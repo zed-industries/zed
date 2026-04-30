@@ -518,7 +518,7 @@ impl Render for DapLogToolbarItemView {
             .and_then(|session_id| menu_rows.iter().find(|row| row.session_id == session_id));
 
         let dap_menu: PopoverMenu<_> = PopoverMenu::new("DapLogView")
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
             .trigger(Button::new(
                 "debug_client_menu_header",
                 current_client
@@ -1028,9 +1028,14 @@ impl SearchableItem for DapLogView {
         })
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.editor
-            .update(cx, |e, cx| e.query_suggestion(window, cx))
+            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
     }
 
     fn activate_match(

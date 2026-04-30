@@ -2,7 +2,6 @@ use anyhow::anyhow;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
 
-use project::ProjectPath;
 use ui::{
     Color, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render,
     Styled, StyledExt, div, h_flex, rems, v_flex,
@@ -17,15 +16,15 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, Task, Window,
+    App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, Window,
 };
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::prelude::*;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
 use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
@@ -37,7 +36,6 @@ pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
-pub mod file_history_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
@@ -48,7 +46,9 @@ pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod stash_picker;
 pub mod text_diff_view;
+pub mod worktree_names;
 pub mod worktree_picker;
+pub mod worktree_service;
 
 pub use conflict_view::MergeConflictIndicator;
 
@@ -67,6 +67,64 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
+
+        workspace.register_action(
+            |workspace, action: &zed_actions::CreateWorktree, window, cx| {
+                worktree_service::handle_create_worktree(workspace, action, window, None, cx);
+            },
+        );
+        workspace.register_action(
+            |workspace, action: &zed_actions::SwitchWorktree, window, cx| {
+                worktree_service::handle_switch_worktree(workspace, action, window, None, cx);
+            },
+        );
+
+        workspace.register_action(|workspace, _: &zed_actions::git::Worktree, window, cx| {
+            let focused_dock = workspace.focused_dock_position(window, cx);
+            let project = workspace.project().clone();
+            let workspace_handle = workspace.weak_handle();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                worktree_picker::WorktreePicker::new_modal(
+                    project,
+                    workspace_handle,
+                    focused_dock,
+                    window,
+                    cx,
+                )
+            });
+        });
+
+        workspace.register_action(
+            |workspace, action: &zed_actions::OpenWorktreeInNewWindow, window, cx| {
+                let path = action.path.clone();
+                let is_remote = !workspace.project().read(cx).is_local();
+
+                if is_remote {
+                    let connection_options =
+                        workspace.project().read(cx).remote_connection_options(cx);
+                    let app_state = workspace.app_state().clone();
+                    let workspace_handle = workspace.weak_handle();
+                    cx.spawn_in(window, async move |_, cx| {
+                        if let Some(connection_options) = connection_options {
+                            crate::worktree_picker::open_remote_worktree(
+                                connection_options,
+                                vec![path],
+                                app_state,
+                                workspace_handle,
+                                cx,
+                            )
+                            .await?;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                } else {
+                    workspace
+                        .open_workspace_for_paths(OpenMode::NewWindow, vec![path], window, cx)
+                        .detach_and_log_err(cx);
+                }
+            },
+        );
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
@@ -210,6 +268,9 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::RenameBranch, window, cx| {
             rename_current_branch(workspace, window, cx);
         });
+        workspace.register_action(|workspace, _: &git::CopyBranchName, _, cx| {
+            copy_branch_name(workspace, cx);
+        });
         workspace.register_action(show_ref_picker);
         workspace.register_action(
             |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
@@ -218,41 +279,6 @@ pub fn init(cx: &mut App) {
                 };
             },
         );
-        workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
-            let Some(active_item) = workspace.active_item(cx) else {
-                return;
-            };
-            let Some(editor) = active_item.downcast::<Editor>() else {
-                return;
-            };
-            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
-                return;
-            };
-            let Some(file) = buffer.read(cx).file() else {
-                return;
-            };
-            let worktree_id = file.worktree_id(cx);
-            let project_path = ProjectPath {
-                worktree_id,
-                path: file.path().clone(),
-            };
-            let project = workspace.project();
-            let git_store = project.read(cx).git_store();
-            let Some((repo, repo_path)) = git_store
-                .read(cx)
-                .repository_and_path_for_project_path(&project_path, cx)
-            else {
-                return;
-            };
-            file_history_view::FileHistoryView::open(
-                repo_path,
-                git_store.downgrade(),
-                repo.downgrade(),
-                workspace.weak_handle(),
-                window,
-                cx,
-            );
-        });
     })
     .detach();
 }
@@ -403,6 +429,20 @@ fn rename_current_branch(
     workspace.toggle_modal(window, cx, |window, cx| {
         RenameBranchModal::new(current_branch_name, repo, window, cx)
     });
+}
+
+fn copy_branch_name(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    let Some(panel) = workspace.panel::<GitPanel>(cx) else {
+        return;
+    };
+    let branch_name = panel.update(cx, |panel, cx| {
+        let repo = panel.active_repository.as_ref()?;
+        let repo = repo.read(cx);
+        repo.branch.as_ref().map(|branch| branch.name().to_string())
+    });
+    if let Some(name) = branch_name {
+        cx.write_to_clipboard(ClipboardItem::new_string(name));
+    }
 }
 
 struct RefPickerModal {
@@ -675,7 +715,7 @@ fn render_remote_button(
 }
 
 mod remote_button {
-    use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
+    use gpui::{Action, Anchor, AnyView, ClickEvent, FocusHandle};
     use ui::{
         App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
         IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
@@ -863,7 +903,7 @@ mod remote_button {
                         .action("Force Push", git::ForcePush.boxed_clone())
                 }))
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 
     #[allow(clippy::too_many_arguments)]

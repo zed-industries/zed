@@ -484,7 +484,7 @@ where
         PopoverMenu::new("kernel-switcher")
             .menu(move |_window, _cx| Some(picker_view.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
+            .attach(gpui::Anchor::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

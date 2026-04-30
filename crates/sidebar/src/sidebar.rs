@@ -2,7 +2,7 @@ mod thread_switcher;
 
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::thread_metadata_store::{
     ThreadMetadata, ThreadMetadataStore, WorktreePaths, worktree_info_from_thread_paths,
@@ -12,8 +12,8 @@ use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
 use agent_ui::{
-    AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, CrossChannelImportOnboarding,
-    DEFAULT_THREAD_TITLE, NewThread, RemoveSelectedThread, ThreadId, ThreadImportModal,
+    AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, ArchiveSelectedThread,
+    CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewThread, ThreadId, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
@@ -45,8 +45,8 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor,
-    Tooltip, WithScrollbar, prelude::*, render_modifiers,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, ScrollAxes, Scrollbars, Tab, ThreadItem,
+    ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*, render_modifiers,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -335,6 +335,26 @@ struct WorkspaceMenuWorktreeLabel {
     secondary_name: Option<SharedString>,
 }
 
+impl WorkspaceMenuWorktreeLabel {
+    fn render(&self, color: Color) -> impl IntoElement {
+        h_flex()
+            .min_w_0()
+            .gap_0p5()
+            .when_some(self.icon, |this, icon| {
+                this.child(Icon::new(icon).size(IconSize::XSmall).color(color))
+            })
+            .child(
+                Label::new(self.primary_name.clone())
+                    .color(color)
+                    .truncate(),
+            )
+            .when_some(self.secondary_name.clone(), |this, secondary_name| {
+                this.child(Label::new(":").color(color).alpha(0.5))
+                    .child(Label::new(secondary_name).color(color).truncate())
+            })
+    }
+}
+
 fn workspace_menu_worktree_labels(
     workspace: &Entity<Workspace>,
     cx: &App,
@@ -361,14 +381,17 @@ fn workspace_menu_worktree_labels(
                 .iter()
                 .find(|snapshot| snapshot.work_directory_abs_path.as_ref() == root_path);
 
-            if let Some(snapshot) = repository_snapshot
-                && snapshot.is_linked_worktree()
-            {
-                let worktree_name = project::linked_worktree_short_name(
-                    snapshot.original_repo_abs_path.as_ref(),
-                    root_path,
-                )
-                .unwrap_or_else(|| folder_name.clone());
+            if let Some(snapshot) = repository_snapshot {
+                let worktree_name = if snapshot.is_linked_worktree() {
+                    snapshot
+                        .main_worktree_abs_path()
+                        .and_then(|main_worktree_path| {
+                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                        })
+                        .unwrap_or_else(|| folder_name.clone())
+                } else {
+                    "main".into()
+                };
 
                 if show_folder_name {
                     WorkspaceMenuWorktreeLabel {
@@ -485,7 +508,6 @@ impl Sidebar {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_use_modal_editing(true);
             editor.set_placeholder_text("Search…", window, cx);
             editor
         });
@@ -494,7 +516,7 @@ impl Sidebar {
             &multi_workspace,
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
-                MultiWorkspaceEvent::ActiveWorkspaceChanged => {
+                MultiWorkspaceEvent::ActiveWorkspaceChanged { .. } => {
                     this.sync_active_entry_from_active_workspace(cx);
                     this.replace_archived_panel_thread(window, cx);
                     this.update_entries(cx);
@@ -736,8 +758,8 @@ impl Sidebar {
                     this.sync_active_entry_from_panel(_agent_panel, cx);
                     this.update_entries(cx);
                 }
-                AgentPanelEvent::MessageSentOrQueued { thread_id } => {
-                    this.record_thread_message_sent_or_queued(thread_id, cx);
+                AgentPanelEvent::ThreadInteracted { thread_id } => {
+                    this.record_thread_interacted(thread_id, cx);
                     this.update_entries(cx);
                 }
             },
@@ -1150,6 +1172,37 @@ impl Sidebar {
                     }
                     let workspace = resolve_workspace(&row);
                     threads.push(make_thread_entry(row, workspace));
+                }
+
+                // Also surface any thread whose `folder_paths` equals
+                // one of this group's open workspaces' root paths.
+                // The three lookups above can all miss when the
+                // thread's stored `main_worktree_paths` disagree with
+                // the group key (for example, a stale row whose main
+                // paths equal its folder paths for a linked-worktree
+                // workspace). The thread will be rewritten into the
+                // correct shape the next time `handle_conversation_event`
+                // fires, but until then the sidebar should still show
+                // it under the group whose workspace it actually
+                // belongs to.
+                for ws in group_workspaces {
+                    let ws_paths = workspace_path_list(ws, cx);
+                    if ws_paths.paths().is_empty() {
+                        continue;
+                    }
+                    for row in thread_store
+                        .read(cx)
+                        .entries_for_path(&ws_paths, group_host.as_ref())
+                        .cloned()
+                    {
+                        if !seen_thread_ids.insert(row.thread_id) {
+                            continue;
+                        }
+                        threads.push(make_thread_entry(
+                            row,
+                            ThreadEntryWorkspace::Open(ws.clone()),
+                        ));
+                    }
                 }
 
                 // Load any legacy threads for any single linked wortree of this project group.
@@ -1669,6 +1722,17 @@ impl Sidebar {
                         cx,
                     )),
             )
+            .on_mouse_down(gpui::MouseButton::Right, {
+                let menu_handle = self
+                    .project_header_menu_handles
+                    .get(&ix)
+                    .cloned()
+                    .unwrap_or_default();
+                move |_, window, cx| {
+                    cx.stop_propagation();
+                    menu_handle.toggle(window, cx);
+                }
+            })
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                     if event.modifiers().secondary() {
@@ -1871,7 +1935,7 @@ impl Sidebar {
                         let menu = if open_workspaces.is_empty() {
                             menu
                         } else {
-                            let mut menu = menu.separator().header("Open Workspaces");
+                            let mut menu = menu.separator().header("Open Worktrees");
 
                             for (
                                 workspace_index,
@@ -1898,79 +1962,68 @@ impl Sidebar {
                                         let label_color = if is_active_workspace {
                                             Color::Accent
                                         } else {
-                                            Color::Muted
+                                            Color::Default
                                         };
                                         let row_group_name = SharedString::from(format!(
                                             "workspace-menu-row-{workspace_index}"
                                         ));
 
                                         h_flex()
-                                            .w_full()
                                             .group(&row_group_name)
-                                            .justify_between()
+                                            .w_full()
                                             .gap_2()
-                                            .child(h_flex().min_w_0().gap_3().children(
-                                                workspace_label.iter().map(|label| {
-                                                    h_flex()
-                                                        .min_w_0()
-                                                        .gap_0p5()
-                                                        .when_some(label.icon, |this, icon| {
-                                                            this.child(
-                                                                Icon::new(icon)
-                                                                    .size(IconSize::XSmall)
-                                                                    .color(label_color),
-                                                            )
-                                                        })
-                                                        .child(
-                                                            Label::new(label.primary_name.clone())
-                                                                .color(label_color)
-                                                                .truncate(),
-                                                        )
-                                                        .when_some(
-                                                            label.secondary_name.clone(),
-                                                            |this, secondary_name| {
+                                            .justify_between()
+                                            .child(h_flex().min_w_0().gap_1().children(
+                                                workspace_label.iter().enumerate().map(
+                                                    |(label_ix, label)| {
+                                                        h_flex()
+                                                            .gap_1()
+                                                            .when(label_ix > 0, |this| {
                                                                 this.child(
-                                                                    Label::new(":")
-                                                                        .color(label_color),
+                                                                    Label::new("•").alpha(0.25),
                                                                 )
-                                                                .child(
-                                                                    Label::new(secondary_name)
-                                                                        .color(label_color)
-                                                                        .truncate(),
-                                                                )
-                                                            },
-                                                        )
-                                                        .into_any_element()
-                                                }),
+                                                            })
+                                                            .child(label.render(label_color))
+                                                            .into_any_element()
+                                                    },
+                                                ),
                                             ))
-                                            .child(
-                                                IconButton::new(
-                                                    ("close-workspace", workspace_index),
-                                                    IconName::Close,
+                                            .when(!is_active_workspace, |this| {
+                                                let close_multi_workspace =
+                                                    close_multi_workspace.clone();
+                                                let close_weak_menu = close_weak_menu.clone();
+                                                let close_workspace = close_workspace.clone();
+
+                                                this.child(
+                                                    IconButton::new(
+                                                        ("close-workspace", workspace_index),
+                                                        IconName::Close,
+                                                    )
+                                                    .icon_size(IconSize::Small)
+                                                    .visible_on_hover(&row_group_name)
+                                                    .tooltip(Tooltip::text("Close Workspace"))
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.stop_propagation();
+                                                        window.prevent_default();
+                                                        close_multi_workspace
+                                                            .update(cx, |multi_workspace, cx| {
+                                                                multi_workspace
+                                                                    .close_workspace(
+                                                                        &close_workspace,
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            })
+                                                            .ok();
+                                                        close_weak_menu
+                                                            .update(cx, |_, cx| {
+                                                                cx.emit(DismissEvent)
+                                                            })
+                                                            .ok();
+                                                    }),
                                                 )
-                                                .shape(ui::IconButtonShape::Square)
-                                                .style(ButtonStyle::Subtle)
-                                                .visible_on_hover(&row_group_name)
-                                                .tooltip(Tooltip::text("Close Workspace"))
-                                                .on_click(move |_, window, cx| {
-                                                    cx.stop_propagation();
-                                                    window.prevent_default();
-                                                    close_multi_workspace
-                                                        .update(cx, |multi_workspace, cx| {
-                                                            multi_workspace
-                                                                .close_workspace(
-                                                                    &close_workspace,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .detach_and_log_err(cx);
-                                                        })
-                                                        .ok();
-                                                    close_weak_menu
-                                                        .update(cx, |_, cx| cx.emit(DismissEvent))
-                                                        .ok();
-                                                }),
-                                            )
+                                            })
                                             .into_any_element()
                                     },
                                     move |window, cx| {
@@ -1978,6 +2031,7 @@ impl Sidebar {
                                             .update(cx, |multi_workspace, cx| {
                                                 multi_workspace.activate(
                                                     activate_workspace.clone(),
+                                                    None,
                                                     window,
                                                     cx,
                                                 );
@@ -2022,7 +2076,7 @@ impl Sidebar {
 
                 Some(menu)
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.),
                 y: px(1.),
@@ -2170,6 +2224,23 @@ impl Sidebar {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter_editor.read(cx).is_focused(window) {
+            if self.reset_filter_editor_text(window, cx) {
+                self.selection = None;
+                self.update_entries(cx);
+                return;
+            }
+
+            if self.selection.is_none() {
+                self.select_first_entry();
+            }
+            if self.selection.is_some() {
+                self.focus_handle.focus(window, cx);
+                cx.notify();
+            }
+            return;
+        }
+
         if self.reset_filter_editor_text(window, cx) {
             self.update_entries(cx);
         } else {
@@ -2193,15 +2264,6 @@ impl Sidebar {
             });
         } else {
             self.filter_editor.focus_handle(cx).focus(window, cx);
-        }
-
-        // When vim mode is active, the editor defaults to normal mode which
-        // blocks text input. Switch to insert mode so the user can type
-        // immediately.
-        if vim_mode_setting::VimModeSetting::get_global(cx).0 {
-            if let Ok(action) = cx.build_action("vim::SwitchToInsertMode", None) {
-                window.dispatch_action(action, cx);
-            }
         }
 
         cx.notify();
@@ -2464,7 +2526,7 @@ impl Sidebar {
         }
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), window, cx);
+            multi_workspace.activate(workspace.clone(), None, window, cx);
             if retain {
                 multi_workspace.retain_active_workspace(cx);
             }
@@ -2504,7 +2566,7 @@ impl Sidebar {
         let activated = target_window
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
-                multi_workspace.activate(workspace.clone(), window, cx);
+                multi_workspace.activate(workspace.clone(), None, window, cx);
                 Self::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx);
             })
             .log_err()
@@ -3346,7 +3408,7 @@ impl Sidebar {
         thread_id: Option<agent_ui::ThreadId>,
         neighbor: Option<&ThreadMetadata>,
         thread_folder_paths: Option<&PathList>,
-        in_flight_archive: Option<(Task<()>, smol::channel::Sender<()>)>,
+        in_flight_archive: Option<(Task<()>, async_channel::Sender<()>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3437,12 +3499,12 @@ impl Sidebar {
         thread_id: ThreadId,
         roots: Vec<thread_worktree_archive::RootPlan>,
         cx: &mut Context<Self>,
-    ) -> Option<(Task<()>, smol::channel::Sender<()>)> {
+    ) -> Option<(Task<()>, async_channel::Sender<()>)> {
         if roots.is_empty() {
             return None;
         }
 
-        let (cancel_tx, cancel_rx) = smol::channel::bounded::<()>(1);
+        let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
         let task = cx.spawn(async move |_this, cx| {
             match Self::archive_worktree_roots(roots, cancel_rx, cx).await {
                 Ok(ArchiveWorktreeOutcome::Success) => {
@@ -3469,7 +3531,7 @@ impl Sidebar {
 
     async fn archive_worktree_roots(
         roots: Vec<thread_worktree_archive::RootPlan>,
-        cancel_rx: smol::channel::Receiver<()>,
+        cancel_rx: async_channel::Receiver<()>,
         cx: &mut gpui::AsyncApp,
     ) -> anyhow::Result<ArchiveWorktreeOutcome> {
         let mut completed_persists: Vec<(i64, thread_worktree_archive::RootPlan)> = Vec::new();
@@ -3526,14 +3588,14 @@ impl Sidebar {
     ) {
         if let Some(multi_workspace) = self.multi_workspace.upgrade() {
             multi_workspace.update(cx, |mw, cx| {
-                mw.activate(workspace.clone(), window, cx);
+                mw.activate(workspace.clone(), None, window, cx);
             });
         }
     }
 
-    fn remove_selected_thread(
+    fn archive_selected_thread(
         &mut self,
-        _: &RemoveSelectedThread,
+        _: &ArchiveSelectedThread,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3560,11 +3622,7 @@ impl Sidebar {
         self.thread_last_accessed.insert(*id, Utc::now());
     }
 
-    fn record_thread_message_sent_or_queued(
-        &mut self,
-        thread_id: &agent_ui::ThreadId,
-        cx: &mut App,
-    ) {
+    fn record_thread_interacted(&mut self, thread_id: &agent_ui::ThreadId, cx: &mut App) {
         let store = ThreadMetadataStore::global(cx);
         store.update(cx, |store, cx| {
             store.update_interacted_at(thread_id, Utc::now(), cx);
@@ -3722,7 +3780,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), window, cx);
+                            mw.activate(workspace.clone(), None, window, cx);
                         });
                     }
                     this.active_entry = Some(ActiveEntry {
@@ -3741,7 +3799,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), window, cx);
+                            mw.activate(workspace.clone(), None, window, cx);
                             mw.retain_active_workspace(cx);
                         });
                     }
@@ -3759,7 +3817,7 @@ impl Sidebar {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         if let Some(original_ws) = &original_workspace {
                             mw.update(cx, |mw, cx| {
-                                mw.activate(original_ws.clone(), window, cx);
+                                mw.activate(original_ws.clone(), None, window, cx);
                             });
                         }
                     }
@@ -3816,7 +3874,7 @@ impl Sidebar {
         if let Some((metadata, workspace)) = initial_preview {
             if let Some(mw) = self.multi_workspace.upgrade() {
                 mw.update(cx, |mw, cx| {
-                    mw.activate(workspace.clone(), window, cx);
+                    mw.activate(workspace.clone(), None, window, cx);
                 });
             }
             self.active_entry = Some(ActiveEntry {
@@ -3926,7 +3984,7 @@ impl Sidebar {
                             move |_window, cx| {
                                 Tooltip::for_action_in(
                                     "Archive Thread",
-                                    &RemoveSelectedThread,
+                                    &ArchiveSelectedThread,
                                     &focus_handle,
                                     cx,
                                 )
@@ -4030,7 +4088,7 @@ impl Sidebar {
                 x: px(-2.0),
                 y: px(-2.0),
             })
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::Anchor::BottomRight)
     }
 
     fn new_thread_in_group(
@@ -4063,13 +4121,13 @@ impl Sidebar {
         };
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), window, cx);
+            multi_workspace.activate(workspace.clone(), None, window, cx);
         });
 
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.activate_draft(true, window, cx);
+                panel.activate_draft(true, "sidebar", window, cx);
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);
@@ -4125,6 +4183,9 @@ impl Sidebar {
             .and_then(|mw| mw.read(cx).last_active_workspace_for_group(key, cx))
             .or_else(|| self.workspace_for_group(key, cx));
         if let Some(workspace) = workspace {
+            if self.is_active_workspace(&workspace, cx) {
+                return;
+            }
             self.activate_workspace(&workspace, window, cx);
         } else {
             self.open_workspace_for_group(key, window, cx);
@@ -4190,7 +4251,7 @@ impl Sidebar {
                 .workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
         }) {
             multi_workspace.update(cx, |multi_workspace, cx| {
-                multi_workspace.activate(workspace, window, cx);
+                multi_workspace.activate(workspace, None, window, cx);
                 multi_workspace.retain_active_workspace(cx);
             });
         } else {
@@ -4447,14 +4508,14 @@ impl Sidebar {
 
         sidebar_side_context_menu("sidebar-toggle-menu", _cx)
             .anchor(if on_right {
-                gpui::Corner::BottomRight
+                gpui::Anchor::BottomRight
             } else {
-                gpui::Corner::BottomLeft
+                gpui::Anchor::BottomLeft
             })
             .attach(if on_right {
-                gpui::Corner::TopRight
+                gpui::Anchor::TopRight
             } else {
-                gpui::Corner::TopLeft
+                gpui::Anchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
                 let icon = if on_right {
@@ -4910,7 +4971,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::fold_all))
             .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::remove_selected_thread))
+            .on_action(cx.listener(Self::archive_selected_thread))
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
@@ -4953,7 +5014,12 @@ impl Render for Sidebar {
                                         this.child(self.render_no_results(cx))
                                     })
                                     .when_some(sticky_header, |this, header| this.child(header))
-                                    .vertical_scrollbar_for(&self.list_state, window, cx),
+                                    .custom_scrollbars(
+                                        Scrollbars::new(ScrollAxes::Vertical)
+                                            .tracked_scroll_handle(&self.list_state),
+                                        window,
+                                        cx,
+                                    ),
                             )
                         }
                     }),
@@ -5181,7 +5247,7 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             .find(|snapshot| abs_path.starts_with(&*snapshot.work_directory_abs_path));
 
         let is_linked = repo_info.map(|s| s.is_linked_worktree()).unwrap_or(false);
-        let original_repo_path = repo_info.map(|s| &s.original_repo_abs_path);
+        let main_worktree_path = repo_info.and_then(|s| s.main_worktree_abs_path());
         let branch = repo_info.and_then(|s| s.branch.as_ref().map(|b| b.ref_name.clone()));
 
         write!(output, "  - {}", abs_path.display()).ok();
@@ -5192,8 +5258,13 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             write!(output, " [branch: {branch}]").ok();
         }
         if is_linked {
-            if let Some(original) = original_repo_path {
-                write!(output, " [linked worktree -> {}]", original.display()).ok();
+            if let Some(main_worktree_path) = main_worktree_path {
+                write!(
+                    output,
+                    " [linked worktree -> {}]",
+                    main_worktree_path.display()
+                )
+                .ok();
             } else {
                 write!(output, " [linked worktree]").ok();
             }

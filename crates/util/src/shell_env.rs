@@ -38,6 +38,39 @@ pub async fn capture(
     return capture_unix(shell_path.as_ref(), args, directory.as_ref()).await;
 }
 
+/// Try to parse the environment output before checking the exit status.
+/// The user's shell rc files may contain commands that fail (e.g. editor
+/// integrations that call posix_spawnp outside a real PTY), causing a
+/// non-zero exit status even though `zed --printenv` ran successfully and
+/// produced valid output on its separate fd.
+fn parse_env_output(
+    env_output: &str,
+    status: &std::process::ExitStatus,
+    successful_capture_warning: impl FnOnce() -> String,
+    failed_capture_error: impl FnOnce() -> String,
+) -> Result<collections::HashMap<String, String>> {
+    match parse_env_map_from_noisy_output(env_output) {
+        Ok(env_map) => {
+            if !status.success() {
+                log::warn!("{}", successful_capture_warning());
+            }
+            Ok(env_map)
+        }
+        Err(parse_error) => {
+            if !status.success() {
+                anyhow::bail!(
+                    "{}. Failed to deserialize environment variables from json: {parse_error}. output: {env_output}",
+                    failed_capture_error(),
+                );
+            }
+
+            anyhow::bail!(
+                "Failed to deserialize environment variables from json: {parse_error}. output: {env_output}"
+            );
+        }
+    }
+}
+
 #[cfg(unix)]
 async fn capture_unix(
     shell_path: &Path,
@@ -123,19 +156,25 @@ async fn capture_unix(
     let (env_output, process_output) = spawn_and_read_fd(command, fd_num).await?;
     let env_output = String::from_utf8_lossy(&env_output);
 
-    anyhow::ensure!(
-        process_output.status.success(),
-        "login shell exited with {}. stdout: {:?}, stderr: {:?}",
-        process_output.status,
-        String::from_utf8_lossy(&process_output.stdout),
-        String::from_utf8_lossy(&process_output.stderr),
-    );
-
-    // Parse the JSON output from zed --printenv
-    let env_map = parse_env_map_from_noisy_output(&env_output).with_context(|| {
-        format!("Failed to deserialize environment variables from json: {env_output}")
-    })?;
-    Ok(env_map)
+    parse_env_output(
+        &env_output,
+        &process_output.status,
+        || {
+            format!(
+                "login shell exited with {} but environment was captured successfully. stderr: {:?}",
+                process_output.status,
+                String::from_utf8_lossy(&process_output.stderr),
+            )
+        },
+        || {
+            format!(
+                "login shell exited with {}. stdout: {:?}, stderr: {:?}",
+                process_output.status,
+                String::from_utf8_lossy(&process_output.stdout),
+                String::from_utf8_lossy(&process_output.stderr),
+            )
+        },
+    )
 }
 
 #[cfg(unix)]
@@ -241,16 +280,72 @@ async fn capture_windows(
         .output()
         .await
         .with_context(|| format!("command {cmd:?}"))?;
-    anyhow::ensure!(
-        output.status.success(),
-        "Command {cmd:?} failed with {}. stdout: {:?}, stderr: {:?}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
     let env_output = String::from_utf8_lossy(&output.stdout);
 
-    parse_env_map_from_noisy_output(&env_output).with_context(|| {
-        format!("Failed to deserialize environment variables from json: {env_output}")
-    })
+    parse_env_output(
+        &env_output,
+        &output.status,
+        || {
+            format!(
+                "Command {cmd:?} exited with {} but environment was captured successfully. stderr: {:?}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr),
+            )
+        },
+        || {
+            format!(
+                "Command {cmd:?} failed with {}. stdout: {:?}, stderr: {:?}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            )
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::ExitStatus;
+
+    use super::*;
+    use crate::path;
+
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+
+        ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(code: u32) -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+
+        ExitStatus::from_raw(code)
+    }
+
+    #[test]
+    fn parse_env_output_accepts_valid_env_when_shell_exits_nonzero() {
+        let env_json = serde_json::json!({
+            "PATH": path!("/usr/bin"),
+            "SHELL": path!("/bin/zsh"),
+        });
+        let env_output = format!("shell startup noise\n{env_json}\nshell shutdown noise");
+
+        let env_map = parse_env_output(
+            &env_output,
+            &exit_status(1),
+            || "shell exited with 1 but environment was captured successfully".to_string(),
+            || panic!("failed capture error should not be evaluated for valid environment output"),
+        )
+        .expect("valid environment output should be returned despite non-zero shell exit");
+        assert_eq!(
+            env_map.get("PATH").map(String::as_str),
+            Some(path!("/usr/bin"))
+        );
+        assert_eq!(
+            env_map.get("SHELL").map(String::as_str),
+            Some(path!("/bin/zsh"))
+        );
+    }
 }

@@ -10,7 +10,7 @@ use crate::thread_metadata_store::{
 use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use collections::HashMap;
@@ -31,15 +31,16 @@ use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tab,
-    ThreadItem, Tooltip, WithScrollbar, prelude::*, utils::platform_title_bar_height,
+    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, ScrollAxes,
+    Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    utils::platform_title_bar_height,
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
-    ModalView, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
-    resolve_worktree_workspaces,
+    CloseWindow, ModalView, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
+    WorkspaceId, resolve_worktree_workspaces,
 };
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -260,9 +261,19 @@ impl ThreadsArchiveView {
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+
+        // If we're filtering to archived threads but none remain (e.g. the
+        // user just deleted the last one), fall back to showing all threads
+        // so they aren't stranded with an empty list and a disabled toggle.
+        if self.thread_filter == ThreadFilter::ArchivedOnly
+            && store.archived_entries().next().is_none()
+        {
+            self.thread_filter = ThreadFilter::All;
+        }
+
         let thread_filter = self.thread_filter;
-        let sessions = ThreadMetadataStore::global(cx)
-            .read(cx)
+        let sessions = store
             .entries()
             .filter(|t| match thread_filter {
                 ThreadFilter::All => true,
@@ -320,26 +331,20 @@ impl ThreadsArchiveView {
         let preserve = self.preserve_selection_on_next_update;
         self.preserve_selection_on_next_update = false;
 
-        let saved_scroll = if preserve {
-            Some(self.list_state.logical_scroll_top())
-        } else {
-            None
-        };
+        let saved_scroll = self.list_state.logical_scroll_top();
 
         self.list_state.reset(items.len());
         self.items = items;
 
-        if !preserve {
-            self.hovered_index = None;
-        } else if let Some(ix) = self.hovered_index {
+        if let Some(ix) = self.hovered_index {
             if ix >= self.items.len() || !self.is_selectable_item(ix) {
                 self.hovered_index = None;
             }
         }
 
-        if let Some(scroll_top) = saved_scroll {
-            self.list_state.scroll_to(scroll_top);
+        self.list_state.scroll_to(saved_scroll);
 
+        if preserve {
             if let Some(ix) = self.selection {
                 let next = self.find_next_selectable(ix).or_else(|| {
                     ix.checked_sub(1)
@@ -653,12 +658,15 @@ impl ThreadsArchiveView {
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                        if *is_hovered {
-                            this.hovered_index = Some(ix);
-                        } else if this.hovered_index == Some(ix) {
-                            this.hovered_index = None;
+                        let previously_hovered = this.hovered_index;
+                        this.hovered_index = if *is_hovered {
+                            Some(ix)
+                        } else {
+                            previously_hovered.filter(|&i| i != ix)
+                        };
+                        if this.hovered_index != previously_hovered {
+                            cx.notify();
                         }
-                        cx.notify();
                     }));
 
                 if is_restoring {
@@ -830,8 +838,12 @@ impl ThreadsArchiveView {
             AgentSettings::get_global(cx).sidebar_side(),
             settings::SidebarSide::Left
         );
-        let traffic_lights =
-            cfg!(target_os = "macos") && !window.is_fullscreen() && sidebar_on_left;
+        let sidebar_on_right = !sidebar_on_left;
+        let not_fullscreen = !window.is_fullscreen();
+        let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
+        let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
+        let right_window_controls =
+            !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
         let header_height = platform_title_bar_height(window);
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
@@ -840,14 +852,19 @@ impl ThreadsArchiveView {
             .h(header_height)
             .mt_px()
             .pb_px()
+            .when(left_window_controls, |this| {
+                this.children(Self::render_left_window_controls(window, cx))
+            })
             .map(|this| {
                 if traffic_lights {
                     this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
-                } else {
+                } else if !left_window_controls {
                     this.pl_1p5()
+                } else {
+                    this
                 }
             })
-            .pr_1p5()
+            .when(!right_window_controls, |this| this.pr_1p5())
             .gap_1()
             .justify_between()
             .border_b_1()
@@ -882,6 +899,25 @@ impl ThreadsArchiveView {
                         })),
                 )
             })
+            .when(right_window_controls, |this| {
+                this.children(Self::render_right_window_controls(window, cx))
+            })
+    }
+
+    fn render_left_window_controls(window: &Window, cx: &mut App) -> Option<AnyElement> {
+        platform_title_bar::render_left_window_controls(
+            cx.button_layout(),
+            Box::new(CloseWindow),
+            window,
+        )
+    }
+
+    fn render_right_window_controls(window: &Window, cx: &mut App) -> Option<AnyElement> {
+        platform_title_bar::render_right_window_controls(
+            cx.button_layout(),
+            Box::new(CloseWindow),
+            window,
+        )
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -917,6 +953,7 @@ impl ThreadsArchiveView {
             )
             .child(
                 h_flex()
+                    .gap_1()
                     .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)
@@ -1014,7 +1051,11 @@ impl Render for ThreadsArchiveView {
                     .flex_1()
                     .size_full(),
                 )
-                .vertical_scrollbar_for(&self.list_state, window, cx)
+                .custom_scrollbars(
+                    Scrollbars::new(ScrollAxes::Vertical).tracked_scroll_handle(&self.list_state),
+                    window,
+                    cx,
+                )
                 .into_any_element()
         };
 
@@ -1082,7 +1123,7 @@ impl ProjectPickerModal {
         let db = WorkspaceDb::global(cx);
         cx.spawn_in(window, async move |this, cx| {
             let workspaces = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -1302,7 +1343,7 @@ impl PickerDelegate for ProjectPickerDelegate {
             })
             .collect();
 
-        let mut sibling_matches = smol::block_on(fuzzy::match_strings(
+        let mut sibling_matches = gpui::block_on(fuzzy::match_strings(
             &sibling_candidates,
             query,
             smart_case,
@@ -1336,7 +1377,7 @@ impl PickerDelegate for ProjectPickerDelegate {
             })
             .collect();
 
-        let mut recent_matches = smol::block_on(fuzzy::match_strings(
+        let mut recent_matches = gpui::block_on(fuzzy::match_strings(
             &recent_candidates,
             query,
             smart_case,

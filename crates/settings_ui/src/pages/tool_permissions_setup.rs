@@ -1112,7 +1112,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1171,7 +1171,7 @@ fn render_default_mode_section(
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }

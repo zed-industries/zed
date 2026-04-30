@@ -26,16 +26,16 @@ use futures::{
         oneshot::{self, Canceled},
     },
     future::{self, BoxFuture, Shared},
-    stream::FuturesOrdered,
+    stream::{FuturesOrdered, FuturesUnordered},
 };
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, Oid, RunHook,
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
-        DiffType, FetchOptions, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
-        GraphCommitData, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        Branch, CommitData, CommitDetails, CommitDiff, CommitFile, CommitOptions,
+        CreateWorktreeTarget, DiffType, FetchOptions, GitCommitTemplate, GitRepository,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
         RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
         Worktree as GitWorktree,
     },
@@ -46,14 +46,15 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
+    Subscription, Task, WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
+use paths::{config_dir, home_dir};
 use pending_op::{PendingOp, PendingOpId, PendingOps, PendingOpsSummary};
 use postage::stream::Stream as _;
 use rpc::{
@@ -62,6 +63,7 @@ use rpc::{
 };
 use serde::Deserialize;
 use settings::{Settings, WorktreeId};
+use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     cmp::Ordering,
@@ -75,7 +77,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
@@ -162,12 +164,29 @@ enum DiffKind {
     SinceOid(Option<git::Oid>),
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub enum GitAccess {
+    /// Either:
+    /// - the user owns `.git`
+    /// - the user doesn't own `.git`, but has both of:
+    ///   - OS-level read permissions
+    ///   - the directory is marked as safe (git config safe.directory)
+    #[default]
+    Yes,
+
+    /// The user is not the owner of `.git`, and one of the following is true:
+    /// - the directory is not marked as safe (git config safe.directory)
+    /// - the user does not have OS-level read permissions to `.git`
+    No,
+}
+
 enum GitStoreState {
     Local {
         next_repository_id: Arc<AtomicU64>,
         downstream: Option<LocalDownstreamState>,
         project_environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
+        _fs_watches: Box<[Task<()>]>,
     },
     Remote {
         upstream_client: AnyProtoClient,
@@ -273,8 +292,8 @@ pub struct MergeDetails {
 
 #[derive(Clone)]
 pub enum CommitDataState {
-    Loading,
-    Loaded(Arc<GraphCommitData>),
+    Loading(Option<Shared<oneshot::Receiver<Arc<CommitData>>>>),
+    Loaded(Arc<CommitData>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -282,11 +301,18 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
-    /// The working directory of the original repository. For a normal
-    /// checkout this equals `work_directory_abs_path`. For a git worktree
-    /// checkout, this is the original repo's working directory — used to
-    /// anchor new worktree creation so they don't nest.
-    pub original_repo_abs_path: Arc<Path>,
+    /// Absolute path to the directory holding this worktree's Git state.
+    ///
+    /// For a linked worktree this is the worktree-specific directory under the
+    /// common Git directory, such as `<main>/.git/worktrees/<name>`.
+    pub repository_dir_abs_path: Arc<Path>,
+    /// Absolute path to the repository's common Git directory.
+    ///
+    /// For a normal checkout this is `<work_directory>/.git`. For a linked
+    /// worktree this is the common Git directory shared by all worktrees. If
+    /// that common directory is a bare repository, there may be no main
+    /// worktree path to derive from it.
+    pub common_dir_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub branch_list: Arc<[Branch]>,
@@ -307,14 +333,26 @@ pub struct JobInfo {
     pub message: SharedString,
 }
 
-struct GraphCommitDataHandler {
+struct CommitDataHandler {
     _task: Task<()>,
-    commit_data_request: smol::channel::Sender<Oid>,
+    commit_data_request: async_channel::Sender<Oid>,
+    completion_senders: HashMap<Oid, oneshot::Sender<Arc<CommitData>>>,
+    pending_requests: HashSet<Oid>,
 }
 
-enum GraphCommitHandlerState {
-    Starting,
-    Open(GraphCommitDataHandler),
+/// Represents the handler of a git cat-file --batch process within Zed
+/// It's used to lazily fetch commit data as needed (whatever a user is viewing)
+enum CommitDataHandlerState {
+    /// The handler is open and processing requests
+    Open(CommitDataHandler),
+    /// The handler closed because it didn't receive any requests in the last 10s
+    /// or hasn't been open before
+    Closed,
+}
+
+enum NextCommitDataRequest {
+    Request(BoxFuture<'static, Result<proto::GetCommitDataResponse>>),
+    Idle,
     Closed,
 }
 
@@ -347,8 +385,16 @@ pub struct Repository {
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
-    graph_commit_data_handler: GraphCommitHandlerState,
+    commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+    refetch_repo_state: Arc<
+        dyn Fn(
+            &mut Context<Self>,
+        ) -> (
+            mpsc::UnboundedSender<GitJob>,
+            Shared<Task<Result<RepositoryState, String>>>,
+        ),
+    >,
 }
 
 impl std::ops::Deref for Repository {
@@ -452,6 +498,7 @@ pub enum GitStoreEvent {
     IndexWriteError(anyhow::Error),
     JobsUpdated,
     ConflictsUpdated,
+    GlobalConfigurationUpdated,
 }
 
 impl EventEmitter<RepositoryEvent> for Repository {}
@@ -479,6 +526,43 @@ impl GitStore {
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let _fs_watches = if fs.is_fake() {
+            Box::new([])
+        } else {
+            [
+                config_dir().join("git/config"),
+                home_dir().join(".gitconfig"),
+            ]
+            .into_iter()
+            .map(|path| {
+                let fs = fs.clone();
+
+                cx.spawn(async move |this, cx| {
+                    let watcher = fs.watch(&path, Duration::from_millis(100));
+                    let (mut watcher, _) = watcher.await;
+                    while let Some(_) = watcher.next().await {
+                        let Ok(_) = this.update(cx, |this, cx| {
+                            for repo in this.repositories.values() {
+                                repo.update(cx, |this, cx| {
+                                    if this.job_sender.is_closed() {
+                                        let (job_sender, state) = (this.refetch_repo_state)(cx);
+                                        this.repository_state = state;
+                                        this.job_sender = job_sender;
+                                        this.schedule_scan(None, cx);
+                                    }
+                                })
+                            }
+                            cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
+                        }) else {
+                            return;
+                        };
+                    }
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+        };
+
         Self::new(
             worktree_store.clone(),
             buffer_store,
@@ -486,6 +570,7 @@ impl GitStore {
                 next_repository_id: Arc::new(AtomicU64::new(1)),
                 downstream: None,
                 project_environment: environment,
+                _fs_watches,
                 fs,
             },
             cx,
@@ -571,7 +656,6 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_compare_checkpoints);
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
-        client.add_entity_request_handler(Self::handle_file_history);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
@@ -595,6 +679,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_head_sha);
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
+        client.add_entity_request_handler(Self::handle_get_commit_data);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1253,30 +1338,6 @@ impl GitStore {
         })
     }
 
-    pub fn file_history(
-        &self,
-        repo: &Entity<Repository>,
-        path: RepoPath,
-        cx: &mut App,
-    ) -> Task<Result<git::repository::FileHistory>> {
-        let rx = repo.update(cx, |repo, _| repo.file_history(path));
-
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
-    }
-
-    pub fn file_history_paginated(
-        &self,
-        repo: &Entity<Repository>,
-        path: RepoPath,
-        skip: usize,
-        limit: Option<usize>,
-        cx: &mut App,
-    ) -> Task<Result<git::repository::FileHistory>> {
-        let rx = repo.update(cx, |repo, _| repo.file_history_paginated(path, skip, limit));
-
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
-    }
-
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -1397,6 +1458,7 @@ impl GitStore {
             downstream,
             next_repository_id,
             fs,
+            ..
         } = &self.state
         else {
             return;
@@ -1585,12 +1647,8 @@ impl GitStore {
                 ..
             } = update
             {
-                let original_repo_abs_path: Arc<Path> = git::repository::original_repo_path(
-                    work_directory_abs_path,
-                    common_dir_abs_path,
-                    repository_dir_abs_path,
-                )
-                .into();
+                let repository_dir_abs_path = repository_dir_abs_path.clone();
+                let common_dir_abs_path = common_dir_abs_path.clone();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let is_trusted = TrustedWorktrees::try_get_global(cx)
                     .map(|trusted_worktrees| {
@@ -1604,7 +1662,8 @@ impl GitStore {
                     let mut repo = Repository::local(
                         id,
                         work_directory_abs_path.clone(),
-                        original_repo_abs_path.clone(),
+                        repository_dir_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         dot_git_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
@@ -1847,9 +1906,10 @@ impl GitStore {
         &self.repositories
     }
 
-    /// Returns the original (main) repository working directory for the given worktree.
-    /// For normal checkouts this equals the worktree's own path; for linked
-    /// worktrees it points back to the original repo.
+    /// Returns the main repository working directory for the given worktree.
+    /// For normal checkouts this equals the worktree's own path. For linked
+    /// worktrees it points back to the main worktree, if one exists. Linked
+    /// worktrees attached to a bare repository have no main worktree path.
     pub fn original_repo_path_for_worktree(
         &self,
         worktree_id: WorktreeId,
@@ -1864,7 +1924,12 @@ impl GitStore {
                     .is_some_and(|ids| ids.contains(&worktree_id))
             })
             .and_then(|repo_id| self.repositories.get(repo_id))
-            .map(|repo| repo.read(cx).snapshot().original_repo_abs_path)
+            .and_then(|repo| {
+                repo.read(cx)
+                    .snapshot()
+                    .main_worktree_abs_path()
+                    .map(Arc::from)
+            })
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
@@ -1942,7 +2007,7 @@ impl GitStore {
             GitStoreState::Local { fs, .. } => {
                 let fs = fs.clone();
                 cx.background_executor()
-                    .spawn(async move { fs.git_clone(&repo, &path).await })
+                    .spawn(async move { fs.git_clone(&path, &repo).await })
             }
             GitStoreState::Remote {
                 upstream_client,
@@ -1972,6 +2037,31 @@ impl GitStore {
         }
     }
 
+    pub fn git_config(&self, path: Arc<Path>, args: Vec<String>, cx: &App) -> Task<Result<String>> {
+        match &self.state {
+            GitStoreState::Local { fs, .. } => {
+                let fs = fs.clone();
+                cx.background_executor()
+                    .spawn(async move { fs.git_config(&path, args).await })
+            }
+            GitStoreState::Remote {
+                upstream_client, ..
+            } => {
+                // Prevent running git config commands for collab.
+                if upstream_client.is_via_collab() {
+                    return Task::ready(Err(anyhow!(
+                        "Git Config isn't support for project guests"
+                    )));
+                }
+
+                // TODO: Implement this for remote repositories.
+                Task::ready(Err(anyhow!(
+                    "Git Config isn't yet supported for remote projects"
+                )))
+            }
+        }
+    }
+
     async fn handle_update_repository(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateRepository>,
@@ -1984,8 +2074,12 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
 
-            let original_repo_abs_path: Option<Arc<Path>> = update
-                .original_repo_abs_path
+            let repository_dir_abs_path: Option<Arc<Path>> = update
+                .repository_dir_abs_path
+                .as_deref()
+                .map(|p| Path::new(p).into());
+            let common_dir_abs_path: Option<Arc<Path>> = update
+                .common_dir_abs_path
                 .as_deref()
                 .map(|p| Path::new(p).into());
 
@@ -1996,7 +2090,8 @@ impl GitStore {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
-                        original_repo_abs_path.clone(),
+                        repository_dir_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         path_style,
                         ProjectId(update.project_id),
                         client,
@@ -2525,6 +2620,55 @@ impl GitStore {
         Ok(proto::GitGetHeadShaResponse { sha: head_sha })
     }
 
+    async fn handle_get_commit_data(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetCommitData>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetCommitDataResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let shas: Vec<Oid> = envelope
+            .payload
+            .shas
+            .iter()
+            .filter_map(|s| Oid::from_str(s).ok())
+            .collect();
+
+        let mut commits = Vec::with_capacity(shas.len());
+        let mut receivers = Vec::new();
+
+        repository_handle.update(&mut cx, |repository, cx| {
+            for &sha in &shas {
+                match repository.fetch_commit_data(sha, true, cx) {
+                    CommitDataState::Loaded(data) => {
+                        commits.push(commit_data_to_proto(data));
+                    }
+                    CommitDataState::Loading(Some(shared)) => {
+                        receivers.push(shared.clone());
+                    }
+                    CommitDataState::Loading(None) => {
+                        // todo(git_graph) this could happen if the request fails, we should encode an error case
+                        debug_panic!(
+                            "This should never happen since we passed true into fetch commit data"
+                        );
+                    }
+                }
+            }
+        });
+
+        let results = future::join_all(receivers).await;
+
+        commits.extend(
+            results
+                .into_iter()
+                .filter_map(|result| result.ok())
+                .map(|data| commit_data_to_proto(&data)),
+        );
+
+        Ok(proto::GetCommitDataResponse { commits })
+    }
+
     async fn handle_edit_ref(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitEditRef>,
@@ -2883,40 +3027,6 @@ impl GitStore {
                     is_binary: file.is_binary,
                 })
                 .collect(),
-        })
-    }
-
-    async fn handle_file_history(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitFileHistory>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitFileHistoryResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let path = RepoPath::from_proto(&envelope.payload.path)?;
-        let skip = envelope.payload.skip as usize;
-        let limit = envelope.payload.limit.map(|l| l as usize);
-
-        let file_history = repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.file_history_paginated(path, skip, limit)
-            })
-            .await??;
-
-        Ok(proto::GitFileHistoryResponse {
-            entries: file_history
-                .entries
-                .into_iter()
-                .map(|entry| proto::FileHistoryEntry {
-                    sha: entry.sha.to_string(),
-                    subject: entry.subject.to_string(),
-                    message: entry.message.to_string(),
-                    commit_timestamp: entry.commit_timestamp,
-                    author_name: entry.author_name.to_string(),
-                    author_email: entry.author_email.to_string(),
-                })
-                .collect(),
-            path: file_history.path.to_proto(),
         })
     }
 
@@ -3831,14 +3941,20 @@ impl RepositorySnapshot {
     fn empty(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
-        original_repo_abs_path: Option<Arc<Path>>,
+        repository_dir_abs_path: Option<Arc<Path>>,
+        common_dir_abs_path: Option<Arc<Path>>,
         path_style: PathStyle,
     ) -> Self {
+        let repository_dir_abs_path =
+            repository_dir_abs_path.unwrap_or_else(|| work_directory_abs_path.join(".git").into());
+        let common_dir_abs_path =
+            common_dir_abs_path.unwrap_or_else(|| repository_dir_abs_path.clone());
+
         Self {
             id,
             statuses_by_path: Default::default(),
-            original_repo_abs_path: original_repo_abs_path
-                .unwrap_or_else(|| work_directory_abs_path.clone()),
+            repository_dir_abs_path,
+            common_dir_abs_path,
             work_directory_abs_path,
             branch: None,
             branch_list: Arc::from([]),
@@ -3856,6 +3972,7 @@ impl RepositorySnapshot {
     fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
@@ -3884,9 +4001,10 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
-            original_repo_abs_path: Some(
-                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            repository_dir_abs_path: Some(
+                self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
+            common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
@@ -3941,6 +4059,7 @@ impl RepositorySnapshot {
 
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
@@ -3965,14 +4084,32 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
-            original_repo_abs_path: Some(
-                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            repository_dir_abs_path: Some(
+                self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
+            common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
                 .map(worktree_to_proto)
                 .collect(),
+        }
+    }
+
+    /// Returns the main worktree path for this repository, if one exists.
+    ///
+    /// Linked worktrees attached to bare repositories do not have a main
+    /// worktree. For linked worktrees attached to a non-bare repository, the
+    /// common Git directory is the main worktree's `.git` directory.
+    pub fn main_worktree_abs_path(&self) -> Option<&Path> {
+        if self.is_linked_worktree() {
+            if self.common_dir_abs_path.file_name()? == std::ffi::OsStr::new(".git") {
+                self.common_dir_abs_path.parent()
+            } else {
+                None
+            }
+        } else {
+            Some(self.work_directory_abs_path.as_ref())
         }
     }
 
@@ -3984,7 +4121,7 @@ impl RepositorySnapshot {
     ///
     /// Submodules also return `true` here, since they are not linked worktrees.
     pub fn is_main_worktree(&self) -> bool {
-        self.work_directory_abs_path == self.original_repo_abs_path
+        !self.is_linked_worktree()
     }
 
     /// Returns true if this repository is a linked worktree, that is, one that
@@ -3992,7 +4129,7 @@ impl RepositorySnapshot {
     ///
     /// Returns `false` for both the main worktree and submodules.
     pub fn is_linked_worktree(&self) -> bool {
-        !self.is_main_worktree()
+        self.repository_dir_abs_path != self.common_dir_abs_path
     }
 
     pub fn linked_worktrees(&self) -> &[GitWorktree] {
@@ -4024,10 +4161,12 @@ impl RepositorySnapshot {
     }
 
     fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
-        self.path_style
-            .join(&self.work_directory_abs_path, repo_path.as_std_path())
-            .unwrap()
-            .into()
+        let repo_path = repo_path.display(self.path_style);
+        PathBuf::from(
+            self.path_style
+                .join(&self.work_directory_abs_path, repo_path.as_ref())
+                .unwrap(),
+        )
     }
 
     #[inline]
@@ -4167,7 +4306,8 @@ impl Repository {
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
-        original_repo_abs_path: Arc<Path>,
+        repository_dir_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
@@ -4178,39 +4318,52 @@ impl Repository {
         let snapshot = RepositorySnapshot::empty(
             id,
             work_directory_abs_path.clone(),
-            Some(original_repo_abs_path),
+            Some(repository_dir_abs_path),
+            Some(common_dir_abs_path),
             PathStyle::local(),
         );
-        let state = cx
-            .spawn(async move |_, cx| {
-                LocalRepositoryState::new(
-                    work_directory_abs_path,
-                    dot_git_abs_path,
-                    project_environment,
-                    fs,
-                    is_trusted,
-                    cx,
-                )
-                .await
-                .map_err(|err| err.to_string())
-            })
-            .shared();
-        let job_sender = Repository::spawn_local_git_worker(state.clone(), cx);
-        let state = cx
-            .spawn(async move |_, _| {
-                let state = state.await?;
-                Ok(RepositoryState::Local(state))
-            })
-            .shared();
+        let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
+            let work_directory_abs_path = work_directory_abs_path.clone();
+            let dot_git_abs_path = dot_git_abs_path.clone();
+            let project_environment = project_environment.clone();
+            let fs = fs.clone();
 
+            let state = cx
+                .spawn(async move |_, cx| {
+                    LocalRepositoryState::new(
+                        work_directory_abs_path,
+                        dot_git_abs_path,
+                        project_environment,
+                        fs,
+                        is_trusted,
+                        cx,
+                    )
+                    .await
+                    .map_err(|err| err.to_string())
+                })
+                .shared();
+            let job_sender = Repository::spawn_local_git_worker(state.clone(), cx);
+            let state = cx
+                .spawn(async move |_, _| {
+                    let state = state.await?;
+                    Ok(RepositoryState::Local(state))
+                })
+                .shared();
+
+            (job_sender, state)
+        });
+
+        let (job_sender, state) = (refetch_repo_state)(cx);
+
+        // todo(git_graph_remote): Make this subscription on both remote/local repo
         cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
             RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
-                if this.scan_id > 1 {
+                if this.scan_id > 2 {
                     this.initial_graph_data.clear();
                 }
             }
             RepositoryEvent::StashEntriesChanged => {
-                if this.scan_id > 1 {
+                if this.scan_id > 2 {
                     this.initial_graph_data
                         .retain(|(log_source, _), _| *log_source != LogSource::All);
                 }
@@ -4234,14 +4387,16 @@ impl Repository {
             active_jobs: Default::default(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            graph_commit_data_handler: GraphCommitHandlerState::Closed,
+            commit_data_handler: CommitDataHandlerState::Closed,
+            refetch_repo_state,
         }
     }
 
     fn remote(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
-        original_repo_abs_path: Option<Arc<Path>>,
+        repository_dir_abs_path: Option<Arc<Path>>,
+        common_dir_abs_path: Option<Arc<Path>>,
         path_style: PathStyle,
         project_id: ProjectId,
         client: AnyProtoClient,
@@ -4251,12 +4406,22 @@ impl Repository {
         let snapshot = RepositorySnapshot::empty(
             id,
             work_directory_abs_path,
-            original_repo_abs_path,
+            repository_dir_abs_path,
+            common_dir_abs_path,
             path_style,
         );
-        let repository_state = RemoteRepositoryState { project_id, client };
-        let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
-        let repository_state = Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
+        let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
+            let repository_state = RemoteRepositoryState {
+                project_id,
+                client: client.clone(),
+            };
+            let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
+            let repository_state =
+                Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
+            (job_sender, repository_state)
+        });
+
+        let (job_sender, repository_state) = (refetch_repo_state)(cx);
         Self {
             this: cx.weak_entity(),
             snapshot,
@@ -4272,7 +4437,8 @@ impl Repository {
             job_id: 0,
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            graph_commit_data_handler: GraphCommitHandlerState::Closed,
+            commit_data_handler: CommitDataHandlerState::Closed,
+            refetch_repo_state,
         }
     }
 
@@ -4791,55 +4957,6 @@ impl Repository {
         })
     }
 
-    pub fn file_history(
-        &mut self,
-        path: RepoPath,
-    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
-        self.file_history_paginated(path, 0, None)
-    }
-
-    pub fn file_history_paginated(
-        &mut self,
-        path: RepoPath,
-        skip: usize,
-        limit: Option<usize>,
-    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
-        let id = self.id;
-        self.send_job(None, move |git_repo, _cx| async move {
-            match git_repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.file_history_paginated(path, skip, limit).await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
-                    let response = client
-                        .request(proto::GitFileHistory {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            path: path.to_proto(),
-                            skip: skip as u64,
-                            limit: limit.map(|l| l as u64),
-                        })
-                        .await?;
-                    Ok(git::repository::FileHistory {
-                        entries: response
-                            .entries
-                            .into_iter()
-                            .map(|entry| git::repository::FileHistoryEntry {
-                                sha: entry.sha.into(),
-                                subject: entry.subject.into(),
-                                message: entry.message.into(),
-                                commit_timestamp: entry.commit_timestamp,
-                                author_name: entry.author_name.into(),
-                                author_email: entry.author_email.into(),
-                            })
-                            .collect(),
-                        path: RepoPath::from_proto(&response.path)?,
-                    })
-                }
-            }
-        })
-    }
-
     pub fn get_graph_data(
         &self,
         log_source: LogSource,
@@ -4852,7 +4969,7 @@ impl Repository {
         &mut self,
         log_source: LogSource,
         search_args: SearchCommitArgs,
-        request_tx: smol::channel::Sender<Oid>,
+        request_tx: async_channel::Sender<Oid>,
         cx: &mut Context<Self>,
     ) {
         let repository_state = self.repository_state.clone();
@@ -4952,7 +5069,7 @@ impl Repository {
         cx: &mut AsyncApp,
     ) -> Result<(), SharedString> {
         let (request_tx, request_rx) =
-            smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+            async_channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
 
         let task = cx.background_executor().spawn({
             let log_source = log_source.clone();
@@ -4998,40 +5115,95 @@ impl Repository {
         Ok(())
     }
 
-    pub fn fetch_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {
-        if !self.commit_data.contains_key(&sha) {
-            match &self.graph_commit_data_handler {
-                GraphCommitHandlerState::Open(handler) => {
-                    if handler.commit_data_request.try_send(sha).is_ok() {
-                        let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
-                        debug_assert!(old_value.is_none(), "We should never overwrite commit data");
-                    }
-                }
-                GraphCommitHandlerState::Closed => {
-                    self.open_graph_commit_data_handler(cx);
-                }
-                GraphCommitHandlerState::Starting => {}
+    pub fn fetch_commit_data(
+        &mut self,
+        sha: Oid,
+        await_result: bool,
+        cx: &mut Context<Self>,
+    ) -> &CommitDataState {
+        if self.commit_data.contains_key(&sha) {
+            let data = &self.commit_data[&sha];
+
+            if let CommitDataState::Loading(None) = data
+                && await_result
+            {
+                let (tx, rx) = oneshot::channel();
+                self.commit_data
+                    .insert(sha, CommitDataState::Loading(Some(rx.shared())));
+
+                let handler = self.get_handler(cx);
+                handler.completion_senders.insert(sha, tx);
             }
+
+            return &self.commit_data[&sha];
         }
 
-        self.commit_data
-            .get(&sha)
-            .unwrap_or(&CommitDataState::Loading)
+        let (state, completer) = if await_result {
+            let (tx, rx) = oneshot::channel();
+            (CommitDataState::Loading(Some(rx.shared())), Some(tx))
+        } else {
+            (CommitDataState::Loading(None), None)
+        };
+
+        self.commit_data.insert(sha, state);
+
+        let handler = self.get_handler(cx);
+        if let Some(tx) = completer {
+            handler.completion_senders.insert(sha, tx);
+        }
+        let mut has_failed = false;
+        if handler.commit_data_request.try_send(sha).is_ok() {
+            handler.pending_requests.insert(sha);
+        } else {
+            has_failed = true;
+            handler.completion_senders.remove(&sha);
+            debug_assert!(
+                matches!(
+                    self.commit_data.remove(&sha),
+                    Some(CommitDataState::Loading(_))
+                ),
+                "Commit data should still be loading when enqueueing the request fails"
+            );
+        }
+
+        &self.commit_data.get(&sha).unwrap_or_else(|| {
+            debug_assert!(!has_failed, "This should always be inserted");
+            &CommitDataState::Loading(None)
+        })
     }
 
-    fn open_graph_commit_data_handler(&mut self, cx: &mut Context<Self>) {
-        self.graph_commit_data_handler = GraphCommitHandlerState::Starting;
+    fn get_handler(&mut self, cx: &mut Context<Self>) -> &mut CommitDataHandler {
+        if matches!(self.commit_data_handler, CommitDataHandlerState::Closed) {
+            self.commit_data_handler =
+                CommitDataHandlerState::Open(self.open_commit_data_handler(cx));
+        }
 
+        match &mut self.commit_data_handler {
+            CommitDataHandlerState::Open(handler) => handler,
+            CommitDataHandlerState::Closed => unreachable!(),
+        }
+    }
+
+    fn open_commit_data_handler(&self, cx: &Context<Self>) -> CommitDataHandler {
         let state = self.repository_state.clone();
-        let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
-        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+        let (result_tx, result_rx) = async_channel::bounded::<(Oid, CommitData)>(64);
+        let (request_tx, request_rx) = async_channel::unbounded::<Oid>();
 
         let foreground_task = cx.spawn(async move |this, cx| {
             while let Ok((sha, commit_data)) = result_rx.recv().await {
                 let result = this.update(cx, |this, cx| {
-                    let old_value = this
-                        .commit_data
-                        .insert(sha, CommitDataState::Loaded(Arc::new(commit_data)));
+                    let data = Arc::new(commit_data);
+
+                    if let CommitDataHandlerState::Open(handler) = &mut this.commit_data_handler {
+                        handler.pending_requests.remove(&sha);
+                        if let Some(completion_sender) = handler.completion_senders.remove(&sha) {
+                            completion_sender.send(data.clone()).ok();
+                        }
+                    } else {
+                        debug_panic!("The handler state has to be open for this task to exist");
+                    }
+
+                    let old_value = this.commit_data.insert(sha, CommitDataState::Loaded(data));
                     debug_assert!(
                         !matches!(old_value, Some(CommitDataState::Loaded(_))),
                         "We should never overwrite commit data"
@@ -5045,53 +5217,98 @@ impl Repository {
             }
 
             this.update(cx, |this, _cx| {
-                this.graph_commit_data_handler = GraphCommitHandlerState::Closed;
+                let CommitDataHandlerState::Open(handler) = std::mem::replace(
+                    &mut this.commit_data_handler,
+                    CommitDataHandlerState::Closed,
+                ) else {
+                    debug_panic!("The handler state has to be open for this task to exist");
+                    return;
+                };
+
+                for sha in handler.pending_requests {
+                    this.commit_data.remove(&sha);
+                }
             })
             .ok();
         });
 
         let request_tx_for_handler = request_tx;
+        let repository_id = self.id;
         let background_executor = cx.background_executor().clone();
 
         cx.background_spawn(async move {
-            let backend = match state.await {
-                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
-                Ok(RepositoryState::Remote(_)) => {
-                    log::error!("commit_data_reader not supported for remote repositories");
-                    return;
+            match state.await {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    Self::local_commit_data_reader(
+                        backend,
+                        request_rx,
+                        result_tx,
+                        background_executor,
+                    )
+                    .await;
+                }
+                Ok(RepositoryState::Remote(RemoteRepositoryState { project_id, client })) => {
+                    Self::remote_commit_data_reader(
+                        project_id,
+                        client,
+                        repository_id,
+                        request_rx,
+                        result_tx,
+                        background_executor,
+                    )
+                    .await;
                 }
                 Err(error) => {
                     log::error!("failed to get repository state: {error}");
                     return;
                 }
             };
+        })
+        .detach();
 
-            let reader = match backend.commit_data_reader() {
-                Ok(reader) => reader,
-                Err(error) => {
-                    log::error!("failed to create commit data reader: {error:?}");
-                    return;
-                }
-            };
+        CommitDataHandler {
+            _task: foreground_task,
+            commit_data_request: request_tx_for_handler,
+            completion_senders: HashMap::default(),
+            pending_requests: HashSet::default(),
+        }
+    }
 
-            loop {
-                let timeout = background_executor.timer(std::time::Duration::from_secs(10));
+    async fn local_commit_data_reader(
+        backend: Arc<dyn GitRepository>,
+        request_rx: smol::channel::Receiver<Oid>,
+        result_tx: smol::channel::Sender<(Oid, CommitData)>,
+        background_executor: BackgroundExecutor,
+    ) {
+        async fn receive_commit_data_request(
+            request_rx: &smol::channel::Receiver<Oid>,
+        ) -> Option<Oid> {
+            if request_rx.is_closed() && request_rx.is_empty() {
+                future::pending().await
+            } else {
+                request_rx.recv().await.ok()
+            }
+        }
+
+        let reader = match backend.commit_data_reader() {
+            Ok(reader) => reader,
+            Err(error) => {
+                log::error!("failed to create commit data reader: {error:?}");
+                return;
+            }
+        };
+
+        let read_commit_data = |sha| reader.read(sha).map(move |result| (sha, result));
+        let mut read_futures = FuturesUnordered::new();
+
+        loop {
+            if read_futures.is_empty() {
+                let timeout = background_executor.timer(Duration::from_secs(10));
 
                 futures::select_biased! {
-                    sha = futures::FutureExt::fuse(request_rx.recv()) => {
-                        let Ok(sha) = sha else {
-                            break;
-                        };
-
-                        match reader.read(sha).await {
-                            Ok(commit_data) => {
-                                if result_tx.send((sha, commit_data)).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(error) => {
-                                log::error!("failed to read commit data for {sha}: {error:?}");
-                            }
+                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                        if let Some(sha) = sha {
+                            read_futures.push(read_commit_data(sha));
                         }
                     }
                     _ = futures::FutureExt::fuse(timeout) => {
@@ -5100,14 +5317,181 @@ impl Repository {
                 }
             }
 
-            drop(result_tx);
-        })
-        .detach();
+            let next_read = read_futures.next().fuse();
+            futures::pin_mut!(next_read);
 
-        self.graph_commit_data_handler = GraphCommitHandlerState::Open(GraphCommitDataHandler {
-            _task: foreground_task,
-            commit_data_request: request_tx_for_handler,
-        });
+            futures::select_biased! {
+                result = next_read => {
+                    let Some((sha, result)) = result else {
+                        continue;
+                    };
+
+                    match result {
+                        Ok(commit_data) => {
+                            if result_tx.send((sha, commit_data)).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            log::error!("failed to read commit data for {sha}: {error:?}");
+                        }
+                    }
+                }
+                sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                    if let Some(sha) = sha {
+                        read_futures.push(read_commit_data(sha));
+                    }
+                }
+            }
+        }
+
+        drop(result_tx);
+    }
+
+    async fn remote_commit_data_reader(
+        project_id: ProjectId,
+        client: AnyProtoClient,
+        repository_id: RepositoryId,
+        request_rx: smol::channel::Receiver<Oid>,
+        result_tx: smol::channel::Sender<(Oid, CommitData)>,
+        background_executor: BackgroundExecutor,
+    ) {
+        let mut response_futures =
+            FuturesUnordered::<BoxFuture<'static, Result<proto::GetCommitDataResponse>>>::new();
+        let mut accept_requests = true;
+        let mut next_request = Self::get_next_request(
+            project_id,
+            client.clone(),
+            repository_id,
+            &request_rx,
+            &background_executor,
+        )
+        .boxed()
+        .fuse();
+
+        loop {
+            if !accept_requests && response_futures.is_empty() {
+                break;
+            }
+
+            if response_futures.is_empty() {
+                match (&mut next_request).await {
+                    NextCommitDataRequest::Request(request) => {
+                        response_futures.push(request);
+                        next_request = Self::get_next_request(
+                            project_id,
+                            client.clone(),
+                            repository_id,
+                            &request_rx,
+                            &background_executor,
+                        )
+                        .boxed()
+                        .fuse();
+                    }
+                    NextCommitDataRequest::Closed | NextCommitDataRequest::Idle => break,
+                }
+            }
+
+            let next_response = response_futures.next().fuse();
+            futures::pin_mut!(next_response);
+
+            futures::select_biased! {
+                request = next_request => {
+                    match request {
+                        NextCommitDataRequest::Request(request) => {
+                            response_futures.push(request);
+                        }
+                        NextCommitDataRequest::Idle => {}
+                        NextCommitDataRequest::Closed => {
+                            accept_requests = false;
+                        }
+                    }
+
+                    if accept_requests {
+                        next_request = Self::get_next_request(
+                            project_id,
+                            client.clone(),
+                            repository_id,
+                            &request_rx,
+                            &background_executor,
+                        )
+                        .boxed()
+                        .fuse();
+                    }
+                }
+                result = next_response => {
+                    let Some(result) = result else {
+                        continue;
+                    };
+
+                    if let Ok(commit_data) = result {
+                        for commit in commit_data.commits {
+                            let Ok(commit_data) = commit_data_from_proto(commit) else {
+                                continue;
+                            };
+
+                            if result_tx
+                                .send((commit_data.sha, commit_data))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        drop(result_tx);
+    }
+
+    async fn get_next_request(
+        project_id: ProjectId,
+        client: AnyProtoClient,
+        repository_id: RepositoryId,
+        request_rx: &smol::channel::Receiver<Oid>,
+        background_executor: &BackgroundExecutor,
+    ) -> NextCommitDataRequest {
+        let mut queued_shas = Vec::with_capacity(64);
+
+        loop {
+            if queued_shas.len() >= 64 {
+                break;
+            }
+
+            let timeout = background_executor.timer(Duration::from_millis(5));
+
+            futures::select_biased! {
+                sha = futures::FutureExt::fuse(request_rx.recv()) => {
+                    let Ok(sha) = sha else {
+                        break;
+                    };
+
+                    queued_shas.push(sha);
+
+                }
+                _ = futures::FutureExt::fuse(timeout) => {
+                    break;
+                }
+            }
+        }
+
+        if queued_shas.is_empty() && request_rx.is_closed() {
+            NextCommitDataRequest::Closed
+        } else if queued_shas.is_empty() {
+            NextCommitDataRequest::Idle
+        } else {
+            NextCommitDataRequest::Request(
+                client
+                    .request(proto::GetCommitData {
+                        project_id: project_id.to_proto(),
+                        repository_id: repository_id.to_proto(),
+                        shas: queued_shas.into_iter().map(|oid| oid.to_string()).collect(),
+                    })
+                    .boxed(),
+            )
+        }
     }
 
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
@@ -5349,8 +5733,9 @@ impl Repository {
             snapshot
                 .status()
                 .filter_map(|entry| {
-                    if let Some(ops) =
-                        pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                    if let Some(ops) = pending_ops
+                        .get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                        .filter(|ops| !ops.last_op_errored())
                     {
                         if ops.staging() || ops.staged() {
                             None
@@ -5382,8 +5767,9 @@ impl Repository {
             snapshot
                 .status()
                 .filter_map(|entry| {
-                    if let Some(ops) =
-                        pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                    if let Some(ops) = pending_ops
+                        .get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                        .filter(|ops| !ops.last_op_errored())
                     {
                         if !ops.staging() && !ops.staged() {
                             None
@@ -5516,6 +5902,55 @@ impl Repository {
             })?
             .await??;
             Ok(())
+        })
+    }
+
+    pub fn add_path_to_gitignore(
+        &mut self,
+        repo_path: &RepoPath,
+        is_dir: bool,
+    ) -> oneshot::Receiver<Result<()>> {
+        let work_dir = self.snapshot.work_directory_abs_path.clone();
+        let path_display = repo_path.as_ref().display(PathStyle::Posix);
+        let file_path_str = if is_dir {
+            format!("{}/", path_display)
+        } else {
+            path_display.to_string()
+        };
+
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { fs, .. }) => {
+                    let gitignore_path = work_dir.join(".gitignore");
+
+                    let existing_content = fs.load(&gitignore_path).await.unwrap_or_default();
+
+                    if existing_content
+                        .lines()
+                        .any(|line| line.trim() == file_path_str)
+                    {
+                        return Ok(());
+                    }
+
+                    let new_content = if existing_content.is_empty() {
+                        format!("{}\n", file_path_str)
+                    } else if existing_content.ends_with('\n') {
+                        format!("{}{}\n", existing_content, file_path_str)
+                    } else {
+                        format!("{}\n{}\n", existing_content, file_path_str)
+                    };
+
+                    fs.save(
+                        &gitignore_path,
+                        &text::Rope::from(new_content.as_str()),
+                        text::LineEnding::Unix,
+                    )
+                    .await
+                }
+                RepositoryState::Remote(_) => Err(anyhow::anyhow!(
+                    "Cannot modify .gitignore on remote repository"
+                )),
+            }
         })
     }
 
@@ -6077,15 +6512,13 @@ impl Repository {
     }
 
     /// If this is a linked worktree (*NOT* the main checkout of a repository),
-    /// returns the pathed for the linked worktree.
+    /// returns the path for the linked worktree.
     ///
     /// Returns None if this is the main checkout.
     pub fn linked_worktree_path(&self) -> Option<&Arc<Path>> {
-        if self.work_directory_abs_path != self.original_repo_abs_path {
-            Some(&self.work_directory_abs_path)
-        } else {
-            None
-        }
+        self.snapshot
+            .is_linked_worktree()
+            .then_some(&self.work_directory_abs_path)
     }
 
     pub fn path_for_new_linked_worktree(
@@ -6093,11 +6526,15 @@ impl Repository {
         branch_name: &str,
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
-        let original_repo = self.original_repo_abs_path.clone();
-        let project_name = original_repo
+        let repository_anchor = self
+            .snapshot
+            .main_worktree_abs_path()
+            .unwrap_or(self.common_dir_abs_path.as_ref());
+        let project_name = repository_anchor
             .file_name()
             .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
-        let directory = worktrees_directory_for_repo(&original_repo, worktree_directory_setting)?;
+        let directory =
+            worktrees_directory_for_repo(repository_anchor, worktree_directory_setting)?;
         Ok(directory.join(branch_name).join(project_name))
     }
 
@@ -6347,7 +6784,11 @@ impl Repository {
 
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        let original_repo_abs_path = self.snapshot.original_repo_abs_path.clone();
+        let repository_anchor_path: Arc<Path> = self
+            .snapshot
+            .main_worktree_abs_path()
+            .unwrap_or(self.snapshot.common_dir_abs_path.as_ref())
+            .into();
         self.send_job(
             Some(format!("git worktree remove: {}", path.display()).into()),
             move |repo, cx| async move {
@@ -6390,7 +6831,7 @@ impl Repository {
 
                         let managed_worktree_base = cx.update(|cx| {
                             let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-                            worktrees_directory_for_repo(&original_repo_abs_path, setting).log_err()
+                            worktrees_directory_for_repo(&repository_anchor_path, setting).log_err()
                         });
 
                         if let Some(managed_worktree_base) = managed_worktree_base {
@@ -6768,8 +7209,12 @@ impl Repository {
         update: proto::UpdateRepository,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some(main_path) = &update.original_repo_abs_path {
-            self.snapshot.original_repo_abs_path = Path::new(main_path.as_str()).into();
+        if let Some(repository_dir_abs_path) = &update.repository_dir_abs_path {
+            self.snapshot.repository_dir_abs_path =
+                Path::new(repository_dir_abs_path.as_str()).into();
+        }
+        if let Some(common_dir_abs_path) = &update.common_dir_abs_path {
+            self.snapshot.common_dir_abs_path = Path::new(common_dir_abs_path.as_str()).into();
         }
 
         let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
@@ -6782,6 +7227,15 @@ impl Repository {
         }
         self.snapshot.branch = new_branch;
         self.snapshot.head_commit = new_head_commit;
+
+        if update.is_last_update {
+            let new_branch_list: Arc<[Branch]> =
+                update.branch_list.iter().map(proto_to_branch).collect();
+            if *self.snapshot.branch_list != *new_branch_list {
+                cx.emit(RepositoryEvent::BranchListChanged);
+            }
+            self.snapshot.branch_list = new_branch_list;
+        }
 
         // We don't store any merge head state for downstream projects; the upstream
         // will track it and we will just get the updated conflicts
@@ -7334,6 +7788,23 @@ impl Repository {
         self.pending_ops.edit(edits, ());
         ids
     }
+
+    pub fn access(&mut self, _cx: &App) -> oneshot::Receiver<GitAccess> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                // TODO: Correctly handle remote repositories, where the user
+                // that's running the Zed remote may not own the `.git/`
+                // directory. For now we just return `GitAccess::Yes` so that
+                // remoting continues working as expected.
+                RepositoryState::Remote(..) => GitAccess::Yes,
+                RepositoryState::Local(state) => match state.backend.status(&[]).await {
+                    Ok(_) => GitAccess::Yes,
+                    Err(_) => GitAccess::No,
+                },
+            }
+        })
+    }
+
     pub fn default_remote_url(&self) -> Option<String> {
         self.remote_upstream_url
             .clone()
@@ -7376,7 +7847,7 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
 ///
 /// Returns `Ok(resolved_path)` or an error with a user-facing message.
 pub fn worktrees_directory_for_repo(
-    original_repo_abs_path: &Path,
+    repository_anchor_path: &Path,
     worktree_directory_setting: &str,
 ) -> Result<PathBuf> {
     // Check the original setting before trimming, since a path like "///"
@@ -7402,25 +7873,25 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = original_repo_abs_path.join(trimmed);
+    let joined = repository_anchor_path.join(trimmed);
     let resolved = util::normalize_path(&joined);
-    let resolved = if resolved.starts_with(original_repo_abs_path) {
+    let resolved = if resolved.starts_with(repository_anchor_path) {
         resolved
-    } else if let Some(repo_dir_name) = original_repo_abs_path.file_name() {
+    } else if let Some(repo_dir_name) = repository_anchor_path.file_name() {
         resolved.join(repo_dir_name)
     } else {
         resolved
     };
 
-    let parent = original_repo_abs_path
+    let parent = repository_anchor_path
         .parent()
-        .unwrap_or(original_repo_abs_path);
+        .unwrap_or(repository_anchor_path);
 
     if !resolved.starts_with(parent) {
         anyhow::bail!(
             "git.worktree_directory resolved to {resolved:?}, which is outside \
              the project root and its parent directory. It must resolve to a \
-             subdirectory of {original_repo_abs_path:?} or a sibling of it."
+             subdirectory of {repository_anchor_path:?} or a sibling of it."
         );
     }
 
@@ -7464,6 +7935,29 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
         }
 
         current = parent;
+    }
+}
+
+/// Returns the repository's identity path given its common Git directory.
+///
+/// This is the canonical, on-disk path used for project grouping and as the
+/// basis for display names. The goal is to return the directory the user
+/// thinks of as "the project":
+///
+/// - If `common_dir`'s last component starts with `.` (e.g. `.git` for a
+///   normal checkout, or `.bare` for a bare clone), the parent directory is
+///   returned. Both of these are internal Git directories; the parent is the
+///   meaningful project root.
+/// - Otherwise (e.g. `zed.git` for a bare clone), `common_dir` itself is
+///   returned — it is already a meaningful on-disk path.
+pub fn repo_identity_path(common_dir: &Path) -> &Path {
+    let is_dot_entry = common_dir
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+    if is_dot_entry {
+        common_dir.parent().unwrap_or(common_dir)
+    } else {
+        common_dir
     }
 }
 
@@ -7623,6 +8117,35 @@ fn deserialize_blame_buffer_response(
     Some(Blame { entries, messages })
 }
 
+fn commit_data_to_proto(commit: &CommitData) -> proto::CommitData {
+    proto::CommitData {
+        sha: commit.sha.to_string(),
+        parents: commit.parents.iter().map(|p| p.to_string()).collect(),
+        author_name: commit.author_name.to_string(),
+        author_email: commit.author_email.to_string(),
+        commit_timestamp: commit.commit_timestamp,
+        subject: commit.subject.to_string(),
+        message: commit.message.to_string(),
+    }
+}
+
+fn commit_data_from_proto(commit: proto::CommitData) -> Result<CommitData> {
+    let sha = Oid::from_str(&commit.sha)?;
+    let mut parents = SmallVec::with_capacity(commit.parents.len());
+    for parent in &commit.parents {
+        parents.push(Oid::from_str(parent)?);
+    }
+    Ok(CommitData {
+        sha,
+        parents,
+        author_name: SharedString::from(commit.author_name),
+        author_email: SharedString::from(commit.author_email),
+        commit_timestamp: commit.commit_timestamp,
+        subject: SharedString::from(commit.subject),
+        message: SharedString::from(commit.message),
+    })
+}
+
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
     proto::Branch {
         is_head: branch.is_head,
@@ -7730,6 +8253,354 @@ fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
         commit_timestamp: proto.commit_timestamp,
         author_email: proto.author_email.clone().into(),
         author_name: proto.author_name.clone().into(),
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Repository {
+    pub fn loaded_commit_data_for_test(&self) -> HashMap<Oid, CommitData> {
+        self.commit_data
+            .iter()
+            .filter_map(|(sha, state)| match state {
+                CommitDataState::Loaded(data) => Some((*sha, data.as_ref().clone())),
+                CommitDataState::Loading(_) => None,
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Project;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use gpui::proptest::prelude::*;
+    use rand::{SeedableRng, rngs::StdRng};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
+        match &repository.commit_data_handler {
+            CommitDataHandlerState::Open(handler) => {
+                verify_loading_entries_are_pending(repository, handler)?;
+                verify_await_result_loading_entries_have_completion_senders(repository, handler)?;
+                verify_pending_requests_are_loading(repository, handler)?;
+                verify_completion_senders_are_await_result_loading(repository, handler)?;
+                verify_completion_senders_are_pending(handler)?;
+                verify_non_await_result_loading_entries_have_no_completion_sender(
+                    repository, handler,
+                )?;
+                verify_loaded_entries_are_not_pending(repository, handler)?;
+                verify_loaded_entries_have_no_completion_sender(repository, handler)?;
+            }
+            CommitDataHandlerState::Closed => {
+                verify_closed_handler_invariants(repository)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_loading_entries_are_pending(
+        repository: &Repository,
+        handler: &CommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loading(_)) {
+                anyhow::ensure!(
+                    handler.pending_requests.contains(sha),
+                    "loading commit data for {sha} must be tracked in pending_requests"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_await_result_loading_entries_have_completion_senders(
+        repository: &Repository,
+        handler: &CommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loading(Some(_))) {
+                anyhow::ensure!(
+                    handler.completion_senders.contains_key(sha),
+                    "await-result loading commit data for {sha} must have a completion sender"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_pending_requests_are_loading(
+        repository: &Repository,
+        handler: &CommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for sha in &handler.pending_requests {
+            anyhow::ensure!(
+                matches!(
+                    repository.commit_data.get(sha),
+                    Some(CommitDataState::Loading(_))
+                ),
+                "pending request for {sha} must correspond to loading commit data"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn verify_completion_senders_are_await_result_loading(
+        repository: &Repository,
+        handler: &CommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for sha in handler.completion_senders.keys() {
+            anyhow::ensure!(
+                matches!(
+                    repository.commit_data.get(sha),
+                    Some(CommitDataState::Loading(Some(_)))
+                ),
+                "completion sender for {sha} must correspond to await-result loading commit data"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn verify_completion_senders_are_pending(handler: &CommitDataHandler) -> anyhow::Result<()> {
+        for sha in handler.completion_senders.keys() {
+            anyhow::ensure!(
+                handler.pending_requests.contains(sha),
+                "completion sender for {sha} must also be tracked as pending"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn verify_non_await_result_loading_entries_have_no_completion_sender(
+        repository: &Repository,
+        handler: &CommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loading(None)) {
+                anyhow::ensure!(
+                    !handler.completion_senders.contains_key(sha),
+                    "non-await-result loading commit data for {sha} must not have a completion sender"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_loaded_entries_are_not_pending(
+        repository: &Repository,
+        handler: &CommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loaded(_)) {
+                anyhow::ensure!(
+                    !handler.pending_requests.contains(sha),
+                    "loaded commit data for {sha} must not still be pending"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_loaded_entries_have_no_completion_sender(
+        repository: &Repository,
+        handler: &CommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loaded(_)) {
+                anyhow::ensure!(
+                    !handler.completion_senders.contains_key(sha),
+                    "loaded commit data for {sha} must not keep a completion sender"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_closed_handler_invariants(repository: &Repository) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            anyhow::ensure!(
+                !matches!(state, CommitDataState::Loading(_)),
+                "closed handler must not keep loading commit data for {sha}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[gpui::property_test(config = ProptestConfig {
+        cases: 20,
+        ..Default::default()
+    })]
+    async fn test_commit_data_random_invariants(
+        #[strategy = any::<u64>()] seed: u64,
+        #[strategy = gpui::proptest::collection::vec(0usize..2000, 1..200)] commit_indexes: Vec<
+            usize,
+        >,
+        #[strategy = gpui::proptest::collection::vec(any::<bool>(), 1..200)] await_results: Vec<
+            bool,
+        >,
+        #[strategy = gpui::proptest::collection::vec(0usize..2000, 0..200)] failing_commit_indexes: Vec<
+            usize,
+        >,
+        #[strategy = gpui::proptest::collection::vec(0usize..2000, 0..200)] missing_commit_indexes: Vec<
+            usize,
+        >,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let commit_shas = (0..2000).map(|_| Oid::random(&mut rng)).collect::<Vec<_>>();
+        let failing_shas = failing_commit_indexes
+            .into_iter()
+            .map(|index| commit_shas[index % commit_shas.len()])
+            .collect::<HashSet<_>>();
+        let missing_shas = missing_commit_indexes
+            .into_iter()
+            .map(|index| commit_shas[index % commit_shas.len()])
+            .collect::<HashSet<_>>();
+        let commit_data = commit_shas
+            .iter()
+            .filter(|sha| !missing_shas.contains(sha))
+            .map(|sha| {
+                (
+                    CommitData {
+                        sha: *sha,
+                        parents: SmallVec::new(),
+                        author_name: SharedString::from(format!("Author {sha}")),
+                        author_email: SharedString::from(format!("{sha}@example.com")),
+                        commit_timestamp: rng.random_range(0..10_000),
+                        subject: SharedString::from(format!("Subject {sha}")),
+                        message: SharedString::from(format!("Subject {sha}\n\nBody for {sha}")),
+                    },
+                    failing_shas.contains(sha),
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected_loaded_shas = commit_indexes
+            .iter()
+            .map(|index| commit_shas[index % commit_shas.len()])
+            .filter(|sha| !failing_shas.contains(sha) && !missing_shas.contains(sha))
+            .collect::<HashSet<_>>();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_commit_data(Path::new("/project/.git"), commit_data);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        cx.update(|cx| {
+            cx.observe(&repository, |repo, cx| {
+                verify_invariants(repo.read(cx))
+                    .context("Invariant weren't held after a cx.notify")
+                    .unwrap();
+            })
+        })
+        .detach();
+
+        let mut next_step = 0;
+        while next_step < commit_indexes.len() {
+            let remaining_steps = commit_indexes.len() - next_step;
+            let chunk_size = rng.random_range(1..=remaining_steps.min(16));
+            let chunk_end = next_step + chunk_size;
+
+            for step in next_step..chunk_end {
+                let sha = commit_shas[commit_indexes[step] % commit_shas.len()];
+                let await_result = await_results[step % await_results.len()];
+
+                repository.update(cx, |repository, cx| {
+                    repository.fetch_commit_data(sha, await_result, cx);
+                    verify_invariants(repository)
+                        .with_context(|| {
+                            format!(
+                                "commit data invariant violation after step {} for sha {}",
+                                step + 1,
+                                sha,
+                            )
+                        })
+                        .unwrap();
+                });
+            }
+
+            cx.run_until_parked();
+            repository.read_with(cx, |repository, _cx| {
+                verify_invariants(repository)
+                    .with_context(|| {
+                        format!(
+                            "commit data invariant violation after draining through step {}",
+                            chunk_end,
+                        )
+                    })
+                    .unwrap();
+            });
+
+            next_step = chunk_end;
+        }
+
+        cx.run_until_parked();
+        repository.read_with(cx, |repository, _cx| {
+            verify_invariants(repository)
+                .with_context(|| "commit data invariant violation after final drain".to_string())
+                .unwrap();
+
+            let loaded_shas = repository
+                .commit_data
+                .iter()
+                .filter_map(|(sha, state)| match state {
+                    CommitDataState::Loaded(_) => Some(*sha),
+                    CommitDataState::Loading(_) => None,
+                })
+                .collect::<HashSet<_>>();
+            let missing_loaded_shas = expected_loaded_shas
+                .difference(&loaded_shas)
+                .copied()
+                .collect::<Vec<_>>();
+            let unexpected_loaded_shas = loaded_shas
+                .difference(&expected_loaded_shas)
+                .copied()
+                .collect::<Vec<_>>();
+            assert!(
+                missing_loaded_shas.is_empty() && unexpected_loaded_shas.is_empty(),
+                "loaded commit data SHAs after final drain did not match expectation. missing: {:?}, unexpected: {:?}",
+                missing_loaded_shas,
+                unexpected_loaded_shas,
+            );
+        });
     }
 }
 

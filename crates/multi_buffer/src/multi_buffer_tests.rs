@@ -2955,7 +2955,7 @@ impl ReferenceMultibuffer {
                     })
                     .collect::<Vec<_>>();
 
-            new_ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
+            new_ranges.sort_by_key(|nr| nr.context.start);
 
             self.set_excerpts(
                 path.unwrap(),
@@ -3899,7 +3899,7 @@ fn mutate_excerpt_ranges(
     }
 
     existing_ranges.extend(ranges_to_add);
-    existing_ranges.sort_by(|l, r| l.start.cmp(&r.start));
+    existing_ranges.sort_by_key(|r| r.start);
 }
 
 fn check_multibuffer(
@@ -5862,6 +5862,48 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
         "Should include trailing empty excerpts"
     );
     assert_eq!(ranges_half_open_max[1].1, BufferOffset(0)..BufferOffset(0));
+}
+
+#[gpui::test]
+fn test_range_to_buffer_ranges_zero_length_at_excerpt_boundary(cx: &mut App) {
+    let buffer_1 = cx.new(|cx| Buffer::local("aaa\nbbb", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("ccc\nddd", cx));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_1.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_2.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    assert_eq!(snapshot.text(), "aaa\nbbb\nccc\nddd");
+
+    // This point is right at the start of the very first excerpt, so if we get
+    // a buffer range, we should get `0..0`
+    let excerpt_2_start = Point::new(2, 0);
+    let expected_ranges = vec![BufferOffset(0)..BufferOffset(0)];
+    let ranges = snapshot
+        .range_to_buffer_ranges(excerpt_2_start..excerpt_2_start)
+        .into_iter()
+        .map(|tup| tup.1)
+        .collect_vec();
+
+    assert_eq!(
+        ranges, expected_ranges,
+        "Zero-length range at excerpt boundary should return the excerpt at that point"
+    );
 }
 
 #[gpui::test]

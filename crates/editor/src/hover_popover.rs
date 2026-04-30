@@ -62,6 +62,8 @@ pub fn hover_at(
             editor.hover_state.hiding_delay_task = None;
             editor.hover_state.closest_mouse_distance = None;
             show_hover(editor, anchor, false, window, cx);
+        } else if !editor.hover_state.visible() {
+            editor.hover_state.info_task = None;
         } else {
             let settings = EditorSettings::get_global(cx);
             if !settings.hover_popover_sticky {
@@ -203,8 +205,7 @@ pub fn hover_at_inlay(
 
                 let language_registry = project.read_with(cx, |p, _| p.languages().clone());
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content =
-                    parse_blocks(&blocks, Some(&language_registry), None, cx).await;
+                let parsed_content = parse_blocks(&blocks, Some(&language_registry), None, cx);
 
                 let scroll_handle = ScrollHandle::new();
 
@@ -492,8 +493,7 @@ fn show_hover(
                     text: format!("Unicode character U+{:02X}", invisible as u32),
                     kind: HoverBlockKind::PlainText,
                 }];
-                let parsed_content =
-                    parse_blocks(&blocks, language_registry.as_ref(), None, cx).await;
+                let parsed_content = parse_blocks(&blocks, language_registry.as_ref(), None, cx);
                 let scroll_handle = ScrollHandle::new();
                 let subscription = this
                     .update(cx, |_, cx| {
@@ -534,7 +534,7 @@ fn show_hover(
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
                 let parsed_content =
-                    parse_blocks(&blocks, language_registry.as_ref(), language, cx).await;
+                    parse_blocks(&blocks, language_registry.as_ref(), language, cx);
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
                 let subscription = this
@@ -621,7 +621,7 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
         .unwrap_or(false)
 }
 
-async fn parse_blocks(
+fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: Option<&Arc<LanguageRegistry>>,
     language: Option<Arc<Language>>,
@@ -1202,13 +1202,13 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
+    use futures::stream::StreamExt;
     use gpui::App;
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
     use project::InlayId;
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
-    use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
     use text::Bias;
@@ -1496,6 +1496,64 @@ mod tests {
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         request.next().await;
+        cx.editor(|editor, _, _| {
+            assert!(!editor.hover_state.visible());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_mouse_hover_cancelled_before_delay(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn ˇtest() { println!(); }
+        "});
+        let hover_point = cx.display_point(indoc! {"
+            fn test() { printˇln!(); }
+        "});
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot()
+                .anchor_before(hover_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), None, window, cx);
+            hover_at(editor, None, None, window, cx);
+        });
+
+        let request_count = Arc::new(AtomicUsize::new(0));
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>({
+            let request_count = request_count.clone();
+            move |_, _, _| {
+                let request_count = request_count.clone();
+                async move {
+                    request_count.fetch_add(1, atomic::Ordering::Release);
+                    Ok(Some(lsp::Hover {
+                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                            kind: lsp::MarkupKind::Markdown,
+                            value: "some basic docs".to_string(),
+                        }),
+                        range: None,
+                    }))
+                }
+            }
+        });
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        cx.background_executor.run_until_parked();
+        cx.run_until_parked();
+
+        assert_eq!(request_count.load(atomic::Ordering::Acquire), 0);
         cx.editor(|editor, _, _| {
             assert!(!editor.hover_state.visible());
         });
@@ -1892,6 +1950,7 @@ mod tests {
             PointForPosition {
                 previous_valid,
                 next_valid,
+                nearest_valid: previous_valid,
                 exact_unclipped,
                 column_overshoot_after_line_end: 0,
             }
@@ -2019,6 +2078,7 @@ mod tests {
             PointForPosition {
                 previous_valid,
                 next_valid,
+                nearest_valid: previous_valid,
                 exact_unclipped,
                 column_overshoot_after_line_end: 0,
             }

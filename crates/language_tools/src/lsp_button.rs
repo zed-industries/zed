@@ -13,7 +13,7 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Corner, Entity, Subscription, Task, WeakEntity, actions};
+use gpui::{Anchor, Entity, Subscription, Task, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
@@ -1321,7 +1321,7 @@ impl Render for LspButton {
                         .ok()
                         .flatten()
                 })
-                .anchor(Corner::BottomLeft)
+                .anchor(Anchor::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
