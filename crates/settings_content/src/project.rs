@@ -78,6 +78,9 @@ pub struct ProjectSettingsContent {
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: Option<DirenvSettings>,
 
+    /// Project-local configuration for Git-related features.
+    pub git: Option<ProjectGitSettings>,
+
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 
@@ -85,6 +88,16 @@ pub struct ProjectSettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ProjectGitSettings {
+    /// Directory where git worktrees are created, relative to the repository
+    /// working directory.
+    ///
+    /// Default: ../worktrees
+    pub worktree_directory: Option<String>,
 }
 
 #[with_fallible_options]
@@ -795,4 +808,34 @@ pub enum GitHostingProviderKind {
     Gitea,
     Forgejo,
     SourceHut,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ParseStatus, RootUserSettings};
+
+    #[test]
+    fn test_project_git_settings_only_include_worktree_directory() {
+        let (settings, status) = ProjectSettingsContent::parse_json(
+            r#"{
+                "git": {
+                    "worktree_directory": "../custom-worktrees",
+                    "inline_blame": {
+                        "enabled": false
+                    }
+                }
+            }"#,
+        );
+
+        assert_eq!(status, ParseStatus::Success);
+        let git = settings
+            .expect("settings should parse")
+            .git
+            .expect("git settings should parse");
+        assert_eq!(
+            git.worktree_directory.as_deref(),
+            Some("../custom-worktrees")
+        );
+    }
 }

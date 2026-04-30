@@ -1,11 +1,11 @@
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use collections::HashMap;
 use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
 use git::repository::DEFAULT_WORKTREE_DIRECTORY;
-use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
+use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
@@ -26,16 +26,62 @@ use settings::{
     LocalSettingsPath, RegisterSetting, SemanticTokenRules, Settings, SettingsLocation,
     SettingsStore, parse_json_with_comments, watch_config_file,
 };
-use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    cell::OnceCell,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
+    Project,
     task_store::{TaskSettingsLocation, TaskStore},
     trusted_worktrees::{PathTrust, TrustedWorktrees, TrustedWorktreesEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
+
+pub fn worktree_directory_setting_for_repo(
+    project: &Entity<Project>,
+    repo_path: &Path,
+    cx: &App,
+) -> String {
+    let matched_worktree = project
+        .read(cx)
+        .visible_worktrees(cx)
+        .filter_map(|worktree| {
+            let worktree = worktree.read(cx);
+            let worktree_path = worktree.abs_path();
+            let path = worktree
+                .path_style()
+                .strip_prefix(repo_path, worktree_path.as_ref())?;
+            Some((
+                worktree.id(),
+                path.into_owned(),
+                worktree_path.as_ref().components().count(),
+            ))
+        })
+        .max_by(|(left_id, _, left_depth), (right_id, _, right_depth)| {
+            left_depth
+                .cmp(right_depth)
+                .then_with(|| left_id.cmp(right_id))
+        });
+    let settings_location =
+        matched_worktree
+            .as_ref()
+            .map(|(worktree_id, path, _)| SettingsLocation {
+                worktree_id: *worktree_id,
+                path: path.as_rel_path(),
+            });
+
+    ProjectSettings::get(settings_location, cx)
+        .git
+        .worktree_directory
+        .clone()
+}
 
 #[derive(Debug, Clone, RegisterSetting)]
 pub struct ProjectSettings {
@@ -616,7 +662,18 @@ impl Settings for ProjectSettings {
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();
         let inline_diagnostics = diagnostics.inline.as_ref().unwrap();
 
-        let git = content.git.as_ref().unwrap();
+        let mut git = content
+            .git
+            .clone()
+            .ok_or_else(|| anyhow!("missing git settings defaults"))
+            .unwrap();
+        if let Some(worktree_directory) = project
+            .git
+            .as_ref()
+            .and_then(|git| git.worktree_directory.clone())
+        {
+            git.worktree_directory = Some(worktree_directory);
+        }
         let git_enabled = {
             GitEnabledSettings {
                 status: git.enabled.as_ref().unwrap().is_git_status_enabled(),
@@ -653,7 +710,6 @@ impl Settings for ProjectSettings {
             path_style: git.path_style.unwrap().into(),
             worktree_directory: git
                 .worktree_directory
-                .clone()
                 .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
         };
         Self {

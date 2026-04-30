@@ -7,7 +7,7 @@ use fs::Fs;
 use gpui::{AsyncWindowContext, Entity, SharedString, WeakEntity};
 use project::Project;
 use project::git_store::Repository;
-use project::project_settings::ProjectSettings;
+use project::project_settings::{ProjectSettings, worktree_directory_setting_for_repo};
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
@@ -85,12 +85,12 @@ pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -
 /// - `creation_infos`: a vec of `(repo, new_path, receiver)` tuples.
 /// - `path_remapping`: `(old_work_dir, new_worktree_path)` pairs for remapping editor tabs.
 fn start_worktree_creations(
+    project: &Entity<Project>,
     git_repos: &[Entity<Repository>],
     worktree_name: Option<String>,
     existing_worktree_names: &[String],
     existing_worktree_paths: &HashSet<PathBuf>,
     base_ref: Option<String>,
-    worktree_directory_setting: &str,
     rng: &mut impl rand::Rng,
     cx: &mut gpui::App,
 ) -> anyhow::Result<(
@@ -111,9 +111,12 @@ fn start_worktree_creations(
     });
 
     for repo in git_repos {
+        let repo_work_directory = repo.read(cx).work_directory_abs_path.clone();
+        let worktree_directory_setting =
+            worktree_directory_setting_for_repo(project, repo_work_directory.as_ref(), cx);
         let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
             let new_path =
-                repo.path_for_new_linked_worktree(&worktree_name, worktree_directory_setting)?;
+                repo.path_for_new_linked_worktree(&worktree_name, &worktree_directory_setting)?;
             if existing_worktree_paths.contains(&new_path) {
                 anyhow::bail!("A worktree already exists at {}", new_path.display());
             }
@@ -359,6 +362,7 @@ pub fn handle_create_worktree(
 
     cx.spawn_in(window, async move |_workspace_entity, mut cx| {
         let result = do_create_worktree(
+            project,
             git_repos,
             non_git_paths,
             worktree_name,
@@ -457,6 +461,7 @@ pub fn handle_switch_worktree(
 }
 
 async fn do_create_worktree(
+    project: Entity<Project>,
     git_repos: Vec<Entity<Repository>>,
     non_git_paths: Vec<PathBuf>,
     worktree_name: Option<String>,
@@ -473,12 +478,6 @@ async fn do_create_worktree(
             .iter()
             .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
             .collect()
-    })?;
-    let worktree_directory_setting = cx.update(|_, cx| {
-        ProjectSettings::get_global(cx)
-            .git
-            .worktree_directory
-            .clone()
     })?;
 
     let mut existing_worktree_names = Vec::new();
@@ -511,12 +510,12 @@ async fn do_create_worktree(
 
     let (creation_infos, path_remapping) = cx.update(|_, cx| {
         start_worktree_creations(
+            &project,
             &git_repos,
             worktree_name,
             &existing_worktree_names,
             &existing_worktree_paths,
             base_ref,
-            &worktree_directory_setting,
             &mut rng,
             cx,
         )
@@ -808,20 +807,20 @@ async fn open_worktree_workspace(
 mod tests {
     use super::*;
     use fs::Fs;
-    use gpui::{App, Task, TestAppContext};
+    use gpui::{App, BorrowAppContext, Task, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use project::project_settings::ProjectSettings;
     use project::task_store::{TaskSettingsLocation, TaskStore};
-    use project::{FakeFs, WorktreeSettings};
+    use project::{FakeFs, WorktreeId, WorktreeSettings};
     use serde_json::json;
-    use settings::{SettingsLocation, SettingsStore};
+    use settings::{LocalSettingsKind, LocalSettingsPath, SettingsLocation, SettingsStore};
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
     use std::sync::Mutex;
     use task::SpawnInTerminal;
     use theme::LoadThemes;
     use util::path;
-    use util::rel_path::rel_path;
+    use util::rel_path::{RelPath, rel_path};
     use workspace::{TerminalProvider, WorkspaceSettings};
 
     struct CountingTerminalProvider {
@@ -902,6 +901,291 @@ mod tests {
                     .expect("should inject create_worktree hook tasks for linked worktree");
             });
         });
+    }
+
+    fn set_worktree_directory_setting(
+        worktree_id: WorktreeId,
+        worktree_directory: &str,
+        cx: &mut App,
+    ) {
+        set_worktree_directory_setting_at_path(worktree_id, rel_path(""), worktree_directory, cx);
+    }
+
+    fn set_worktree_directory_setting_at_path(
+        worktree_id: WorktreeId,
+        path: &RelPath,
+        worktree_directory: &str,
+        cx: &mut App,
+    ) {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            let settings_content = format!(
+                r#"{{
+  "git": {{
+    "worktree_directory": "{worktree_directory}"
+  }}
+}}"#
+            );
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(path.into()),
+                    LocalSettingsKind::Settings,
+                    Some(&settings_content),
+                    cx,
+                )
+                .expect("should set local worktree settings");
+        });
+    }
+
+    fn worktree_id_for_path(
+        project: &Entity<Project>,
+        path: &Path,
+        cx: &mut TestAppContext,
+    ) -> WorktreeId {
+        project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .find_map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (worktree.abs_path().as_ref() == path).then_some(worktree.id())
+                })
+                .expect("worktree should exist")
+        })
+    }
+
+    fn repository_for_path(
+        project: &Entity<Project>,
+        path: &Path,
+        cx: &mut TestAppContext,
+    ) -> Entity<Repository> {
+        project.read_with(cx, |project, cx| {
+            project
+                .repositories(cx)
+                .values()
+                .find(|repo| repo.read(cx).work_directory_abs_path.as_ref() == path)
+                .expect("repository should exist")
+                .clone()
+        })
+    }
+
+    fn path_for_created_worktree(
+        project: &Entity<Project>,
+        repo: &Entity<Repository>,
+        worktree_name: &str,
+        cx: &mut TestAppContext,
+    ) -> PathBuf {
+        let mut rng = rand::rng();
+        cx.update(|cx| {
+            let (_creation_infos, path_remapping) = start_worktree_creations(
+                project,
+                std::slice::from_ref(repo),
+                Some(worktree_name.to_string()),
+                &[],
+                &HashSet::default(),
+                None,
+                &mut rng,
+                cx,
+            )
+            .expect("should start worktree creation");
+            path_remapping
+                .into_iter()
+                .map(|(_, new_path)| new_path)
+                .next()
+                .expect("worktree path should be remapped")
+        })
+    }
+
+    #[gpui::test]
+    async fn test_create_worktree_uses_project_worktree_directory_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let main_project_root = PathBuf::from(path!("/root/project"));
+        let project = Project::test(fs.clone(), [main_project_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let main_worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.update(|cx| {
+            set_worktree_directory_setting(main_worktree_id, "../custom-worktrees", cx);
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let main_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        main_workspace.update_in(cx, |workspace, window, cx| {
+            handle_create_worktree(
+                workspace,
+                &zed_actions::CreateWorktree {
+                    worktree_name: Some("feature".to_string()),
+                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let active_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let linked_worktree_path = active_workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .abs_path()
+                .to_path_buf()
+        });
+
+        assert_eq!(
+            linked_worktree_path,
+            PathBuf::from(path!("/root/custom-worktrees/project/feature/project"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_worktree_uses_containing_project_setting_for_nested_repo(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                ".zed": {
+                    "settings.json": r#"{"git":{"worktree_directory":"../custom-worktrees"}}"#,
+                },
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let root_worktree_id = worktree_id_for_path(&project, Path::new(path!("/root")), cx);
+        cx.update(|cx| {
+            set_worktree_directory_setting(root_worktree_id, "../custom-worktrees", cx);
+        });
+
+        let repo = repository_for_path(&project, Path::new(path!("/root/project")), cx);
+        let linked_worktree_path = path_for_created_worktree(&project, &repo, "feature", cx);
+
+        assert_eq!(
+            linked_worktree_path,
+            PathBuf::from(path!("/root/custom-worktrees/project/feature/project"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_worktree_falls_back_to_global_setting_for_nested_repo(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let repo = repository_for_path(&project, Path::new(path!("/root/project")), cx);
+        let linked_worktree_path = path_for_created_worktree(&project, &repo, "feature", cx);
+
+        assert_eq!(
+            linked_worktree_path,
+            PathBuf::from(path!("/root/worktrees/project/feature/project"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_worktree_uses_deepest_containing_local_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let root_worktree_id = worktree_id_for_path(&project, Path::new(path!("/root")), cx);
+        cx.update(|cx| {
+            set_worktree_directory_setting(root_worktree_id, "../outer-worktrees", cx);
+            set_worktree_directory_setting_at_path(
+                root_worktree_id,
+                rel_path("project"),
+                "../inner-worktrees",
+                cx,
+            );
+        });
+
+        let repo = repository_for_path(&project, Path::new(path!("/root/project")), cx);
+        let linked_worktree_path = path_for_created_worktree(&project, &repo, "feature", cx);
+
+        assert_eq!(
+            linked_worktree_path,
+            PathBuf::from(path!("/root/inner-worktrees/project/feature/project"))
+        );
     }
 
     #[gpui::test]
