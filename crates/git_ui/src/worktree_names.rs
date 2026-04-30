@@ -24,8 +24,8 @@ const ADJECTIVES: &[&str] = &[
     "stocky", "stoic", "stony", "stout", "sturdy", "suede", "sunny", "supple", "sure", "tall",
     "tangy", "tawny", "teal", "terse", "thick", "tidal", "tidy", "timber", "topaz", "total",
     "trim", "tropic", "tulip", "upper", "urban", "vast", "velvet", "verde", "vivid", "vocal",
-    "warm", "waxen", "west", "whole", "wide", "wild", "wise", "witty", "woven", "young",
-    "zealous", "zephyr", "zesty", "zinc",
+    "warm", "waxen", "west", "whole", "wide", "wild", "wise", "witty", "woven", "young", "zealous",
+    "zephyr", "zesty", "zinc",
 ];
 
 const NOUNS: &[&str] = &[
