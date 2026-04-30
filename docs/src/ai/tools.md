@@ -61,6 +61,8 @@ Allows the Agent to work through problems, brainstorm ideas, or plan without exe
 
 Searches the web for information, providing results with snippets and links from relevant web pages, useful for accessing real-time information.
 
+> **Note:** The built-in `search_web` tool is only available to [Zed Pro](https://zed.dev/pricing) subscribers. If you're on a free plan, you can get equivalent functionality by connecting an MCP server that provides web search capabilities. See [MCP servers](./mcp.md) for details.
+
 **Example:** Looking up whether a known bug in a dependency has been patched in a recent release, or finding the current API signature for a third-party library when the local docs are out of date.
 
 ## Edit Tools
