@@ -1333,112 +1333,60 @@ impl AgentConnection for AcpConnection {
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
-            let response = into_foreground_future(
-                self.connection
-                    .send_request(acp::NewSessionRequest::new(cwd.clone()).mcp_servers(mcp_servers)),
-            )
-            .await
-            .map_err(map_acp_error)?;
+            let response =
+                into_foreground_future(self.connection.send_request(
+                    acp::NewSessionRequest::new(cwd.clone()).mcp_servers(mcp_servers),
+                ))
+                .await
+                .map_err(map_acp_error)?;
 
             let (modes, models, config_options) =
                 config_state(response.modes, response.models, response.config_options);
 
-            if let Some(default_mode) = self.default_mode.clone() {
-                if let Some(modes) = modes.as_ref() {
-                    let mut modes_ref = modes.borrow_mut();
-                    let has_mode = modes_ref
-                        .available_modes
-                        .iter()
-                        .any(|mode| mode.id == default_mode);
+            if let Some(default_mode) = self.default_mode.clone()
+                && let Some((modes, initial_mode_id)) =
+                    apply_default_mode_to_state(&default_mode, modes.as_ref(), &name)
+            {
+                cx.spawn({
+                    let default_mode = default_mode.clone();
+                    let session_id = response.session_id.clone();
+                    let conn = self.connection.clone();
+                    async move |_| {
+                        let result = into_foreground_future(conn.send_request(
+                            acp::SetSessionModeRequest::new(session_id, default_mode),
+                        ))
+                        .await
+                        .log_err();
 
-                    if has_mode {
-                        let initial_mode_id = modes_ref.current_mode_id.clone();
-
-                        cx.spawn({
-                            let default_mode = default_mode.clone();
-                            let session_id = response.session_id.clone();
-                            let modes = modes.clone();
-                            let conn = self.connection.clone();
-                            async move |_| {
-                                let result = into_foreground_future(
-                                    conn.send_request(acp::SetSessionModeRequest::new(
-                                        session_id,
-                                        default_mode,
-                                    )),
-                                )
-                                .await
-                                .log_err();
-
-                                if result.is_none() {
-                                    modes.borrow_mut().current_mode_id = initial_mode_id;
-                                }
-                            }
-                        })
-                        .detach();
-
-                        modes_ref.current_mode_id = default_mode;
-                    } else {
-                        let available_modes = modes_ref
-                            .available_modes
-                            .iter()
-                            .map(|mode| format!("- `{}`: {}", mode.id, mode.name))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-
-                        log::warn!(
-                            "`{default_mode}` is not valid {name} mode. Available options:\n{available_modes}",
-                        );
+                        if result.is_none() {
+                            modes.borrow_mut().current_mode_id = initial_mode_id;
+                        }
                     }
-                }
+                })
+                .detach();
             }
 
-            if let Some(default_model) = self.default_model.clone() {
-                if let Some(models) = models.as_ref() {
-                    let mut models_ref = models.borrow_mut();
-                    let has_model = models_ref
-                        .available_models
-                        .iter()
-                        .any(|model| model.model_id == default_model);
+            if let Some(default_model) = self.default_model.clone()
+                && let Some((models, initial_model_id)) =
+                    apply_default_model_to_state(&default_model, models.as_ref(), &name)
+            {
+                cx.spawn({
+                    let default_model = default_model.clone();
+                    let session_id = response.session_id.clone();
+                    let conn = self.connection.clone();
+                    async move |_| {
+                        let result = into_foreground_future(conn.send_request(
+                            acp::SetSessionModelRequest::new(session_id, default_model),
+                        ))
+                        .await
+                        .log_err();
 
-                    if has_model {
-                        let initial_model_id = models_ref.current_model_id.clone();
-
-                        cx.spawn({
-                            let default_model = default_model.clone();
-                            let session_id = response.session_id.clone();
-                            let models = models.clone();
-                            let conn = self.connection.clone();
-                            async move |_| {
-                                let result = into_foreground_future(
-                                    conn.send_request(acp::SetSessionModelRequest::new(
-                                        session_id,
-                                        default_model,
-                                    )),
-                                )
-                                .await
-                                .log_err();
-
-                                if result.is_none() {
-                                    models.borrow_mut().current_model_id = initial_model_id;
-                                }
-                            }
-                        })
-                        .detach();
-
-                        models_ref.current_model_id = default_model;
-                    } else {
-                        let available_models = models_ref
-                            .available_models
-                            .iter()
-                            .map(|model| format!("- `{}`: {}", model.model_id, model.name))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-
-                        log::warn!(
-                            "`{default_model}` is not a valid {name} model. Available options:\n{available_models}",
-                        );
+                        if result.is_none() {
+                            models.borrow_mut().current_model_id = initial_model_id;
+                        }
                     }
-                }
+                })
+                .detach();
             }
 
             if let Some(config_opts) = config_options.as_ref() {
@@ -1456,9 +1404,7 @@ impl AgentConnection for AcpConnection {
                     action_log,
                     response.session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
-                    watch::Receiver::constant(
-                        self.agent_capabilities.prompt_capabilities.clone(),
-                    ),
+                    watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
                     cx,
                 )
             });
@@ -2514,6 +2460,62 @@ mod tests {
         };
     }
 
+    #[test]
+    fn configured_defaults_override_acp_state_with_config_options() {
+        let modes = acp::SessionModeState::new(
+            "build",
+            vec![
+                acp::SessionMode::new("build", "Build"),
+                acp::SessionMode::new("plan", "Plan"),
+            ],
+        );
+        let models = acp::SessionModelState::new(
+            "default-model",
+            vec![
+                acp::ModelInfo::new("default-model", "Default Model"),
+                acp::ModelInfo::new("configured-model", "Configured Model"),
+            ],
+        );
+        let config_options = vec![acp::SessionConfigOption::select(
+            "verbosity",
+            "Verbosity",
+            "normal",
+            vec![acp::SessionConfigSelectOption::new("normal", "Normal")],
+        )];
+
+        let (modes, models, config_options) =
+            config_state(Some(modes), Some(models), Some(config_options));
+
+        let initial_mode = apply_default_mode_to_state(
+            &acp::SessionModeId::new("plan"),
+            modes.as_ref(),
+            "test-agent",
+        )
+        .map(|(_, initial)| initial);
+        let initial_model = apply_default_model_to_state(
+            &acp::ModelId::new("configured-model"),
+            models.as_ref(),
+            "test-agent",
+        )
+        .map(|(_, initial)| initial);
+
+        assert_eq!(initial_mode, Some(acp::SessionModeId::new("build")));
+        assert_eq!(initial_model, Some(acp::ModelId::new("default-model")));
+        assert_eq!(
+            modes
+                .as_ref()
+                .map(|modes| modes.borrow().current_mode_id.clone()),
+            Some(acp::SessionModeId::new("plan"))
+        );
+        assert_eq!(
+            models
+                .as_ref()
+                .map(|models| models.borrow().current_model_id.clone()),
+            Some(acp::ModelId::new("configured-model"))
+        );
+        assert!(config_options.is_some());
+    }
+
     async fn connect_fake_agent(
         cx: &mut gpui::TestAppContext,
     ) -> (
@@ -3134,13 +3136,74 @@ fn config_state(
     Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
-    if let Some(opts) = config_options {
-        return (None, None, Some(Rc::new(RefCell::new(opts))));
-    }
-
     let modes = modes.map(|modes| Rc::new(RefCell::new(modes)));
     let models = models.map(|models| Rc::new(RefCell::new(models)));
-    (modes, models, None)
+    let config_options = config_options.map(|opts| Rc::new(RefCell::new(opts)));
+    (modes, models, config_options)
+}
+
+fn apply_default_mode_to_state(
+    default_mode: &acp::SessionModeId,
+    modes: Option<&Rc<RefCell<acp::SessionModeState>>>,
+    agent_name: &str,
+) -> Option<(Rc<RefCell<acp::SessionModeState>>, acp::SessionModeId)> {
+    let modes = modes?.clone();
+    let mut modes_ref = modes.borrow_mut();
+    let has_mode = modes_ref
+        .available_modes
+        .iter()
+        .any(|mode| &mode.id == default_mode);
+
+    if has_mode {
+        let initial_mode_id = modes_ref.current_mode_id.clone();
+        modes_ref.current_mode_id = default_mode.clone();
+        drop(modes_ref);
+        Some((modes, initial_mode_id))
+    } else {
+        let available_modes = modes_ref
+            .available_modes
+            .iter()
+            .map(|mode| format!("- `{}`: {}", mode.id, mode.name))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        log::warn!(
+            "`{default_mode}` is not valid {agent_name} mode. Available options:\n{available_modes}",
+        );
+        None
+    }
+}
+
+fn apply_default_model_to_state(
+    default_model: &acp::ModelId,
+    models: Option<&Rc<RefCell<acp::SessionModelState>>>,
+    agent_name: &str,
+) -> Option<(Rc<RefCell<acp::SessionModelState>>, acp::ModelId)> {
+    let models = models?.clone();
+    let mut models_ref = models.borrow_mut();
+    let has_model = models_ref
+        .available_models
+        .iter()
+        .any(|model| &model.model_id == default_model);
+
+    if has_model {
+        let initial_model_id = models_ref.current_model_id.clone();
+        models_ref.current_model_id = default_model.clone();
+        drop(models_ref);
+        Some((models, initial_model_id))
+    } else {
+        let available_models = models_ref
+            .available_models
+            .iter()
+            .map(|model| format!("- `{}`: {}", model.model_id, model.name))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        log::warn!(
+            "`{default_model}` is not a valid {agent_name} model. Available options:\n{available_models}",
+        );
+        None
+    }
 }
 
 struct AcpSessionModes {
