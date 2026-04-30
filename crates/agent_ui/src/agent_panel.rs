@@ -238,9 +238,15 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &NewAgentPanelTerminal, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        let working_directory =
+                            terminal_view::default_working_directory(workspace, cx);
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.new_terminal(window, cx);
+                            panel.new_terminal_with_working_directory(
+                                working_directory,
+                                window,
+                                cx,
+                            );
                         });
                     }
                 })
@@ -1338,11 +1344,20 @@ impl AgentPanel {
     }
 
     pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let working_directory = self.default_terminal_working_directory(cx);
+        self.new_terminal_with_working_directory(working_directory, window, cx);
+    }
+
+    fn new_terminal_with_working_directory(
+        &mut self,
+        working_directory: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.project.read(cx).supports_terminal(cx) {
             self.show_terminal_unavailable_toast(cx);
             return;
         }
-        let working_directory = self.default_terminal_working_directory(cx);
         self.spawn_terminal(TerminalId::new(), working_directory, true, window, cx);
     }
 
@@ -3490,8 +3505,16 @@ impl AgentPanel {
                                                     if let Some(panel) =
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
+                                                        let working_directory =
+                                                            terminal_view::default_working_directory(
+                                                                workspace, cx,
+                                                            );
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.new_terminal(window, cx);
+                                                            panel.new_terminal_with_working_directory(
+                                                                working_directory,
+                                                                window,
+                                                                cx,
+                                                            );
                                                         });
                                                     }
                                                 });
