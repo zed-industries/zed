@@ -1482,6 +1482,10 @@ impl PlatformWindow for MacWindow {
             let filename = path.map_or(ns_string(""), |p| ns_string(&p.to_string_lossy()));
             let _: () = msg_send![window, setRepresentedFilename: filename];
         }
+
+        // Changing the document path state resets the traffic light position,
+        // so we have to move it again.
+        self.0.lock().move_traffic_light();
     }
 
     fn show_character_palette(&self) {
