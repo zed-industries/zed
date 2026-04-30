@@ -717,7 +717,20 @@ impl Item for Editor {
     }
 
     fn suggested_filename(&self, cx: &App) -> SharedString {
-        self.buffer.read(cx).title(cx).to_string().into()
+        let multi_buffer = self.buffer.read(cx);
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            let buffer = buffer.read(cx);
+            if buffer.file().is_none()
+                && let Some(language) = buffer.language()
+                && language.name() != "Plain Text"
+                && let Some(path_suffix) = language.path_suffixes().first()
+                && !path_suffix.is_empty()
+            {
+                return format!("untitled.{path_suffix}").into();
+            }
+        }
+
+        multi_buffer.title(cx).to_string().into()
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
@@ -2384,6 +2397,25 @@ mod tests {
                 window[0], window[1],
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_uses_language_extension_for_untitled_buffer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| {
+                Buffer::local("fn main() {\n}", cx).with_language(languages::rust_lang(), cx)
+            })
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "untitled.rs");
+        });
     }
 
     async fn deserialize_editor(
