@@ -416,6 +416,16 @@ impl HeadlessProject {
                         log_store.remove_language_server(*id, cx);
                     });
                 }
+                self.session
+                    .send(proto::UpdateLanguageServer {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_name: None,
+                        language_server_id: id.to_proto(),
+                        variant: Some(proto::update_language_server::Variant::Removed(
+                            proto::ServerRemoved {},
+                        )),
+                    })
+                    .log_err();
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,

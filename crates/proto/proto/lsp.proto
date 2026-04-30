@@ -577,6 +577,7 @@ message UpdateLanguageServer {
     StatusUpdate status_update = 9;
     RegisteredForBuffer registered_for_buffer = 10;
     ServerMetadataUpdated metadata_updated = 11;
+    ServerRemoved removed = 12;
   }
 }
 
@@ -612,6 +613,8 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message ServerRemoved {}
 
 message StatusUpdate {
   optional string message = 1;
