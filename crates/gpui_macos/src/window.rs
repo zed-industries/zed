@@ -463,7 +463,6 @@ struct MacWindowState {
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
-    cursor_hidden: bool,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -782,7 +781,6 @@ impl MacWindow {
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
-                cursor_hidden: false,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -1812,23 +1810,12 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
         let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
 
         let window_state = get_window_state(this);
-        let cursor_style;
-        let cursor_hidden;
+        let cursor_style = window_state.lock().cursor_style;
 
-        {
-            let mut window_state = window_state.lock();
-
-            if matches!(window_state.cursor_style, CursorStyle::None) {
-                if !window_state.cursor_hidden {
-                    let _: () = msg_send![class!(NSCursor), hide];
-                    window_state.cursor_hidden = true;
-                }
-                return;
-            }
-
-            cursor_style = window_state.cursor_style;
-            cursor_hidden = window_state.cursor_hidden;
-        };
+        if matches!(cursor_style, CursorStyle::None) {
+            let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: YES];
+            return;
+        }
 
         let cursor: id = match cursor_style {
             CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
@@ -1866,11 +1853,6 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
             CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
             CursorStyle::None => unreachable!(),
         };
-
-        if cursor_hidden {
-            let _: () = msg_send![class!(NSCursor), unhide];
-            window_state.lock().cursor_hidden = false;
-        }
 
         let bounds = NSView::bounds(this as *const Object as id);
         let _: () = msg_send![this, addCursorRect: bounds cursor: cursor];
