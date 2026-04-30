@@ -190,6 +190,8 @@ From the picker, you can:
 - Open an existing worktree in a new window
 - Delete linked worktrees that are not currently open in the project
 
+### Worktree Management
+
 New worktrees are created in detached HEAD state.
 After switching to the new worktree, use the branch picker next to the worktree picker to create a new branch or check out an existing, unused branch.
 This keeps Zed from accidentally checking out the same branch in multiple worktrees.
@@ -199,11 +201,15 @@ By default, Zed creates worktrees under `../worktrees` relative to the repositor
 
 See [All Settings](./reference/all-settings.md#git-worktree-directory) for examples.
 
-If your project contains multiple Git repositories (i.e., multi-root folders), Zed creates a linked worktree for each repository when creating a new worktree from the picker.
-Non-Git folders in the same project are included in the new workspace as-is.
+### Init Setup
 
 To run setup steps after Zed creates a linked worktree, use the [`create_worktree` task hook](./tasks.md#hooks).
 For agent-specific workflows, see [Worktree Isolation](./ai/parallel-agents.md#worktree-isolation).
+
+### Multi-root Workspaces
+
+If your project contains multiple Git repositories (i.e., multi-root folders), Zed creates a linked worktree for each repository when creating a new worktree from the picker.
+Non-Git folders in the same project are included in the new workspace as-is.
 
 ## Merge Conflicts
 
