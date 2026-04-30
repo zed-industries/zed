@@ -177,8 +177,8 @@ impl LanguageModelProvider for AnthropicCompatibleLanguageModelProvider {
             .map(|model| self.create_language_model(model.clone()))
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        None
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
