@@ -991,8 +991,9 @@ impl Platform for MacPlatform {
     /// Match cursor style to one of the styles available
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
+        let cursor_hidden = self.0.lock().cursor_hidden.clone();
         unsafe {
-            set_active_window_cursor_style(style);
+            set_active_window_cursor_style(style, &cursor_hidden);
         }
     }
 
