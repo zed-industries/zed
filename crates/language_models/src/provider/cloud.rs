@@ -267,7 +267,20 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         if self.is_authenticated(cx) {
             return Task::ready(Ok(()));
         }
-        self.state.update(cx, |state, cx| state.authenticate(cx))
+        let mut status = self.state.read(cx).client.status();
+        let mut current_user = self.state.read(cx).user_store.read(cx).watch_current_user();
+        if !status.borrow().is_signing_in() {
+            return Task::ready(Ok(()));
+        }
+        cx.background_spawn(async move {
+            while status.borrow().is_signing_in() {
+                status.next().await;
+            }
+            while current_user.borrow().is_none() {
+                current_user.next().await;
+            }
+            Ok(())
+        })
     }
 
     fn configuration_view(
