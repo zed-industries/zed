@@ -621,14 +621,22 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let guard = self.0.lock();
-        let renderer_context = guard.renderer_context.clone();
+        let (cursor_hidden, foreground_executor, background_executor, renderer_context) = {
+            let guard = self.0.lock();
+            (
+                guard.cursor_hidden.clone(),
+                guard.foreground_executor.clone(),
+                guard.background_executor.clone(),
+                guard.renderer_context.clone(),
+            )
+        };
+
         Ok(Box::new(MacWindow::open(
             handle,
             options,
-            guard.cursor_hidden.clone(),
-            guard.foreground_executor.clone(),
-            guard.background_executor.clone(),
+            cursor_hidden,
+            foreground_executor,
+            background_executor,
             renderer_context,
         )))
     }
