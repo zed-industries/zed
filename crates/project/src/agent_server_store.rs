@@ -7,7 +7,8 @@ use std::{
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
+use futures::StreamExt;
 use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task, TaskExt};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
@@ -1126,6 +1127,47 @@ fn versioned_archive_cache_dir(
     ))
 }
 
+async fn remove_stale_versioned_archive_cache_dirs(
+    fs: Arc<dyn Fs>,
+    base_dir: &Path,
+    current_version_dir: &Path,
+) -> Result<()> {
+    let Some(current_dir_name) = current_version_dir.file_name() else {
+        return Ok(());
+    };
+
+    let mut entries = fs
+        .read_dir(base_dir)
+        .await
+        .with_context(|| format!("reading archive cache directory {base_dir:?}"))?;
+
+    while let Some(entry) = entries.next().await {
+        let entry = entry.with_context(|| format!("reading entry in {base_dir:?}"))?;
+        let Some(entry_name) = entry.file_name() else {
+            continue;
+        };
+
+        if entry_name == current_dir_name
+            || !entry_name.to_string_lossy().starts_with("v_")
+            || !fs.is_dir(&entry).await
+        {
+            continue;
+        }
+
+        fs.remove_dir(
+            &entry,
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .with_context(|| format!("removing stale archive cache directory {entry:?}"))?;
+    }
+
+    Ok(())
+}
+
 pub struct LocalExtensionArchiveAgent {
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
@@ -1477,6 +1519,10 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     anyhow::bail!("command must be relative (start with './'): {}", cmd);
                 }
             };
+
+            remove_stale_versioned_archive_cache_dirs(fs.clone(), &dir, &version_dir)
+                .await
+                .log_err();
 
             let mut args = target_config.args.clone();
             args.extend(extra_args);
