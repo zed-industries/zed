@@ -11543,6 +11543,7 @@ impl LspStore {
                         is_unnecessary,
                         underline,
                         data: diagnostic.data.clone(),
+                        rendered: extract_rendered(diagnostic.data.as_ref()),
                         registration_id: registration_id.clone(),
                     },
                 });
@@ -11571,6 +11572,7 @@ impl LspStore {
                                     is_unnecessary: false,
                                     underline,
                                     data: diagnostic.data.clone(),
+                                    rendered: None,
                                     registration_id: registration_id.clone(),
                                 },
                             });
@@ -13428,6 +13430,18 @@ impl LspStore {
         }
         lsp_data
     }
+}
+
+// Pulls the verbose pre-rendered diagnostic text out of a language server's
+// `diagnostic.data` payload. rust-analyzer puts the full pretty-printed compiler
+// output (with ascii-art spans and trait-bound details) under the `rendered`
+// key; other servers may follow the same convention. Returning `None` is the
+// no-op path - the regular `message` is still shown.
+fn extract_rendered(data: Option<&serde_json::Value>) -> Option<String> {
+    data?
+        .get("rendered")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 // Registration with registerOptions as null, should fallback to true.
