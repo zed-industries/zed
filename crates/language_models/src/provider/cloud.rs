@@ -4,6 +4,7 @@ use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_u
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
+use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task};
@@ -277,7 +278,21 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 status.next().await;
             }
             while current_user.borrow().is_none() {
-                current_user.next().await;
+                let current_status = *status.borrow();
+                if !matches!(
+                    current_status,
+                    client::Status::Authenticated
+                        | client::Status::Reauthenticated
+                        | client::Status::Connected { .. }
+                ) {
+                    return Err(AuthenticateError::Other(anyhow::anyhow!(
+                        "sign-in did not complete: {current_status:?}"
+                    )));
+                }
+                futures::select_biased! {
+                    _ = current_user.next().fuse() => {},
+                    _ = status.next().fuse() => {},
+                }
             }
             Ok(())
         })
