@@ -9,6 +9,7 @@
 mod buffer;
 mod diagnostic;
 mod diagnostic_set;
+mod file_content;
 mod language_registry;
 
 pub mod language_settings;
@@ -36,17 +37,17 @@ use http_client::HttpClient;
 
 pub use language_core::highlight_map::{HighlightId, HighlightMap};
 
+use futures::future::FutureExt as _;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
-    DecreaseIndentConfig, Grammar, GrammarId, HighlightsConfig, ImportsConfig, IndentConfig,
-    InjectionConfig, InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig,
-    LanguageConfigOverride, LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig,
-    Override, OverrideConfig, OverrideEntry, PromptResponseContext, RedactionConfig,
-    RunnableCapture, RunnableConfig, SoftWrap, Symbol, TaskListConfig, TextObject,
-    TextObjectConfig, ToLspPosition, WrapCharactersConfig,
-    auto_indent_using_last_non_empty_line_default, deserialize_regex, deserialize_regex_vec,
-    regex_json_schema, regex_vec_json_schema, serialize_regex,
+    DecreaseIndentConfig, Grammar, GrammarId, HighlightsConfig, IndentConfig, InjectionConfig,
+    InjectionPatternConfig, JsxTagAutoCloseConfig, LanguageConfig, LanguageConfigOverride,
+    LanguageId, LanguageMatcher, OrderedListConfig, OutlineConfig, Override, OverrideConfig,
+    OverrideEntry, PromptResponseContext, RedactionConfig, RunnableCapture, RunnableConfig,
+    SoftWrap, Symbol, TaskListConfig, TextObject, TextObjectConfig, ToLspPosition,
+    WrapCharactersConfig, auto_indent_using_last_non_empty_line_default, deserialize_regex,
+    deserialize_regex_vec, regex_json_schema, regex_vec_json_schema, serialize_regex,
 };
 pub use language_registry::{
     LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
@@ -61,7 +62,6 @@ use regex::Regex;
 use semver::Version;
 use serde_json::Value;
 use settings::WorktreeId;
-use smol::future::FutureExt as _;
 use std::{
     ffi::OsStr,
     fmt::Debug,
@@ -92,6 +92,7 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
+pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
 pub use language_registry::{
     AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,
@@ -109,7 +110,6 @@ pub(crate) fn to_settings_soft_wrap(value: language_core::SoftWrap) -> settings:
         language_core::SoftWrap::None => settings::SoftWrap::None,
         language_core::SoftWrap::PreferLine => settings::SoftWrap::PreferLine,
         language_core::SoftWrap::EditorWidth => settings::SoftWrap::EditorWidth,
-        language_core::SoftWrap::PreferredLineLength => settings::SoftWrap::PreferredLineLength,
         language_core::SoftWrap::Bounded => settings::SoftWrap::Bounded,
     }
 }
@@ -203,6 +203,17 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
         None,
     ))
 });
+
+/// Commands that the client (editor) handles locally rather than forwarding
+/// to the language server. Servers embed these in code lens and code action
+/// responses when they want the editor to perform a well-known UI action.
+#[derive(Debug, Clone)]
+pub enum ClientCommand {
+    /// Open a location list (references panel / peek view).
+    ShowLocations,
+    /// Schedule a task from an LSP command's arguments.
+    ScheduleTask(task::TaskTemplate),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
@@ -557,6 +568,14 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         Ok(original)
     }
 
+    fn client_command(
+        &self,
+        _command_name: &str,
+        _arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        None
+    }
+
     /// Method only implemented by the default JSON language server adapter.
     /// Used to provide dynamic reloading of the JSON schemas used to
     /// provide autocompletion and diagnostics in Zed setting and keybind
@@ -908,10 +927,6 @@ impl Language {
         })
     }
 
-    pub fn with_imports_query(self, source: &str) -> Result<Self> {
-        self.with_grammar_query_and_name(|grammar, name| grammar.with_imports_query(source, name))
-    }
-
     pub fn with_brackets_query(self, source: &str) -> Result<Self> {
         self.with_grammar_query_and_name(|grammar, name| grammar.with_brackets_query(source, name))
     }
@@ -1028,9 +1043,7 @@ impl Language {
                 BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id
-                    && !highlight_id.is_default()
-                {
+                if let Some(highlight_id) = chunk.syntax_highlight_id {
                     result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;
@@ -1082,11 +1095,11 @@ impl Language {
 
 #[inline]
 pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
-    HighlightMap::from_ids(capture_names.iter().map(|capture_name| {
-        theme
-            .highlight_id(capture_name)
-            .map_or(HighlightId::default(), HighlightId)
-    }))
+    HighlightMap::from_ids(
+        capture_names
+            .iter()
+            .map(|capture_name| theme.highlight_id(capture_name).map(HighlightId::new)),
+    )
 }
 
 impl LanguageScope {
@@ -1579,9 +1592,6 @@ pub fn rust_lang() -> Arc<Language> {
         debugger: Some(Cow::from(include_str!(
             "../../grammars/src/rust/debugger.scm"
         ))),
-        imports: Some(Cow::from(include_str!(
-            "../../grammars/src/rust/imports.scm"
-        ))),
     })
     .expect("Could not parse queries");
     Arc::new(language)
@@ -1653,9 +1663,18 @@ mod tests {
         ];
 
         let map = build_highlight_map(capture_names, &theme);
-        assert_eq!(theme.get_capture_name(map.get(0)), Some("function"));
-        assert_eq!(theme.get_capture_name(map.get(1)), Some("function.async"));
-        assert_eq!(theme.get_capture_name(map.get(2)), Some("variable.builtin"));
+        assert_eq!(
+            theme.get_capture_name(map.get(0).unwrap()),
+            Some("function")
+        );
+        assert_eq!(
+            theme.get_capture_name(map.get(1).unwrap()),
+            Some("function.async")
+        );
+        assert_eq!(
+            theme.get_capture_name(map.get(2).unwrap()),
+            Some("variable.builtin")
+        );
     }
 
     #[gpui::test(iterations = 10)]

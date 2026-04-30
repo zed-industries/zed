@@ -1,11 +1,11 @@
-use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use settings::Settings;
 use std::{
     path::{Path, PathBuf},
@@ -14,10 +14,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    decide_permission_from_settings,
-};
+use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -100,35 +97,14 @@ impl AgentTool for TerminalTool {
             let (working_dir, authorize) = cx.update(|cx| {
                 let working_dir =
                     working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
-
-                let decision = decide_permission_from_settings(
-                    Self::NAME,
-                    std::slice::from_ref(&input.command),
-                    AgentSettings::get_global(cx),
-                );
-
-                let authorize = match decision {
-                    ToolPermissionDecision::Allow => None,
-                    ToolPermissionDecision::Deny(reason) => {
-                        return Err(reason);
-                    }
-                    ToolPermissionDecision::Confirm => {
-                        let context = crate::ToolPermissionContext::new(
-                            Self::NAME,
-                            vec![input.command.clone()],
-                        );
-                        Some(event_stream.authorize(
-                            self.initial_title(Ok(input.clone()), cx),
-                            context,
-                            cx,
-                        ))
-                    }
-                };
-                Ok((working_dir, authorize))
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
+                let authorize =
+                    event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
+                Result::<_, String>::Ok((working_dir, authorize))
             })?;
-            if let Some(authorize) = authorize {
-                authorize.await.map_err(|e| e.to_string())?;
-            }
+
+            authorize.await.map_err(|e| e.to_string())?;
 
             let terminal = self
                 .environment
@@ -681,17 +657,17 @@ mod tests {
         );
         assert!(
             !matches!(
-                rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "invalid command should not request authorization"
         );
         assert!(
             !matches!(
-                rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallUpdate(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
                     acp_thread::ToolCallUpdate::UpdateFields(_)
-                ))))
+                )))
             ),
             "invalid command should not emit a terminal card update"
         );
@@ -810,8 +786,8 @@ mod tests {
         );
         assert!(
             !matches!(
-                rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "hardcoded denial should not request authorization"
         );
@@ -1058,8 +1034,8 @@ mod tests {
         );
         assert!(
             !matches!(
-                rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "rejected command {command:?} should not request authorization"
         );

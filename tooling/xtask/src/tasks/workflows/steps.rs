@@ -1,4 +1,4 @@
-use gh_workflow::*;
+use gh_workflow::{ctx::Context, *};
 use serde_json::Value;
 
 use crate::tasks::workflows::{
@@ -137,6 +137,8 @@ impl From<CheckoutStep> for Step<Use> {
     }
 }
 
+impl FluentBuilder for CheckoutStep {}
+
 pub fn checkout_repo() -> CheckoutStep {
     CheckoutStep::default()
 }
@@ -176,6 +178,20 @@ pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
 
+pub fn install_cargo_edit() -> Step<Use> {
+    taiki_install_action("cargo-edit")
+}
+
+pub fn taiki_install_action(tool: &str) -> Step<Use> {
+    Step::new(named::function_name(1))
+        .uses(
+            "taiki-e",
+            "install-action",
+            "02cc5f8ca9f2301050c0c099055816a41ee05507", // v2
+        )
+        .add_with(("tool", tool))
+}
+
 pub fn cargo_install_nextest() -> Step<Use> {
     named::uses(
         "taiki-e",
@@ -213,9 +229,9 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
 
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
-        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
+        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 350 200"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
+        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
     }
 }
 
@@ -513,20 +529,50 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
         .add_env(("REF_NAME", ref_name.to_string()))
 }
 
+/// Non-exhaustive list of the permissions to be set for a GitHub app token.
+///
+/// See https://github.com/actions/create-github-app-token?tab=readme-ov-file#permission-permission-name
+/// and beyond for a full list of available permissions.
+#[allow(unused)]
+pub(crate) enum TokenPermissions {
+    Contents,
+    Issues,
+    PullRequests,
+    Workflows,
+}
+
+impl TokenPermissions {
+    pub fn environment_name(&self) -> &'static str {
+        match self {
+            TokenPermissions::Contents => "permission-contents",
+            TokenPermissions::Issues => "permission-issues",
+            TokenPermissions::PullRequests => "permission-pull-requests",
+            TokenPermissions::Workflows => "permission-workflows",
+        }
+    }
+}
+
 pub(crate) struct GenerateAppToken<'a> {
     job_name: String,
     app_id: &'a str,
     app_secret: &'a str,
     repository_target: Option<RepositoryTarget>,
+    permissions: Option<Vec<(TokenPermissions, Level)>>,
 }
 
 impl<'a> GenerateAppToken<'a> {
-    pub fn for_repository(self, repository_target: RepositoryTarget) -> (Step<Use>, StepOutput) {
+    pub fn for_repository(self, repository_target: RepositoryTarget) -> Self {
         Self {
             repository_target: Some(repository_target),
             ..self
         }
-        .into()
+    }
+
+    pub fn with_permissions(self, permissions: impl Into<Vec<(TokenPermissions, Level)>>) -> Self {
+        Self {
+            permissions: Some(permissions.into()),
+            ..self
+        }
     }
 }
 
@@ -549,26 +595,24 @@ impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
                          RepositoryTarget {
                              owner,
                              repositories,
-                             permissions,
                          }| {
                             input
                                 .when_some(owner, |input, owner| input.add("owner", owner))
                                 .when_some(repositories, |input, repositories| {
                                     input.add("repositories", repositories)
                                 })
-                                .when_some(permissions, |input, permissions| {
-                                    permissions.into_iter().fold(
-                                        input,
-                                        |input, (permission, level)| {
-                                            input.add(
-                                                permission,
-                                                serde_json::to_value(&level).unwrap_or_default(),
-                                            )
-                                        },
-                                    )
-                                })
                         },
-                    ),
+                    )
+                    .when_some(token.permissions, |input, permissions| {
+                        permissions
+                            .into_iter()
+                            .fold(input, |input, (permission, level)| {
+                                input.add(
+                                    permission.environment_name(),
+                                    serde_json::to_value(&level).unwrap_or_default(),
+                                )
+                            })
+                    }),
             );
 
         let generated_token = StepOutput::new(&step, "token");
@@ -579,7 +623,6 @@ impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
 pub(crate) struct RepositoryTarget {
     owner: Option<String>,
     repositories: Option<String>,
-    permissions: Option<Vec<(String, Level)>>,
 }
 
 impl RepositoryTarget {
@@ -587,7 +630,6 @@ impl RepositoryTarget {
         Self {
             owner: Some(owner.to_string()),
             repositories: Some(repositories.join("\n")),
-            permissions: None,
         }
     }
 
@@ -595,14 +637,6 @@ impl RepositoryTarget {
         Self {
             owner: None,
             repositories: None,
-            permissions: None,
-        }
-    }
-
-    pub fn permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
-        Self {
-            permissions: Some(permissions.into()),
-            ..self
         }
     }
 }
@@ -614,8 +648,8 @@ pub(crate) fn generate_token<'a>(
     generate_token_with_job_name(app_id_source, app_secret_source)
 }
 
-pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
-    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).into()
+pub fn authenticate_as_zippy() -> GenerateAppToken<'static> {
+    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
 }
 
 fn generate_token_with_job_name<'a>(
@@ -627,5 +661,242 @@ fn generate_token_with_job_name<'a>(
         app_id: app_id_source,
         app_secret: app_secret_source,
         repository_target: None,
+        permissions: None,
+    }
+}
+
+pub(crate) struct BotCommitStep {
+    message: String,
+    branch: String,
+    files: String,
+    token: String,
+}
+
+impl BotCommitStep {
+    pub fn new(message: impl ToString, branch: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            message: message.to_string(),
+            branch: branch.to_string(),
+            files: "**".to_string(),
+            token: token.to_string(),
+        }
+    }
+
+    pub fn with_files(self, files: impl ToString) -> Self {
+        Self {
+            files: files.to_string(),
+            ..self
+        }
+    }
+}
+
+impl From<BotCommitStep> for Step<Use> {
+    fn from(step: BotCommitStep) -> Self {
+        Step::new("steps::bot_commit")
+            .uses(
+                "IAreKyleW00t",
+                "verified-bot-commit",
+                "126a6a11889ab05bcff72ec2403c326cd249b84c", // v2.3.0
+            )
+            .id("commit")
+            .add_with(("message", step.message))
+            .add_with(("ref", format!("refs/heads/{}", step.branch)))
+            .add_with(("files", step.files))
+            .add_with(("token", step.token))
+    }
+}
+
+pub(crate) enum GitRef {
+    Tag(String),
+    Branch(String),
+}
+
+impl GitRef {
+    pub fn tag(name: impl ToString) -> Self {
+        Self::Tag(name.to_string())
+    }
+
+    pub fn branch(name: impl ToString) -> Self {
+        Self::Branch(name.to_string())
+    }
+
+    fn create_ref_path(&self) -> String {
+        match self {
+            Self::Tag(name) => format!("refs/tags/{name}"),
+            Self::Branch(name) => format!("refs/heads/{name}"),
+        }
+    }
+
+    fn update_ref_path(&self) -> String {
+        match self {
+            Self::Tag(name) => format!("tags/{name}"),
+            Self::Branch(name) => format!("heads/{name}"),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Tag(_) => "tag",
+            Self::Branch(_) => "branch",
+        }
+    }
+}
+
+#[allow(unused)]
+enum RefOperation {
+    Create,
+    Update { force: bool },
+}
+
+struct RefOp {
+    git_ref: GitRef,
+    operation: RefOperation,
+    sha: String,
+    token: String,
+}
+
+impl From<RefOp> for Step<Use> {
+    fn from(op: RefOp) -> Self {
+        let (api_method, ref_path, force_line) = match &op.operation {
+            RefOperation::Create => ("createRef", op.git_ref.create_ref_path(), String::new()),
+            RefOperation::Update { force } => (
+                "updateRef",
+                op.git_ref.update_ref_path(),
+                format!(",\n    force: {force}"),
+            ),
+        };
+        let step_name = match &op.operation {
+            RefOperation::Create => format!("steps::create_{}", op.git_ref.kind()),
+            RefOperation::Update { .. } => format!("steps::update_{}", op.git_ref.kind()),
+        };
+        let sha = &op.sha;
+        let script = indoc::formatdoc! {r#"
+            github.rest.git.{api_method}({{
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: '{ref_path}',
+                sha: '{sha}'{force_line}
+            }})
+        "#};
+        Step::new(step_name)
+            .uses(
+                "actions",
+                "github-script",
+                "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+            )
+            .with(
+                Input::default()
+                    .add("script", script)
+                    .add("github-token", op.token),
+            )
+    }
+}
+
+pub(crate) fn create_ref(
+    git_ref: GitRef,
+    sha: impl ToString,
+    token: &StepOutput,
+) -> impl Into<Step<Use>> {
+    RefOp {
+        git_ref,
+        operation: RefOperation::Create,
+        sha: sha.to_string(),
+        token: token.to_string(),
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn update_ref(
+    git_ref: GitRef,
+    sha: impl ToString,
+    token: &StepOutput,
+    force: bool,
+) -> impl Into<Step<Use>> {
+    RefOp {
+        git_ref,
+        operation: RefOperation::Update { force },
+        sha: sha.to_string(),
+        token: token.to_string(),
+    }
+}
+
+const ZED_ZIPPY_COMMITTER: &str =
+    "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>";
+
+pub(crate) struct CreatePrStep {
+    title: String,
+    body: String,
+    branch: String,
+    base: String,
+    token: String,
+    assignees: Option<String>,
+    labels: Option<String>,
+    path: Option<String>,
+}
+
+impl CreatePrStep {
+    pub fn new(title: impl ToString, branch: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            title: title.to_string(),
+            body: "Release Notes:\n\n- N/A".to_string(),
+            branch: branch.to_string(),
+            base: "main".to_string(),
+            token: token.to_string(),
+            assignees: Some(Context::github().actor().to_string()),
+            labels: None,
+            path: None,
+        }
+    }
+
+    pub fn with_body(self, body: impl ToString) -> Self {
+        Self {
+            body: body.to_string(),
+            ..self
+        }
+    }
+
+    pub fn with_assignee(self, assignee: impl ToString) -> Self {
+        Self {
+            assignees: Some(assignee.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_labels(self, labels: impl ToString) -> Self {
+        Self {
+            labels: Some(labels.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_path(self, path: impl ToString) -> Self {
+        Self {
+            path: Some(path.to_string()),
+            ..self
+        }
+    }
+}
+
+impl From<CreatePrStep> for Step<Use> {
+    fn from(step: CreatePrStep) -> Self {
+        Step::new("steps::create_pull_request")
+            .uses(
+                "peter-evans",
+                "create-pull-request",
+                "98357b18bf14b5342f975ff684046ec3b2a07725", // v7
+            )
+            .add_with(("title", step.title.clone()))
+            .add_with(("body", step.body))
+            .add_with(("commit-message", step.title))
+            .add_with(("branch", step.branch))
+            .add_with(("committer", ZED_ZIPPY_COMMITTER))
+            .add_with(("author", ZED_ZIPPY_COMMITTER))
+            .add_with(("base", step.base))
+            .add_with(("delete-branch", true))
+            .add_with(("token", step.token))
+            .add_with(("sign-commits", true))
+            .when_some(step.assignees, |s, v| s.add_with(("assignees", v)))
+            .when_some(step.labels, |s, v| s.add_with(("labels", v)))
+            .when_some(step.path, |s, v| s.add_with(("path", v)))
     }
 }

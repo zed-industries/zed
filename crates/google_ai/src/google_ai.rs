@@ -3,8 +3,9 @@ use std::mem;
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+pub use language_model_core::ModelMode as GoogleModelMode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-pub use settings::ModelMode as GoogleModelMode;
+pub mod completion;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -63,38 +64,6 @@ pub async fn stream_generate_content(
     }
 }
 
-pub async fn count_tokens(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: CountTokensRequest,
-) -> Result<CountTokensResponse> {
-    validate_generate_content_request(&request.generate_content_request)?;
-
-    let uri = format!(
-        "{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",
-        model_id = &request.generate_content_request.model.model_id,
-    );
-
-    let request = serde_json::to_string(&request)?;
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(&uri)
-        .header("Content-Type", "application/json");
-    let http_request = request_builder.body(AsyncBody::from(request))?;
-
-    let mut response = client.send(http_request).await?;
-    let mut text = String::new();
-    response.body_mut().read_to_string(&mut text).await?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "error during countTokens, status code: {:?}, body: {}",
-        response.status(),
-        text
-    );
-    Ok(serde_json::from_str::<CountTokensResponse>(&text)?)
-}
-
 pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Result<()> {
     if request.model.is_empty() {
         bail!("Model must be specified");
@@ -122,8 +91,6 @@ pub enum Task {
     GenerateContent,
     #[serde(rename = "streamGenerateContent")]
     StreamGenerateContent,
-    #[serde(rename = "countTokens")]
-    CountTokens,
     #[serde(rename = "embedContent")]
     EmbedContent,
     #[serde(rename = "batchEmbedContents")]
@@ -382,18 +349,6 @@ pub struct SafetyRating {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CountTokensRequest {
-    pub generate_content_request: GenerateContentRequest,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CountTokensResponse {
-    pub total_tokens: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
     pub args: serde_json::Value,
@@ -517,7 +472,7 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         #[serde(default)]

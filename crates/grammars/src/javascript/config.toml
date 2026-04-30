@@ -24,7 +24,6 @@ tab_size = 2
 scope_opt_in_language_servers = ["tailwindcss-language-server", "emmet-language-server"]
 prettier_parser_name = "babel"
 debuggers = ["JavaScript"]
-import_path_strip_regex = "(?:/index)?\\.[jt]s$"
 
 [jsx_tag_auto_close]
 open_tag_node_name = "jsx_opening_element"
@@ -37,7 +36,7 @@ linked_edit_characters = ["."]
 
 [overrides.element]
 line_comments = { remove = true }
-block_comment = { start = "{/* ", prefix = "", end = "*/}", tab_size = 0 }
+block_comment = { start = "{/* ", prefix = "", end = "*/}", tab_size = 1 }
 opt_into_language_servers = ["emmet-language-server"]
 
 [overrides.string]

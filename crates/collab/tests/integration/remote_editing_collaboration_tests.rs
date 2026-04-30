@@ -469,13 +469,15 @@ async fn test_ssh_collaboration_git_worktrees(
         .unwrap();
     assert_eq!(worktrees.len(), 1);
 
-    let worktree_directory = PathBuf::from("/project");
+    let worktree_directory = PathBuf::from("/worktrees");
     cx_b.update(|cx| {
         repo_b.update(cx, |repo, _| {
             repo.create_worktree(
-                "feature-branch".to_string(),
+                git::repository::CreateWorktreeTarget::NewBranch {
+                    branch_name: "feature-branch".to_string(),
+                    base_sha: Some("abc123".to_string()),
+                },
                 worktree_directory.join("feature-branch"),
-                Some("abc123".to_string()),
             )
         })
     })
@@ -536,8 +538,8 @@ async fn test_ssh_collaboration_git_worktrees(
     cx_a.update(|cx| {
         repo_a.update(cx, |repository, _| {
             repository.rename_worktree(
-                PathBuf::from("/project/feature-branch"),
-                PathBuf::from("/project/renamed-branch"),
+                PathBuf::from("/worktrees/feature-branch"),
+                PathBuf::from("/worktrees/renamed-branch"),
             )
         })
     })
@@ -559,7 +561,7 @@ async fn test_ssh_collaboration_git_worktrees(
     );
     assert_eq!(
         host_worktrees[1].path,
-        PathBuf::from("/project/renamed-branch")
+        PathBuf::from("/worktrees/renamed-branch")
     );
 
     let server_worktrees = {
@@ -588,13 +590,13 @@ async fn test_ssh_collaboration_git_worktrees(
     );
     assert_eq!(
         server_worktrees[1].path,
-        PathBuf::from("/project/renamed-branch")
+        PathBuf::from("/worktrees/renamed-branch")
     );
 
     // Host (client A) removes the renamed worktree via SSH
     cx_a.update(|cx| {
         repo_a.update(cx, |repository, _| {
-            repository.remove_worktree(PathBuf::from("/project/renamed-branch"), false)
+            repository.remove_worktree(PathBuf::from("/worktrees/renamed-branch"), false)
         })
     })
     .await

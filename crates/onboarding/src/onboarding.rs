@@ -1,5 +1,6 @@
 use crate::multibuffer_hint::MultibufferHint;
 use client::{Client, UserStore, zed_urls};
+use cloud_api_types::Plan;
 use db::kvp::KeyValueStore;
 use fs::Fs;
 use gpui::{
@@ -7,7 +8,8 @@ use gpui::{
     FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, ScrollHandle, SharedString,
     Subscription, Task, WeakEntity, Window, actions,
 };
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
+use project::agent_server_store::AllAgentServersSettings;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
@@ -16,6 +18,7 @@ use ui::{
     Divider, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
     WithScrollbar as _, prelude::*, rems_from_px,
 };
+
 pub use workspace::welcome::ShowWelcome;
 use workspace::welcome::WelcomePage;
 use workspace::{
@@ -215,6 +218,41 @@ impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
         let font_family_cache = theme::FontFamilyCache::global(cx);
 
+        let installed_agents = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .clone();
+        let client = Client::global(cx);
+        let status = *client.status().borrow();
+        let plan = workspace.user_store().read(cx).plan();
+        let zed_agent_state = if status.is_signed_out()
+            || matches!(
+                status,
+                client::Status::AuthenticationError | client::Status::ConnectionError
+            ) {
+            "signed_out"
+        } else if status.is_signing_in() {
+            "signing_in"
+        } else {
+            match plan {
+                Some(Plan::ZedPro) => "pro",
+                Some(Plan::ZedProTrial) => "trial",
+                Some(Plan::ZedBusiness) => "business",
+                Some(Plan::ZedStudent) => "student",
+                Some(Plan::ZedFree) | None => "free",
+            }
+        };
+        let agents_installed = basics_page::FEATURED_AGENT_IDS
+            .iter()
+            .filter(|id| installed_agents.contains_key(**id))
+            .copied()
+            .collect::<Vec<_>>();
+        telemetry::event!(
+            "Welcome Agent Setup Viewed",
+            zed_agent = zed_agent_state,
+            agents_installed = agents_installed,
+        );
+
         cx.new(|cx| {
             cx.spawn(async move |this, cx| {
                 font_family_cache.prefetch(cx).await;
@@ -259,7 +297,7 @@ impl Onboarding {
     }
 
     fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        crate::basics_page::render_basics_page(cx).into_any_element()
+        crate::basics_page::render_basics_page(&self.user_store, cx).into_any_element()
     }
 }
 
@@ -287,21 +325,20 @@ impl Render for Onboarding {
                 window.focus_prev(cx);
                 cx.notify();
             }))
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
             .child(
                 div()
-                    .max_w(Rems(48.0))
+                    .id("page-content")
                     .size_full()
-                    .mx_auto()
+                    .overflow_y_scroll()
                     .child(
                         v_flex()
-                            .id("page-content")
-                            .m_auto()
-                            .p_12()
-                            .size_full()
-                            .max_w_full()
                             .min_w_0()
+                            .max_w(rems_from_px(780.))
+                            .w_full()
+                            .mx_auto()
+                            .p_12()
                             .gap_6()
-                            .overflow_y_scroll()
                             .child(
                                 h_flex()
                                     .w_full()
@@ -329,25 +366,21 @@ impl Render for Onboarding {
                                         Button::new("finish_setup", "Finish Setup")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Medium)
-                                            .width(Rems(12.0))
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &Finish,
-                                                    &self.focus_handle,
-                                                    cx,
-                                                )
-                                                .size(rems_from_px(12.)),
-                                            )
+                                            .width(rems_from_px(200.))
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &Finish,
+                                                &self.focus_handle,
+                                                cx,
+                                            ))
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
                                             })
                                     }),
                             )
                             .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
-                            .child(self.render_page(cx))
-                            .track_scroll(&self.scroll_handle),
+                            .child(self.render_page(cx)),
                     )
-                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                    .track_scroll(&self.scroll_handle),
             )
     }
 }
@@ -497,8 +530,12 @@ pub async fn handle_import_vscode_settings(
                     format!("Your {} settings were successfully imported.", source),
                     cx,
                     |this, _| {
-                        this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                            .dismiss_button(true)
+                        this.icon(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        )
+                        .dismiss_button(true)
                     },
                 );
                 SettingsImportState::update(cx, |state, _| match source {
@@ -516,11 +553,15 @@ pub async fn handle_import_vscode_settings(
                     "Failed to import settings. See log for details",
                     cx,
                     |this, _| {
-                        this.icon(ToastIcon::new(IconName::Close).color(Color::Error))
-                            .action("Open Log", |window, cx| {
-                                window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
-                            })
-                            .dismiss_button(true)
+                        this.icon(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .action("Open Log", |window, cx| {
+                            window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
+                        })
+                        .dismiss_button(true)
                     },
                 );
                 workspace.toggle_status_toast(error_toast, cx);

@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
@@ -54,6 +55,7 @@ pub struct OllamaLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
@@ -65,10 +67,15 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OllamaLanguageModelProvider::api_url(cx);
-        let task = self
-            .api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         self.fetched_models.clear();
         cx.spawn(async move |this, cx| {
@@ -80,10 +87,14 @@ impl State {
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OllamaLanguageModelProvider::api_url(cx);
-        let task = self
-            .api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         // Always try to fetch models - if no API key is needed (local Ollama), it will work
         // If API key is needed and provided, it will work
@@ -157,7 +168,11 @@ impl State {
 }
 
 impl OllamaLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let this = Self {
             http_client: http_client.clone(),
             state: cx.new(|cx| {
@@ -170,6 +185,14 @@ impl OllamaLanguageModelProvider {
                             let url_changed = last_settings.api_url != current_settings.api_url;
                             last_settings = current_settings.clone();
                             if url_changed {
+                                let credentials_provider = this.credentials_provider.clone();
+                                let api_url = Self::api_url(cx);
+                                this.api_key_state.handle_url_change(
+                                    api_url,
+                                    |this| &mut this.api_key_state,
+                                    credentials_provider,
+                                    cx,
+                                );
                                 this.fetched_models.clear();
                                 this.authenticate(cx).detach();
                             }
@@ -184,6 +207,7 @@ impl OllamaLanguageModelProvider {
                     fetched_models: Default::default(),
                     fetch_model_task: None,
                     api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                    credentials_provider,
                 }
             }),
         };
@@ -339,7 +363,7 @@ impl OllamaLanguageModel {
                             MessageContent::ToolResult(tool_result) => {
                                 messages.push(ChatMessage::Tool {
                                     tool_name: tool_result.tool_name.to_string(),
-                                    content: tool_result.content.to_str().unwrap_or("").to_string(),
+                                    content: tool_result.text_contents(),
                                 })
                             }
                             _ => unreachable!("Only tool result should be extracted"),
@@ -467,23 +491,6 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // There is no endpoint for this _yet_ in Ollama
-        // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().chars().count())
-            .sum::<usize>()
-            / 4;
-
-        async move { Ok(token_count as u64) }.boxed()
     }
 
     fn stream_completion(

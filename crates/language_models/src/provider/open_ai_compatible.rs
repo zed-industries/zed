@@ -1,5 +1,6 @@
 use anyhow::Result;
 use convert_case::{Case, Casing};
+use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
@@ -44,6 +45,7 @@ pub struct State {
     id: Arc<str>,
     api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl State {
@@ -52,20 +54,36 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = SharedString::new(self.settings.api_url.as_str());
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = SharedString::new(self.settings.api_url.clone());
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 }
 
 impl OpenAiCompatibleLanguageModelProvider {
-    pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        id: Arc<str>,
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         fn resolve_settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiCompatibleSettings> {
             crate::AllLanguageModelSettings::get_global(cx)
                 .openai_compatible
@@ -79,10 +97,12 @@ impl OpenAiCompatibleLanguageModelProvider {
                     return;
                 };
                 if &this.settings != &settings {
+                    let credentials_provider = this.credentials_provider.clone();
                     let api_url = SharedString::new(settings.api_url.as_str());
                     this.api_key_state.handle_url_change(
                         api_url,
                         |this| &mut this.api_key_state,
+                        credentials_provider,
                         cx,
                     );
                     this.settings = settings;
@@ -98,6 +118,7 @@ impl OpenAiCompatibleLanguageModelProvider {
                     EnvVar::new(api_key_env_var_name),
                 ),
                 settings,
+                credentials_provider,
             }
         });
 
@@ -339,27 +360,6 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         self.model.max_output_tokens
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let max_token_count = self.max_token_count();
-        cx.background_spawn(async move {
-            let messages = super::open_ai::collect_tiktoken_messages(request);
-            let model = if max_token_count >= 100_000 {
-                // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
-                "gpt-4o"
-            } else {
-                // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
-                // supported with this tiktoken method
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -381,7 +381,8 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                None,
+                self.model.reasoning_effort,
+                self.model.capabilities.interleaved_reasoning,
             );
             let completions = self.stream_completion(request, cx);
             async move {
@@ -396,7 +397,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                None,
+                self.model.reasoning_effort,
             );
             let completions = self.stream_response(request, cx);
             async move {

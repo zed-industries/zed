@@ -10,6 +10,7 @@ use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::{
     CharBag,
+    char_bag::simple_lowercase,
     matcher::{MatchCandidate, Matcher},
 };
 
@@ -94,7 +95,7 @@ pub fn match_fixed_path_set(
     max_results: usize,
     path_style: PathStyle,
 ) -> Vec<PathMatch> {
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let lowercase_query = query.chars().map(simple_lowercase).collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
@@ -110,7 +111,7 @@ pub fn match_fixed_path_set(
             path_prefix_chars.extend(path_style.primary_separator().chars());
             let lowercase_pfx = path_prefix_chars
                 .iter()
-                .map(|c| c.to_ascii_lowercase())
+                .map(|c| simple_lowercase(*c))
                 .collect::<Vec<_>>();
 
             (worktree_root_name, path_prefix_chars, lowercase_pfx)
@@ -171,7 +172,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
     let lowercase_query = query
         .iter()
-        .map(|query| query.to_ascii_lowercase())
+        .map(|query| simple_lowercase(*query))
         .collect::<Vec<_>>();
 
     let query = &query;
@@ -217,7 +218,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             }
                             let lowercase_prefix = prefix
                                 .iter()
-                                .map(|c| c.to_ascii_lowercase())
+                                .map(|c| simple_lowercase(*c))
                                 .collect::<Vec<_>>();
                             matcher.match_candidates(
                                 &prefix,
