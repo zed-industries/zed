@@ -280,10 +280,10 @@ impl GitHostingProvider for Github {
         author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
-        if let Some(email) = author_email {
-            if let Some(avatar_url) = build_cdn_avatar_url_for_author_email(&email)? {
-                return Ok(Some(avatar_url));
-            }
+        if let Some(email) = author_email
+            && let Some(avatar_url) = build_cdn_avatar_url_for_author_email(&email)?
+        {
+            return Ok(Some(avatar_url));
         }
 
         let commit = commit.to_string();
