@@ -1,9 +1,8 @@
 use std::ops::Range;
 
-use super::thread_history::ThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
-use agent_client_protocol::ToolCallId;
+use agent_client_protocol::schema as acp;
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
@@ -26,7 +25,6 @@ pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     session_capabilities: SharedSessionCapabilities,
@@ -38,7 +36,6 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
@@ -47,7 +44,6 @@ impl EntryViewState {
             workspace,
             project,
             thread_store,
-            history,
             prompt_store,
             entries: Vec::new(),
             session_capabilities,
@@ -90,7 +86,6 @@ impl EntryViewState {
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),
-                            self.history.clone(),
                             self.prompt_store.clone(),
                             self.session_capabilities.clone(),
                             self.agent_id.clone(),
@@ -130,6 +125,7 @@ impl EntryViewState {
                         index,
                         Entry::ToolCall(ToolCallEntry {
                             content: HashMap::default(),
+                            focus_handle: cx.focus_handle(),
                         }),
                     );
                     let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
@@ -262,7 +258,7 @@ impl EntryViewState {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
                 | Entry::CompletedPlan => {}
-                Entry::ToolCall(ToolCallEntry { content }) => {
+                Entry::ToolCall(ToolCallEntry { content, .. }) => {
                     for view in content.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
                             diff_editor.update(cx, |diff_editor, cx| {
@@ -287,9 +283,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(ToolCallId),
-    NewTerminal(ToolCallId),
-    TerminalMovedToBackground(ToolCallId),
+    NewDiff(acp::ToolCallId),
+    NewTerminal(acp::ToolCallId),
+    TerminalMovedToBackground(acp::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -321,6 +317,7 @@ impl AssistantMessageEntry {
 #[derive(Debug)]
 pub struct ToolCallEntry {
     content: HashMap<EntityId, AnyEntity>,
+    focus_handle: FocusHandle,
 }
 
 #[derive(Debug)]
@@ -336,7 +333,8 @@ impl Entry {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
-            Self::ToolCall(_) | Self::CompletedPlan => None,
+            Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
+            Self::CompletedPlan => None,
         }
     }
 
@@ -376,7 +374,7 @@ impl Entry {
 
     fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
         match self {
-            Self::ToolCall(ToolCallEntry { content }) => Some(content),
+            Self::ToolCall(ToolCallEntry { content, .. }) => Some(content),
             _ => None,
         }
     }
@@ -384,8 +382,25 @@ impl Entry {
     #[cfg(test)]
     pub fn has_content(&self) -> bool {
         match self {
-            Self::ToolCall(ToolCallEntry { content }) => !content.is_empty(),
+            Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
             Self::UserMessage(_) | Self::AssistantMessage(_) | Self::CompletedPlan => false,
+        }
+    }
+}
+
+impl Focusable for ToolCallEntry {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Focusable for Entry {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match self {
+            Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
+            Self::AssistantMessage(message) => message.focus_handle.clone(),
+            Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
+            Self::CompletedPlan => cx.focus_handle(),
         }
     }
 }
@@ -438,6 +453,7 @@ fn create_editor_diff(
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
         editor.set_delegate_open_excerpts(true);
+        editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);
@@ -466,7 +482,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol as acp;
+    use agent_client_protocol::schema as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
@@ -523,14 +539,12 @@ mod tests {
         });
 
         let thread_store = None;
-        let history: Option<gpui::WeakEntity<crate::ThreadHistory>> = None;
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.downgrade(),
                 thread_store,
-                history,
                 None,
                 Arc::new(RwLock::new(SessionCapabilities::default())),
                 "Test Agent".into(),

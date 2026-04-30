@@ -1,11 +1,11 @@
 use action_log::DiffStats;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_ui::thread_metadata_store::ThreadMetadata;
 use gpui::{
     Action as _, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
-    ModifiersChangedEvent, Render, SharedString, prelude::*,
+    ModifiersChangedEvent, Render, ScrollHandle, SharedString, prelude::*,
 };
-use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, prelude::*};
+use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WithScrollbar, prelude::*};
 use workspace::{ModalView, Workspace};
 use zed_actions::agents_sidebar::ToggleThreadSwitcher;
 
@@ -42,6 +42,7 @@ pub(crate) struct ThreadSwitcher {
     entries: Vec<ThreadSwitcherEntry>,
     selected_index: usize,
     init_modifiers: Option<Modifiers>,
+    scroll_handle: ScrollHandle,
 }
 
 impl ThreadSwitcher {
@@ -74,11 +75,15 @@ impl ThreadSwitcher {
         })
         .detach();
 
+        let scroll_handle = ScrollHandle::new();
+        scroll_handle.scroll_to_item(selected_index);
+
         Self {
             focus_handle,
             entries,
             selected_index,
             init_modifiers,
+            scroll_handle,
         }
     }
 
@@ -117,6 +122,7 @@ impl ThreadSwitcher {
     }
 
     fn emit_preview(&mut self, cx: &mut Context<Self>) {
+        self.scroll_handle.scroll_to_item(self.selected_index);
         if let Some(entry) = self.entries.get(self.selected_index) {
             cx.emit(ThreadSwitcherEvent::Preview {
                 metadata: entry.metadata.clone(),
@@ -144,6 +150,16 @@ impl ThreadSwitcher {
             self.selected_index = index;
             self.confirm_selected(cx);
         }
+    }
+
+    fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.entries.len() || index == self.selected_index {
+            return;
+        }
+        self.selected_index = index;
+        self.scroll_handle.scroll_to_item(index);
+        self.emit_preview(cx);
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut gpui::Window, cx: &mut Context<Self>) {
@@ -196,31 +212,30 @@ impl Focusable for ThreadSwitcher {
 }
 
 impl Render for ThreadSwitcher {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_index = self.selected_index;
 
         v_flex()
             .key_context("ThreadSwitcher")
             .track_focus(&self.focus_handle)
-            .w(rems_from_px(440.))
             .p_1p5()
-            .gap_0p5()
+            .w(rems_from_px(440.))
             .elevation_3(cx)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle))
-            .children(self.entries.iter().enumerate().map(|(ix, entry)| {
-                let id = SharedString::from(format!("thread-switcher-{}", entry.session_id));
+            .child(
+                v_flex()
+                    .id("thread-switcher-list")
+                    .gap_0p5()
+                    .max_h_128()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .children(self.entries.iter().enumerate().map(|(ix, entry)| {
+                        let id =
+                            SharedString::from(format!("thread-switcher-{}", entry.session_id));
 
-                div()
-                    .id(id.clone())
-                    .on_click(
-                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            this.select_and_confirm(ix, cx);
-                        }),
-                    )
-                    .child(
                         ThreadItem::new(id, entry.title.clone())
                             .rounded(true)
                             .icon(entry.icon)
@@ -242,9 +257,21 @@ impl Render for ThreadSwitcher {
                                 this.removed(entry.diff_stats.lines_removed as usize)
                             })
                             .selected(ix == selected_index)
-                            .base_bg(cx.theme().colors().elevated_surface_background),
-                    )
-                    .into_any_element()
-            }))
+                            .base_bg(cx.theme().colors().elevated_surface_background)
+                            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                                if *hovered {
+                                    this.select_index(ix, cx);
+                                }
+                            }))
+                            // TODO: This is not properly propagating to the tread item.
+                            .on_click(cx.listener(
+                                move |this, _event: &gpui::ClickEvent, _window, cx| {
+                                    this.select_and_confirm(ix, cx);
+                                },
+                            ))
+                            .into_any_element()
+                    })),
+            )
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
 }

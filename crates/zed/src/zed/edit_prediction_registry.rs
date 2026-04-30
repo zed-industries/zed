@@ -147,7 +147,6 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
-        EditPredictionProvider::Experimental(_) => None,
     }
 }
 
@@ -258,9 +257,7 @@ fn assign_edit_prediction_provider(
                 ep_store.update(cx, |this, cx| this.start_copilot_for_project(&project, cx));
 
             if let Some(copilot) = copilot {
-                if let Some(buffer) = singleton_buffer
-                    && buffer.read(cx).file().is_some()
-                {
+                if let Some(buffer) = singleton_buffer {
                     copilot.update(cx, |copilot, cx| {
                         copilot.register_buffer(&buffer, cx);
                     });

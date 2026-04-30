@@ -69,6 +69,8 @@ impl MacKeyboardLayout {
             let name: *const std::os::raw::c_char = msg_send![name, UTF8String];
             let name = CStr::from_ptr(name).to_str().unwrap().to_string();
 
+            let _: () = msg_send![current_keyboard, release];
+
             Self { id, name }
         }
     }

@@ -3,6 +3,7 @@ use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
+use async_channel::Sender;
 use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
@@ -15,7 +16,6 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
-use smol::channel::Sender;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
@@ -99,7 +99,7 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
 
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
-pub struct GraphCommitData {
+pub struct CommitData {
     pub sha: Oid,
     /// Most commits have a single parent, so we use a SmallVec to avoid allocations.
     pub parents: SmallVec<[Oid; 1]>,
@@ -107,6 +107,7 @@ pub struct GraphCommitData {
     pub author_email: SharedString,
     pub commit_timestamp: i64,
     pub subject: SharedString,
+    pub message: SharedString,
 }
 
 #[derive(Debug)]
@@ -118,16 +119,16 @@ pub struct InitialGraphCommitData {
 
 struct CommitDataRequest {
     sha: Oid,
-    response_tx: oneshot::Sender<Result<GraphCommitData>>,
+    response_tx: oneshot::Sender<Result<CommitData>>,
 }
 
 pub struct CommitDataReader {
-    request_tx: smol::channel::Sender<CommitDataRequest>,
+    request_tx: async_channel::Sender<CommitDataRequest>,
     _task: Task<()>,
 }
 
 impl CommitDataReader {
-    pub async fn read(&self, sha: Oid) -> Result<GraphCommitData> {
+    pub async fn read(&self, sha: Oid) -> Result<CommitData> {
         let (response_tx, response_rx) = oneshot::channel();
         self.request_tx
             .send(CommitDataRequest { sha, response_tx })
@@ -137,15 +138,37 @@ impl CommitDataReader {
             .await
             .map_err(|_| anyhow!("commit data reader task dropped response"))?
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(
+        executor: BackgroundExecutor,
+        resolve: impl 'static + Send + Sync + Fn(Oid) -> Result<CommitData>,
+    ) -> Self {
+        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+        let resolve = Arc::new(resolve);
+        let delay_executor = executor.clone();
+        let task = executor.spawn(async move {
+            while let Ok(CommitDataRequest { sha, response_tx }) = request_rx.recv().await {
+                delay_executor.simulate_random_delay().await;
+                response_tx.send(resolve(sha)).ok();
+            }
+        });
+
+        Self {
+            request_tx,
+            _task: task,
+        }
+    }
 }
 
-fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
+fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<CommitData> {
     let mut parents = SmallVec::new();
     let mut author_name = SharedString::default();
     let mut author_email = SharedString::default();
     let mut commit_timestamp = 0i64;
     let mut in_headers = true;
     let mut subject = None;
+    let mut message_lines = Vec::new();
 
     for line in content.lines() {
         if in_headers {
@@ -172,18 +195,22 @@ fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
                     }
                 }
             }
-        } else if subject.is_none() {
-            subject = Some(SharedString::from(line.to_string()));
+        } else {
+            if subject.is_none() {
+                subject = Some(SharedString::from(line.to_string()));
+            }
+            message_lines.push(line);
         }
     }
 
-    Some(GraphCommitData {
+    Some(CommitData {
         sha,
         parents,
         author_name,
         author_email,
         commit_timestamp,
         subject: subject.unwrap_or_default(),
+        message: SharedString::from(message_lines.join("\n")),
     })
 }
 
@@ -295,7 +322,7 @@ impl Worktree {
 
     pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
         if self.is_main {
-            return "main".to_string();
+            return "main worktree".to_string();
         }
 
         let dir_name = self
@@ -322,9 +349,11 @@ impl Worktree {
     }
 }
 
-pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
+pub fn parse_worktrees_from_str<T: AsRef<str>>(
+    raw_worktrees: T,
+    main_worktree_path: Option<&Path>,
+) -> Vec<Worktree> {
     let mut worktrees = Vec::new();
-    let mut is_first = true;
     let normalized = raw_worktrees.as_ref().replace("\r\n", "\n");
     let entries = normalized.split("\n\n");
     for entry in entries {
@@ -352,14 +381,16 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
         }
 
         if let (Some(path), Some(sha)) = (path, sha) {
+            let path = PathBuf::from(path);
+            let is_main =
+                main_worktree_path.is_some_and(|main_worktree_path| path == main_worktree_path);
             worktrees.push(Worktree {
-                path: PathBuf::from(path),
+                path,
                 ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
-                is_main: is_first,
+                is_main,
                 is_bare,
             });
-            is_first = false;
         }
     }
 
@@ -463,22 +494,6 @@ pub struct CommitDetails {
     pub commit_timestamp: i64,
     pub author_email: SharedString,
     pub author_name: SharedString,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct FileHistoryEntry {
-    pub sha: SharedString,
-    pub subject: SharedString,
-    pub message: SharedString,
-    pub commit_timestamp: i64,
-    pub author_name: SharedString,
-    pub author_email: SharedString,
-}
-
-#[derive(Debug, Clone)]
-pub struct FileHistory {
-    pub entries: Vec<FileHistoryEntry>,
-    pub path: RepoPath,
 }
 
 #[derive(Debug)]
@@ -706,6 +721,7 @@ pub enum LogSource {
     All,
     Branch(SharedString),
     Sha(Oid),
+    Path(RepoPath),
 }
 
 impl LogSource {
@@ -716,6 +732,7 @@ impl LogSource {
             LogSource::Sha(oid) => {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
+            LogSource::Path(_) => Ok("--follow"),
         }
     }
 }
@@ -823,13 +840,6 @@ pub trait GitRepository: Send + Sync {
         content: Rope,
         line_ending: LineEnding,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
-    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>>;
-    fn file_history_paginated(
-        &self,
-        path: RepoPath,
-        skip: usize,
-        limit: Option<usize>,
-    ) -> BoxFuture<'_, Result<FileHistory>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -982,6 +992,8 @@ pub trait GitRepository: Send + Sync {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>>;
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>>;
 
     fn default_branch(
         &self,
@@ -1178,6 +1190,11 @@ pub struct GitRepositoryCheckpoint {
 pub struct GitCommitter {
     pub name: Option<String>,
     pub email: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GitCommitTemplate {
+    pub template: String,
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
@@ -1535,6 +1552,58 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
+        let working_directory_and_git_binary = self.working_directory().map(|working_directory| {
+            (
+                working_directory.clone(),
+                GitBinary::new(
+                    self.any_git_binary_path.clone(),
+                    working_directory,
+                    self.path(),
+                    self.executor.clone(),
+                    self.is_trusted(),
+                ),
+            )
+        });
+
+        self.executor
+            .spawn(async move {
+                let (working_directory, git_binary) = working_directory_and_git_binary?;
+
+                let output = git_binary
+                    .build_command(&["config", "--get", "commit.template"])
+                    .output()
+                    .await
+                    .context("failed to run git config --get commit.template")?;
+
+                let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !output.status.success() || raw_path.is_empty() {
+                    return Ok(None);
+                }
+
+                let path = PathBuf::from(&raw_path);
+                let path = if let Some(path) = raw_path.strip_prefix("~/") {
+                    paths::home_dir().join(path)
+                } else if path.is_relative() {
+                    working_directory.join(path)
+                } else {
+                    path
+                };
+
+                let template = match std::fs::read_to_string(&path) {
+                    Ok(s) if !s.trim().is_empty() => Some(s),
+                    Err(err) => {
+                        log::warn!("failed to read commit template {}: {}", path.display(), err);
+                        None
+                    }
+                    _ => None,
+                };
+
+                Ok(template.map(|template| GitCommitTemplate { template }))
+            })
+            .boxed()
+    }
+
     fn set_index_text(
         &self,
         path: RepoPath,
@@ -1800,6 +1869,11 @@ impl GitRepository for RealGitRepository {
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let git_binary = self.git_binary();
+        let main_worktree_path = {
+            let repo = self.repository.lock();
+            let common_dir = repo.commondir().to_path_buf();
+            original_repo_path_from_common_dir(&common_dir)
+        };
         self.executor
             .spawn(async move {
                 let git = git_binary?;
@@ -1809,7 +1883,10 @@ impl GitRepository for RealGitRepository {
                     .await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    Ok(parse_worktrees_from_str(&stdout))
+                    Ok(parse_worktrees_from_str(
+                        &stdout,
+                        main_worktree_path.as_deref(),
+                    ))
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
@@ -2030,92 +2107,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 crate::blame::Blame::for_path(&git?, &path, &content, line_ending).await
-            })
-            .boxed()
-    }
-
-    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<FileHistory>> {
-        self.file_history_paginated(path, 0, None)
-    }
-
-    fn file_history_paginated(
-        &self,
-        path: RepoPath,
-        skip: usize,
-        limit: Option<usize>,
-    ) -> BoxFuture<'_, Result<FileHistory>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let git = git_binary?;
-                // Use a unique delimiter with a hardcoded UUID to separate commits
-                // This essentially eliminates any chance of encountering the delimiter in actual commit data
-                let commit_delimiter =
-                    concat!("<<COMMIT_END-", "3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>",);
-
-                let format_string = format!(
-                    "--pretty=format:%H%x00%s%x00%B%x00%at%x00%an%x00%ae{}",
-                    commit_delimiter
-                );
-
-                let mut args = vec!["log", "--follow", &format_string];
-
-                let skip_str;
-                let limit_str;
-                if skip > 0 {
-                    skip_str = skip.to_string();
-                    args.push("--skip");
-                    args.push(&skip_str);
-                }
-                if let Some(n) = limit {
-                    limit_str = n.to_string();
-                    args.push("-n");
-                    args.push(&limit_str);
-                }
-
-                args.push("--");
-
-                let output = git
-                    .build_command(&args)
-                    .arg(path.as_unix_str())
-                    .output()
-                    .await?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    bail!("git log failed: {stderr}");
-                }
-
-                let stdout = std::str::from_utf8(&output.stdout)?;
-                let mut entries = Vec::new();
-
-                for commit_block in stdout.split(commit_delimiter) {
-                    let commit_block = commit_block.trim();
-                    if commit_block.is_empty() {
-                        continue;
-                    }
-
-                    let fields: Vec<&str> = commit_block.split('\0').collect();
-                    if fields.len() >= 6 {
-                        let sha = fields[0].trim().to_string().into();
-                        let subject = fields[1].trim().to_string().into();
-                        let message = fields[2].trim().to_string().into();
-                        let commit_timestamp = fields[3].trim().parse().unwrap_or(0);
-                        let author_name = fields[4].trim().to_string().into();
-                        let author_email = fields[5].trim().to_string().into();
-
-                        entries.push(FileHistoryEntry {
-                            sha,
-                            subject,
-                            message,
-                            commit_timestamp,
-                            author_name,
-                            author_email,
-                        });
-                    }
-                }
-
-                Ok(FileHistory { entries, path })
             })
             .boxed()
     }
@@ -2990,12 +2981,18 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git_binary?;
 
-            let mut command = git.build_command(&[
+            let mut git_log_command = vec![
                 "log",
                 GRAPH_COMMIT_FORMAT,
                 log_order.as_arg(),
                 log_source.get_arg()?,
-            ]);
+            ];
+
+            if let LogSource::Path(path) = &log_source {
+                git_log_command.extend(["--", path.as_unix_str()]);
+            }
+
+            let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
 
@@ -3077,6 +3074,10 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
+            if let LogSource::Path(path) = &log_source {
+                args.extend(["--", path.as_unix_str()]);
+            }
+
             let mut command = git.build_command(&args);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
@@ -3113,7 +3114,7 @@ impl GitRepository for RealGitRepository {
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
         let git_binary = self.git_binary()?;
 
-        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+        let (request_tx, request_rx) = async_channel::bounded::<CommitDataRequest>(64);
 
         let task = self.executor.spawn(async move {
             if let Err(error) = run_commit_data_reader(git_binary, request_rx).await {
@@ -3139,7 +3140,7 @@ impl GitRepository for RealGitRepository {
 
 async fn run_commit_data_reader(
     git: GitBinary,
-    request_rx: smol::channel::Receiver<CommitDataRequest>,
+    request_rx: async_channel::Receiver<CommitDataRequest>,
 ) -> Result<()> {
     let mut process = git
         .build_command(&["cat-file", "--batch"])
@@ -3185,7 +3186,7 @@ async fn run_commit_data_reader(
 async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
     stdout: &mut R,
     sha: &Oid,
-) -> Result<GraphCommitData> {
+) -> Result<CommitData> {
     let mut header_bytes = Vec::new();
     stdout.read_until(b'\n', &mut header_bytes).await?;
     let header_line = String::from_utf8_lossy(&header_bytes);
@@ -4191,12 +4192,12 @@ mod tests {
     #[test]
     fn test_parse_worktrees_from_str() {
         // Empty input
-        let result = parse_worktrees_from_str("");
+        let result = parse_worktrees_from_str("", None);
         assert!(result.is_empty());
 
         // Single worktree (main)
         let input = "worktree /home/user/project\nHEAD abc123def\nbranch refs/heads/main\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123def");
@@ -4205,23 +4206,23 @@ mod tests {
         assert!(!result[0].is_bare);
 
         // Multiple worktrees
-        let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
-                      worktree /home/user/project-wt\nHEAD def456\nbranch refs/heads/feature\n\n";
-        let result = parse_worktrees_from_str(input);
+        let input = "worktree /home/user/project-wt\nHEAD def456\nbranch refs/heads/feature\n\n\
+                      worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n";
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
-        assert!(result[0].is_main);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project-wt"));
+        assert_eq!(result[0].ref_name, Some("refs/heads/feature".into()));
+        assert!(!result[0].is_main);
         assert!(!result[0].is_bare);
-        assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
-        assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
-        assert!(!result[1].is_main);
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
+        assert!(result[1].is_main);
         assert!(!result[1].is_bare);
 
         // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/detached\nHEAD def456\ndetached\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
@@ -4232,14 +4233,14 @@ mod tests {
         assert!(!result[1].is_main);
         assert!(!result[1].is_bare);
 
-        // Bare repo entry (included with ref_name: None)
+        // Bare repo entry with no main worktree.
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
                       worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
         assert_eq!(result[0].ref_name, None);
-        assert!(result[0].is_main);
+        assert!(!result[0].is_main);
         assert!(result[0].is_bare);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
@@ -4250,7 +4251,7 @@ mod tests {
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/locked-wt\nHEAD def456\nbranch refs/heads/locked-branch\nlocked\n\n\
                       worktree /home/user/prunable-wt\nHEAD 789aaa\nbranch refs/heads/prunable-branch\nprunable\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
@@ -4268,7 +4269,7 @@ mod tests {
         // Leading/trailing whitespace on lines should be tolerated
         let input =
             "  worktree /home/user/project  \n  HEAD abc123  \n  branch refs/heads/main  \n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
@@ -4277,7 +4278,7 @@ mod tests {
 
         // Windows-style line endings should be handled
         let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");

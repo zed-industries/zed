@@ -1,5 +1,5 @@
 use editor::{Editor, EditorEvent};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
@@ -29,7 +29,9 @@ pub struct TabularDataPreviewFeatureFlag;
 
 impl FeatureFlag for TabularDataPreviewFeatureFlag {
     const NAME: &'static str = "tabular-data-preview";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(TabularDataPreviewFeatureFlag);
 
 pub struct CsvPreviewView {
     pub(crate) engine: TableDataEngine,

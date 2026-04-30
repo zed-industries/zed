@@ -1,6 +1,7 @@
 use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
+use futures::{FutureExt, future::Shared};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};
 use util::path_list::PathList;
 
@@ -10,6 +11,7 @@ impl Global for GlobalThreadStore {}
 
 pub struct ThreadStore {
     threads: Vec<DbThreadMetadata>,
+    reload_task: Shared<Task<()>>,
 }
 
 impl ThreadStore {
@@ -27,11 +29,18 @@ impl ThreadStore {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let this = Self {
+        let reload_task = Self::spawn_reload(cx);
+        Self {
             threads: Vec::new(),
-        };
-        this.reload(cx);
-        this
+            reload_task,
+        }
+    }
+
+    /// Resolves when the most recently initiated reload has completed.
+    /// Callers that need to read `entries()` and can't tolerate the initial
+    /// empty state must await this before reading.
+    pub fn reload_task(&self) -> Shared<Task<()>> {
+        self.reload_task.clone()
     }
 
     pub fn thread_from_session_id(&self, session_id: &acp::SessionId) -> Option<&DbThreadMetadata> {
@@ -87,11 +96,19 @@ impl ThreadStore {
         })
     }
 
-    pub fn reload(&self, cx: &mut Context<Self>) {
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.reload_task = Self::spawn_reload(cx);
+    }
+
+    fn spawn_reload(cx: &mut Context<Self>) -> Shared<Task<()>> {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
-            let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let all_threads = database.list_threads().await?;
+            let Ok(database) = database_connection.await.map_err(|err| anyhow!(err)) else {
+                return;
+            };
+            let Ok(all_threads) = database.list_threads().await else {
+                return;
+            };
             this.update(cx, |this, cx| {
                 this.threads.clear();
                 for thread in all_threads {
@@ -102,8 +119,9 @@ impl ThreadStore {
                 }
                 cx.notify();
             })
+            .ok();
         })
-        .detach_and_log_err(cx);
+        .shared()
     }
 
     pub fn is_empty(&self) -> bool {

@@ -642,14 +642,6 @@ fn main() -> Result<()> {
         }
     }
 
-    // When only diff paths are provided (no regular paths), add the current
-    // working directory so the workspace opens with the right context.
-    if paths.is_empty() && urls.is_empty() && !diff_paths.is_empty() {
-        if let Ok(cwd) = env::current_dir() {
-            paths.push(cwd.to_string_lossy().into_owned());
-        }
-    }
-
     anyhow::ensure!(
         args.dev_server_token.is_none(),
         "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
@@ -1109,7 +1101,7 @@ mod windows {
     use crate::{Detect, InstalledApp};
     use std::io;
     use std::path::{Path, PathBuf};
-    use std::process::ExitStatus;
+    use std::process::{ExitStatus, Stdio};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -1152,6 +1144,9 @@ mod windows {
                 if let Some(dir) = user_data_dir {
                     cmd.arg("--user-data-dir").arg(dir);
                 }
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
                 cmd.spawn()?;
             } else {
                 unsafe {

@@ -6,7 +6,6 @@ use std::ops::Range;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::ThreadHistory;
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
 use crate::{
@@ -231,11 +230,6 @@ impl InlineAssistant {
 
         let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
-        let history = agent_panel
-            .connection_store()
-            .read(cx)
-            .entry(&crate::Agent::NativeAgent)
-            .and_then(|s| s.read(cx).history().cloned());
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -247,7 +241,6 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
-                            history.as_ref().map(|h| h.downgrade()),
                             action.prompt.clone(),
                             window,
                             cx,
@@ -262,7 +255,6 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
-                            history.as_ref().map(|h| h.downgrade()),
                             action.prompt.clone(),
                             window,
                             cx,
@@ -446,7 +438,6 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -493,7 +484,6 @@ impl InlineAssistant {
                     self.fs.clone(),
                     thread_store.clone(),
                     prompt_store.clone(),
-                    history.clone(),
                     project.clone(),
                     workspace.clone(),
                     window,
@@ -585,7 +575,6 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -604,7 +593,6 @@ impl InlineAssistant {
             project,
             thread_store,
             prompt_store,
-            history,
             initial_prompt,
             window,
             &codegen_ranges,
@@ -618,53 +606,6 @@ impl InlineAssistant {
         }
 
         assist_to_focus
-    }
-
-    pub fn suggest_assist(
-        &mut self,
-        editor: &Entity<Editor>,
-        mut range: Range<Anchor>,
-        initial_prompt: String,
-        initial_transaction_id: Option<TransactionId>,
-        focus: bool,
-        workspace: Entity<Workspace>,
-        thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> InlineAssistId {
-        let buffer = editor.read(cx).buffer().clone();
-        {
-            let snapshot = buffer.read(cx).read(cx);
-            range.start = range.start.bias_left(&snapshot);
-            range.end = range.end.bias_right(&snapshot);
-        }
-
-        let project = workspace.read(cx).project().downgrade();
-
-        let assist_id = self
-            .batch_assist(
-                editor,
-                workspace.downgrade(),
-                project,
-                thread_store,
-                prompt_store,
-                history,
-                Some(initial_prompt),
-                window,
-                &[range],
-                None,
-                initial_transaction_id,
-                cx,
-            )
-            .expect("batch_assist returns an id if there's only one range");
-
-        if focus {
-            self.focus_assist(assist_id, window, cx);
-        }
-
-        assist_id
     }
 
     fn insert_assist_blocks(
@@ -1863,12 +1804,12 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use fs::FakeFs;
     use futures::channel::mpsc;
+    use futures::stream::StreamExt as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
     use language_model::{LanguageModelRegistry, SelectedModel};
     use project::Project;
     use prompt_store::PromptBuilder;
-    use smol::stream::StreamExt as _;
     use std::str::FromStr;
     use std::sync::Arc;
     use util::test::marked_text_ranges;
@@ -1974,7 +1915,6 @@ pub mod evals {
                         workspace.downgrade(),
                         project.downgrade(),
                         thread_store,
-                        None,
                         None,
                         Some(prompt),
                         window,

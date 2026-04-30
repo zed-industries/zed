@@ -25,8 +25,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 pub use open_ai::completion::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, collect_tiktoken_messages, count_open_ai_tokens,
-    into_open_ai, into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = OPEN_AI_PROVIDER_ID;
@@ -183,6 +182,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     max_completion_tokens: model.max_completion_tokens,
                     reasoning_effort: model.reasoning_effort,
                     supports_chat_completions: model.capabilities.chat_completions,
+                    supports_images: model.capabilities.images,
                 },
             );
         }
@@ -327,13 +327,14 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointThreeCodex
             | Model::FivePointFour
             | Model::FivePointFourPro
+            | Model::FivePointFive
+            | Model::FivePointFivePro
             | Model::O1
             | Model::O3 => true,
-            Model::ThreePointFiveTurbo
-            | Model::Four
-            | Model::FourTurbo
-            | Model::O3Mini
-            | Model::Custom { .. } => false,
+            Model::ThreePointFiveTurbo | Model::Four | Model::FourTurbo | Model::O3Mini => false,
+            Model::Custom {
+                supports_images, ..
+            } => *supports_images,
         }
     }
 
@@ -369,16 +370,6 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let model = self.model.clone();
-        cx.background_spawn(async move { count_open_ai_tokens(request, model) })
-            .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -393,22 +384,7 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        if self.model.supports_chat_completions() {
-            let request = into_open_ai(
-                request,
-                self.model.id(),
-                self.model.supports_parallel_tool_calls(),
-                self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
-                self.model.reasoning_effort(),
-            );
-            let completions = self.stream_completion(request, cx);
-            async move {
-                let mapper = OpenAiEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
-            }
-            .boxed()
-        } else {
+        if self.model.uses_responses_api() {
             let request = into_open_ai_response(
                 request,
                 self.model.id(),
@@ -420,6 +396,22 @@ impl LanguageModel for OpenAiLanguageModel {
             let completions = self.stream_response(request, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
+        } else {
+            let request = into_open_ai(
+                request,
+                self.model.id(),
+                self.model.supports_parallel_tool_calls(),
+                self.model.supports_prompt_cache_key(),
+                self.max_output_tokens(),
+                self.model.reasoning_effort(),
+                false,
+            );
+            let completions = self.stream_completion(request, cx);
+            async move {
+                let mapper = OpenAiEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()

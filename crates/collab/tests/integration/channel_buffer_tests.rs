@@ -657,6 +657,11 @@ async fn test_channel_buffer_changes(
     deterministic.advance_clock(ACKNOWLEDGE_DEBOUNCE_INTERVAL);
     server
         .simulate_long_connection_interruption(client_b.peer_id().unwrap(), deterministic.clone());
+
+    // Re-subscribe to channels after reconnection (simulates collab panel re-rendering)
+    client_b.initialize_channel_store(cx_b);
+    deterministic.run_until_parked();
+
     channel_store_b.read_with(cx_b, |channel_store, _| {
         assert!(!channel_store.has_channel_buffer_changed(channel_id))
     });
