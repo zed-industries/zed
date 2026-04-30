@@ -383,11 +383,12 @@ fn workspace_menu_worktree_labels(
 
             if let Some(snapshot) = repository_snapshot {
                 let worktree_name = if snapshot.is_linked_worktree() {
-                    project::linked_worktree_short_name(
-                        snapshot.original_repo_abs_path.as_ref(),
-                        root_path,
-                    )
-                    .unwrap_or_else(|| folder_name.clone())
+                    snapshot
+                        .main_worktree_abs_path()
+                        .and_then(|main_worktree_path| {
+                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                        })
+                        .unwrap_or_else(|| folder_name.clone())
                 } else {
                     "main".into()
                 };
@@ -5246,7 +5247,7 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             .find(|snapshot| abs_path.starts_with(&*snapshot.work_directory_abs_path));
 
         let is_linked = repo_info.map(|s| s.is_linked_worktree()).unwrap_or(false);
-        let original_repo_path = repo_info.map(|s| &s.original_repo_abs_path);
+        let main_worktree_path = repo_info.and_then(|s| s.main_worktree_abs_path());
         let branch = repo_info.and_then(|s| s.branch.as_ref().map(|b| b.ref_name.clone()));
 
         write!(output, "  - {}", abs_path.display()).ok();
@@ -5257,8 +5258,13 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             write!(output, " [branch: {branch}]").ok();
         }
         if is_linked {
-            if let Some(original) = original_repo_path {
-                write!(output, " [linked worktree -> {}]", original.display()).ok();
+            if let Some(main_worktree_path) = main_worktree_path {
+                write!(
+                    output,
+                    " [linked worktree -> {}]",
+                    main_worktree_path.display()
+                )
+                .ok();
             } else {
                 write!(output, " [linked worktree]").ok();
             }
