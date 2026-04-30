@@ -190,9 +190,14 @@ struct HoverTarget {
     hovered_word: HoveredWord,
 }
 
+pub enum TerminalViewEvent {
+    CustomTitleChanged,
+}
+
 impl EventEmitter<Event> for TerminalView {}
 impl EventEmitter<ItemEvent> for TerminalView {}
 impl EventEmitter<SearchEvent> for TerminalView {}
+impl EventEmitter<TerminalViewEvent> for TerminalView {}
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
@@ -395,6 +400,7 @@ impl TerminalView {
         if self.custom_title != label {
             self.custom_title = label;
             self.needs_serialize = true;
+            cx.emit(TerminalViewEvent::CustomTitleChanged);
             cx.emit(ItemEvent::UpdateTab);
             cx.notify();
         }

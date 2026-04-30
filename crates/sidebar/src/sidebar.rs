@@ -308,6 +308,7 @@ impl From<TerminalEntry> for ListEntry {
 struct SidebarContents {
     entries: Vec<ListEntry>,
     notified_threads: HashSet<agent_ui::ThreadId>,
+    notified_terminals: HashSet<TerminalId>,
     project_header_indices: Vec<usize>,
     has_open_projects: bool,
 }
@@ -1055,6 +1056,7 @@ impl Sidebar {
 
         let mut entries = Vec::new();
         let mut notified_threads = previous.notified_threads;
+        let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
@@ -1118,6 +1120,15 @@ impl Sidebar {
         for group in &groups {
             let group_key = &group.key;
             let group_workspaces = &group.workspaces;
+            let mut terminals: Vec<TerminalEntry> = group_workspaces
+                .iter()
+                .flat_map(|workspace| terminal_entries_for_workspace(workspace, cx))
+                .collect();
+            notified_terminals.extend(
+                terminals
+                    .iter()
+                    .filter_map(|terminal| terminal.notified.then_some(terminal.id)),
+            );
             if group_key.path_list().paths().is_empty() {
                 continue;
             }
@@ -1135,10 +1146,6 @@ impl Sidebar {
             let live_infos: Vec<_> = group_workspaces
                 .iter()
                 .flat_map(|ws| all_thread_infos_for_workspace(ws, cx))
-                .collect();
-            let mut terminals: Vec<TerminalEntry> = group_workspaces
-                .iter()
-                .flat_map(|ws| terminal_entries_for_workspace(ws, cx))
                 .collect();
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
@@ -1347,7 +1354,7 @@ impl Sidebar {
                 }
             }
 
-            terminals.sort_by_key(|terminal| Reverse(terminal.updated_at));
+            terminals.sort_by_key(|terminal| Reverse((terminal.updated_at, terminal.id)));
 
             let has_threads = if !threads.is_empty() || !terminals.is_empty() {
                 true
@@ -1473,6 +1480,7 @@ impl Sidebar {
         self.contents = SidebarContents {
             entries,
             notified_threads,
+            notified_terminals,
             project_header_indices,
             has_open_projects,
         };
@@ -3190,14 +3198,6 @@ impl Sidebar {
                 });
             }
         });
-        if self
-            .active_entry
-            .as_ref()
-            .is_some_and(|active| matches!(active, ActiveEntry::Terminal { terminal_id: active_id, .. } if *active_id == terminal_id))
-        {
-            self.active_entry = None;
-        }
-        self.update_entries(cx);
     }
 
     fn archive_thread(
@@ -4202,7 +4202,7 @@ impl Sidebar {
         &self,
         ix: usize,
         terminal: &TerminalEntry,
-        is_selected: bool,
+        is_active: bool,
         is_focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -4222,7 +4222,7 @@ impl Sidebar {
             .timestamp(timestamp)
             .notified(terminal.notified)
             .highlight_positions(terminal.highlight_positions.clone())
-            .selected(is_selected)
+            .selected(is_active)
             .focused(is_focused)
             .hovered(is_hovered)
             .on_hover(cx.listener(move |this, is_hovered: &bool, _window, cx| {
@@ -5101,13 +5101,7 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn has_notifications(&self, _cx: &App) -> bool {
-        if !self.contents.notified_threads.is_empty() {
-            return true;
-        }
-        self.contents
-            .entries
-            .iter()
-            .any(|entry| matches!(entry, ListEntry::Terminal(terminal) if terminal.notified))
+        !self.contents.notified_threads.is_empty() || !self.contents.notified_terminals.is_empty()
     }
 
     fn is_threads_list_view_active(&self) -> bool {

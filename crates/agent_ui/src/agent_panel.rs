@@ -13,7 +13,7 @@ use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
-use collections::HashSet;
+use collections::{HashSet, IndexMap};
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
 use project::AgentId;
@@ -72,7 +72,7 @@ use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use terminal_view::{TerminalView, TerminalViewEvent, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
     Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
@@ -101,7 +101,7 @@ impl MaxIdleRetainedThreads {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct TerminalId(uuid::Uuid);
 
 impl TerminalId {
@@ -447,7 +447,56 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
-                        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
+                        let active_editor = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<Editor>(cx));
+                        let has_editor_selection = active_editor.is_some_and(|editor| {
+                            editor.update(cx, |editor, cx| {
+                                editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                            })
+                        });
+
+                        let has_terminal_selection = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<TerminalView>(cx))
+                            .is_some_and(|terminal_view| {
+                                terminal_view
+                                    .read(cx)
+                                    .terminal()
+                                    .read(cx)
+                                    .last_content
+                                    .selection_text
+                                    .as_ref()
+                                    .is_some_and(|text| !text.is_empty())
+                            });
+
+                        let has_terminal_panel_selection =
+                            workspace.panel::<TerminalPanel>(cx).is_some_and(|panel| {
+                                let position = match TerminalSettings::get_global(cx).dock {
+                                    TerminalDockPosition::Left => DockPosition::Left,
+                                    TerminalDockPosition::Bottom => DockPosition::Bottom,
+                                    TerminalDockPosition::Right => DockPosition::Right,
+                                };
+                                let dock_is_open =
+                                    workspace.dock_at_position(position).read(cx).is_open();
+                                dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
+                            });
+
+                        let panel = workspace.panel::<AgentPanel>(cx);
+                        let has_agent_panel_terminal_selection =
+                            panel.as_ref().is_some_and(|panel| {
+                                !panel.read(cx).terminal_selections(cx).is_empty()
+                            });
+
+                        if !has_editor_selection
+                            && !has_terminal_selection
+                            && !has_terminal_panel_selection
+                            && !has_agent_panel_terminal_selection
+                        {
+                            return;
+                        }
+
+                        let Some(agent_panel) = panel else {
                             return;
                         };
 
@@ -643,7 +692,6 @@ struct AgentTerminal {
     view: Entity<TerminalView>,
     last_known_working_directory: Option<PathBuf>,
     last_known_title: String,
-    custom_title: Option<String>,
     updated_at: DateTime<Utc>,
     notified: bool,
     _subscriptions: Vec<Subscription>,
@@ -661,17 +709,25 @@ impl AgentTerminal {
         self.view.read(cx).terminal().read(cx).working_directory()
     }
 
+    fn selection_text(&self, cx: &App) -> Option<String> {
+        self.view
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .last_content
+            .selection_text
+            .clone()
+            .filter(|text| !text.is_empty())
+    }
+
     fn refresh_metadata(&mut self, cx: &App) -> bool {
         let working_directory = self.current_working_directory(cx);
         let title = self.display_title(cx).to_string();
-        let custom_title = self.view.read(cx).custom_title().map(str::to_string);
         let changed = self.last_known_working_directory != working_directory
-            || self.last_known_title != title
-            || self.custom_title != custom_title;
+            || self.last_known_title != title;
         if changed {
             self.last_known_working_directory = working_directory;
             self.last_known_title = title;
-            self.custom_title = custom_title;
             self.updated_at = Utc::now();
         }
         changed
@@ -745,11 +801,13 @@ pub struct AgentPanel {
     configuration_subscription: Option<Subscription>,
     focus_handle: FocusHandle,
     base_view: BaseView,
+    last_active_thread_id: Option<ThreadId>,
     overlay_view: Option<OverlayView>,
     draft_thread: Option<Entity<ConversationView>>,
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
-    terminals: HashMap<TerminalId, AgentTerminal>,
-    terminal_order: Vec<TerminalId>,
+    // Agent-panel terminals are transient; serialization keeps the most recent
+    // thread state so reopening the workspace does not restore terminal shells.
+    terminals: IndexMap<TerminalId, AgentTerminal>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     _extension_subscription: Option<Subscription>,
@@ -761,6 +819,7 @@ pub struct AgentPanel {
     selected_agent: Agent,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
+    _window_activation_subscription: Subscription,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
@@ -775,44 +834,52 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent.clone();
 
-        let is_draft_active = self.active_thread_is_draft(cx);
-        let last_active_thread = self
-            .active_agent_thread(cx)
-            .map(|thread| {
-                let thread = thread.read(cx);
-
-                let title = thread.title();
-                let work_dirs = thread.work_dirs().cloned();
-                SerializedActiveThread {
-                    session_id: (!is_draft_active).then(|| thread.session_id().0.to_string()),
-                    agent_type: self.selected_agent.clone(),
-                    title: title.map(|t| t.to_string()),
-                    work_dirs: work_dirs.map(|dirs| dirs.serialize()),
-                }
-            })
-            .or_else(|| {
-                // The active view may be in `Loading` or `LoadError` — for
-                // example, while a restored thread is waiting for a custom
-                // agent to finish registering. Without this fallback, a
-                // stray `serialize()` triggered during that window would
-                // write `session_id=None` and wipe the restored session
-                if is_draft_active {
-                    return None;
-                }
-                let conversation_view = self.active_conversation_view()?;
-                let session_id = conversation_view.read(cx).root_session_id.clone()?;
-                let metadata = ThreadMetadataStore::try_global(cx)
-                    .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
-                Some(SerializedActiveThread {
-                    session_id: Some(session_id.0.to_string()),
-                    agent_type: self.selected_agent.clone(),
-                    title: metadata
-                        .as_ref()
-                        .and_then(|m| m.title.as_ref())
-                        .map(|t| t.to_string()),
-                    work_dirs: metadata.map(|m| m.folder_paths().serialize()),
+        let conversation_view_to_serialize = self.active_conversation_view().or_else(|| {
+            let last_active_thread_id = self.last_active_thread_id?;
+            self.draft_thread
+                .as_ref()
+                .filter(|draft| draft.read(cx).thread_id == last_active_thread_id)
+                .or_else(|| self.retained_threads.get(&last_active_thread_id))
+        });
+        let last_active_thread = conversation_view_to_serialize.and_then(|conversation_view| {
+            let is_draft = self
+                .draft_thread
+                .as_ref()
+                .is_some_and(|draft| draft.entity_id() == conversation_view.entity_id());
+            conversation_view
+                .read(cx)
+                .root_thread(cx)
+                .map(|thread| {
+                    let thread = thread.read(cx);
+                    let title = thread.title();
+                    let work_dirs = thread.work_dirs().cloned();
+                    SerializedActiveThread {
+                        session_id: (!is_draft).then(|| thread.session_id().0.to_string()),
+                        agent_type: conversation_view.read(cx).agent_key().clone(),
+                        title: title.map(|t| t.to_string()),
+                        work_dirs: work_dirs.map(|dirs| dirs.serialize()),
+                    }
                 })
-            });
+                .or_else(|| {
+                    if is_draft {
+                        return None;
+                    }
+                    let conversation_view = conversation_view.read(cx);
+                    let session_id = conversation_view.root_session_id.clone()?;
+                    let agent_type = conversation_view.agent_key().clone();
+                    let metadata = ThreadMetadataStore::try_global(cx)
+                        .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
+                    Some(SerializedActiveThread {
+                        session_id: Some(session_id.0.to_string()),
+                        agent_type,
+                        title: metadata
+                            .as_ref()
+                            .and_then(|metadata| metadata.title.as_ref())
+                            .map(|title| title.to_string()),
+                        work_dirs: metadata.map(|metadata| metadata.folder_paths().serialize()),
+                    })
+                })
+        });
 
         let kvp = KeyValueStore::global(cx);
         let draft_thread_prompt = self.draft_thread.as_ref().and_then(|conversation| {
@@ -1008,7 +1075,7 @@ impl AgentPanel {
     pub(crate) fn new(
         workspace: &Workspace,
         prompt_store: Option<Entity<PromptStore>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let fs = workspace.app_state().fs.clone();
@@ -1089,10 +1156,15 @@ impl AgentPanel {
                 }
             },
         );
+        let _window_activation_subscription =
+            cx.observe_window_activation(window, |this, window, cx| {
+                this.clear_active_terminal_notification_if_focused(window, cx);
+            });
 
         let mut panel = Self {
             workspace_id,
             base_view,
+            last_active_thread_id: None,
             overlay_view: None,
             workspace,
             user_store,
@@ -1107,8 +1179,7 @@ impl AgentPanel {
             context_server_registry,
             draft_thread: None,
             retained_threads: HashMap::default(),
-            terminals: HashMap::default(),
-            terminal_order: Vec::new(),
+            terminals: IndexMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
 
@@ -1121,6 +1192,7 @@ impl AgentPanel {
             selected_agent: Agent::default(),
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
+            _window_activation_subscription,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
@@ -1267,6 +1339,7 @@ impl AgentPanel {
 
     pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.project.read(cx).supports_terminal(cx) {
+            self.show_terminal_unavailable_toast(cx);
             return;
         }
         let working_directory = self.default_terminal_working_directory(cx);
@@ -1328,16 +1401,23 @@ impl AgentPanel {
         let item_subscription = cx.subscribe_in(
             &terminal_view,
             window,
-            move |this, _terminal_view, event: &ItemEvent, window, cx| {
+            move |this, terminal_view, event: &ItemEvent, window, cx| {
                 if let ItemEvent::CloseItem = event {
-                    this.close_terminal(terminal_id, true, window, cx);
+                    let focus = terminal_view.focus_handle(cx).contains_focused(window, cx);
+                    this.close_terminal(terminal_id, focus, window, cx);
                 }
             },
         );
-        // Listen on the underlying `Terminal` entity for metadata changes and
-        // bell. `ItemEvent::UpdateTab` is intentionally not used, because it
-        // also fires on every `Event::Wakeup` (i.e. each batch of pty output),
-        // which would call `refresh_terminal_metadata` continuously.
+        let view_subscription = cx.subscribe(
+            &terminal_view,
+            move |this, _terminal_view, event: &TerminalViewEvent, cx| match event {
+                TerminalViewEvent::CustomTitleChanged => {
+                    this.refresh_terminal_metadata(terminal_id, cx);
+                }
+            },
+        );
+        // Listen on the underlying `Terminal` entity for shell-driven metadata
+        // changes and bell.
         let terminal_subscription = cx.subscribe_in(
             &terminal_entity,
             window,
@@ -1359,21 +1439,18 @@ impl AgentPanel {
             view: terminal_view,
             last_known_working_directory: None,
             last_known_title: String::new(),
-            custom_title: None,
             updated_at: Utc::now(),
             notified: false,
-            _subscriptions: vec![item_subscription, terminal_subscription],
+            _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
         };
         terminal.refresh_metadata(cx);
+        self.terminals.shift_remove(&terminal_id);
         self.terminals.insert(terminal_id, terminal);
-        self.terminal_order.retain(|id| *id != terminal_id);
-        self.terminal_order.push(terminal_id);
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
-        } else {
-            cx.emit(AgentPanelEvent::TerminalsChanged);
-            cx.notify();
         }
+        cx.emit(AgentPanelEvent::TerminalsChanged);
+        cx.notify();
     }
 
     pub fn activate_terminal(
@@ -1386,23 +1463,24 @@ impl AgentPanel {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
+        let was_notified = terminal.notified;
         terminal.notified = false;
         self.bump_terminal_order(terminal_id);
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
+        if was_notified {
+            cx.emit(AgentPanelEvent::TerminalsChanged);
+            cx.notify();
+        }
     }
 
     fn bump_terminal_order(&mut self, terminal_id: TerminalId) {
         // Track most-recently-used order so closing the active terminal falls
         // back to the previously active one rather than the most-recently
         // *created* one.
-        if !self.terminals.contains_key(&terminal_id) {
+        let Some((terminal_id, terminal)) = self.terminals.shift_remove_entry(&terminal_id) else {
             return;
-        }
-        if self.terminal_order.last() == Some(&terminal_id) {
-            return;
-        }
-        self.terminal_order.retain(|id| *id != terminal_id);
-        self.terminal_order.push(terminal_id);
+        };
+        self.terminals.insert(terminal_id, terminal);
     }
 
     pub fn close_terminal(
@@ -1412,12 +1490,11 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.terminals.remove(&terminal_id);
-        self.terminal_order.retain(|id| *id != terminal_id);
+        self.terminals.shift_remove(&terminal_id);
 
         let was_active = self.active_terminal_id() == Some(terminal_id);
         if was_active {
-            if let Some(next_terminal_id) = self.terminal_order.last().copied() {
+            if let Some(next_terminal_id) = self.terminals.keys().next_back().copied() {
                 self.set_base_view(
                     BaseView::Terminal {
                         terminal_id: next_terminal_id,
@@ -1471,6 +1548,59 @@ impl AgentPanel {
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
+    }
+
+    fn clear_terminal_notification(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            return;
+        };
+        if terminal.notified {
+            terminal.notified = false;
+            cx.emit(AgentPanelEvent::TerminalsChanged);
+            cx.notify();
+        }
+    }
+
+    fn clear_active_terminal_notification_if_focused(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !window.is_window_active() {
+            return;
+        }
+        let Some(terminal_id) = self.active_terminal_id() else {
+            return;
+        };
+        let is_focused = self
+            .terminals
+            .get(&terminal_id)
+            .is_some_and(|terminal| terminal.view.focus_handle(cx).contains_focused(window, cx));
+        if is_focused {
+            self.clear_terminal_notification(terminal_id, cx);
+        }
+    }
+
+    fn show_terminal_unavailable_toast(&self, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        cx.defer(move |cx| {
+            let Some(workspace) = workspace.upgrade() else {
+                return;
+            };
+            workspace.update(cx, |workspace, cx| {
+                struct AgentPanelTerminalUnavailableToast;
+                workspace.show_toast(
+                    workspace::Toast::new(
+                        workspace::notifications::NotificationId::unique::<
+                            AgentPanelTerminalUnavailableToast,
+                        >(),
+                        "Terminals aren't available for this project",
+                    )
+                    .autohide(),
+                    cx,
+                );
+            });
+        });
     }
 
     fn default_terminal_working_directory(&self, cx: &App) -> Option<PathBuf> {
@@ -1598,17 +1728,21 @@ impl AgentPanel {
     }
 
     pub fn terminals(&self, cx: &App) -> Vec<AgentPanelTerminalInfo> {
-        self.terminal_order
+        self.terminals
             .iter()
-            .filter_map(|id| {
-                let terminal = self.terminals.get(id)?;
-                Some(AgentPanelTerminalInfo {
-                    id: *id,
-                    title: terminal.display_title(cx),
-                    updated_at: terminal.updated_at,
-                    notified: terminal.notified,
-                })
+            .map(|(id, terminal)| AgentPanelTerminalInfo {
+                id: *id,
+                title: terminal.display_title(cx),
+                updated_at: terminal.updated_at,
+                notified: terminal.notified,
             })
+            .collect()
+    }
+
+    pub fn terminal_selections(&self, cx: &App) -> Vec<String> {
+        self.terminals
+            .values()
+            .filter_map(|terminal| terminal.selection_text(cx))
             .collect()
     }
 
@@ -2347,7 +2481,9 @@ impl AgentPanel {
         self.retain_running_thread(old_view, cx);
 
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
-            let thread_agent = conversation_view.read(cx).agent_key().clone();
+            let conversation_view = conversation_view.read(cx);
+            self.last_active_thread_id = Some(conversation_view.thread_id);
+            let thread_agent = conversation_view.agent_key().clone();
             if self.selected_agent != thread_agent {
                 self.selected_agent = thread_agent;
                 self.serialize(cx);
@@ -2392,6 +2528,13 @@ impl AgentPanel {
     }
 
     fn refresh_base_view_subscriptions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let BaseView::Terminal { terminal_id } = &self.base_view
+            && !self.terminals.contains_key(terminal_id)
+        {
+            self.activate_draft(false, "agent_panel", window, cx);
+            return;
+        }
+
         self._base_view_observation = match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
                 self._thread_view_subscription =
@@ -2427,7 +2570,6 @@ impl AgentPanel {
                                 }
                                 this.bump_terminal_order(terminal_id);
                                 cx.emit(AgentPanelEvent::TerminalFocused);
-                                cx.emit(AgentPanelEvent::TerminalsChanged);
                                 cx.notify();
                             }),
                         );
@@ -2443,9 +2585,7 @@ impl AgentPanel {
                 None
             }
         };
-        if !matches!(self.base_view, BaseView::Terminal { .. }) {
-            self.serialize(cx);
-        }
+        self.serialize(cx);
     }
 
     fn visible_surface(&self) -> VisibleSurface<'_> {
@@ -3087,20 +3227,15 @@ impl AgentPanel {
                         .into_any_element()
                 }
             }
-            VisibleSurface::Terminal(terminal_view) => {
-                let terminal_view = terminal_view.read(cx);
-                Label::new(
-                    terminal_view
-                        .custom_title()
-                        .map(SharedString::from)
-                        .unwrap_or_else(|| {
-                            SharedString::from(terminal_view.terminal().read(cx).title(true))
-                        }),
-                )
+            VisibleSurface::Terminal(_) => self
+                .active_terminal_id()
+                .and_then(|terminal_id| self.terminals.get(&terminal_id))
+                .map(|terminal| terminal.display_title(cx))
+                .map(|title| Label::new(title))
+                .unwrap_or_else(|| Label::new("Terminal"))
                 .color(Color::Muted)
                 .truncate()
-                .into_any_element()
-            }
+                .into_any_element(),
             VisibleSurface::Configuration(_) => {
                 Label::new("Settings").truncate().into_any_element()
             }
@@ -3891,10 +4026,10 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        match &self.base_view {
-            BaseView::AgentThread { .. } => key_context.add("acp_thread"),
-            BaseView::Terminal { .. } => key_context.add("Terminal"),
-            BaseView::Uninitialized => {}
+        match self.visible_surface() {
+            VisibleSurface::AgentThread(_) => key_context.add("acp_thread"),
+            VisibleSurface::Terminal(_) => key_context.add("Terminal"),
+            VisibleSurface::Configuration(_) | VisibleSurface::Uninitialized => {}
         }
         key_context
     }
@@ -3923,7 +4058,9 @@ impl Render for AgentPanel {
                 this.new_terminal(window, cx);
             }))
             .on_action(cx.listener(|this, _: &CloseActiveItem, window, cx| {
-                if let Some(terminal_id) = this.active_terminal_id() {
+                if matches!(this.visible_surface(), VisibleSurface::Terminal(_))
+                    && let Some(terminal_id) = this.active_terminal_id()
+                {
                     this.close_terminal(terminal_id, true, window, cx);
                 } else {
                     // Don't swallow the action: let it bubble up to the workspace
