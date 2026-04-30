@@ -1102,6 +1102,7 @@
       "shift-tab": "git_panel::FocusChanges",
       "alt-up": "git_panel::FocusChanges",
       "shift-escape": "git::ExpandCommitEditor",
+      "alt-shift-escape": "git::ToggleFillCommitEditor",
       "alt-tab": "git::GenerateCommitMessage",
     },
   },

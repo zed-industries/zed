@@ -2356,6 +2356,7 @@ fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> Predi
         request_id: Uuid::new_v4().to_string(),
         editable_range,
         output: new_excerpt,
+        cursor_offset: None,
         model_version: None,
     }
 }
@@ -2365,6 +2366,7 @@ fn empty_response() -> PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
         editable_range: 0..0,
         output: String::new(),
+        cursor_offset: None,
         model_version: None,
     }
 }
@@ -2713,6 +2715,7 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
         output: "hello world\n".to_string(),
         editable_range: 0..excerpt_length,
         model_version: None,
+        cursor_offset: None,
     };
     respond_tx.send(response).unwrap();
 
@@ -2771,9 +2774,10 @@ async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestApp
     respond_tx
         .send(PredictEditsV3Response {
             request_id: Uuid::new_v4().to_string(),
-            output: "hello<|user_cursor|> world".to_string(),
+            output: "hello world".to_string(),
             editable_range: 0..excerpt_length,
             model_version: None,
+            cursor_offset: Some(5),
         })
         .unwrap();
 
@@ -2878,6 +2882,7 @@ async fn make_test_ep_store(
                                     editable_range: 0..req.input.cursor_excerpt.len(),
                                     output: completion_response.lock().clone(),
                                     model_version: None,
+                                    cursor_offset: None,
                                 })
                                 .unwrap()
                                 .into(),
@@ -3310,8 +3315,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     // Let the worker process the channel message before we start advancing.
     cx.run_until_parked();
 
-    let mut region_a_edit_offset = 5;
-    for _ in 0..3 {
+    for region_a_edit_offset in (5..).take(3) {
         // Edit inside region A (not at the boundary) so `last_edit_at` is
         // updated before the worker's next wake.
         buffer.update(cx, |buffer, cx| {
@@ -3321,7 +3325,6 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
                 cx,
             );
         });
-        region_a_edit_offset += 1;
         cx.run_until_parked();
 
         cx.executor()

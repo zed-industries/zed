@@ -1609,7 +1609,10 @@ mod trust_tests {
 mod resolve_worktree_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use project::{git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name};
+    use project::{
+        git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name,
+        repo_identity_path,
+    };
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
@@ -1685,6 +1688,27 @@ mod resolve_worktree_tests {
         let result =
             resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/does-not-exist")).await;
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_repo_identity_path() {
+        let examples = [
+            // Normal checkout: `.git` starts with `.`, so parent is the worktree
+            ("/home/bob/zed/.git", "/home/bob/zed"),
+            // Bare clone named `.bare`: starts with `.`, so parent is the project dir
+            ("/repos/project/.bare", "/repos/project"),
+            // Bare clone with `.git` extension: does not start with `.`, kept as-is
+            ("/repos/zed.git", "/repos/zed.git"),
+            // Bare clone with arbitrary plain name: kept as-is
+            ("/repos/project", "/repos/project"),
+        ];
+        for (common_dir, expected) in examples {
+            assert_eq!(
+                repo_identity_path(Path::new(common_dir)),
+                Path::new(expected),
+                "identity path for common_dir {common_dir:?} should be {expected:?}"
+            );
+        }
     }
 
     #[test]
