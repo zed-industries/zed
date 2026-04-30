@@ -2811,6 +2811,7 @@ impl Render for GitGraph {
                                 .id("graph-canvas")
                                 .size_full()
                                 .overflow_hidden()
+                                .cursor_pointer()
                                 .child(
                                     div()
                                         .size_full()
@@ -2846,6 +2847,7 @@ impl Render for GitGraph {
                                     };
 
                                     row.h(row_height)
+                                        .cursor_pointer()
                                         .when(is_selected, |row| row.bg(selected_bg))
                                         .when(is_hovered && !is_selected, |row| row.bg(hover_bg))
                                         .on_hover(move |&is_hovered, _, cx| {

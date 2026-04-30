@@ -462,7 +462,6 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "ollama",
                         "openai",
                         "openrouter",
-                        "vercel",
                         "vercel_ai_gateway",
                         "x_ai",
                         "zed.dev"

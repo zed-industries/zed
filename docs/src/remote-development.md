@@ -262,6 +262,9 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 - [Running & Testing](./running-testing.md): Run tasks, terminal commands, and
   debugger sessions while you work remotely.
+- [Git Worktrees](./git.md#git-worktrees): Create and switch between linked
+  Git worktrees. Zed supports the worktree picker in remote projects when the
+  remote connection is active.
 - [Configuring Zed](./configuring-zed.md): Manage shared and project settings,
   including `.zed/settings.json`.
 - [Agent Panel](./ai/agent-panel.md): Use AI workflows in remote projects.

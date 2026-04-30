@@ -2969,8 +2969,8 @@ impl LocalLspStore {
             .flat_map(|(worktree_id, servers)| {
                 servers
                     .roots
-                    .iter()
-                    .flat_map(|(_, language_servers)| language_servers)
+                    .values()
+                    .flatten()
                     .map(move |(_, (server_node, server_languages))| {
                         (worktree_id, server_node, server_languages)
                     })

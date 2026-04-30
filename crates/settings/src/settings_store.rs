@@ -1786,11 +1786,10 @@ mod tests {
 
     #[gpui::test]
     fn test_default_settings_release_channel_overrides(cx: &mut App) {
-        assert_eq!(
-            *release_channel::RELEASE_CHANNEL,
-            release_channel::ReleaseChannel::Dev,
-            "tests expect the dev release channel",
-        );
+        // The test deals with overrides and should ignore the other set-ups (Preview and Stable runs)
+        if *release_channel::RELEASE_CHANNEL != release_channel::ReleaseChannel::Dev {
+            return;
+        }
 
         let mut defaults: serde_json::Value =
             crate::parse_json_with_comments(&default_settings()).unwrap();
