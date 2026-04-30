@@ -32,6 +32,13 @@ use crate::open_ai_compatible::{
     load_open_ai_compatible_api_key_if_needed, send_custom_server_request,
 };
 
+fn zeta_format_for_local_model(model: &str) -> Option<ZetaFormat> {
+    match model {
+        "zeta2" => Some(ZetaFormat::V0211SeedCoder),
+        _ => None,
+    }
+}
+
 pub fn request_prediction_with_zeta(
     store: &mut EditPredictionStore,
     EditPredictionModelInput {
@@ -101,10 +108,14 @@ pub fn request_prediction_with_zeta(
 
     let request_task = cx.background_spawn({
         async move {
+            let local_zeta_format = custom_server_settings
+                .as_ref()
+                .and_then(|settings| zeta_format_for_local_model(&settings.model));
             let zeta_version = raw_config
                 .as_ref()
                 .map(|config| config.format)
-                .unwrap_or(ZetaFormat::default());
+                .or(local_zeta_format)
+                .unwrap_or_default();
 
             let cursor_offset = position.to_offset(&snapshot);
             let (full_context_offset_range, prompt_input) = zeta2_prompt_input(
@@ -139,7 +150,14 @@ pub fn request_prediction_with_zeta(
                 (if let Some(custom_settings) = &custom_server_settings {
                     let max_tokens = custom_settings.max_output_tokens * 4;
 
-                    Some(match custom_settings.prompt_format {
+                    let prompt_format = match (custom_settings.prompt_format, local_zeta_format) {
+                        (EditPredictionPromptFormat::Infer, Some(_)) => {
+                            EditPredictionPromptFormat::Zeta2
+                        }
+                        (prompt_format, _) => prompt_format,
+                    };
+
+                    Some(match prompt_format {
                         EditPredictionPromptFormat::Zeta => {
                             let ranges = &prompt_input.excerpt_ranges;
                             let editable_range_in_excerpt = ranges.editable_350.clone();

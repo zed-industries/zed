@@ -151,6 +151,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
 }
 
 fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
+    if model == "zeta2" {
+        return Some(EditPredictionPromptFormat::Zeta2);
+    }
+
     let model_base = model.split(':').next().unwrap_or(model);
 
     Some(match model_base {
