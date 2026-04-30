@@ -221,9 +221,6 @@ impl Render for TitleBar {
                 };
 
                 if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
-                    // When the worktree is a subfolder of the repo, show
-                    // "repo_name/relative_path" so users can tell which
-                    // subfolder is open (e.g. "repository_name/subfolder_name").
                     let name = if let Ok(relative) =
                         worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
                     {
