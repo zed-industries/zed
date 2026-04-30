@@ -54,14 +54,16 @@ pub fn run_setup_webrtc(args: SetupWebrtcArgs) -> Result<()> {
     let extracted_dir = tag_dir.join(&triple);
 
     if extracted_dir.exists() && !args.force {
-        eprintln!("Already present at {}, skipping download.", extracted_dir.display());
+        eprintln!(
+            "Already present at {}, skipping download.",
+            extracted_dir.display()
+        );
     } else {
         if extracted_dir.exists() {
             fs::remove_dir_all(&extracted_dir)
                 .with_context(|| format!("removing stale {}", extracted_dir.display()))?;
         }
-        fs::create_dir_all(&tag_dir)
-            .with_context(|| format!("creating {}", tag_dir.display()))?;
+        fs::create_dir_all(&tag_dir).with_context(|| format!("creating {}", tag_dir.display()))?;
         download_and_extract(&tag, &triple, &tag_dir)?;
     }
 
@@ -114,11 +116,10 @@ fn fetch_webrtc_tag(rev: &str) -> Result<String> {
     let url = format!(
         "https://raw.githubusercontent.com/zed-industries/livekit-rust-sdks/{rev}/webrtc-sys/build/src/lib.rs"
     );
-    let body = curl_text(&url)
-        .with_context(|| format!("fetching {url}"))?;
+    let body = curl_text(&url).with_context(|| format!("fetching {url}"))?;
 
-    let re = Regex::new(r#"pub\s+const\s+WEBRTC_TAG\s*:\s*&str\s*=\s*"([^"]+)""#)
-        .expect("static regex");
+    let re =
+        Regex::new(r#"pub\s+const\s+WEBRTC_TAG\s*:\s*&str\s*=\s*"([^"]+)""#).expect("static regex");
     let captures = re
         .captures(&body)
         .with_context(|| format!("could not find WEBRTC_TAG in {url}"))?;
@@ -167,7 +168,10 @@ fn download_and_extract(tag: &str, triple: &str, into: &Path) -> Result<()> {
         .status()
         .context("running unzip")?;
     if !status.success() {
-        bail!("unzip exited with {status} while extracting {}", zip_path.display());
+        bail!(
+            "unzip exited with {status} while extracting {}",
+            zip_path.display()
+        );
     }
 
     fs::remove_file(&zip_path).ok();
@@ -191,8 +195,8 @@ fn curl_text(url: &str) -> Result<String> {
 
 fn ensure_gitignore_entry(workspace_root: &Path) -> Result<()> {
     let path = workspace_root.join(".gitignore");
-    let existing = fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let existing =
+        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     if existing
         .lines()
         .any(|line| line.trim() == GITIGNORE_ENTRY || line.trim() == LOCAL_DIR_NAME)
@@ -226,8 +230,7 @@ fn update_cargo_config(webrtc_path: &Path) -> Result<()> {
     }
 
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
 
     let mut doc = DocumentMut::new();
@@ -241,9 +244,6 @@ fn update_cargo_config(webrtc_path: &Path) -> Result<()> {
 
     fs::write(&config_path, doc.to_string())
         .with_context(|| format!("writing {}", config_path.display()))?;
-    eprintln!(
-        "Wrote {} with {ENV_VAR}={path_str}",
-        config_path.display()
-    );
+    eprintln!("Wrote {} with {ENV_VAR}={path_str}", config_path.display());
     Ok(())
 }
