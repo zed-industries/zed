@@ -147,11 +147,22 @@ impl State {
         self.user_store.read(cx).current_user().is_none()
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let client = self.client.clone();
+        let mut current_user = self.user_store.read(cx).watch_current_user();
         cx.spawn(async move |state, cx| {
-            client.sign_in_with_optional_connect(true, cx).await?;
-            state.update(cx, |_, cx| cx.notify())
+            client
+                .sign_in_with_optional_connect(true, cx)
+                .await
+                .map_err(|a| AuthenticateError::from(a))?;
+            while current_user.borrow().is_none() {
+                current_user.next().await;
+            }
+            state
+                .update(cx, |_, cx| {
+                    cx.notify();
+                })
+                .map_err(|a| AuthenticateError::from(a))
         })
     }
 
@@ -253,16 +264,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        let mut status = self.state.read(cx).client.status();
-        if !status.borrow().is_signing_in() {
+        if self.is_authenticated(cx) {
             return Task::ready(Ok(()));
         }
-        cx.background_spawn(async move {
-            while status.borrow().is_signing_in() {
-                status.next().await;
-            }
-            Ok(())
-        })
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
     fn configuration_view(
