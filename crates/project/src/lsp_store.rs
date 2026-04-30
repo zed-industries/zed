@@ -284,6 +284,9 @@ pub struct DocumentDiagnostics {
 struct DynamicRegistrations {
     did_change_watched_files: HashMap<String, Vec<FileSystemWatcher>>,
     diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
+    inlay_hint: HashMap<Option<String>, OneOf<bool, lsp::InlayHintServerCapabilities>>,
+    code_lens: HashMap<Option<String>, lsp::CodeLensOptions>,
+    document_symbol: HashMap<Option<String>, OneOf<bool, lsp::DocumentSymbolOptions>>,
 }
 
 pub struct LocalLspStore {
@@ -12689,14 +12692,36 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/inlayHint" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let reg_id = reg.id.clone();
+                    let options: OneOf<bool, lsp::InlayHintServerCapabilities> =
+                        parse_register_capabilities(reg)?;
+                    let local = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?;
+                    local
+                        .language_server_dynamic_registrations
+                        .entry(server_id)
+                        .or_default()
+                        .inlay_hint
+                        .insert(Some(reg_id), options.clone());
                     server.update_capabilities(|capabilities| {
                         capabilities.inlay_hint_provider = Some(options);
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentSymbol" => {
-                    let options = parse_register_capabilities(reg)?;
+                    let reg_id = reg.id.clone();
+                    let options: OneOf<bool, lsp::DocumentSymbolOptions> =
+                        parse_register_capabilities(reg)?;
+                    let local = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?;
+                    local
+                        .language_server_dynamic_registrations
+                        .entry(server_id)
+                        .or_default()
+                        .document_symbol
+                        .insert(Some(reg_id), options.clone());
                     server.update_capabilities(|capabilities| {
                         capabilities.document_symbol_provider = Some(options);
                     });
@@ -12830,9 +12855,18 @@ impl LspStore {
                 "textDocument/codeLens" => {
                     if let Some(caps) = reg
                         .register_options
-                        .map(serde_json::from_value)
+                        .map(serde_json::from_value::<lsp::CodeLensOptions>)
                         .transpose()?
                     {
+                        let local = self
+                            .as_local_mut()
+                            .context("Expected LSP Store to be local")?;
+                        local
+                            .language_server_dynamic_registrations
+                            .entry(server_id)
+                            .or_default()
+                            .code_lens
+                            .insert(Some(reg.id.clone()), caps.clone());
                         server.update_capabilities(|capabilities| {
                             capabilities.code_lens_provider = Some(caps);
                         });
@@ -13059,10 +13093,82 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
+                "textDocument/inlayHint" => {
+                    let local = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?;
+                    let registrations = local
+                        .language_server_dynamic_registrations
+                        .get_mut(&server_id)
+                        .with_context(|| {
+                            format!("Expected dynamic registration to exist for server {server_id}")
+                        })?;
+                    registrations
+                        .inlay_hint
+                        .remove(&Some(unreg.id.clone()))
+                        .with_context(|| {
+                            format!(
+                                "Attempted to unregister non-existent inlay hint registration with ID {}",
+                                unreg.id
+                            )
+                        })?;
+                    if registrations.inlay_hint.is_empty() {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.inlay_hint_provider = None;
+                        });
+                    }
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/documentSymbol" => {
+                    let local = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?;
+                    let registrations = local
+                        .language_server_dynamic_registrations
+                        .get_mut(&server_id)
+                        .with_context(|| {
+                            format!("Expected dynamic registration to exist for server {server_id}")
+                        })?;
+                    registrations
+                        .document_symbol
+                        .remove(&Some(unreg.id.clone()))
+                        .with_context(|| {
+                            format!(
+                                "Attempted to unregister non-existent document symbol registration with ID {}",
+                                unreg.id
+                            )
+                        })?;
+                    if registrations.document_symbol.is_empty() {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.document_symbol_provider = None;
+                        });
+                    }
+                    notify_server_capabilities_updated(&server, cx);
+                }
                 "textDocument/codeLens" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.code_lens_provider = None;
-                    });
+                    let local = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?;
+                    let registrations = local
+                        .language_server_dynamic_registrations
+                        .get_mut(&server_id)
+                        .with_context(|| {
+                            format!("Expected dynamic registration to exist for server {server_id}")
+                        })?;
+                    registrations
+                        .code_lens
+                        .remove(&Some(unreg.id.clone()))
+                        .with_context(|| {
+                            format!(
+                                "Attempted to unregister non-existent code lens registration with ID {}",
+                                unreg.id
+                            )
+                        })?;
+                    if registrations.code_lens.is_empty() {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.code_lens_provider = None;
+                        });
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/diagnostic" => {
