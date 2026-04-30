@@ -227,6 +227,7 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
     });
 }
 
+#[track_caller]
 fn assert_active_matches_title(workspace: &Workspace, expected_title: &str, cx: &App) {
     let active_item = workspace.active_item(cx).expect("no active item");
     assert_eq!(
