@@ -4798,7 +4798,7 @@ impl Workspace {
         }
     }
 
-    pub fn auto_watch_screens_state(&self) -> &AutoWatch {
+    pub fn auto_watch_state(&self) -> &AutoWatch {
         &self.auto_watch
     }
 
@@ -4807,7 +4807,7 @@ impl Workspace {
             .and_then(|call| call.peer_ids_with_video_tracks(cx).first().copied())
     }
 
-    pub fn toggle_auto_watch_screens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_auto_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.auto_watch.enabled() {
             self.auto_watch = AutoWatch::Off;
             cx.notify();

@@ -92,10 +92,10 @@ impl FeatureFlag for AgentThreadWorktreeLabelFlag {
 }
 register_feature_flag!(AgentThreadWorktreeLabelFlag);
 
-pub struct AutoWatchScreensFeatureFlag;
+pub struct AutoWatchFeatureFlag;
 
-impl FeatureFlag for AutoWatchScreensFeatureFlag {
+impl FeatureFlag for AutoWatchFeatureFlag {
     const NAME: &'static str = "auto-watch-screens";
     type Value = PresenceFlag;
 }
-register_feature_flag!(AutoWatchScreensFeatureFlag);
+register_feature_flag!(AutoWatchFeatureFlag);

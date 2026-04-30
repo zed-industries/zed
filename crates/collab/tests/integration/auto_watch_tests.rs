@@ -68,7 +68,7 @@ async fn test_auto_watch_opens_existing_share_on_toggle(
     executor.run_until_parked();
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.toggle_auto_watch_screens(window, cx);
+        workspace.toggle_auto_watch(window, cx);
     });
     executor.run_until_parked();
 
@@ -89,7 +89,7 @@ async fn test_auto_watch_opens_share_when_no_one_is_sharing_yet(
     let (workspace_a, user_a) = setup.client_a.build_workspace(&setup.project_a, user_a);
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.toggle_auto_watch_screens(window, cx);
+        workspace.toggle_auto_watch(window, cx);
     });
 
     start_screen_share(user_b).await;
@@ -112,7 +112,7 @@ async fn test_auto_watch_switches_to_next_share_on_share_end(
     let (workspace_a, user_a) = setup.client_a.build_workspace(&setup.project_a, user_a);
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.toggle_auto_watch_screens(window, cx);
+        workspace.toggle_auto_watch(window, cx);
     });
 
     start_screen_share(user_b).await;
@@ -151,7 +151,7 @@ async fn test_auto_watch_ignores_shares_while_user_is_sharing(
 
     // Should NOT open B's screen cause we are sharing
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.toggle_auto_watch_screens(window, cx);
+        workspace.toggle_auto_watch(window, cx);
     });
     executor.run_until_parked();
 
@@ -181,7 +181,7 @@ async fn test_auto_watch_opens_share_after_local_user_stops_sharing(
     let (workspace_a, user_a) = setup.client_a.build_workspace(&setup.project_a, user_a);
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.toggle_auto_watch_screens(window, cx);
+        workspace.toggle_auto_watch(window, cx);
     });
     start_screen_share(user_a).await;
     executor.run_until_parked();
@@ -209,7 +209,7 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
     let (workspace_a, user_a) = setup.client_a.build_workspace(&setup.project_a, user_a);
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.toggle_auto_watch_screens(window, cx);
+        workspace.toggle_auto_watch(window, cx);
     });
     start_screen_share(user_b).await;
     executor.run_until_parked();
@@ -219,7 +219,7 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
     });
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.toggle_auto_watch_screens(window, cx);
+        workspace.toggle_auto_watch(window, cx);
     });
 
     workspace_a.update(user_a, |workspace, cx| {

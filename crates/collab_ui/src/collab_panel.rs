@@ -11,7 +11,7 @@ use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
 use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
-use feature_flags::{AutoWatchScreensFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AutoWatchFeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
@@ -2900,13 +2900,13 @@ impl CollabPanel {
             .workspace
             .upgrade()
             .map_or(AutoWatch::Off, |workspace| {
-                *workspace.read(cx).auto_watch_screens_state()
+                *workspace.read(cx).auto_watch_state()
             });
         let is_auto_watching = auto_watch_state.enabled();
 
         let button = match section {
             Section::ActiveCall => {
-                let has_auto_watch_flag = cx.has_flag::<AutoWatchScreensFeatureFlag>();
+                let has_auto_watch_flag = cx.has_flag::<AutoWatchFeatureFlag>();
                 let show_auto_watch = has_auto_watch_flag && is_auto_watching;
                 let show_copy = channel_link.is_some();
 
@@ -2945,7 +2945,7 @@ impl CollabPanel {
                                         |this, _, window, cx| {
                                             this.workspace
                                                 .update(cx, |workspace, cx| {
-                                                    workspace.toggle_auto_watch_screens(window, cx)
+                                                    workspace.toggle_auto_watch(window, cx)
                                                 })
                                                 .ok();
                                         },
