@@ -8792,10 +8792,8 @@ fn kill_ring_texts(cx: &mut EditorTestContext) -> Vec<String> {
     cx.editor(|_, _, cx| {
         cx.try_global::<KillRingState>()
             .map(|kill_ring| {
-                kill_ring
-                    .entries
-                    .iter()
-                    .map(|entry| entry.to_paste_data().0)
+                KillRingState::entries(kill_ring)
+                    .map(|entry| entry.text())
                     .collect()
             })
             .unwrap_or_default()
@@ -9061,6 +9059,25 @@ async fn test_kill_ring_region_actions_share_ring_and_clear_mark(cx: &mut TestAp
     cx.set_state("ˇ");
     cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
     cx.assert_editor_state("fiveˇ");
+}
+
+#[gpui::test]
+async fn test_kill_ring_capacity_drops_oldest(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    for index in 0..=60 {
+        cx.set_state(&format!("prefix «entry-{index:02}ˇ» suffix"));
+        cx.update_editor(|editor, window, cx| editor.kill_ring_save(&KillRingSave, window, cx));
+        cx.set_state(&format!("prefix entry-{index:02} suffixˇ"));
+    }
+
+    let texts = kill_ring_texts(&mut cx);
+    assert_eq!(texts.len(), 60);
+    assert_eq!(texts.first().map(String::as_str), Some("entry-60"));
+    assert_eq!(texts.last().map(String::as_str), Some("entry-01"));
+    assert!(!texts.iter().any(|text| text == "entry-00"));
 }
 
 #[gpui::test]

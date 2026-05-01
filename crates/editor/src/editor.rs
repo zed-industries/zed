@@ -11575,7 +11575,7 @@ impl Editor {
         let universal_argument = self.take_universal_argument(cx);
         let entry_count = cx
             .try_global::<KillRingState>()
-            .map_or(0, |state| state.entries.len());
+            .map_or(0, KillRingState::len);
         if entry_count == 0 {
             return;
         }
@@ -11620,7 +11620,7 @@ impl Editor {
 
         let entry_count = cx
             .try_global::<KillRingState>()
-            .map_or(0, |state| state.entries.len());
+            .map_or(0, KillRingState::len);
         if entry_count == 0 {
             return;
         }
@@ -25207,6 +25207,18 @@ pub struct KillRingState {
 }
 
 impl KillRingState {
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &KillRingEntry> + ExactSizeIterator {
+        self.entries.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     fn latest(&self) -> Option<&KillRingEntry> {
         self.entries.front()
     }
@@ -25268,11 +25280,15 @@ struct KillRingYankState {
 }
 
 #[derive(Clone)]
-struct KillRingEntry {
+pub struct KillRingEntry {
     selections: Vec<KillRingSelection>,
 }
 
 impl KillRingEntry {
+    pub fn text(&self) -> String {
+        self.to_paste_data().0
+    }
+
     fn from_clipboard_item(item: &ClipboardItem) -> Option<Self> {
         let ClipboardEntry::String(kill_ring) = item.entries().first()? else {
             return None;
