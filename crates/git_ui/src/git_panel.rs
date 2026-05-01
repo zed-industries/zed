@@ -8379,6 +8379,68 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_focus_editor_action_focuses_commit_editor_handle(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_editor(&FocusEditor, window, cx);
+            assert!(
+                panel.commit_editor.read(cx).is_focused(window),
+                "commit editor handle should be focused after FocusEditor"
+            );
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("GitPanel"),
+                "should always have GitPanel context"
+            );
+            assert!(
+                context.contains("CommitEditor"),
+                "should contain CommitEditor context after FocusEditor"
+            );
+            assert!(
+                !context.contains("menu"),
+                "should not contain menu context while commit editor is focused"
+            );
+            assert!(
+                !context.contains("ChangesList"),
+                "should not contain ChangesList context while commit editor is focused"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_fill_commit_editor_toggle(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
