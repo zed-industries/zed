@@ -207,8 +207,7 @@ fn main() {
 
         #[cfg(windows)]
         {
-            windows_resources::compile(false)
-                .expect("failed to compile Windows resources");
+            windows_resources::compile(false).expect("failed to compile Windows resources");
         }
     }
 

@@ -1,4 +1,7 @@
-#![allow(clippy::disallowed_methods, reason = "build helper used only from build scripts")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "build helper used only from build scripts"
+)]
 #![cfg(target_os = "windows")]
 
 use std::process::Command;
