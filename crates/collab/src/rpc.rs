@@ -2541,10 +2541,11 @@ async fn get_users(
         .map(UserId::from_proto)
         .collect();
     let users = session
-        .db()
-        .await
+        .app_state
+        .user_service
         .get_users_by_ids(user_ids)
-        .await?
+        .await?;
+    let users = users
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),

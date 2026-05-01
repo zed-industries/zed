@@ -6,6 +6,7 @@ pub mod env;
 pub mod executor;
 pub mod rpc;
 pub mod seed;
+pub mod services;
 
 use anyhow::Context as _;
 use aws_config::{BehaviorVersion, Region};
@@ -18,6 +19,8 @@ use executor::Executor;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
+
+use crate::services::{DatabaseUserService, UserService};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -216,6 +219,7 @@ pub struct AppState {
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub executor: Executor,
     pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
+    pub user_service: Arc<dyn UserService>,
     pub config: Config,
 }
 
@@ -259,6 +263,7 @@ impl AppState {
             } else {
                 None
             },
+            user_service: Arc::new(DatabaseUserService::new(db)),
             config,
         };
         Ok(Arc::new(this))

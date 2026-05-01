@@ -7,6 +7,7 @@ use client::{
     proto::PeerId,
 };
 use clock::FakeSystemClock;
+use collab::services::FakeUserService;
 use collab::{
     AppState, Config,
     db::{NewUserParams, UserId},
@@ -576,6 +577,7 @@ impl TestServer {
             blob_store_client: None,
             executor,
             kinesis_client: None,
+            user_service: Arc::new(FakeUserService::new()),
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
