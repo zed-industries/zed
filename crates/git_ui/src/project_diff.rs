@@ -22,7 +22,7 @@ use git::{
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
-    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
+    FocusHandle, Focusable, Render, SharedString, Subscription, Task, WeakEntity, actions, rems,
 };
 use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
@@ -59,6 +59,9 @@ actions!(
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
         BranchDiff,
+        /// Shows the diff between the working directory and a custom branch
+        /// chosen from a picker.
+        DiffAgainstBranch,
         /// Opens a new agent thread with the branch diff for review.
         ReviewDiff,
         LeaderAndFollower,
@@ -94,6 +97,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
+        workspace.register_action(Self::deploy_branch_diff_against);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -307,20 +311,93 @@ impl ProjectDiff {
                 .await??
                 .context("Could not determine default branch")?;
 
-            let branch_diff = cx.new_window_entity(|window, cx| {
-                branch_diff::BranchDiff::new(
-                    DiffBase::Merge {
-                        base_ref: main_branch,
-                    },
-                    project.clone(),
-                    window,
-                    cx,
-                )
-            })?;
-            cx.new_window_entity(|window, cx| {
-                Self::new_impl(branch_diff, project, workspace, window, cx)
-            })
+            Self::build_with_base_ref(project, workspace, main_branch, cx)
         })
+    }
+
+    fn build_with_base_ref(
+        project: Entity<Project>,
+        workspace: Entity<Workspace>,
+        base_ref: SharedString,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<Entity<Self>> {
+        let branch_diff = cx.new_window_entity(|window, cx| {
+            branch_diff::BranchDiff::new(DiffBase::Merge { base_ref }, project.clone(), window, cx)
+        })?;
+        cx.new_window_entity(|window, cx| {
+            Self::new_impl(branch_diff, project, workspace, window, cx)
+        })
+    }
+
+    fn deploy_branch_diff_against(
+        workspace: &mut Workspace,
+        _: &DiffAgainstBranch,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        let repository = project.read(cx).active_repository(cx);
+        if repository.is_none() {
+            return;
+        }
+        let workspace_handle = cx.entity();
+        let workspace_weak = workspace_handle.downgrade();
+
+        let on_select: crate::branch_picker::BranchSelectCallback = Arc::new({
+            let workspace_weak = workspace_weak.clone();
+            move |ref_name, window, cx| {
+                let Some(workspace) = workspace_weak.upgrade() else {
+                    return;
+                };
+
+                let existing = workspace.read(cx).items_of_type::<Self>(cx).find(|item| {
+                    matches!(
+                        item.read(cx).diff_base(cx),
+                        DiffBase::Merge { base_ref } if base_ref == &ref_name
+                    )
+                });
+                if let Some(existing) = existing {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    });
+                    return;
+                }
+
+                let project = project.clone();
+                let workspace_for_async = workspace.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        let this = Self::build_with_base_ref(
+                            project,
+                            workspace_for_async.clone(),
+                            ref_name,
+                            cx,
+                        )?;
+                        workspace_for_async.update_in(cx, |workspace, window, cx| {
+                            workspace.add_item_to_active_pane(
+                                Box::new(this),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        })?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_notify_err(workspace.downgrade(), window, cx);
+            }
+        });
+
+        workspace.toggle_modal(window, cx, |window, cx| {
+            crate::branch_picker::BranchList::new_for_selection(
+                workspace_weak,
+                repository,
+                rems(34.),
+                on_select,
+                window,
+                cx,
+            )
+        });
     }
 
     fn new(
@@ -2641,6 +2718,69 @@ mod tests {
                     }))
                 )
             ])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_diff_against_custom_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "C",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let custom_ref: SharedString = "refs/heads/feature-x".into();
+        let diff = cx
+            .update(|window, cx| {
+                let project = project.clone();
+                let custom_ref = custom_ref.clone();
+                window.spawn(cx, async move |cx| {
+                    ProjectDiff::build_with_base_ref(project, workspace, custom_ref, cx)
+                })
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        diff.read_with(cx, |diff, cx| {
+            assert!(
+                matches!(
+                    diff.diff_base(cx),
+                    DiffBase::Merge { base_ref } if base_ref == &custom_ref,
+                ),
+                "expected diff_base to carry the custom ref",
+            );
+        });
+
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", "B".into())],
+            "sha",
+        );
+        fs.set_merge_base_content_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", "A".into())],
+        );
+        cx.run_until_parked();
+
+        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - A
+                + ˇC"
+                .unindent(),
         );
     }
 
