@@ -122,7 +122,7 @@ RUN chmod -R 0755 {full_dest} \
         env.sort();
 
         for (key, value) in env {
-            layer = format!("{layer}ENV {key}={value}\n")
+            layer.push_str(&dockerfile_env_instruction(key, value));
         }
         layer
     }
@@ -201,6 +201,29 @@ RUN chmod -R 0755 {full_dest} \
     }
 }
 
+pub(crate) fn dockerfile_env_instruction(key: &str, value: &str) -> String {
+    format!("ENV {key}={}\n", escape_dockerfile_env_value(value))
+}
+
+fn escape_dockerfile_env_value(value: &str) -> String {
+    let mut escaped_value = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            ' ' | '\t' => {
+                escaped_value.push('\\');
+                escaped_value.push(character);
+            }
+            '\\' => escaped_value.push_str("\\\\"),
+            '\'' => escaped_value.push_str("\\'"),
+            '"' => escaped_value.push_str("\\\""),
+            '\n' => escaped_value.push_str("\\n"),
+            '\r' => escaped_value.push_str("\\r"),
+            _ => escaped_value.push(character),
+        }
+    }
+    escaped_value
+}
+
 /// Parses an OCI feature reference string into its components.
 ///
 /// Handles formats like:
@@ -251,4 +274,61 @@ pub(crate) fn parse_oci_feature_ref(input: &str) -> Option<OciFeatureRef> {
         path,
         version,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dockerfile_env_instruction_escapes_values_for_key_value_syntax() {
+        assert_eq!(
+            dockerfile_env_instruction("PROMPT_COMMAND", "history -a"),
+            "ENV PROMPT_COMMAND=history\\ -a\n"
+        );
+        assert_eq!(dockerfile_env_instruction("EMPTY", ""), "ENV EMPTY=\n");
+        assert_eq!(
+            dockerfile_env_instruction("GREETING", "hello \"zed\""),
+            "ENV GREETING=hello\\ \\\"zed\\\"\n"
+        );
+        assert_eq!(
+            dockerfile_env_instruction("SHELL_PROMPT", "don't stop"),
+            "ENV SHELL_PROMPT=don\\'t\\ stop\n"
+        );
+        assert_eq!(
+            dockerfile_env_instruction("WINDOWS_PATH", r"C:\Program Files\Zed"),
+            "ENV WINDOWS_PATH=C:\\\\Program\\ Files\\\\Zed\n"
+        );
+    }
+
+    #[test]
+    fn dockerfile_env_instruction_preserves_dockerfile_environment_references() {
+        assert_eq!(
+            dockerfile_env_instruction("PATH", "/usr/local/go/bin:/go/bin:${PATH}"),
+            "ENV PATH=/usr/local/go/bin:/go/bin:${PATH}\n"
+        );
+    }
+
+    #[test]
+    fn generate_dockerfile_env_escapes_container_env_values_with_spaces_for_features() {
+        let feature = FeatureManifest::new(
+            "go_0".to_string(),
+            PathBuf::from("/tmp/go_0"),
+            DevContainerFeatureJson {
+                container_env: Some(HashMap::from([
+                    (
+                        "PATH".to_string(),
+                        "/usr/local/go/bin:/go/bin:${PATH}".to_string(),
+                    ),
+                    ("PROMPT_COMMAND".to_string(), "history -a".to_string()),
+                ])),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            feature.generate_dockerfile_env(),
+            "ENV PATH=/usr/local/go/bin:/go/bin:${PATH}\nENV PROMPT_COMMAND=history\\ -a\n"
+        );
+    }
 }

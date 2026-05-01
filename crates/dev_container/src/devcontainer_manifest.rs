@@ -25,7 +25,9 @@ use crate::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
         DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
     },
-    features::{DevContainerFeatureJson, FeatureManifest, parse_oci_feature_ref},
+    features::{
+        DevContainerFeatureJson, FeatureManifest, dockerfile_env_instruction, parse_oci_feature_ref,
+    },
     get_oci_token,
     oci::{TokenResponse, download_oci_tarball, get_oci_manifest},
     safe_id_lower,
@@ -704,7 +706,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
             if let Some(env) = &self.dev_container().container_env {
                 for (key, value) in env {
-                    extended_dockerfile = format!("{extended_dockerfile}ENV {key}={value}\n");
+                    extended_dockerfile.push_str(&dockerfile_env_instruction(key, value));
                 }
             }
         }
@@ -1541,7 +1543,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         if let Some(env) = &self.dev_container().container_env {
             for (key, value) in env {
-                dockerfile = format!("{dockerfile}ENV {key}={value}\n");
+                dockerfile.push_str(&dockerfile_env_instruction(key, value));
             }
         }
         dockerfile
@@ -5228,6 +5230,113 @@ USER $IMAGE_USER
 # Ensure that /etc/profile does not clobber the existing path
 RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 "#
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_update_uid_dockerfile_escapes_container_env_values_with_spaces(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-${devcontainerId}",
+              "image": "test_image:latest",
+              "containerEnv": {
+                "PROMPT_COMMAND": "history -a",
+              },
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let files = test_dependencies.fs.files();
+        let uid_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile")
+            })
+            .expect("to be found");
+        let uid_dockerfile = test_dependencies.fs.load(uid_dockerfile).await.unwrap();
+
+        assert!(
+            uid_dockerfile.contains("ENV PROMPT_COMMAND=history\\ -a\n"),
+            "containerEnv values with spaces should be escaped in Dockerfile ENV key=value form: {uid_dockerfile}"
+        );
+        assert!(
+            !uid_dockerfile.contains("ENV PROMPT_COMMAND=history -a\n"),
+            "unescaped spaces in Dockerfile ENV key=value form make docker build parse '-a' as another variable"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_extended_dockerfile_escapes_container_env_values_with_spaces_when_uid_update_disabled(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-${devcontainerId}",
+              "build": {
+                "dockerfile": "Dockerfile",
+              },
+              "updateRemoteUserUID": false,
+              "containerEnv": {
+                "PROMPT_COMMAND": "history -a",
+              },
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                "FROM test_image:latest".to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let files = test_dependencies.fs.files();
+        let extended_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
+            })
+            .expect("to be found");
+        let extended_dockerfile = test_dependencies
+            .fs
+            .load(extended_dockerfile)
+            .await
+            .unwrap();
+
+        assert!(
+            extended_dockerfile.contains("ENV PROMPT_COMMAND=history\\ -a\n"),
+            "containerEnv values with spaces should be escaped in Dockerfile ENV key=value form: {extended_dockerfile}"
+        );
+        assert!(
+            !extended_dockerfile.contains("ENV PROMPT_COMMAND=history -a\n"),
+            "unescaped spaces in Dockerfile ENV key=value form make docker build parse '-a' as another variable"
         );
     }
 
