@@ -26,7 +26,7 @@ use crate::{
         DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
     },
     features::{DevContainerFeatureJson, FeatureManifest, parse_oci_feature_ref},
-    get_oci_token,
+    format_dockerfile_env_line, get_oci_token,
     oci::{TokenResponse, download_oci_tarball, get_oci_manifest},
     safe_id_lower,
 };
@@ -704,7 +704,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
             if let Some(env) = &self.dev_container().container_env {
                 for (key, value) in env {
-                    extended_dockerfile = format!("{extended_dockerfile}ENV {key}={value}\n");
+                    extended_dockerfile.push_str(&format_dockerfile_env_line(key, value));
                 }
             }
         }
@@ -1541,7 +1541,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         if let Some(env) = &self.dev_container().container_env {
             for (key, value) in env {
-                dockerfile = format!("{dockerfile}ENV {key}={value}\n");
+                dockerfile.push_str(&format_dockerfile_env_line(key, value));
             }
         }
         dockerfile
@@ -3348,6 +3348,38 @@ mod test {
         );
 
         assert_eq!(replaced, "before one:two after");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_update_uid_dockerfile_escapes_container_env_values_with_spaces(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"
+{
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "remoteUser": "vscode",
+    "containerEnv": {
+        "PROMPT_COMMAND": "history -a"
+    }
+}
+            "#,
+        )
+        .await
+        .unwrap();
+
+        let dockerfile = devcontainer_manifest.generate_update_uid_dockerfile();
+
+        assert!(
+            dockerfile.contains("ENV PROMPT_COMMAND=\"history -a\"\n"),
+            "containerEnv values with spaces should be quoted in Dockerfile ENV lines: {dockerfile}"
+        );
+        assert!(
+            !dockerfile.contains("ENV PROMPT_COMMAND=history -a\n"),
+            "unescaped spaces make Docker parse '-a' as a separate ENV assignment"
+        );
     }
 
     #[gpui::test]

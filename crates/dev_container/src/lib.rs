@@ -75,6 +75,35 @@ pub(crate) fn safe_id_lower(input: &str) -> String {
 pub(crate) fn safe_id_upper(input: &str) -> String {
     get_safe_id(input).to_uppercase()
 }
+
+pub(crate) fn format_dockerfile_env_line(key: &str, value: &str) -> String {
+    format!("ENV {key}={}\n", escape_dockerfile_env_value(value))
+}
+
+fn escape_dockerfile_env_value(value: &str) -> std::borrow::Cow<'_, str> {
+    if value
+        .chars()
+        .all(|character| !character.is_whitespace() && character != '"' && character != '\\')
+    {
+        return std::borrow::Cow::Borrowed(value);
+    }
+
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for character in value.chars() {
+        match character {
+            '"' | '\\' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+    std::borrow::Cow::Owned(escaped)
+}
 fn get_safe_id(input: &str) -> String {
     let replaced: String = input
         .chars()
@@ -1675,8 +1704,24 @@ mod tests {
 
     use crate::{
         DevContainerTemplatesResponse, devcontainer_templates_repository,
-        get_deserializable_oci_blob, ghcr_registry,
+        format_dockerfile_env_line, get_deserializable_oci_blob, ghcr_registry,
     };
+
+    #[test]
+    fn test_format_dockerfile_env_line_quotes_values_that_need_escaping() {
+        assert_eq!(
+            format_dockerfile_env_line("PROMPT_COMMAND", "history -a"),
+            "ENV PROMPT_COMMAND=\"history -a\"\n"
+        );
+        assert_eq!(
+            format_dockerfile_env_line("PATH", "/usr/local/go/bin:/go/bin:${PATH}"),
+            "ENV PATH=/usr/local/go/bin:/go/bin:${PATH}\n"
+        );
+        assert_eq!(
+            format_dockerfile_env_line("QUOTE", "a\"b"),
+            "ENV QUOTE=\"a\\\"b\"\n"
+        );
+    }
 
     #[gpui::test]
     async fn test_get_devcontainer_templates() {

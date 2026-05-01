@@ -7,7 +7,7 @@ use serde_json_lenient::Value;
 use crate::{
     devcontainer_api::DevContainerError,
     devcontainer_json::{FeatureOptions, MountDefinition},
-    safe_id_upper,
+    format_dockerfile_env_line, safe_id_upper,
 };
 
 /// Parsed components of an OCI feature reference such as
@@ -122,7 +122,7 @@ RUN chmod -R 0755 {full_dest} \
         env.sort();
 
         for (key, value) in env {
-            layer = format!("{layer}ENV {key}={value}\n")
+            layer.push_str(&format_dockerfile_env_line(key, value));
         }
         layer
     }
