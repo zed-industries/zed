@@ -55,7 +55,14 @@ pub struct ResponseFunctionCallItem {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseFunctionCallOutputItem {
     pub call_id: String,
-    pub output: String,
+    pub output: ResponseFunctionCallOutputContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ResponseFunctionCallOutputContent {
+    List(Vec<ResponseInputContent>),
+    Text(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

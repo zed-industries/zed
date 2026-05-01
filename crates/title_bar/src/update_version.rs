@@ -84,11 +84,11 @@ impl Render for UpdateVersion {
             AutoUpdateStatus::Checking if self.update_check_type.is_manual() => {
                 UpdateButton::checking().into_any_element()
             }
-            AutoUpdateStatus::Downloading { version } if self.update_check_type.is_manual() => {
+            AutoUpdateStatus::Downloading { version } => {
                 let tooltip = Self::version_tooltip_message(&version);
                 UpdateButton::downloading(tooltip).into_any_element()
             }
-            AutoUpdateStatus::Installing { version } if self.update_check_type.is_manual() => {
+            AutoUpdateStatus::Installing { version } => {
                 let tooltip = Self::version_tooltip_message(&version);
                 UpdateButton::installing(tooltip).into_any_element()
             }
@@ -116,10 +116,7 @@ impl Render for UpdateVersion {
                     }))
                     .into_any_element()
             }
-            AutoUpdateStatus::Idle
-            | AutoUpdateStatus::Checking { .. }
-            | AutoUpdateStatus::Downloading { .. }
-            | AutoUpdateStatus::Installing { .. } => Empty.into_any_element(),
+            AutoUpdateStatus::Idle | AutoUpdateStatus::Checking { .. } => Empty.into_any_element(),
         }
     }
 }

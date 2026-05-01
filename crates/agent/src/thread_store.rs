@@ -1,8 +1,8 @@
 use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
+use futures::{FutureExt, future::Shared};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};
-use std::collections::HashMap;
 use util::path_list::PathList;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
@@ -11,7 +11,7 @@ impl Global for GlobalThreadStore {}
 
 pub struct ThreadStore {
     threads: Vec<DbThreadMetadata>,
-    threads_by_paths: HashMap<PathList, Vec<usize>>,
+    reload_task: Shared<Task<()>>,
 }
 
 impl ThreadStore {
@@ -29,12 +29,18 @@ impl ThreadStore {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let this = Self {
+        let reload_task = Self::spawn_reload(cx);
+        Self {
             threads: Vec::new(),
-            threads_by_paths: HashMap::default(),
-        };
-        this.reload(cx);
-        this
+            reload_task,
+        }
+    }
+
+    /// Resolves when the most recently initiated reload has completed.
+    /// Callers that need to read `entries()` and can't tolerate the initial
+    /// empty state must await this before reading.
+    pub fn reload_task(&self) -> Shared<Task<()>> {
+        self.reload_task.clone()
     }
 
     pub fn thread_from_session_id(&self, session_id: &acp::SessionId) -> Option<&DbThreadMetadata> {
@@ -90,29 +96,32 @@ impl ThreadStore {
         })
     }
 
-    pub fn reload(&self, cx: &mut Context<Self>) {
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.reload_task = Self::spawn_reload(cx);
+    }
+
+    fn spawn_reload(cx: &mut Context<Self>) -> Shared<Task<()>> {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
-            let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let all_threads = database.list_threads().await?;
+            let Ok(database) = database_connection.await.map_err(|err| anyhow!(err)) else {
+                return;
+            };
+            let Ok(all_threads) = database.list_threads().await else {
+                return;
+            };
             this.update(cx, |this, cx| {
                 this.threads.clear();
-                this.threads_by_paths.clear();
                 for thread in all_threads {
                     if thread.parent_session_id.is_some() {
                         continue;
                     }
-                    let index = this.threads.len();
-                    this.threads_by_paths
-                        .entry(thread.folder_paths.clone())
-                        .or_default()
-                        .push(index);
                     this.threads.push(thread);
                 }
                 cx.notify();
             })
+            .ok();
         })
-        .detach_and_log_err(cx);
+        .shared()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -123,13 +132,8 @@ impl ThreadStore {
         self.threads.iter().cloned()
     }
 
-    /// Returns threads whose folder_paths match the given paths exactly.
-    /// Uses a cached index for O(1) lookup per path list.
-    pub fn threads_for_paths(&self, paths: &PathList) -> impl Iterator<Item = &DbThreadMetadata> {
-        self.threads_by_paths
-            .get(paths)
-            .into_iter()
-            .flat_map(|indices| indices.iter().map(|&index| &self.threads[index]))
+    pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
+        self.threads.iter().map(|t| t.id.clone())
     }
 }
 
@@ -305,51 +309,5 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, first_id);
         assert_eq!(entries[1].id, second_id);
-    }
-
-    #[gpui::test]
-    async fn test_threads_for_paths_filters_correctly(cx: &mut TestAppContext) {
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        cx.run_until_parked();
-
-        let project_a_paths = PathList::new(&[std::path::PathBuf::from("/home/user/project-a")]);
-        let project_b_paths = PathList::new(&[std::path::PathBuf::from("/home/user/project-b")]);
-
-        let thread_a = make_thread(
-            "Thread in A",
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-        );
-        let thread_b = make_thread(
-            "Thread in B",
-            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-        );
-        let thread_a_id = session_id("thread-a");
-        let thread_b_id = session_id("thread-b");
-
-        let save_a = thread_store.update(cx, |store, cx| {
-            store.save_thread(thread_a_id.clone(), thread_a, project_a_paths.clone(), cx)
-        });
-        save_a.await.unwrap();
-
-        let save_b = thread_store.update(cx, |store, cx| {
-            store.save_thread(thread_b_id.clone(), thread_b, project_b_paths.clone(), cx)
-        });
-        save_b.await.unwrap();
-
-        cx.run_until_parked();
-
-        thread_store.read_with(cx, |store, _cx| {
-            let a_threads: Vec<_> = store.threads_for_paths(&project_a_paths).collect();
-            assert_eq!(a_threads.len(), 1);
-            assert_eq!(a_threads[0].id, thread_a_id);
-
-            let b_threads: Vec<_> = store.threads_for_paths(&project_b_paths).collect();
-            assert_eq!(b_threads.len(), 1);
-            assert_eq!(b_threads[0].id, thread_b_id);
-
-            let nonexistent = PathList::new(&[std::path::PathBuf::from("/nonexistent")]);
-            let no_threads: Vec<_> = store.threads_for_paths(&nonexistent).collect();
-            assert!(no_threads.is_empty());
-        });
     }
 }

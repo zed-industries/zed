@@ -1,17 +1,20 @@
 use acp_thread::AgentSessionModes;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
-use agent_settings::AgentSettings;
+
 use fs::Fs;
 use gpui::{Context, Entity, WeakEntity, Window, prelude::*};
-use settings::Settings as _;
+
 use std::{rc::Rc, sync::Arc};
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, Tooltip, prelude::*,
+    Button, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 
-use crate::{CycleModeSelector, ToggleProfileSelector, ui::HoldForDefault};
+use crate::{
+    CycleModeSelector, ToggleProfileSelector,
+    ui::{HoldForDefault, documentation_aside_side},
+};
 
 pub struct ModeSelector {
     connection: Rc<dyn AgentSessionModes>,
@@ -87,13 +90,7 @@ impl ModeSelector {
             let current_mode = self.connection.current_mode();
             let default_mode = self.agent_server.default_mode(cx);
 
-            let settings = AgentSettings::get_global(cx);
-            let side = match settings.dock {
-                settings::DockPosition::Left => DocumentationSide::Right,
-                settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                    DocumentationSide::Left
-                }
-            };
+            let side = documentation_aside_side(cx);
 
             for mode in all_modes {
                 let is_selected = &mode.id == &current_mode;
@@ -169,10 +166,7 @@ impl Render for ModeSelector {
         let trigger_button = Button::new("mode-selector-trigger", current_mode_name)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
-            .icon(icon)
-            .icon_size(IconSize::XSmall)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
+            .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
             .disabled(self.setting_mode);
 
         PopoverMenu::new("mode-selector")
@@ -203,7 +197,7 @@ impl Render for ModeSelector {
                     }
                 }),
             )
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::Anchor::BottomRight)
             .with_handle(self.menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),

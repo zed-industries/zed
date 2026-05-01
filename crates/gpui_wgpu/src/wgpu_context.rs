@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use gpui_util::ResultExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use wgpu::TextureFormat;
 
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
@@ -11,6 +12,7 @@ pub struct WgpuContext {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
     dual_source_blending: bool,
+    color_texture_format: wgpu::TextureFormat,
     device_lost: Arc<AtomicBool>,
 }
 
@@ -41,8 +43,8 @@ impl WgpuContext {
 
         // Select an adapter by actually testing surface configuration with the real device.
         // This is the only reliable way to determine compatibility on hybrid GPU systems.
-        let (adapter, device, queue, dual_source_blending) =
-            pollster::block_on(Self::select_adapter_and_device(
+        let (adapter, device, queue, dual_source_blending, color_texture_format) =
+            gpui::block_on(Self::select_adapter_and_device(
                 &instance,
                 device_id_filter,
                 surface,
@@ -72,17 +74,19 @@ impl WgpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),
             dual_source_blending,
+            color_texture_format,
             device_lost,
         })
     }
 
     #[cfg(target_family = "wasm")]
     pub async fn new_web() -> anyhow::Result<Self> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
         });
 
         let adapter = instance
@@ -101,7 +105,8 @@ impl WgpuContext {
         );
 
         let device_lost = Arc::new(AtomicBool::new(false));
-        let (device, queue, dual_source_blending) = Self::create_device(&adapter).await?;
+        let (device, queue, dual_source_blending, color_texture_format) =
+            Self::create_device(&adapter).await?;
 
         Ok(Self {
             instance,
@@ -109,13 +114,14 @@ impl WgpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),
             dual_source_blending,
+            color_texture_format,
             device_lost,
         })
     }
 
     async fn create_device(
         adapter: &wgpu::Adapter,
-    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
+    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let dual_source_blending = adapter
             .features()
             .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
@@ -129,6 +135,8 @@ impl WgpuContext {
                 Subpixel text antialiasing will be disabled."
             );
         }
+
+        let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -144,16 +152,22 @@ impl WgpuContext {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
 
-        Ok((device, queue, dual_source_blending))
+        Ok((
+            device,
+            queue,
+            dual_source_blending,
+            color_atlas_texture_format,
+        ))
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn instance() -> wgpu::Instance {
-        wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: Some(display),
         })
     }
 
@@ -183,7 +197,13 @@ impl WgpuContext {
         device_id_filter: Option<u32>,
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<&CompositorGpuHint>,
-    ) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue, bool)> {
+    ) -> anyhow::Result<(
+        wgpu::Adapter,
+        wgpu::Device,
+        wgpu::Queue,
+        bool,
+        TextureFormat,
+    )> {
         let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
 
         if adapters.is_empty() {
@@ -198,9 +218,8 @@ impl WgpuContext {
         //
         // 1. ZED_DEVICE_ID match — explicit user override
         // 2. Compositor GPU match — the GPU the display server is rendering on
-        // 3. Device type — WGPU HighPerformance order (Discrete > Integrated >
-        //    Other > Virtual > Cpu). "Other" ranks above "Virtual" because
-        //    backends like OpenGL may report real hardware as "Other".
+        // 3. Device type (Discrete > Integrated > Other > Virtual > Cpu).
+        //    "Other" ranks above "Virtual" because OpenGL seems to count as "Other".
         // 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
         adapters.sort_by_key(|adapter| {
             let info = adapter.get_info();
@@ -268,13 +287,19 @@ impl WgpuContext {
             log::info!("Testing adapter: {} ({:?})...", info.name, info.backend);
 
             match Self::try_adapter_with_surface(&adapter, surface).await {
-                Ok((device, queue, dual_source_blending)) => {
+                Ok((device, queue, dual_source_blending, color_atlas_texture_format)) => {
                     log::info!(
                         "Selected GPU (passed configuration test): {} ({:?})",
                         info.name,
                         info.backend
                     );
-                    return Ok((adapter, device, queue, dual_source_blending));
+                    return Ok((
+                        adapter,
+                        device,
+                        queue,
+                        dual_source_blending,
+                        color_atlas_texture_format,
+                    ));
                 }
                 Err(e) => {
                     log::info!(
@@ -296,7 +321,7 @@ impl WgpuContext {
     async fn try_adapter_with_surface(
         adapter: &wgpu::Adapter,
         surface: &wgpu::Surface<'_>,
-    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
+    ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool, TextureFormat)> {
         let caps = surface.get_capabilities(adapter);
         if caps.formats.is_empty() {
             anyhow::bail!("no compatible surface formats");
@@ -305,10 +330,8 @@ impl WgpuContext {
             anyhow::bail!("no compatible alpha modes");
         }
 
-        // Create the real device with full features
-        let (device, queue, dual_source_blending) = Self::create_device(adapter).await?;
-
-        // Use an error scope to capture any validation errors during configure
+        let (device, queue, dual_source_blending, color_atlas_texture_format) =
+            Self::create_device(adapter).await?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
 
         let test_config = wgpu::SurfaceConfiguration {
@@ -324,17 +347,58 @@ impl WgpuContext {
 
         surface.configure(&device, &test_config);
 
-        // Check if there was a validation error
         let error = error_scope.pop().await;
         if let Some(e) = error {
             anyhow::bail!("surface configuration failed: {e}");
         }
 
-        Ok((device, queue, dual_source_blending))
+        Ok((
+            device,
+            queue,
+            dual_source_blending,
+            color_atlas_texture_format,
+        ))
     }
 
+    fn select_color_texture_format(adapter: &wgpu::Adapter) -> anyhow::Result<wgpu::TextureFormat> {
+        let required_usages = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+        let bgra_features = adapter.get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm);
+        if bgra_features.allowed_usages.contains(required_usages) {
+            return Ok(wgpu::TextureFormat::Bgra8Unorm);
+        }
+
+        let rgba_features = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
+        if rgba_features.allowed_usages.contains(required_usages) {
+            let info = adapter.get_info();
+            log::warn!(
+                "Adapter {} ({:?}) does not support Bgra8Unorm atlas textures with usages {:?}; \
+                 falling back to Rgba8Unorm atlas textures.",
+                info.name,
+                info.backend,
+                required_usages,
+            );
+            return Ok(wgpu::TextureFormat::Rgba8Unorm);
+        }
+
+        let info = adapter.get_info();
+        Err(anyhow::anyhow!(
+            "Adapter {} ({:?}, device={:#06x}) does not support a usable color atlas texture \
+             format with usages {:?}. Bgra8Unorm allowed usages: {:?}; \
+             Rgba8Unorm allowed usages: {:?}.",
+            info.name,
+            info.backend,
+            info.device,
+            required_usages,
+            bgra_features.allowed_usages,
+            rgba_features.allowed_usages,
+        ))
+    }
     pub fn supports_dual_source_blending(&self) -> bool {
         self.dual_source_blending
+    }
+
+    pub fn color_texture_format(&self) -> wgpu::TextureFormat {
+        self.color_texture_format
     }
 
     /// Returns true if the GPU device was lost (e.g., due to driver crash, suspend/resume).

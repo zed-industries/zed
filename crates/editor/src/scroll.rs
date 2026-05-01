@@ -5,10 +5,10 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
+    MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    persistence::DB,
+    persistence::EditorDb,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
@@ -44,13 +44,13 @@ impl ScrollAnchor {
     pub(super) fn new() -> Self {
         Self {
             offset: gpui::Point::default(),
-            anchor: Anchor::min(),
+            anchor: Anchor::Min,
         }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.offset.apply_along(Axis::Vertical, |offset| {
-            if self.anchor == Anchor::min() {
+            if self.anchor == Anchor::Min {
                 0.
             } else {
                 let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
@@ -201,8 +201,6 @@ pub struct ScrollManager {
     /// Each side separately clamps the x component using its own scroll_max_x when reading from the SharedScrollAnchor.
     scroll_max_x: Option<f64>,
     ongoing: OngoingScroll,
-    /// Number of sticky header lines currently being rendered for the current scroll position.
-    sticky_header_line_count: usize,
     /// The second element indicates whether the autoscroll request is local
     /// (true) or remote (false). Local requests are initiated by user actions,
     /// while remote requests come from external sources.
@@ -234,7 +232,6 @@ impl ScrollManager {
             anchor,
             scroll_max_x: None,
             ongoing: OngoingScroll::new(),
-            sticky_header_line_count: 0,
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -273,7 +270,6 @@ impl ScrollManager {
             this.display_map_id = Some(my_snapshot.display_map_id);
         });
         self.ongoing = other.ongoing;
-        self.sticky_header_line_count = other.sticky_header_line_count;
     }
 
     pub fn offset(&self, cx: &App) -> gpui::Point<f64> {
@@ -360,18 +356,11 @@ impl ScrollManager {
         pos
     }
 
-    pub fn sticky_header_line_count(&self) -> usize {
-        self.sticky_header_line_count
-    }
-
-    pub fn set_sticky_header_line_count(&mut self, count: usize) {
-        self.sticky_header_line_count = count;
-    }
-
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<ScrollOffset>,
         map: &DisplaySnapshot,
+        scroll_beyond_last_line: ScrollBeyondLastLine,
         local: bool,
         autoscroll: bool,
         workspace_id: Option<WorkspaceId>,
@@ -379,7 +368,7 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
         let scroll_top = scroll_position.y.max(0.);
-        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+        let scroll_top = match scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => scroll_top,
             ScrollBeyondLastLine::Off => {
                 if let Some(height_in_lines) = self.visible_line_count {
@@ -400,7 +389,6 @@ impl ScrollManager {
                 }
             }
         };
-
         let scroll_top_row = DisplayRow(scroll_top as u32);
         let scroll_top_buffer_point = map
             .clip_point(
@@ -467,12 +455,13 @@ impl ScrollManager {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
             let executor = cx.background_executor().clone();
 
+            let db = EditorDb::global(cx);
             self._save_scroll_position_task = cx.background_executor().spawn(async move {
                 executor.timer(Duration::from_millis(10)).await;
                 log::debug!(
                     "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
                 );
-                DB.save_scroll_position(
+                db.save_scroll_position(
                     item_id,
                     workspace_id,
                     top_row,
@@ -638,6 +627,20 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
+    pub(crate) fn scroll_beyond_last_line(&self, cx: &App) -> ScrollBeyondLastLine {
+        match self.mode {
+            EditorMode::Minimap { .. }
+            | EditorMode::Full {
+                sizing_behavior: SizingBehavior::Default,
+                ..
+            } => EditorSettings::get_global(cx).scroll_beyond_last_line,
+
+            EditorMode::Full { .. } | EditorMode::SingleLine | EditorMode::AutoHeight { .. } => {
+                ScrollBeyondLastLine::Off
+            }
+        }
+    }
+
     pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut Context<Self>) {
         self.scroll_manager.vertical_scroll_margin = margin_rows as f64;
         cx.notify();
@@ -665,16 +668,7 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.register_visible_buffers(cx);
-                        editor.colorize_brackets(false, cx);
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                        editor.update_lsp_data(None, window, cx);
-                    })
-                    .ok();
-            });
+            self.update_data_on_scroll(false, window, cx);
         }
     }
 
@@ -775,10 +769,11 @@ impl Editor {
         } else {
             scroll_position
         };
-
+        let scroll_beyond_last_line = self.scroll_beyond_last_line(cx);
         self.scroll_manager.set_scroll_position(
             adjusted_position,
             &display_map,
+            scroll_beyond_last_line,
             local,
             autoscroll,
             workspace_id,
@@ -875,10 +870,8 @@ impl Editor {
         // configure the editor to only display a certain number of columns. If
         // that ever happens, this could probably be removed.
         let settings = AllLanguageSettings::get_global(cx);
-        if matches!(
-            settings.defaults.soft_wrap,
-            SoftWrap::PreferredLineLength | SoftWrap::Bounded
-        ) && (settings.defaults.preferred_line_length as f64) < visible_column_count
+        if matches!(settings.defaults.soft_wrap, SoftWrap::Bounded)
+            && (settings.defaults.preferred_line_length as f64) < visible_column_count
         {
             visible_column_count = settings.defaults.preferred_line_length as f64;
         }
@@ -937,7 +930,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let scroll_position = DB.get_scroll_position(item_id, workspace_id);
+        let scroll_position = EditorDb::global(cx).get_scroll_position(item_id, workspace_id);
         if let Ok(Some((top_row, x, y))) = scroll_position {
             let top_anchor = self
                 .buffer()

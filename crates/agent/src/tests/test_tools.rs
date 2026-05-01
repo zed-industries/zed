@@ -1,5 +1,4 @@
 use super::*;
-use agent_settings::AgentSettings;
 use gpui::{App, SharedString, Task};
 use std::future;
 use std::sync::Mutex;
@@ -56,13 +55,12 @@ impl AgentTool for StreamingEchoTool {
 
     fn run(
         self: Arc<Self>,
-        mut input: ToolInput<Self::Input>,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         let wait_until_complete_rx = self.wait_until_complete_rx.lock().unwrap().take();
         cx.spawn(async move |_cx| {
-            while input.recv_partial().await.is_some() {}
             let input = input
                 .recv()
                 .await
@@ -71,6 +69,68 @@ impl AgentTool for StreamingEchoTool {
                 rx.await.ok();
             }
             Ok(input.text)
+        })
+    }
+}
+
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct StreamingJsonErrorContextToolInput {
+    /// The text to echo.
+    pub text: String,
+}
+
+pub struct StreamingJsonErrorContextTool;
+
+impl AgentTool for StreamingJsonErrorContextTool {
+    type Input = StreamingJsonErrorContextToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "streaming_json_error_context";
+
+    fn supports_input_streaming() -> bool {
+        true
+    }
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Streaming JSON Error Context".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        mut input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        cx.spawn(async move |_cx| {
+            let mut last_partial_text = None;
+
+            loop {
+                match input.next().await {
+                    Ok(ToolInputPayload::Partial(partial)) => {
+                        if let Some(text) = partial.get("text").and_then(|value| value.as_str()) {
+                            last_partial_text = Some(text.to_string());
+                        }
+                    }
+                    Ok(ToolInputPayload::Full(input)) => return Ok(input.text),
+                    Ok(ToolInputPayload::InvalidJson { error_message }) => {
+                        let partial_text = last_partial_text.unwrap_or_default();
+                        return Err(format!(
+                            "Saw partial text '{partial_text}' before invalid JSON: {error_message}"
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(format!("Failed to receive tool input: {error}"));
+                    }
+                }
+            }
         })
     }
 }
@@ -119,7 +179,7 @@ impl AgentTool for StreamingFailingEchoTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
             for _ in 0..self.receive_chunks_until_failure {
-                let _ = input.recv_partial().await;
+                let _ = input.next().await;
             }
             Err("failed".into())
         })
@@ -256,31 +316,59 @@ impl AgentTool for ToolRequiringPermission {
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
 
-            let decision = cx.update(|cx| {
-                decide_permission_from_settings(
-                    Self::NAME,
-                    &[String::new()],
-                    AgentSettings::get_global(cx),
-                )
+            let authorize = cx.update(|cx| {
+                let context = crate::ToolPermissionContext::new(Self::NAME, vec![String::new()]);
+                event_stream.authorize("Authorize?", context, cx)
             });
+            authorize.await.map_err(|e| e.to_string())?;
+            Ok("Allowed".to_string())
+        })
+    }
+}
 
-            let authorize = match decision {
-                ToolPermissionDecision::Allow => None,
-                ToolPermissionDecision::Deny(reason) => {
-                    return Err(reason);
-                }
-                ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
-                    let context = crate::ToolPermissionContext::new(
-                        "tool_requiring_permission",
-                        vec![String::new()],
-                    );
-                    event_stream.authorize("Authorize?", context, cx)
-                })),
-            };
+/// A second tool that also requires permission, used to verify that
+/// permission decisions scoped to one tool don't leak into prompts for a
+/// different tool.
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct ToolRequiringPermission2Input {}
 
-            if let Some(authorize) = authorize {
-                authorize.await.map_err(|e| e.to_string())?;
-            }
+pub struct ToolRequiringPermission2;
+
+impl AgentTool for ToolRequiringPermission2 {
+    type Input = ToolRequiringPermission2Input;
+    type Output = String;
+
+    const NAME: &'static str = "tool_requiring_permission_2";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "This tool also requires permission".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        cx.spawn(async move |cx| {
+            let _input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            let authorize = cx.update(|cx| {
+                let context = crate::ToolPermissionContext::new(Self::NAME, vec![String::new()]);
+                event_stream.authorize("Authorize?", context, cx)
+            });
+            authorize.await.map_err(|e| e.to_string())?;
             Ok("Allowed".to_string())
         })
     }
