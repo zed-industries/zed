@@ -101,8 +101,33 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
                 }
             }]
         );
-        assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");
+        assert_timestamped_log_line(
+            view.editor.read(cx).text(cx).as_str(),
+            "hello from the server",
+        );
     });
+}
+
+fn assert_timestamped_log_line(actual: &str, message: &str) {
+    let Some(line) = actual.strip_suffix('\n') else {
+        panic!("log line should end with newline: {actual:?}");
+    };
+    let Some((timestamp, rest)) = line
+        .strip_prefix('[')
+        .and_then(|line| line.split_once("] "))
+    else {
+        panic!("log line should start with a bracketed timestamp: {actual:?}");
+    };
+
+    assert_eq!(rest, message);
+    assert_eq!(timestamp.len(), "HH:MM:SS".len());
+    assert!(timestamp.chars().enumerate().all(|(index, character)| {
+        if index == 2 || index == 5 {
+            character == ':'
+        } else {
+            character.is_ascii_digit()
+        }
+    }));
 }
 
 fn init_test(cx: &mut gpui::TestAppContext) {
