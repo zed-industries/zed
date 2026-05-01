@@ -728,7 +728,7 @@ pub mod simple_message_notification {
         show_suppress_button: bool,
         title: Option<SharedString>,
         scroll_handle: ScrollHandle,
-        copyable_text: Option<SharedString>,
+        text_to_copy: Option<SharedString>,
         severity: Severity,
     }
 
@@ -749,11 +749,11 @@ pub mod simple_message_notification {
             S: Into<SharedString>,
         {
             let message = message.into();
-            let copyable = message.clone();
+            let text_to_copy = message.clone();
             Self::new_from_builder(cx, move |_, _| {
                 Label::new(message.clone()).into_any_element()
             })
-            .copyable_text(copyable)
+            .text_to_copy(text_to_copy)
         }
 
         pub fn new_from_builder<F>(cx: &mut App, content: F) -> MessageNotification
@@ -777,7 +777,7 @@ pub mod simple_message_notification {
                 title: None,
                 focus_handle: cx.focus_handle(),
                 scroll_handle: ScrollHandle::new(),
-                copyable_text: None,
+                text_to_copy: None,
                 severity: Severity::Info,
             }
         }
@@ -787,11 +787,11 @@ pub mod simple_message_notification {
             self
         }
 
-        pub fn copyable_text<S>(mut self, text: S) -> Self
+        pub fn text_to_copy<S>(mut self, text: S) -> Self
         where
             S: Into<SharedString>,
         {
-            self.copyable_text = Some(text.into());
+            self.text_to_copy = Some(text.into());
             self
         }
 
@@ -934,7 +934,7 @@ pub mod simple_message_notification {
                         .gap_1()
                         .when_some(
                             matches!(self.severity, Severity::Error | Severity::Warning)
-                                .then(|| self.copyable_text.clone())
+                                .then(|| self.text_to_copy.clone())
                                 .flatten(),
                             |this, text| {
                                 this.child(
