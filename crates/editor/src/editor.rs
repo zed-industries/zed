@@ -357,6 +357,8 @@ enum DisplayDiffHunk {
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
     cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
+    cx.observe_keystrokes(universal_argument::observe_keystrokes)
+        .detach();
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
@@ -3808,14 +3810,15 @@ impl Editor {
 
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let repeat_count = self.take_numeric_universal_argument_or(1, cx);
-        if repeat_count <= 0 {
+        if repeat_count == 0 {
             return;
         }
+        let repeat_count = repeat_count.unsigned_abs() as usize;
 
         let text: Arc<str> = if repeat_count == 1 {
             text.into()
         } else {
-            text.repeat(repeat_count as usize).into()
+            text.repeat(repeat_count).into()
         };
 
         if self.read_only(cx) {
@@ -8712,8 +8715,7 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
-        let count = -self.take_numeric_universal_argument_or(1, cx);
-        self.delete_by_char_count(count, true, window, cx);
+        self.delete_by_char_count(-1, true, window, cx);
     }
 
     fn delete_by_char_count(
@@ -8784,8 +8786,7 @@ impl Editor {
     }
 
     pub fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        self.delete_by_char_count(count, false, window, cx);
+        self.delete_by_char_count(1, false, window, cx);
     }
 
     fn previous_deletion_point(
@@ -11705,16 +11706,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.kill_ring_backward_kill_word_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.kill_ring_kill_word_count(count as usize, window, cx);
+        self.kill_ring_kill_word_count(1, window, cx);
     }
 
     fn kill_ring_kill_word_count(
@@ -11746,16 +11738,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.kill_ring_kill_word_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.kill_ring_backward_kill_word_count(count as usize, window, cx);
+        self.kill_ring_backward_kill_word_count(1, window, cx);
     }
 
     fn kill_ring_backward_kill_word_count(
@@ -11966,12 +11949,6 @@ impl Editor {
             cx.notify();
         }
         did_clear
-    }
-
-    fn is_universal_argument_action(action: &dyn Action) -> bool {
-        action.as_any().is::<UniversalArgument>()
-            || action.as_any().is::<UniversalArgumentDigit>()
-            || action.as_any().is::<UniversalArgumentMinus>()
     }
 
     fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
@@ -12396,16 +12373,7 @@ impl Editor {
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_right_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.move_left_count(count as usize, window, cx);
+        self.move_left_count(1, window, cx);
     }
 
     fn move_left_count(&mut self, count: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -12433,16 +12401,7 @@ impl Editor {
     }
 
     pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_left_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.move_right_count(count as usize, window, cx);
+        self.move_right_count(1, window, cx);
     }
 
     fn move_right_count(&mut self, count: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -12472,16 +12431,7 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_down_count(count.unsigned_abs(), window, cx);
-            return;
-        }
-
-        self.move_up_count(count as u32, window, cx);
+        self.move_up_count(1, window, cx);
     }
 
     fn move_up_count(&mut self, count: u32, window: &mut Window, cx: &mut Context<Self>) {
@@ -12703,16 +12653,7 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_up_count(count.unsigned_abs(), window, cx);
-            return;
-        }
-
-        self.move_down_count(count as u32, window, cx);
+        self.move_down_count(1, window, cx);
     }
 
     fn move_down_count(&mut self, count: u32, window: &mut Window, cx: &mut Context<Self>) {
@@ -12914,16 +12855,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_to_next_word_end_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.move_to_previous_word_start_count(count as usize, window, cx);
+        self.move_to_previous_word_start_count(1, window, cx);
     }
 
     fn move_to_previous_word_start_count(
@@ -13000,23 +12932,8 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.delete_to_next_word_end_count(
-                count.unsigned_abs() as usize,
-                action.ignore_newlines,
-                action.ignore_brackets,
-                window,
-                cx,
-            );
-            return;
-        }
-
         self.delete_to_previous_word_start_count(
-            count as usize,
+            1,
             action.ignore_newlines,
             action.ignore_brackets,
             window,
@@ -13098,16 +13015,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_to_previous_word_start_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.move_to_next_word_end_count(count as usize, window, cx);
+        self.move_to_next_word_end_count(1, window, cx);
     }
 
     fn move_to_next_word_end_count(
@@ -13175,23 +13083,8 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.delete_to_previous_word_start_count(
-                count.unsigned_abs() as usize,
-                action.ignore_newlines,
-                action.ignore_brackets,
-                window,
-                cx,
-            );
-            return;
-        }
-
         self.delete_to_next_word_end_count(
-            count as usize,
+            1,
             action.ignore_newlines,
             action.ignore_brackets,
             window,
@@ -13271,7 +13164,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
+        let count = self
+            .take_universal_argument(cx)
+            .map_or(1, ResolvedUniversalArgument::numeric_value);
         self.move_to_beginning_of_line_count(count, action, window, cx);
     }
 
@@ -13360,7 +13255,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
+        let count = self
+            .take_universal_argument(cx)
+            .map_or(1, ResolvedUniversalArgument::numeric_value);
         self.move_to_end_of_line_count(count, action, window, cx);
     }
 
@@ -13465,16 +13362,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_to_end_of_paragraph_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.move_to_start_of_paragraph_count(count as usize, window, cx);
+        self.move_to_start_of_paragraph_count(1, window, cx);
     }
 
     fn move_to_start_of_paragraph_count(
@@ -13503,16 +13391,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.take_numeric_universal_argument_or(1, cx);
-        if count == 0 {
-            return;
-        }
-        if count < 0 {
-            self.move_to_start_of_paragraph_count(count.unsigned_abs() as usize, window, cx);
-            return;
-        }
-
-        self.move_to_end_of_paragraph_count(count as usize, window, cx);
+        self.move_to_end_of_paragraph_count(1, window, cx);
     }
 
     fn move_to_end_of_paragraph_count(
@@ -22247,7 +22126,7 @@ impl Editor {
         if event
             .action
             .as_ref()
-            .is_some_and(|action| Self::is_universal_argument_action(action.as_ref()))
+            .is_some_and(|action| universal_argument::is_universal_argument_action(action.as_ref()))
         {
             return;
         }
@@ -22256,7 +22135,9 @@ impl Editor {
             return;
         }
 
-        self.clear_universal_argument(cx);
+        if event.action.is_none() {
+            self.clear_universal_argument(cx);
+        }
     }
 
     pub fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
