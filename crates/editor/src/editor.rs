@@ -11427,6 +11427,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ClipboardItem {
+        self.cut_common_with_options(cut_no_selection_line, false, window, cx)
+    }
+
+    fn cut_common_with_options(
+        &mut self,
+        cut_no_selection_line: bool,
+        treat_full_line_ranges_as_entire_lines: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ClipboardItem {
         let mut text = String::new();
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut selections = self.selections.all::<Point>(&self.display_snapshot(cx));
@@ -11436,8 +11446,13 @@ impl Editor {
             let mut is_first = true;
             let mut prev_selection_was_entire_line = false;
             for selection in &mut selections {
-                let is_entire_line =
-                    (selection.is_empty() && cut_no_selection_line) || self.selections.line_mode();
+                let is_full_line_range = treat_full_line_ranges_as_entire_lines
+                    && selection.start.column == 0
+                    && selection.end.column == 0
+                    && selection.start.row < selection.end.row;
+                let is_entire_line = (selection.is_empty() && cut_no_selection_line)
+                    || self.selections.line_mode()
+                    || is_full_line_range;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
                     if !selection.is_empty() && selection.end.column == 0 {
@@ -11545,21 +11560,21 @@ impl Editor {
             return;
         }
         let universal_argument = self.take_universal_argument(cx);
-        let line_count = universal_argument.map_or(1, ResolvedUniversalArgument::numeric_value);
-        if line_count == 0 {
-            self.deactivate_selection_mark_mode(cx);
-            return;
-        }
-        let push_mode =
-            KillRingPushMode::append_after_previous_kill(self.should_append_to_kill_ring(cx));
+        let cut_target = KillRingCutTarget::from_universal_argument(universal_argument);
+        let append_to_latest = self.should_append_to_kill_ring(cx);
+        let push_mode = if cut_target.is_backward() {
+            KillRingPushMode::prepend_before_previous_kill(append_to_latest)
+        } else {
+            KillRingPushMode::append_after_previous_kill(append_to_latest)
+        };
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, sel| {
                 if sel.is_empty() {
-                    extend_empty_selection_for_kill_ring_cut(map, sel, line_count);
+                    extend_empty_selection_for_kill_ring_cut(map, sel, cut_target);
                 }
             });
         });
-        let item = self.cut_common(false, window, cx);
+        let item = self.cut_common_with_options(false, true, window, cx);
         self.push_to_kill_ring(item, push_mode, cx);
         self.deactivate_selection_mark_mode(cx);
     }
@@ -24967,37 +24982,67 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum KillRingCutTarget {
+    EndOfLine,
+    ForwardLines(u32),
+    BackwardLines(u32),
+    BackwardToBeginningOfLine,
+}
+
+impl KillRingCutTarget {
+    fn from_universal_argument(argument: Option<ResolvedUniversalArgument>) -> Self {
+        match argument.map(ResolvedUniversalArgument::numeric_value) {
+            None => Self::EndOfLine,
+            Some(line_count) => match line_count.cmp(&0) {
+                Ordering::Greater => Self::ForwardLines(line_count as u32),
+                Ordering::Equal => Self::BackwardToBeginningOfLine,
+                Ordering::Less => Self::BackwardLines(line_count.unsigned_abs()),
+            },
+        }
+    }
+
+    fn is_backward(self) -> bool {
+        matches!(
+            self,
+            Self::BackwardLines(_) | Self::BackwardToBeginningOfLine
+        )
+    }
+}
+
 fn extend_empty_selection_for_kill_ring_cut(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
-    line_count: i32,
+    cut_target: KillRingCutTarget,
 ) {
     let cursor_display_point = selection.head();
     let cursor_buffer_point = cursor_display_point.to_point(map);
 
-    match line_count.cmp(&0) {
-        Ordering::Greater if line_count == 1 => {
+    match cut_target {
+        KillRingCutTarget::EndOfLine => {
             selection.end = movement::line_end(map, cursor_display_point, false);
             if selection.is_empty() {
                 selection.end = DisplayPoint::new(selection.end.row() + 1_u32, 0);
             }
         }
-        Ordering::Greater => {
+        KillRingCutTarget::ForwardLines(line_count) => {
             let max_point = map.buffer_snapshot().max_point();
             // Positive kill-line prefixes kill N whole line intervals, so the
             // endpoint is row + N at column 0 rather than row + N - 1.
-            let target_row = cursor_buffer_point.row.saturating_add(line_count as u32);
+            let target_row = cursor_buffer_point.row.saturating_add(line_count);
             selection.end = if target_row > max_point.row {
                 map.point_to_display_point(max_point, Bias::Right)
             } else {
                 map.point_to_display_point(Point::new(target_row, 0), Bias::Right)
             };
         }
-        Ordering::Equal | Ordering::Less => {
-            let target_row = cursor_buffer_point
-                .row
-                .saturating_sub(line_count.unsigned_abs());
+        KillRingCutTarget::BackwardLines(line_count) => {
+            let target_row = cursor_buffer_point.row.saturating_sub(line_count);
             selection.start = map.point_to_display_point(Point::new(target_row, 0), Bias::Left);
+        }
+        KillRingCutTarget::BackwardToBeginningOfLine => {
+            selection.start =
+                map.point_to_display_point(Point::new(cursor_buffer_point.row, 0), Bias::Left);
         }
     }
 
