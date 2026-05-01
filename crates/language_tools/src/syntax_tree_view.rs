@@ -377,7 +377,9 @@ impl SyntaxTreeView {
         row.child(if node.is_named() {
             Label::new(node.kind()).color(Color::Default)
         } else {
-            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+            // Escape control characters in anonymous node kinds (e.g., literal "\n" tokens)
+            // to prevent them from breaking the UI layout with actual newlines, tabs, etc.
+            Label::new(format!("\"{}\"", escape_node_kind(node.kind()))).color(Color::Created)
         })
         .child(
             div()
@@ -717,6 +719,11 @@ fn format_node_range(node: Node) -> String {
         end.row + 1,
         end.column + 1,
     )
+}
+
+/// Escapes control characters in anonymous node kind strings for display by converting them to their escaped representation (e.g., "\\n").
+fn escape_node_kind(kind: &str) -> String { 
+    kind.escape_debug().collect()
 }
 
 impl Render for SyntaxTreeToolbarItemView {
