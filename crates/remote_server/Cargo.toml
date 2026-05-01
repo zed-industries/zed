@@ -75,11 +75,13 @@ thiserror.workspace = true
 rayon.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
-[target.'cfg(not(windows))'.dependencies]
+[target.'cfg(not(any(target_os = "windows", target_os = "freebsd")))'.dependencies]
 crash-handler.workspace = true
+minidumper.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
 fork.workspace = true
 libc.workspace = true
-minidumper.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

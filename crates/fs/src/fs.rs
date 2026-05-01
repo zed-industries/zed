@@ -576,14 +576,15 @@ impl FileHandle for std::fs::File {
         };
 
         let fd = self.as_fd();
-        let mut kif = MaybeUninit::<libc::kinfo_file>::uninit();
+        let mut kif = MaybeUninit::<libc::kinfo_file>::zeroed();
+        // SAFETY: zeroed memory is a valid initial state for kinfo_file.
+        let kif = unsafe { kif.assume_init_mut() };
         kif.kf_structsize = libc::KINFO_FILE_SIZE;
 
-        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif.as_mut_ptr()) };
+        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif as *mut _) };
         anyhow::ensure!(result != -1, "fcntl returned -1");
 
-        // SAFETY: `fcntl` will initialize the kif.
-        let c_str = unsafe { CStr::from_ptr(kif.assume_init().kf_path.as_ptr()) };
+        let c_str = unsafe { CStr::from_ptr(kif.kf_path.as_ptr()) };
         anyhow::ensure!(!c_str.is_empty(), "Could find a path for the file handle");
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)

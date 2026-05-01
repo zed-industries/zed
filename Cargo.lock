@@ -4144,11 +4144,15 @@ name = "crashes"
 version = "0.1.0"
 dependencies = [
  "async-process",
+ "cfg-if",
  "crash-handler",
+ "futures 0.3.32",
  "log",
  "mach2 0.5.0",
  "minidumper",
  "parking_lot",
+ "paths",
+ "release_channel",
  "serde",
  "serde_json",
  "system_specs",

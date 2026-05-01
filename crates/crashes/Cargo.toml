@@ -6,13 +6,19 @@ edition.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
-async-process.workspace = true
-crash-handler.workspace = true
+cfg-if.workspace = true
+futures.workspace = true
 log.workspace = true
-minidumper.workspace = true
 parking_lot.workspace = true
+release_channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(not(target_os = "freebsd"))'.dependencies]
+async-process.workspace = true
+crash-handler.workspace = true
+minidumper.workspace = true
+paths.workspace = true
 system_specs.workspace = true
 zstd.workspace = true
 
@@ -26,4 +32,4 @@ windows.workspace = true
 workspace = true
 
 [lib]
-path = "src/crashes.rs"
+path = "src/lib.rs"
