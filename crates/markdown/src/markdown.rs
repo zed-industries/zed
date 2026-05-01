@@ -34,8 +34,8 @@ use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
+    ImageFormat, ImageSource, KeyContext, Length, ListState, MouseButton, MouseDownEvent,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, img, point, quad,
 };
@@ -335,6 +335,8 @@ pub struct Markdown {
     context_menu_selected_text: Option<String>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
+    edge_scroll_active: bool,
+    edge_scroll_speed: Pixels,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -507,6 +509,8 @@ impl Markdown {
             context_menu_selected_text: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
+            edge_scroll_active: false,
+            edge_scroll_speed: px(0.),
         };
         this.parse(cx);
         this
@@ -1037,6 +1041,7 @@ pub struct MarkdownElement {
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
+    edge_scroll_list_state: Option<ListState>,
 }
 
 impl MarkdownElement {
@@ -1054,6 +1059,7 @@ impl MarkdownElement {
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
+            edge_scroll_list_state: None,
         }
     }
 
@@ -1122,6 +1128,13 @@ impl MarkdownElement {
 
     pub fn scroll_handle(mut self, scroll_handle: ScrollHandle) -> Self {
         self.autoscroll = AutoscrollBehavior::Controlled(scroll_handle);
+        self
+    }
+
+    /// Enable continuous edge-scrolling of the surrounding `List` while a
+    /// drag-selection is active and the cursor is parked at the viewport edge.
+    pub fn edge_scroll_list(mut self, list_state: ListState) -> Self {
+        self.edge_scroll_list_state = Some(list_state);
         self
     }
 
@@ -1481,6 +1494,7 @@ impl MarkdownElement {
                 }
             }
         });
+        let edge_scroll_list_state = self.edge_scroll_list_state.clone();
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
@@ -1499,6 +1513,44 @@ impl MarkdownElement {
                     markdown.autoscroll_code_block(source_index, event.position);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
+
+                    if let Some(list_state) = edge_scroll_list_state.as_ref() {
+                        let viewport = list_state.viewport_bounds();
+                        let scroll_speed = compute_edge_scroll_speed(viewport, event.position.y);
+
+                        if let Some(speed) = scroll_speed {
+                            markdown.edge_scroll_speed = speed;
+                            if !markdown.edge_scroll_active {
+                                markdown.edge_scroll_active = true;
+                                let list_state = list_state.clone();
+                                cx.spawn(async move |this, cx| {
+                                    loop {
+                                        let should_continue = this
+                                            .update(cx, |markdown, cx| {
+                                                if !markdown.selection.pending {
+                                                    markdown.edge_scroll_active = false;
+                                                    return false;
+                                                }
+                                                list_state.scroll_by(markdown.edge_scroll_speed);
+                                                cx.notify();
+                                                true
+                                            })
+                                            .ok()
+                                            .unwrap_or(false);
+                                        if !should_continue {
+                                            return;
+                                        }
+                                        cx.background_executor()
+                                            .timer(Duration::from_millis(16))
+                                            .await;
+                                    }
+                                })
+                                .detach();
+                            }
+                        } else {
+                            markdown.edge_scroll_active = false;
+                        }
+                    }
                 } else {
                     let is_hovering_clickable = hitbox.is_hovered(window)
                         && rendered_text
@@ -1544,6 +1596,7 @@ impl MarkdownElement {
                     }
                 } else if markdown.selection.pending {
                     markdown.selection.pending = false;
+                    markdown.edge_scroll_active = false;
                     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                     {
                         let text = rendered_text
@@ -2213,6 +2266,26 @@ impl Element for MarkdownElement {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
+
+        let edge_scrolling = {
+            let markdown = self.markdown.read(cx);
+            markdown.edge_scroll_active && markdown.selection.pending
+        };
+        if edge_scrolling {
+            let mouse_position = window.mouse_position();
+            let source_index = match rendered_markdown
+                .text
+                .source_index_for_position(mouse_position)
+            {
+                Ok(ix) | Err(ix) => ix,
+            };
+            self.markdown.update(cx, |markdown, _| {
+                markdown.selection.set_head(source_index, &rendered_markdown.text);
+                markdown.autoscroll_code_block(source_index, mouse_position);
+                markdown.autoscroll_request = Some(source_index);
+            });
+        }
+
         hitbox
     }
 
@@ -2252,6 +2325,23 @@ impl Element for MarkdownElement {
         rendered_markdown.element.paint(window, cx);
         self.paint_search_highlights(&rendered_markdown.text, window, cx);
         self.paint_selection(&rendered_markdown.text, window, cx);
+    }
+}
+
+const EDGE_SCROLL_MARGIN: Pixels = px(40.);
+const EDGE_SCROLL_MAX_SPEED: Pixels = px(8.);
+const EDGE_SCROLL_MIN_PROXIMITY: f32 = 0.3;
+
+fn compute_edge_scroll_speed(viewport: Bounds<Pixels>, mouse_y: Pixels) -> Option<Pixels> {
+    if mouse_y < viewport.top() + EDGE_SCROLL_MARGIN {
+        let proximity = (viewport.top() + EDGE_SCROLL_MARGIN - mouse_y) / EDGE_SCROLL_MARGIN;
+        Some(-EDGE_SCROLL_MAX_SPEED * proximity.clamp(EDGE_SCROLL_MIN_PROXIMITY, 1.0))
+    } else if mouse_y > viewport.bottom() - EDGE_SCROLL_MARGIN {
+        let proximity =
+            (mouse_y - (viewport.bottom() - EDGE_SCROLL_MARGIN)) / EDGE_SCROLL_MARGIN;
+        Some(EDGE_SCROLL_MAX_SPEED * proximity.clamp(EDGE_SCROLL_MIN_PROXIMITY, 1.0))
+    } else {
+        None
     }
 }
 
