@@ -1,4 +1,5 @@
 #![allow(clippy::disallowed_methods, reason = "build helper used only from build scripts")]
+#![cfg(target_os = "windows")]
 
 use std::process::Command;
 
@@ -37,12 +38,6 @@ fn product_version() -> String {
 const ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../zed/resources/windows");
 const MANIFEST_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/resources/manifest.xml");
 
-/// Compile Windows resources (icon, version info, optional manifest) and link
-/// them only into the crate's binary targets (not the library, if one exists).
-///
-/// Resolves the icon filename for the current release channel.
-/// Pass `manifest: true` for binaries that don't get a manifest from gpui.
-#[cfg(target_os = "windows")]
 pub fn compile(manifest: bool) -> Result<(), Box<dyn std::error::Error>> {
     let channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
     let (icon_filename, product_name) = match channel {
