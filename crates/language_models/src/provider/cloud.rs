@@ -506,9 +506,10 @@ mod tests {
         authenticated_user_rx: futures::channel::oneshot::Receiver<()>,
     ) {
         let authenticated_user_rx = Arc::new(Mutex::new(Some(authenticated_user_rx)));
-        client.http_client().as_fake().replace_handler({
-            let authenticated_user_rx = authenticated_user_rx.clone();
-            move |old_handler, request| {
+        client
+            .http_client()
+            .as_fake()
+            .replace_handler(move |old_handler, request| {
                 let authenticated_user_rx = authenticated_user_rx.clone();
                 async move {
                     if request.method() == Method::GET && request.uri().path() == "/client/users/me"
@@ -536,8 +537,7 @@ mod tests {
 
                     old_handler(request).await
                 }
-            }
-        });
+            });
     }
 
     async fn sign_in_until_authenticating(
