@@ -715,11 +715,12 @@ fn send_toggle_log_message(
 }
 
 fn log_contents<T: Message>(lines: &VecDeque<T>, level: <T as Message>::Level) -> String {
-    lines
-        .iter()
-        .filter(|message| message.should_include(level))
-        .flat_map(|message| [message.as_ref(), "\n"])
-        .collect()
+    let mut contents = String::new();
+    for message in lines.iter().filter(|message| message.should_include(level)) {
+        contents.push_str(&message.display_text());
+        contents.push('\n');
+    }
+    contents
 }
 
 impl Render for LspLogView {

@@ -1,5 +1,6 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 
+use chrono::Local;
 use collections::HashMap;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, WeakEntity};
@@ -51,8 +52,13 @@ struct ProjectState {
 
 pub trait Message: AsRef<str> {
     type Level: Copy + std::fmt::Debug;
+
     fn should_include(&self, _: Self::Level) -> bool {
         true
+    }
+
+    fn display_text(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self.as_ref())
     }
 }
 
@@ -60,6 +66,17 @@ pub trait Message: AsRef<str> {
 pub struct LogMessage {
     message: String,
     typ: MessageType,
+    timestamp: String,
+}
+
+impl LogMessage {
+    fn new(message: String, typ: MessageType) -> Self {
+        Self {
+            message,
+            typ,
+            timestamp: Local::now().format("%H:%M:%S").to_string(),
+        }
+    }
 }
 
 impl AsRef<str> for LogMessage {
@@ -81,6 +98,10 @@ impl Message for LogMessage {
             (_, MessageType::INFO) => false,
             _ => true,
         }
+    }
+
+    fn display_text(&self) -> Cow<'_, str> {
+        Cow::Owned(format!("[{}] {}", self.timestamp, self.message))
     }
 }
 
@@ -431,7 +452,7 @@ impl LogStore {
             );
         } else if let Some(new_message) = Self::push_new_message(
             log_lines,
-            LogMessage { message, typ },
+            LogMessage::new(message, typ),
             language_server_state.log_level,
         ) {
             self.emit_event(
@@ -507,7 +528,7 @@ impl LogStore {
         }
         let visible = message.should_include(current_severity);
 
-        let visible_message = visible.then(|| message.as_ref().to_string());
+        let visible_message = visible.then(|| message.display_text().into_owned());
         log_lines.push_back(message);
         visible_message
     }

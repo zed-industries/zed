@@ -42,6 +42,7 @@ async-channel.workspace = true
 base64.workspace = true
 buffer_diff.workspace = true
 circular-buffer.workspace = true
+chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
