@@ -41,18 +41,7 @@ pub use visual_test_context::*;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
-    ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator,
-    colors::{Colors, GlobalColors},
-    hash, init_app_menus,
+    Action, ActionBuildError, ActionRegistry, ActionResolver, Any, AnyView, AnyWindowHandle, AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator, colors::{Colors, GlobalColors}, hash, init_app_menus
 };
 
 mod async_context;
@@ -2031,6 +2020,12 @@ impl App {
                 }
             }));
         self
+    }
+
+    #[doc(hidden)]
+    /// Not stable, only for internal use in the profiler!
+    pub fn __action_resolver(&self) -> ActionResolver {
+        ActionResolver((*self.actions).clone())
     }
 
     /// Event handlers propagate events by default. Call this method to stop dispatching to

@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashMap;
 use collections::HashSet;
+use gpui::TasksIncluded;
 use language::File;
 use lsp::LanguageServerId;
 
@@ -1271,9 +1272,9 @@ impl HeadlessProject {
         let (deltas, now_nanos) = cx.update(|cx| {
             let dispatcher = cx.foreground_executor().dispatcher();
             let timings = if foreground_only {
-                vec![dispatcher.get_current_thread_timings()]
+                vec![dispatcher.get_current_thread_timings(TasksIncluded::OnlyCompleted)]
             } else {
-                dispatcher.get_all_timings()
+                dispatcher.get_all_timings(TasksIncluded::OnlyCompleted)
             };
             this.update(cx, |this, _cx| {
                 let deltas = this.profiling_collector.collect_unseen(timings);

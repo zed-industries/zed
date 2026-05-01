@@ -77,33 +77,21 @@ impl WindowsDispatcher {
 
     #[inline(always)]
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
-        let start = Instant::now();
-
         let location = runnable.metadata().location;
-        let mut timing = TaskTiming {
-            location,
-            start,
-            end: None,
-        };
-        gpui::profiler::add_task_timing(timing);
-
+        profiler::update_running_task(location);
         runnable.run();
-
-        let end = Instant::now();
-        timing.end = Some(end);
-
-        gpui::profiler::add_task_timing(timing);
+        profiler::save_task_timing();
     }
 }
 
 impl PlatformDispatcher for WindowsDispatcher {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
+    fn get_all_timings(&self, included: TasksIncluded) -> Vec<ThreadTaskTimings> {
         let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
-        ThreadTaskTimings::convert(&global_thread_timings)
+        ThreadTaskTimings::convert(&global_thread_timings, included)
     }
 
-    fn get_current_thread_timings(&self) -> gpui::ThreadTaskTimings {
-        gpui::profiler::get_current_thread_task_timings()
+    fn get_current_thread_timings(&self, included: TasksIncluded) -> gpui::ThreadTaskTimings {
+        gpui::profiler::get_current_thread_task_timings(included)
     }
 
     fn is_main_thread(&self) -> bool {

@@ -1,4 +1,4 @@
-use crate::{PlatformDispatcher, Priority, RunnableVariant};
+use crate::{PlatformDispatcher, Priority, RunnableVariant, TaskStatistics, TasksIncluded};
 use scheduler::Instant;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{
@@ -112,17 +112,22 @@ impl Clone for TestDispatcher {
 }
 
 impl PlatformDispatcher for TestDispatcher {
-    fn get_all_timings(&self) -> Vec<crate::ThreadTaskTimings> {
+    fn get_all_timings(&self, _: TasksIncluded) -> Vec<crate::ThreadTaskTimings> {
         Vec::new()
     }
 
-    fn get_current_thread_timings(&self) -> crate::ThreadTaskTimings {
+    fn get_current_thread_timings(&self, _: TasksIncluded) -> crate::ThreadTaskTimings {
         crate::ThreadTaskTimings {
             thread_name: None,
             thread_id: std::thread::current().id(),
             timings: Vec::new(),
             total_pushed: 0,
+            stats: TaskStatistics::new(),
         }
+    }
+
+    fn get_all_stats(&self, _: TasksIncluded) -> Vec<crate::ThreadTaskStatistics> {
+        Vec::new()
     }
 
     fn is_main_thread(&self) -> bool {

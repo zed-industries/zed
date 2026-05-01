@@ -29,12 +29,7 @@ pub(crate) type PlatformScreenCaptureFrame = ();
 pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
-    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, ThreadTaskStatistics, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -757,12 +752,19 @@ pub type RunnableVariant = Runnable<RunnableMeta>;
 #[doc(hidden)]
 pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
+#[doc(hidden)]
+pub enum TasksIncluded {
+    OnlyCompleted,
+    CompletedAndRunning,
+}
+
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings;
+    fn get_all_timings(&self, includes: TasksIncluded) -> Vec<ThreadTaskTimings>;
+    fn get_current_thread_timings(&self, includes: TasksIncluded) -> ThreadTaskTimings;
+    fn get_all_stats(&self, includes: TasksIncluded) -> Vec<ThreadTaskStatistics>;
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);

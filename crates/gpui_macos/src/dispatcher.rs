@@ -1,7 +1,7 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
 use gpui::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant, TaskTiming,
-    ThreadTaskTimings, add_task_timing,
+    ThreadTaskTimings,
 };
 use mach2::{
     kern_return::KERN_SUCCESS,
@@ -184,18 +184,7 @@ extern "C" fn trampoline(context: *mut c_void) {
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
     let location = runnable.metadata().location;
-
-    let start = Instant::now();
-    let mut timing = TaskTiming {
-        location,
-        start,
-        end: None,
-    };
-
-    add_task_timing(timing);
-
+    profiler::update_running_task(location);
     runnable.run();
-
-    timing.end = Some(Instant::now());
-    add_task_timing(timing);
+    profiler::save_task_timing();
 }

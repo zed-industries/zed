@@ -129,7 +129,10 @@ impl Scheduler for PlatformScheduler {
         // Create a runnable that will send the completion signal
         let location = std::panic::Location::caller();
         let (runnable, _task) = async_task::Builder::new()
-            .metadata(RunnableMeta { location })
+            .metadata(RunnableMeta {
+                location,
+                spawned: scheduler::SpawnTime(Instant::now()),
+            })
             .spawn(
                 move |_| async move {
                     let _ = tx.send(());

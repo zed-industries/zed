@@ -211,12 +211,12 @@ impl WebDispatcher {
 }
 
 impl PlatformDispatcher for WebDispatcher {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
+    fn get_all_timings(&self, _: TasksIncluded) -> Vec<ThreadTaskTimings> {
         // TODO-Wasm: should we panic here?
         Vec::new()
     }
 
-    fn get_current_thread_timings(&self) -> ThreadTaskTimings {
+    fn get_current_thread_timings(&self, _: TasksIncluded) -> ThreadTaskTimings {
         ThreadTaskTimings {
             thread_name: None,
             thread_id: std::thread::current().id(),
