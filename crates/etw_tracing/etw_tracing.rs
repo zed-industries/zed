@@ -230,7 +230,7 @@ fn start_etw_recording(cx: &mut App, heap_pid: Option<u32>) {
 
 const RECORDING_TIMEOUT: Duration = Duration::from_secs(60);
 
-const INSTANCE_NAME: &str = "Zed";
+const INSTANCE_NAME: &str = "Brother IDE AI";
 
 const BUILTIN_PROFILES: &[&str] = &[
     "CPU.Verbose.Memory",

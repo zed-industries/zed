@@ -1,46 +1,211 @@
-# Zed
+# Brother IDE AI
 
-[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
-[![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
+The most powerful, sovereign, and secure code editor with integrated local AI.
 
-Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Built on [Zed](https://github.com/zed-industries/zed)'s high-performance foundation, Brother IDE AI adds a fully local AI assistant powered by [Ollama](https://ollama.com) and [DeepSeek](https://github.com/deepseek-ai/DeepSeek-R1) models. No cloud dependency, no telemetry, complete data sovereignty.
 
 ---
 
-### Installation
+## Features
 
-On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or install Zed via your local package manager ([macOS](https://zed.dev/docs/installation#macos)/[Linux](https://zed.dev/docs/linux#installing-via-a-package-manager)/[Windows](https://zed.dev/docs/windows#package-managers)).
+- **Local AI Assistant** - Ask Brother AI questions, explain code, generate tests, and scan for security issues, all running locally on your machine
+- **High Performance** - Built on Zed's GPU-accelerated rendering engine
+- **No Cloud Dependencies** - All AI processing runs locally via Ollama
+- **Telemetry Disabled** - No data leaves your machine
+- **Security First** - Code execution through SecureExecutor sandbox
+- **NLP Command Translation** - Convert natural language to shell commands
 
-Other platforms are not yet available:
+---
 
-- Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
+## Quick Start
 
-### Developing Zed
+### One-Command Installation
 
-- [Building Zed for macOS](./docs/src/development/macos.md)
-- [Building Zed for Linux](./docs/src/development/linux.md)
-- [Building Zed for Windows](./docs/src/development/windows.md)
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdoulayecoumbassa74-design/zed/main/install-brother.sh | bash
+```
+
+Or clone and run manually:
+
+```bash
+git clone https://github.com/abdoulayecoumbassa74-design/zed.git brother-ide-ai
+cd brother-ide-ai
+./install-brother.sh
+```
+
+### Manual Setup
+
+#### 1. Install Ollama
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+#### 2. Pull the DeepSeek Model
+
+```bash
+ollama pull deepseek-r1:7b
+```
+
+#### 3. Start Ollama
+
+```bash
+ollama serve
+```
+
+#### 4. Install Python Dependencies
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install fastapi uvicorn httpx
+```
+
+#### 5. Start the API
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port 8001
+```
+
+#### 6. Build Brother IDE AI
+
+See [Building for Linux](./docs/src/development/linux.md), [macOS](./docs/src/development/macos.md), or [Windows](./docs/src/development/windows.md).
+
+```bash
+cargo build --release -p zed
+```
+
+#### 7. Launch
+
+```bash
+./target/release/zed
+```
+
+---
+
+## AI Integration
+
+### API Endpoints
+
+The Brother IDE AI API runs locally on `http://localhost:8001`:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Health check with Ollama status |
+| `/v1/omni/reason` | GET | General AI reasoning (query param: `request`) |
+| `/v1/translate/nl2cmd` | POST | Natural language to shell command |
+| `/v1/package/install` | POST | Install packages via detected package manager |
+| `/v1/security/scan` | POST | Scan code for security vulnerabilities |
+| `/v1/models` | GET | List available Ollama models |
+
+### Editor Commands (via Task Palette)
+
+Open the task palette in Brother IDE AI and use these built-in tasks:
+
+| Command | Description |
+|---|---|
+| `Brother: Ask AI` | Ask the AI assistant any question |
+| `Brother: Explain This Code` | Explain the selected code |
+| `Brother: Generate Unit Tests` | Generate tests for selected function |
+| `Brother: Find Security Issues` | Scan selected code for vulnerabilities |
+| `Brother: Translate to Shell Command` | Convert selected text to a shell command |
+
+### CLI Tool: `ask-brother`
+
+```bash
+# Simple question
+ask-brother "What is a closure in Rust?"
+
+# With auto-confirm (no prompt)
+ask-brother --auto-confirm "Explain async/await"
+
+# Translate natural language to command
+ask-brother --translate "list all python files recursively"
+
+# Pipe code for security scan
+cat myfile.py | ask-brother --security "Check this code"
+```
+
+### Testing the AI
+
+```bash
+# Test the API
+curl "http://localhost:8001/v1/omni/reason?request=Hello"
+
+# Test NL to command translation
+curl -X POST http://localhost:8001/v1/translate/nl2cmd \
+  -H "Content-Type: application/json" \
+  -d '{"input": "list all python files"}'
+
+# Check health
+curl http://localhost:8001/health
+```
+
+---
+
+## Configuration
+
+### Settings (`~/.config/zed/settings.json`)
+
+```json
+{
+  "telemetry": {
+    "diagnostics": false,
+    "metrics": false
+  },
+  "auto_update": false
+}
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `BROTHER_API_URL` | `http://localhost:8001` | API endpoint for ask-brother CLI |
+| `BROTHER_API_PORT` | `8001` | Port for the API server |
+| `BROTHER_MODEL` | `deepseek-r1:7b` | Ollama model to use |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+| `BROTHER_TIMEOUT` | `120` | Request timeout in seconds |
+| `BROTHER_INSTALL_DIR` | `~/brother-ide-ai` | Installation directory |
+
+---
+
+## Architecture
+
+```
+Brother IDE AI
++-- Editor (Rust/GPUI) .............. Modified Zed editor
++-- API (FastAPI/Python) ............ app.py on port 8001
+|   +-- /v1/omni/reason ............ General AI reasoning
+|   +-- /v1/translate/nl2cmd ....... NL to shell command
+|   +-- /v1/package/install ........ Package installation
+|   +-- /v1/security/scan .......... Security analysis
++-- Ollama .......................... Local LLM runtime
+|   +-- deepseek-r1:7b ............. Default reasoning model
++-- CLI (ask-brother) ............... Command-line interface
++-- install-brother.sh .............. One-command installer
+```
+
+---
+
+## Developing
+
+### Building from Source
+
+- [Building for macOS](./docs/src/development/macos.md)
+- [Building for Linux](./docs/src/development/linux.md)
+- [Building for Windows](./docs/src/development/windows.md)
 
 ### Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
-
-Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways to contribute.
 
 ### Licensing
 
-License information for third party dependencies must be correctly provided for CI to pass.
+License information for third party dependencies must be correctly provided for CI to pass. See the original [Zed licensing documentation](https://github.com/zed-industries/zed#licensing) for details.
 
-We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automatically comply with open source licenses. If CI is failing, check the following:
+---
 
-- Is it showing a `no license specified` error for a crate you've created? If so, add `publish = false` under `[package]` in your crate's Cargo.toml.
-- Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/zed-licenses.toml`.
-- Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/zed-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
+## Credits
 
-## Sponsorship
-
-Zed is developed by **Zed Industries, Inc.**, a for-profit company.
-
-If you’d like to financially support the project, you can do so via GitHub Sponsors.
-Sponsorships go directly to Zed Industries and are used as general company revenue.
-There are no perks or entitlements associated with sponsorship.
+Brother IDE AI is built on top of [Zed](https://zed.dev), a high-performance code editor by Zed Industries.

@@ -674,7 +674,7 @@ pub fn token_refresh_params(
 /// exact URI we intend to use.
 pub fn dcr_registration_body(redirect_uri: &str) -> serde_json::Value {
     serde_json::json!({
-        "client_name": "Zed",
+        "client_name": "Brother IDE AI",
         "redirect_uris": [redirect_uri],
         "grant_types": ["authorization_code"],
         "response_types": ["code"],

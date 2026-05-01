@@ -5,20 +5,20 @@
     <project_license>AGPL-3.0-or-later and Apache-2.0 and GPL-3.0-or-later</project_license>
 
     <name>$APP_NAME</name>
-    <summary>High-performance, multiplayer code editor</summary>
-    <developer id="dev.zed">
-        <name translate="no">Zed Industries, Inc.</name>
+    <summary>The most powerful, sovereign, and secure code editor with local AI</summary>
+    <developer id="brother-ide-ai">
+        <name translate="no">Brother IDE AI</name>
     </developer>
     <description>
         <p>
-            Productive coding starts with a tool that stays out of your way. Zed blends the power of an IDE with the speed of a lightweight editor for productivity you can feel under your fingertips.
+            Brother IDE AI is a sovereign, secure code editor with integrated local AI powered by Ollama and DeepSeek. Built on Zed's high-performance foundation.
         </p>
         <p>Features:</p>
         <ul>
+            <li>Local AI: Integrated AI assistant powered by Ollama with DeepSeek models, no cloud dependency.</li>
             <li>Performance: Efficiently uses every CPU core and your GPU for instant startup, quick file loading, and responsive keystrokes.</li>
             <li>Language-aware: Maintains a syntax tree for precise highlighting, and auto-indent, with LSP support for autocompletion and refactoring.</li>
-            <li>Collaboration: Real-time editing and navigation for multiple developers in a shared workspace.</li>
-            <li>AI Integration: Integrates GitHub Copilot and GPT-4 for natural language code generation.</li>
+            <li>Security: All code execution runs through SecureExecutor sandbox for maximum safety.</li>
         </ul>
     </description>
 
@@ -53,11 +53,11 @@
 
     <screenshots>
         <screenshot type="default">
-            <caption>Zed with a large project open, showing language server and gitblame support</caption>
+            <caption>Brother IDE AI with a large project open, showing language server and gitblame support</caption>
             <image>https://zed.dev/img/flatpak/flatpak-1.png</image>
         </screenshot>
         <screenshot>
-            <caption>Zed with a file open and a channel message thread in the right sidebar</caption>
+            <caption>Brother IDE AI with a file open and a channel message thread in the right sidebar</caption>
             <image>https://zed.dev/img/flatpak/flatpak-2.png</image>
         </screenshot>
         <screenshot>
@@ -65,7 +65,7 @@
             <image>https://zed.dev/img/flatpak/flatpak-3.png</image>
         </screenshot>
         <screenshot>
-            <caption>Zed's extension list</caption>
+            <caption>Brother IDE AI's extension list</caption>
             <image>https://zed.dev/img/flatpak/flatpak-4.png</image>
         </screenshot>
         <screenshot>

@@ -1,11 +1,11 @@
 [package]
-description = "The fast, collaborative code editor."
+description = "Brother IDE AI - The most powerful, sovereign, and secure code editor with local AI."
 edition.workspace = true
 name = "zed"
 version = "1.2.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
-authors = ["Zed Team <hi@zed.dev>"]
+authors = ["Brother IDE AI Team"]
 default-run = "zed"
 
 [lints]

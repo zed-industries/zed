@@ -13,4 +13,54 @@
     "allow_concurrent_runs": true,
     "use_new_terminal": false,
   },
+  {
+    "label": "Brother: Ask AI",
+    "command": "bash",
+    "args": [
+      "-c",
+      "RESPONSE=$(curl -s --max-time 60 -G --data-urlencode \"request=${ZED_SELECTED_TEXT:-What can you help me with?}\" http://localhost:8001/v1/omni/reason 2>&1) && echo \"$RESPONSE\" | python3 -m json.tool 2>/dev/null || echo \"$RESPONSE\" || echo 'ERROR: Brother AI API is not accessible. Run: ollama serve && uvicorn app:app --port 8001'"
+    ],
+    "allow_concurrent_runs": true,
+    "use_new_terminal": false,
+  },
+  {
+    "label": "Brother: Explain This Code",
+    "command": "bash",
+    "args": [
+      "-c",
+      "curl -s --max-time 120 -G --data-urlencode \"request=Explain this code in detail:\\n${ZED_SELECTED_TEXT}\" http://localhost:8001/v1/omni/reason | python3 -m json.tool 2>/dev/null || echo 'ERROR: Brother AI API is not accessible.'"
+    ],
+    "allow_concurrent_runs": true,
+    "use_new_terminal": false,
+  },
+  {
+    "label": "Brother: Generate Unit Tests",
+    "command": "bash",
+    "args": [
+      "-c",
+      "curl -s --max-time 120 -G --data-urlencode \"request=Generate comprehensive unit tests for this function:\\n${ZED_SELECTED_TEXT}\" http://localhost:8001/v1/omni/reason | python3 -m json.tool 2>/dev/null || echo 'ERROR: Brother AI API is not accessible.'"
+    ],
+    "allow_concurrent_runs": true,
+    "use_new_terminal": false,
+  },
+  {
+    "label": "Brother: Find Security Issues",
+    "command": "bash",
+    "args": [
+      "-c",
+      "curl -s --max-time 120 -X POST -H 'Content-Type: application/json' -d '{\"input\": \"'\"${ZED_SELECTED_TEXT}\"'\"}' http://localhost:8001/v1/security/scan | python3 -m json.tool 2>/dev/null || echo 'ERROR: Brother AI API is not accessible.'"
+    ],
+    "allow_concurrent_runs": true,
+    "use_new_terminal": false,
+  },
+  {
+    "label": "Brother: Translate to Shell Command",
+    "command": "bash",
+    "args": [
+      "-c",
+      "curl -s --max-time 60 -X POST -H 'Content-Type: application/json' -d '{\"input\": \"'\"${ZED_SELECTED_TEXT}\"'\"}' http://localhost:8001/v1/translate/nl2cmd | python3 -m json.tool 2>/dev/null || echo 'ERROR: Brother AI API is not accessible.'"
+    ],
+    "allow_concurrent_runs": true,
+    "use_new_terminal": false,
+  },
 ]
