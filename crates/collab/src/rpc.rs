@@ -2568,13 +2568,19 @@ async fn fuzzy_search_users(
     let users = match query.len() {
         0 => vec![],
         1 | 2 => session
-            .db()
-            .await
+            .app_state
+            .user_service
             .get_user_by_github_login(&query)
             .await?
             .into_iter()
             .collect(),
-        _ => session.db().await.fuzzy_search_users(&query, 10).await?,
+        _ => {
+            session
+                .app_state
+                .user_service
+                .fuzzy_search_users(&query, 10)
+                .await?
+        }
     };
     let users = users
         .into_iter()
