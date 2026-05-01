@@ -1534,8 +1534,8 @@ pub(super) struct Initialize {
 
 fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
     InitializeRequestArguments {
-        client_id: Some("zed".to_owned()),
-        client_name: Some("Zed".to_owned()),
+        client_id: Some("brother-ide-ai".to_owned()),
+        client_name: Some("Brother IDE AI".to_owned()),
         adapter_id,
         locale: Some("en-US".to_owned()),
         path_format: Some(InitializeRequestArgumentsPathFormat::Path),

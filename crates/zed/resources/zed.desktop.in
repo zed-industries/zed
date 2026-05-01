@@ -2,8 +2,8 @@
 Version=1.0
 Type=Application
 Name=$APP_NAME
-GenericName=Text Editor
-Comment=A high-performance, multiplayer code editor.
+GenericName=AI Code Editor
+Comment=Brother IDE AI - The most powerful, sovereign, and secure code editor with local AI.
 TryExec=$APP_CLI
 StartupNotify=$DO_STARTUP_NOTIFY
 Exec=$APP_CLI $APP_ARGS

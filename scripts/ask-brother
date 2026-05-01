@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ask-brother - CLI interface for Brother IDE AI
+# Sends queries to the local Brother IDE AI API powered by Ollama/DeepSeek.
+
+API_URL="${BROTHER_API_URL:-http://localhost:8001}"
+TIMEOUT="${BROTHER_TIMEOUT:-120}"
+AUTO_CONFIRM=false
+
+usage() {
+    echo "Usage: ask-brother [OPTIONS] <question>"
+    echo ""
+    echo "Send a question to the Brother IDE AI local assistant."
+    echo ""
+    echo "Options:"
+    echo "  --auto-confirm    Automatically answer 'yes' to confirmation prompts"
+    echo "  --endpoint URL    API endpoint (default: http://localhost:8001)"
+    echo "  --timeout SECS    Request timeout in seconds (default: 120)"
+    echo "  --reason          Use the reasoning endpoint (/v1/omni/reason)"
+    echo "  --translate       Translate natural language to shell command (/v1/translate/nl2cmd)"
+    echo "  --security        Scan for security issues (/v1/security/scan)"
+    echo "  -h, --help        Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  ask-brother 'What is a closure in Rust?'"
+    echo "  ask-brother --translate 'list all python files recursively'"
+    echo "  ask-brother --security < myfile.py"
+    echo "  echo 'some code' | ask-brother --auto-confirm 'Explain this code'"
+}
+
+check_api() {
+    if ! curl -s --connect-timeout 3 "$API_URL/health" > /dev/null 2>&1; then
+        echo "ERROR: Brother IDE AI API is not accessible at $API_URL"
+        echo ""
+        echo "Please ensure:"
+        echo "  1. Ollama is running:  ollama serve"
+        echo "  2. The API is running: uvicorn app:app --port 8001"
+        echo ""
+        echo "Quick start:"
+        echo "  ollama serve &"
+        echo "  cd ~/brother-ide-ai && source .venv/bin/activate && uvicorn app:app --port 8001 &"
+        exit 1
+    fi
+}
+
+ENDPOINT="/v1/omni/reason"
+QUESTION=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --auto-confirm)
+            AUTO_CONFIRM=true
+            shift
+            ;;
+        --endpoint)
+            API_URL="$2"
+            shift 2
+            ;;
+        --timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        --reason)
+            ENDPOINT="/v1/omni/reason"
+            shift
+            ;;
+        --translate)
+            ENDPOINT="/v1/translate/nl2cmd"
+            shift
+            ;;
+        --security)
+            ENDPOINT="/v1/security/scan"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            QUESTION="$*"
+            break
+            ;;
+    esac
+done
+
+if [ -z "$QUESTION" ] && [ -t 0 ]; then
+    echo "Error: No question provided."
+    usage
+    exit 1
+fi
+
+# Read from stdin if available
+STDIN_DATA=""
+if [ ! -t 0 ]; then
+    STDIN_DATA=$(cat)
+fi
+
+if [ -n "$STDIN_DATA" ] && [ -n "$QUESTION" ]; then
+    FULL_QUERY="$QUESTION\n\nCode:\n$STDIN_DATA"
+elif [ -n "$STDIN_DATA" ]; then
+    FULL_QUERY="$STDIN_DATA"
+else
+    FULL_QUERY="$QUESTION"
+fi
+
+if [ "$AUTO_CONFIRM" = true ]; then
+    CONFIRM="y"
+else
+    echo "Question: $FULL_QUERY"
+    echo ""
+    read -r -p "Send to Brother AI? [Y/n] " CONFIRM
+    CONFIRM="${CONFIRM:-y}"
+fi
+
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "Cancelled."
+    exit 0
+fi
+
+check_api
+
+ENCODED_QUERY=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$FULL_QUERY'''))" 2>/dev/null || echo "$FULL_QUERY")
+
+echo "Thinking..."
+echo ""
+
+if [[ "$ENDPOINT" == "/v1/translate/nl2cmd" ]] || [[ "$ENDPOINT" == "/v1/security/scan" ]]; then
+    RESPONSE=$(curl -s --max-time "$TIMEOUT" \
+        -X POST "$API_URL$ENDPOINT" \
+        -H "Content-Type: application/json" \
+        -d "{\"input\": \"$FULL_QUERY\"}" 2>&1)
+else
+    RESPONSE=$(curl -s --max-time "$TIMEOUT" \
+        -G --data-urlencode "request=$FULL_QUERY" \
+        "$API_URL$ENDPOINT" 2>&1)
+fi
+
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "ERROR: Request failed (exit code: $EXIT_CODE)"
+    echo "$RESPONSE"
+    exit 1
+fi
+
+echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
