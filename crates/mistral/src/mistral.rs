@@ -127,12 +127,12 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::CodestralLatest => 256000,
+            Self::CodestralLatest => 128000,
             Self::MistralLargeLatest => 256000,
             Self::MistralMediumLatest => 128000,
-            Self::MistralSmallLatest => 32000,
+            Self::MistralSmallLatest => 256000,
             Self::MagistralMediumLatest => 128000,
-            Self::OpenMistralNemo => 131000,
+            Self::OpenMistralNemo => 128000,
             Self::DevstralMediumLatest => 256000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -162,12 +162,11 @@ impl Model {
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::MistralMediumLatest | Self::MistralSmallLatest => true,
-            Self::CodestralLatest
-            | Self::MistralLargeLatest
-            | Self::MagistralMediumLatest
-            | Self::OpenMistralNemo
-            | Self::DevstralMediumLatest => false,
+            Self::MistralLargeLatest
+            | Self::MistralMediumLatest
+            | Self::MistralSmallLatest
+            | Self::MagistralMediumLatest => true,
+            Self::CodestralLatest | Self::OpenMistralNemo | Self::DevstralMediumLatest => false,
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
