@@ -157,6 +157,10 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
+        // Plain `d` yanks to register `"` only, never the system clipboard
+        if vim.selected_register.is_none() {
+            vim.selected_register = Some('"');
+        }
         let transaction_id = vim.visual_delete(false, window, cx);
         if let (Some(original_selections), Some(transaction_id)) =
             (original_selections, transaction_id)
