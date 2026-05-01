@@ -8319,6 +8319,10 @@ mod tests {
         cx.simulate_resize(gpui::size(px(800.), px(600.)));
 
         panel.update_in(cx, |panel, window, cx| {
+            assert!(
+                !panel.commit_editor.read(cx).is_focused(window),
+                "commit editor should not be focused when changes list is focused"
+            );
             let context = panel.dispatch_context(window, cx);
             assert!(
                 context.contains("GitPanel"),
