@@ -286,7 +286,7 @@ Zed also has a Copy Permalink feature to create a permanent link to a code snipp
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
 by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
-`{#action editor::CopyPermalinkToLine}` or `{#action editor::OpenPermalinkToLine}` actions
+`editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 
 ## Diff Hunk Keyboard Shortcuts {#diff-hunks}
