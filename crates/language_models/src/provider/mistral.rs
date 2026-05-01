@@ -1021,7 +1021,7 @@ mod tests {
             speed: None,
         };
 
-        let (mistral_request, _) = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
+        let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);
 
         assert_eq!(mistral_request.messages.len(), 1);
         assert!(matches!(
