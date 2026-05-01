@@ -3247,6 +3247,93 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::Arc;
 
+    fn viewport(origin_y: f32, height: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(0.), px(origin_y)),
+            size: size(px(100.), px(height)),
+        }
+    }
+
+    #[test]
+    fn edge_scroll_speed_none_in_middle() {
+        assert_eq!(compute_edge_scroll_speed(viewport(0., 500.), px(250.)), None);
+    }
+
+    #[test]
+    fn edge_scroll_speed_max_at_top_edge() {
+        assert_eq!(
+            compute_edge_scroll_speed(viewport(0., 500.), px(0.)),
+            Some(-EDGE_SCROLL_MAX_SPEED),
+        );
+    }
+
+    #[test]
+    fn edge_scroll_speed_max_at_bottom_edge() {
+        assert_eq!(
+            compute_edge_scroll_speed(viewport(0., 500.), px(500.)),
+            Some(EDGE_SCROLL_MAX_SPEED),
+        );
+    }
+
+    #[test]
+    fn edge_scroll_speed_clamps_to_min_proximity_near_top_margin() {
+        // mouse 1px below top: raw proximity 1/40 = 0.025, clamped up to MIN_PROXIMITY.
+        let expected = -EDGE_SCROLL_MAX_SPEED * EDGE_SCROLL_MIN_PROXIMITY;
+        assert_eq!(
+            compute_edge_scroll_speed(viewport(0., 500.), px(39.)),
+            Some(expected),
+        );
+    }
+
+    #[test]
+    fn edge_scroll_speed_clamps_to_min_proximity_near_bottom_margin() {
+        let expected = EDGE_SCROLL_MAX_SPEED * EDGE_SCROLL_MIN_PROXIMITY;
+        assert_eq!(
+            compute_edge_scroll_speed(viewport(0., 500.), px(461.)),
+            Some(expected),
+        );
+    }
+
+    #[test]
+    fn edge_scroll_speed_none_at_top_margin_boundary() {
+        // mouse exactly at top + EDGE_SCROLL_MARGIN: outside both edge zones.
+        assert_eq!(compute_edge_scroll_speed(viewport(0., 500.), px(40.)), None);
+    }
+
+    #[test]
+    fn edge_scroll_speed_none_at_bottom_margin_boundary() {
+        // mouse exactly at bottom - EDGE_SCROLL_MARGIN: outside both edge zones.
+        assert_eq!(
+            compute_edge_scroll_speed(viewport(0., 500.), px(460.)),
+            None,
+        );
+    }
+
+    #[test]
+    fn edge_scroll_speed_clamps_to_max_above_viewport() {
+        assert_eq!(
+            compute_edge_scroll_speed(viewport(0., 500.), px(-100.)),
+            Some(-EDGE_SCROLL_MAX_SPEED),
+        );
+    }
+
+    #[test]
+    fn edge_scroll_speed_clamps_to_max_below_viewport() {
+        assert_eq!(
+            compute_edge_scroll_speed(viewport(0., 500.), px(700.)),
+            Some(EDGE_SCROLL_MAX_SPEED),
+        );
+    }
+
+    #[test]
+    fn edge_scroll_speed_respects_non_zero_viewport_origin() {
+        // viewport y=[100, 300]. Mouse 30px into the top margin → proximity 0.75.
+        let v = viewport(100., 200.);
+        let expected = -EDGE_SCROLL_MAX_SPEED * 0.75;
+        assert_eq!(compute_edge_scroll_speed(v, px(110.)), Some(expected));
+        assert_eq!(compute_edge_scroll_speed(v, px(200.)), None);
+    }
+
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
             if !cx.has_global::<settings::SettingsStore>() {
