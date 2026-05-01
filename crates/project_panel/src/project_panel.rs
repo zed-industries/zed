@@ -3840,16 +3840,15 @@ impl ProjectPanel {
                 let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
                 let worktree = worktree.read(cx);
                 let worktree_entry = worktree.entry_for_id(entry.entry_id)?;
-                Some(
-                    worktree
-                        .abs_path()
-                        .join(worktree_entry.path.as_std_path()),
-                )
+                Some(worktree.abs_path().join(worktree_entry.path.as_std_path()))
             })
             .collect();
         if !paths.is_empty() {
             let external_paths = ExternalPaths(paths.into());
-            eprintln!("Writing to clipboard: ExternalPaths with {} paths", external_paths.paths().len());
+            eprintln!(
+                "Writing to clipboard: ExternalPaths with {} paths",
+                external_paths.paths().len()
+            );
             cx.write_to_clipboard(ClipboardItem {
                 entries: vec![GpuiClipboardEntry::ExternalPaths(external_paths)],
             });
@@ -3860,14 +3859,18 @@ impl ProjectPanel {
         let clipboard_item = cx.read_from_clipboard()?;
         eprintln!("Clipboard has {} entries", clipboard_item.entries().len());
         for (i, entry) in clipboard_item.entries().iter().enumerate() {
-            eprintln!("  Entry {}: {:?}", i, match entry {
-                GpuiClipboardEntry::String(_) => "String",
-                GpuiClipboardEntry::Image(_) => "Image",
-                GpuiClipboardEntry::ExternalPaths(p) => {
-                    eprintln!("    ExternalPaths with {} paths", p.paths().len());
-                    "ExternalPaths"
+            eprintln!(
+                "  Entry {}: {:?}",
+                i,
+                match entry {
+                    GpuiClipboardEntry::String(_) => "String",
+                    GpuiClipboardEntry::Image(_) => "Image",
+                    GpuiClipboardEntry::ExternalPaths(p) => {
+                        eprintln!("    ExternalPaths with {} paths", p.paths().len());
+                        "ExternalPaths"
+                    }
                 }
-            });
+            );
             if let GpuiClipboardEntry::ExternalPaths(paths) = entry {
                 if !paths.paths().is_empty() {
                     return Some(paths.clone());
@@ -3882,11 +3885,14 @@ impl ProjectPanel {
             .clipboard
             .as_ref()
             .is_some_and(|c| !c.items().is_empty());
-        
+
         let has_external = self.external_paths_from_system_clipboard(cx).is_some();
-        
-        eprintln!("has_pasteable_content: internal={}, external={}", has_internal, has_external);
-        
+
+        eprintln!(
+            "has_pasteable_content: internal={}, external={}",
+            has_internal, has_external
+        );
+
         if has_internal {
             return true;
         }

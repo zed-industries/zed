@@ -10253,7 +10253,8 @@ async fn test_copy_paste_between_windows(cx: &mut gpui::TestAppContext) {
 
     // Create first window with root1
     let project1 = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let window1 = cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+    let window1 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
     let workspace1 = window1
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -10263,7 +10264,8 @@ async fn test_copy_paste_between_windows(cx: &mut gpui::TestAppContext) {
 
     // Create second window with root2
     let project2 = Project::test(fs.clone(), ["/root2".as_ref()], cx).await;
-    let window2 = cx.add_window(|window, cx| MultiWorkspace::test_new(project2.clone(), window, cx));
+    let window2 =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project2.clone(), window, cx));
     let workspace2 = window2
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
@@ -10281,11 +10283,12 @@ async fn test_copy_paste_between_windows(cx: &mut gpui::TestAppContext) {
     let clipboard = cx1
         .read_from_clipboard()
         .expect("clipboard should have content after copy");
-    
-    let has_external_paths = clipboard.entries().iter().any(|entry| {
-        matches!(entry, GpuiClipboardEntry::ExternalPaths(_))
-    });
-    
+
+    let has_external_paths = clipboard
+        .entries()
+        .iter()
+        .any(|entry| matches!(entry, GpuiClipboardEntry::ExternalPaths(_)));
+
     assert!(
         has_external_paths,
         "Clipboard should contain ExternalPaths format for cross-window paste"
