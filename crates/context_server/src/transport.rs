@@ -14,4 +14,9 @@ pub trait Transport: Send + Sync {
     async fn send(&self, message: String) -> Result<()>;
     fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>>;
     fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>>;
+
+    /// Called after the MCP initialize handshake completes so transports that
+    /// need the negotiated version (currently only HTTP, which must attach an
+    /// `MCP-Protocol-Version` header from 2025-06-18 onward) can pick it up.
+    fn set_protocol_version(&self, _version: &str) {}
 }

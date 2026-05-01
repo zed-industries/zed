@@ -13,8 +13,10 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 #[schemars(inline)]
 pub enum Timezone {
     /// Use UTC for the datetime.
+    #[serde(alias = "UTC", alias = "Utc")]
     Utc,
     /// Use local time for the datetime.
+    #[serde(alias = "LOCAL", alias = "Local")]
     Local,
 }
 
