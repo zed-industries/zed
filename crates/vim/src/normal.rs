@@ -155,6 +155,10 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
+        // Plain `d` yanks to register `"` only, never the system clipboard
+        if vim.selected_register.is_none() {
+            vim.selected_register = Some('"');
+        }
         vim.visual_delete(false, window, cx);
         vim.switch_mode(Mode::HelixNormal, true, window, cx);
     });

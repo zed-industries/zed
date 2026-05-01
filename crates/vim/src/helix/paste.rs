@@ -33,8 +33,13 @@ impl Vim {
 
                 let selected_register = vim.selected_register.take();
 
+                // With an explicit register, defer to read_register so `+`/`*` still hit the clipboard
                 let Some(register) = Vim::update_globals(cx, |globals, cx| {
-                    globals.read_register(selected_register, Some(editor), cx)
+                    if selected_register.is_some() {
+                        globals.read_register(selected_register, Some(editor), cx)
+                    } else {
+                        globals.read_default_register()
+                    }
                 })
                 .filter(|reg| !reg.text.is_empty()) else {
                     return;
@@ -154,7 +159,7 @@ mod test {
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_system_clipboard_paste(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_paste_ignores_system_clipboard(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
         cx.set_state(
@@ -169,36 +174,11 @@ mod test {
         cx.simulate_keystrokes("p");
         cx.assert_state(
             indoc! {"
-            The quic«clipboardˇ»k brown
+            The quiˇck brown
             fox jumps over
             the lazy dog."},
             Mode::HelixNormal,
         );
-
-        // Multiple cursors with system clipboard (no metadata) pastes
-        // the same text at each cursor.
-        cx.set_state(
-            indoc! {"
-            ˇThe quick brown
-            fox ˇjumps over
-            the lazy dog."},
-            Mode::HelixNormal,
-        );
-        cx.write_to_clipboard(ClipboardItem::new_string("hi".to_string()));
-        cx.simulate_keystrokes("p");
-        cx.assert_state(
-            indoc! {"
-            T«hiˇ»he quick brown
-            fox j«hiˇ»umps over
-            the lazy dog."},
-            Mode::HelixNormal,
-        );
-
-        // Multiple cursors on empty lines should paste on those same lines.
-        cx.set_state("ˇ\nˇ\nˇ\nend", Mode::HelixNormal);
-        cx.write_to_clipboard(ClipboardItem::new_string("X".to_string()));
-        cx.simulate_keystrokes("p");
-        cx.assert_state("«Xˇ»\n«Xˇ»\n«Xˇ»\nend", Mode::HelixNormal);
     }
 
     #[gpui::test]

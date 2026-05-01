@@ -893,6 +893,11 @@ impl VimGlobals {
         }
     }
 
+    /// Reads the default register `"` literally, ignoring `use_system_clipboard`
+    pub(crate) fn read_default_register(&self) -> Option<Register> {
+        self.registers.get(&'"').cloned()
+    }
+
     pub(crate) fn read_register(
         &self,
         register: Option<char>,
