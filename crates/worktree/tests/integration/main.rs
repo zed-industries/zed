@@ -2978,6 +2978,60 @@ fn check_worktree_entries(
 }
 
 #[gpui::test]
+async fn test_root_repo_common_dir_for_relative_gitdir(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".bare": {
+                "HEAD": "ref: refs/heads/main",
+                "config": "[core]\n\tbare = true\n",
+                "info": {
+                    "exclude": "ignored.txt\n",
+                },
+            },
+            "feature-a": {
+                ".git": "gitdir: ../.bare",
+                "file.txt": "content",
+                "ignored.txt": "ignored",
+            },
+        }),
+    )
+    .await;
+
+    let feature_tree = Worktree::local(
+        path!("/repo/feature-a").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    feature_tree
+        .update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    feature_tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot()
+                .root_repo_common_dir()
+                .map(|path| path.as_ref()),
+            Some(Path::new(path!("/repo/.bare"))),
+        );
+        check_worktree_entries(tree, &[], &["ignored.txt"], &["file.txt"], &[]);
+    });
+}
+
+#[gpui::test]
 async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
