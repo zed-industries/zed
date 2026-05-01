@@ -8922,6 +8922,85 @@ async fn test_emacs_universal_argument_self_insert_repeats_input(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_emacs_universal_argument_state_is_global_not_editor_field(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        let universal_argument_globals =
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>();
+        universal_argument_globals.state =
+            Some(crate::universal_argument::UniversalArgumentState::new_plain());
+        universal_argument_globals.consumed_this_dispatch = false;
+        assert!(
+            editor
+                .key_context(window, cx)
+                .contains("universal_argument")
+        );
+    });
+
+    simulate_emacs_keystrokes(&mut cx, &["a"]);
+
+    cx.assert_editor_state("aaaaˇ");
+    cx.update_editor(|editor, window, cx| {
+        assert!(
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+                .state
+                .is_none()
+        );
+        assert!(
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+                .consumed_this_dispatch
+        );
+        assert!(
+            !editor
+                .key_context(window, cx)
+                .contains("universal_argument")
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_prefix_does_not_leak_across_editors(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut first_editor = EditorTestContext::new(cx).await;
+    first_editor.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut first_editor, &["ctrl-u", "3"]);
+    first_editor.update_editor(|_, _, cx| {
+        assert!(
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+                .state
+                .is_some()
+        );
+    });
+
+    let mut second_editor = EditorTestContext::new(cx).await;
+    second_editor.set_state("ˇ");
+    first_editor.update_editor(|editor, window, cx| editor.handle_blur(window, cx));
+    second_editor.update_editor(|editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    simulate_emacs_keystrokes(&mut second_editor, &["a"]);
+
+    second_editor.assert_editor_state("aˇ");
+    second_editor.update_editor(|_, _, cx| {
+        assert!(
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+                .state
+                .is_none()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_emacs_universal_argument_char_motion_consumes_prefix(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     bind_emacs_keymap(cx);

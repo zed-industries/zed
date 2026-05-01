@@ -44,6 +44,7 @@ mod selections_collection;
 pub mod semantic_tokens;
 mod split;
 pub mod split_editor_view;
+pub mod universal_argument;
 
 mod bookmarks;
 #[cfg(test)]
@@ -102,6 +103,10 @@ pub use multi_buffer::{
 pub use split::{SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
+pub use universal_argument::{
+    ResolvedUniversalArgument, UniversalArgumentGlobals, UniversalArgumentNumericState,
+    UniversalArgumentState,
+};
 
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
@@ -1314,7 +1319,6 @@ pub struct Editor {
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
     selection_mark_mode: bool,
-    universal_argument: Option<UniversalArgumentState>,
     kill_ring_yank_state: Option<KillRingYankState>,
     in_kill_ring_yank: bool,
     toggle_fold_multiple_buffers: Task<()>,
@@ -2592,7 +2596,6 @@ impl Editor {
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
-            universal_argument: None,
             kill_ring_yank_state: None,
             in_kill_ring_yank: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -2888,7 +2891,7 @@ impl Editor {
             key_context.add("selection_mode");
         }
 
-        if self.universal_argument.is_some() {
+        if cx.default_global::<UniversalArgumentGlobals>().has_state() {
             key_context.add("universal_argument");
         }
 
@@ -11479,13 +11482,17 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let next_argument = self.universal_argument.map_or_else(
+        let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
+        let next_argument = universal_argument_globals.state.map_or_else(
             UniversalArgumentState::new_plain,
             UniversalArgumentState::multiply,
         );
 
-        if self.universal_argument != Some(next_argument) {
-            self.universal_argument = Some(next_argument);
+        if universal_argument_globals.state != Some(next_argument)
+            || universal_argument_globals.consumed_this_dispatch
+        {
+            universal_argument_globals.state = Some(next_argument);
+            universal_argument_globals.consumed_this_dispatch = false;
             cx.notify();
         }
     }
@@ -11496,11 +11503,13 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(argument) = self.universal_argument.take() else {
+        let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
+        let Some(argument) = universal_argument_globals.state.take() else {
             return;
         };
 
-        self.universal_argument = Some(argument.push_digit(action.0));
+        universal_argument_globals.state = Some(argument.push_digit(action.0));
+        universal_argument_globals.consumed_this_dispatch = false;
         cx.notify();
     }
 
@@ -11510,11 +11519,13 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(argument) = self.universal_argument.take() else {
+        let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
+        let Some(argument) = universal_argument_globals.state.take() else {
             return;
         };
 
-        self.universal_argument = Some(argument.apply_minus());
+        universal_argument_globals.state = Some(argument.apply_minus());
+        universal_argument_globals.consumed_this_dispatch = false;
         cx.notify();
     }
 
@@ -11927,10 +11938,7 @@ impl Editor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<ResolvedUniversalArgument> {
-        let argument = self
-            .universal_argument
-            .take()
-            .map(UniversalArgumentState::resolve);
+        let argument = cx.default_global::<UniversalArgumentGlobals>().take();
         if argument.is_some() {
             cx.notify();
         }
@@ -11943,7 +11951,7 @@ impl Editor {
     }
 
     fn clear_universal_argument(&mut self, cx: &mut Context<Self>) -> bool {
-        let did_clear = self.universal_argument.take().is_some();
+        let did_clear = cx.default_global::<UniversalArgumentGlobals>().clear();
         if did_clear {
             cx.notify();
         }
@@ -22181,6 +22189,7 @@ impl Editor {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
         }
+        self.clear_universal_argument(cx);
         self.selection_drag_state = SelectionDragState::None;
         self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
@@ -22216,7 +22225,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.universal_argument.is_none()
+        let has_universal_argument = cx.default_global::<UniversalArgumentGlobals>().has_state();
+        if !has_universal_argument
             || !self.focus_handle(cx).contains_focused(window, cx)
             || window.has_pending_keystrokes()
             || event.keystroke.is_ime_in_progress()
@@ -25120,100 +25130,6 @@ fn universal_argument_line_motion_target_row(current_row: u32, count: i32, max_r
             .min(max_row)
     } else {
         current_row.saturating_sub(signed_row_offset.unsigned_abs())
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum UniversalArgumentState {
-    Plain { value: i32 },
-    Numeric(UniversalArgumentNumericState),
-}
-
-impl UniversalArgumentState {
-    fn new_plain() -> Self {
-        Self::Plain { value: 4 }
-    }
-
-    fn multiply(self) -> Self {
-        match self {
-            Self::Plain { value } => Self::Plain {
-                value: value.saturating_mul(4),
-            },
-            Self::Numeric(numeric) => Self::Numeric(numeric),
-        }
-    }
-
-    fn push_digit(self, digit: usize) -> Self {
-        let digit = digit.min(9) as i32;
-        match self {
-            Self::Plain { .. } => Self::Numeric(UniversalArgumentNumericState {
-                magnitude: digit,
-                is_negative: false,
-                has_digits: true,
-            }),
-            Self::Numeric(numeric) => Self::Numeric(numeric.push_digit(digit)),
-        }
-    }
-
-    fn apply_minus(self) -> Self {
-        match self {
-            Self::Plain { .. } => Self::Numeric(UniversalArgumentNumericState {
-                magnitude: 0,
-                is_negative: true,
-                has_digits: false,
-            }),
-            Self::Numeric(numeric) => Self::Numeric(numeric.apply_minus()),
-        }
-    }
-
-    fn resolve(self) -> ResolvedUniversalArgument {
-        match self {
-            Self::Plain { value } => ResolvedUniversalArgument::Plain(value),
-            Self::Numeric(numeric) => ResolvedUniversalArgument::Numeric(numeric.value()),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct UniversalArgumentNumericState {
-    magnitude: i32,
-    is_negative: bool,
-    has_digits: bool,
-}
-
-impl UniversalArgumentNumericState {
-    fn push_digit(mut self, digit: i32) -> Self {
-        self.magnitude = self.magnitude.saturating_mul(10).saturating_add(digit);
-        self.has_digits = true;
-        self
-    }
-
-    fn apply_minus(mut self) -> Self {
-        self.is_negative = !self.is_negative;
-        self
-    }
-
-    fn value(self) -> i32 {
-        let magnitude = if self.has_digits { self.magnitude } else { 1 };
-        if self.is_negative {
-            -magnitude
-        } else {
-            magnitude
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResolvedUniversalArgument {
-    Plain(i32),
-    Numeric(i32),
-}
-
-impl ResolvedUniversalArgument {
-    fn numeric_value(self) -> i32 {
-        match self {
-            Self::Plain(value) | Self::Numeric(value) => value,
-        }
     }
 }
 
