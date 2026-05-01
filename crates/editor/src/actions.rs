@@ -192,7 +192,7 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
-/// Expands all excerpts in the editor.
+/// Expands all excerpts with selections.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]

@@ -425,6 +425,7 @@ impl X11WindowState {
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
         supports_xinput_gestures: bool,
+        is_bgr: bool,
     ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
@@ -702,7 +703,7 @@ impl X11WindowState {
 
             xcb_flush(xcb);
 
-            let renderer = {
+            let mut renderer = {
                 let raw_window = RawWindow {
                     connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                         xcb,
@@ -724,6 +725,8 @@ impl X11WindowState {
                 };
                 WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };
+
+            renderer.set_subpixel_layout(is_bgr);
 
             // Set max window size hints based on the GPU's maximum texture dimension.
             // This prevents the window from being resized larger than what the GPU can render.
@@ -883,6 +886,7 @@ impl X11Window {
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
         supports_xinput_gestures: bool,
+        is_bgr: bool,
     ) -> anyhow::Result<Self> {
         let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -901,6 +905,7 @@ impl X11Window {
                 appearance,
                 parent_window,
                 supports_xinput_gestures,
+                is_bgr,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),

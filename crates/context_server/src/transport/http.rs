@@ -9,6 +9,7 @@ use std::{pin::Pin, sync::Arc};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
+use crate::types;
 
 /// Typed errors returned by the HTTP transport that callers can downcast from
 /// `anyhow::Error` to handle specific failure modes.
@@ -33,6 +34,7 @@ impl std::error::Error for TransportError {}
 
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
+const HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
 
@@ -41,6 +43,11 @@ pub struct HttpTransport {
     http_client: Arc<dyn HttpClient>,
     endpoint: String,
     session_id: Arc<SyncMutex<Option<String>>>,
+    /// Negotiated MCP protocol version, populated by `set_protocol_version`
+    /// after the initialize handshake. From 2025-06-18 onward the server
+    /// requires clients to echo this in the `MCP-Protocol-Version` header on
+    /// every subsequent request.
+    protocol_version: Arc<SyncMutex<Option<String>>>,
     executor: BackgroundExecutor,
     response_tx: async_channel::Sender<String>,
     response_rx: async_channel::Receiver<String>,
@@ -78,6 +85,7 @@ impl HttpTransport {
             executor,
             endpoint,
             session_id: Arc::new(SyncMutex::new(None)),
+            protocol_version: Arc::new(SyncMutex::new(None)),
             response_tx,
             response_rx,
             error_tx,
@@ -112,6 +120,14 @@ impl HttpTransport {
         // Add session ID if we have one (except for initialize).
         if let Some(ref session_id) = *self.session_id.lock() {
             request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
+        }
+
+        // Echo the negotiated protocol version once initialization has
+        // completed. Required by servers speaking MCP 2025-06-18 or later.
+        if let Some(ref version) = *self.protocol_version.lock()
+            && types::requires_protocol_version_header(version)
+        {
+            request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
         }
 
         Ok(request_builder.body(AsyncBody::from(message.to_vec()))?)
@@ -315,6 +331,10 @@ impl Transport for HttpTransport {
     fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
         Box::pin(self.error_rx.clone())
     }
+
+    fn set_protocol_version(&self, version: &str) {
+        *self.protocol_version.lock() = Some(version.to_string());
+    }
 }
 
 impl Drop for HttpTransport {
@@ -323,6 +343,7 @@ impl Drop for HttpTransport {
         let http_client = self.http_client.clone();
         let endpoint = self.endpoint.clone();
         let session_id = self.session_id.lock().clone();
+        let protocol_version = self.protocol_version.lock().clone();
         let headers = self.headers.clone();
         let access_token = self.token_provider.as_ref().and_then(|p| p.access_token());
 
@@ -343,6 +364,15 @@ impl Drop for HttpTransport {
                     if let Some(token) = access_token {
                         request_builder =
                             request_builder.header("Authorization", format!("Bearer {}", token));
+                    }
+
+                    // Stamp the negotiated MCP protocol version on the DELETE
+                    // too, matching what `build_request` does for POSTs.
+                    if let Some(ref version) = protocol_version
+                        && types::requires_protocol_version_header(version)
+                    {
+                        request_builder =
+                            request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
                     }
 
                     let request = request_builder.body(AsyncBody::empty());

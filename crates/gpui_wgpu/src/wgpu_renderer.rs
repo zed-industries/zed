@@ -50,7 +50,8 @@ struct GammaParams {
     gamma_ratios: [f32; 4],
     grayscale_enhanced_contrast: f32,
     subpixel_enhanced_contrast: f32,
-    _pad: [f32; 2],
+    is_bgr: u32,
+    _pad: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +147,7 @@ pub struct WgpuRenderer {
     max_buffer_size: u64,
     storage_buffer_alignment: u64,
     rendering_params: RenderingParameters,
+    is_bgr: bool,
     dual_source_blending: bool,
     adapter_info: wgpu::AdapterInfo,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
@@ -475,6 +477,7 @@ impl WgpuRenderer {
             max_buffer_size,
             storage_buffer_alignment,
             rendering_params,
+            is_bgr: false,
             dual_source_blending,
             adapter_info,
             transparent_alpha_mode,
@@ -1016,6 +1019,10 @@ impl WgpuRenderer {
         resources.path_msaa_view = path_msaa_view;
     }
 
+    pub fn set_subpixel_layout(&mut self, is_bgr: bool) {
+        self.is_bgr = is_bgr;
+    }
+
     pub fn update_transparency(&mut self, transparent: bool) {
         let new_alpha_mode = if transparent {
             self.transparent_alpha_mode
@@ -1147,7 +1154,8 @@ impl WgpuRenderer {
             gamma_ratios: self.rendering_params.gamma_ratios,
             grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
             subpixel_enhanced_contrast: self.rendering_params.subpixel_enhanced_contrast,
-            _pad: [0.0; 2],
+            is_bgr: self.is_bgr as u32,
+            _pad: 0,
         };
 
         let globals = GlobalParams {
