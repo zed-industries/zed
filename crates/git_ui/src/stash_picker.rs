@@ -85,9 +85,12 @@ impl StashList {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut _subscriptions = Vec::new();
-        let stash_request = repository
-            .clone()
-            .map(|repository| repository.read_with(cx, |repo, _| repo.cached_stash()));
+        let stash_entries = repository
+            .as_ref()
+            .map(|repository| {
+                repository.read_with(cx, |repo, _| repo.cached_stash().entries.to_vec())
+            })
+            .unwrap_or_default();
 
         if let Some(repo) = repository.clone() {
             _subscriptions.push(
@@ -109,33 +112,29 @@ impl StashList {
             )
         }
 
-        cx.spawn_in(window, async move |this, cx| {
-            let stash_entries = stash_request
-                .map(|git_stash| git_stash.entries.to_vec())
-                .unwrap_or_default();
-
-            this.update_in(cx, |this, window, cx| {
-                this.picker.update(cx, |picker, cx| {
-                    picker.delegate.all_stash_entries = Some(stash_entries);
-                    picker.refresh(window, cx);
-                })
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-
-        let delegate = StashListDelegate::new(repository, workspace, window, cx);
+        let delegate = StashListDelegate::new(repository.clone(), workspace, window, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .show_scrollbar(true)
                 .modal(!embedded)
         });
         let picker_focus_handle = picker.focus_handle(cx);
-        picker.update(cx, |picker, _| {
+        picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
             picker.delegate.show_footer = !embedded;
+            picker.delegate.all_stash_entries = Some(stash_entries);
+            picker.refresh(window, cx);
         });
+
+        if let Some(repository) = repository {
+            cx.spawn_in(window, async move |_, cx| {
+                repository
+                    .update(cx, |repository, cx| repository.refresh_stash_entries(cx))
+                    .await?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
 
         Self {
             picker,
@@ -697,11 +696,16 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use git::{Oid, stash::StashEntry};
+    use git::{
+        Oid,
+        stash::{GitStash, StashEntry},
+    };
     use gpui::{TestAppContext, VisualTestContext, rems};
     use picker::PickerDelegate;
     use project::{FakeFs, Project};
+    use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
     use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -779,6 +783,77 @@ mod tests {
 
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.active_modal::<StashList>(cx).is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stash_picker_refreshes_stale_cache_on_open(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            state.stash_entries = GitStash {
+                entries: vec![stash_entry(0, "before external rename", Some("main"))].into(),
+            };
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+
+        repository.read_with(cx, |repository, _| {
+            assert_eq!(
+                repository.cached_stash().entries[0].message,
+                "before external rename"
+            );
+        });
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            state.stash_entries = GitStash {
+                entries: vec![stash_entry(0, "after external rename", Some("main"))].into(),
+            };
+        })
+        .unwrap();
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*multi_workspace, cx);
+        let workspace = multi_workspace
+            .update(cx, |workspace, _, _| workspace.workspace().clone())
+            .unwrap();
+        let stash_list = workspace.update_in(cx, |workspace, window, cx| {
+            let weak_workspace = workspace.weak_handle();
+            let repository = repository.clone();
+
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                StashList::new(Some(repository), weak_workspace, rems(34.), window, cx)
+            });
+
+            workspace.active_modal::<StashList>(cx).unwrap()
+        });
+
+        cx.run_until_parked();
+
+        stash_list.update(cx, |stash_list, cx| {
+            let entries = stash_list
+                .picker
+                .read(cx)
+                .delegate
+                .all_stash_entries
+                .as_ref()
+                .unwrap();
+            assert_eq!(entries[0].message, "after external rename");
         });
     }
 }

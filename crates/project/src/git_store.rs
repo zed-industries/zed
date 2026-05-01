@@ -4699,6 +4699,45 @@ impl Repository {
         self.snapshot.stash_entries.clone()
     }
 
+    pub fn refresh_stash_entries(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+        let this = cx.weak_entity();
+        let updates_tx = self
+            .git_store()
+            .and_then(|git_store| match &git_store.read(cx).state {
+                GitStoreState::Local { downstream, .. } => downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+                _ => None,
+            });
+
+        let rx = self.send_job(None, move |git_repo, mut cx| async move {
+            let RepositoryState::Local(LocalRepositoryState { backend, .. }) = git_repo else {
+                return Ok(());
+            };
+
+            let stash_entries = backend.stash_entries().await?;
+            let snapshot = this.update(&mut cx, |this, cx| {
+                if this.snapshot.stash_entries == stash_entries {
+                    None
+                } else {
+                    this.snapshot.stash_entries = stash_entries;
+                    cx.emit(RepositoryEvent::StashEntriesChanged);
+                    Some(this.snapshot.clone())
+                }
+            })?;
+
+            if let (Some(snapshot), Some(updates_tx)) = (snapshot, updates_tx) {
+                updates_tx
+                    .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                    .ok();
+            }
+
+            Ok(())
+        });
+
+        cx.spawn(|_, _: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
