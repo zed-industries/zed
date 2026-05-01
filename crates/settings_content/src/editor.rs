@@ -939,6 +939,7 @@ pub struct SearchSettingsContent {
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
     /// Whether to remember recent search and replace queries across sessions.
+    /// When enabled, queries are stored on disk so they survive restarts.
     /// When disabled, any previously stored history is also cleared from disk.
     pub history_enabled: Option<bool>,
 }
