@@ -2373,6 +2373,44 @@ mod tests {
         assert_eq!(task.label, "Login");
     }
 
+    #[test]
+    fn config_state_keeps_modes_and_models_when_config_options_are_present() {
+        let mode_id = acp::SessionModeId::new("ask");
+        let modes = acp::SessionModeState::new(
+            mode_id.clone(),
+            vec![acp::SessionMode::new(mode_id.clone(), "Ask")],
+        );
+        let model_id = acp::ModelId::new("fast");
+        let models = acp::SessionModelState::new(
+            model_id.clone(),
+            vec![acp::ModelInfo::new(model_id.clone(), "Fast")],
+        );
+        let config_option = acp::SessionConfigOption::select(
+            "effort",
+            "Effort",
+            "high",
+            vec![acp::SessionConfigSelectOption::new("high", "High")],
+        );
+
+        let (modes, models, config_options) =
+            config_state(Some(modes), Some(models), Some(vec![config_option]));
+
+        let Some(modes) = modes else {
+            panic!("modes should be preserved when config options are present");
+        };
+        assert_eq!(modes.borrow().current_mode_id, mode_id);
+
+        let Some(models) = models else {
+            panic!("models should be preserved when config options are present");
+        };
+        assert_eq!(models.borrow().current_model_id, model_id);
+
+        let Some(config_options) = config_options else {
+            panic!("config options should be preserved");
+        };
+        assert_eq!(config_options.borrow().len(), 1);
+    }
+
     async fn connect_fake_agent(
         cx: &mut gpui::TestAppContext,
     ) -> (
@@ -2993,13 +3031,10 @@ fn config_state(
     Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
-    if let Some(opts) = config_options {
-        return (None, None, Some(Rc::new(RefCell::new(opts))));
-    }
-
     let modes = modes.map(|modes| Rc::new(RefCell::new(modes)));
     let models = models.map(|models| Rc::new(RefCell::new(models)));
-    (modes, models, None)
+    let config_options = config_options.map(|options| Rc::new(RefCell::new(options)));
+    (modes, models, config_options)
 }
 
 struct AcpSessionModes {
