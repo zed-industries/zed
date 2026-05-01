@@ -32,6 +32,7 @@ fn parse_platform(output: &str) -> Result<RemotePlatform> {
     let os = match os {
         "Darwin" => RemoteOs::MacOs,
         "Linux" => RemoteOs::Linux,
+        "FreeBSD" => RemoteOs::FreeBSD,
         _ => anyhow::bail!(
             "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
         ),
@@ -244,6 +245,7 @@ async fn build_remote_server_from_source(
                     "unknown-linux-gnu"
                 },
             RemoteOs::MacOs => "apple-darwin",
+            RemoteOs::FreeBSD => "unknown-freebsd",
             RemoteOs::Windows if cfg!(windows) => "pc-windows-msvc",
             RemoteOs::Windows => "pc-windows-gnu",
         }
@@ -444,6 +446,10 @@ mod tests {
 
         assert!(parse_platform("Windows x86_64\n").is_err());
         assert!(parse_platform("Linux armv7l\n").is_err());
+
+        let result = parse_platform("FreeBSD x86_64\n").unwrap();
+        assert_eq!(result.os, RemoteOs::FreeBSD);
+        assert_eq!(result.arch, RemoteArch::X86_64);
     }
 
     #[test]
