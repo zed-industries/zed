@@ -7722,6 +7722,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_android"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_wgpu",
+ "log",
+ "ndk",
+ "parking_lot",
+ "raw-window-handle",
+ "uuid",
+]
+
+[[package]]
 name = "gpui_linux"
 version = "0.1.0"
 dependencies = [
@@ -7828,6 +7843,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
+ "gpui_android",
  "gpui_linux",
  "gpui_macos",
  "gpui_web",
@@ -11036,6 +11052,7 @@ dependencies = [
  "log",
  "ndk-sys",
  "num_enum",
+ "raw-window-handle",
  "thiserror 1.0.69",
 ]
 

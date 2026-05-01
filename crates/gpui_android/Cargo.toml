@@ -1,0 +1,27 @@
+[package]
+name = "gpui_android"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_android.rs"
+
+[features]
+default = []
+test-support = ["gpui/test-support"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+gpui.workspace = true
+gpui_wgpu.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+uuid.workspace = true
+raw-window-handle = "0.6"
+ndk = "0.9"
