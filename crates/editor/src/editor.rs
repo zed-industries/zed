@@ -11533,7 +11533,7 @@ impl Editor {
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, sel| {
                 if sel.is_empty() {
-                    extend_selection_for_kill_ring_cut(map, sel, line_count);
+                    extend_empty_selection_for_kill_ring_cut(map, sel, line_count);
                 }
             });
         });
@@ -13268,7 +13268,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 let point = head.to_point(map);
-                let target_row = universal_argument_line_target_row(
+                let target_row = universal_argument_line_motion_target_row(
                     point.row,
                     count,
                     map.buffer_snapshot().max_row().0,
@@ -13356,7 +13356,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 let point = head.to_point(map);
-                let target_row = universal_argument_line_target_row(
+                let target_row = universal_argument_line_motion_target_row(
                     point.row,
                     count,
                     map.buffer_snapshot().max_row().0,
@@ -25064,31 +25064,38 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
     }
 }
 
-fn extend_selection_for_kill_ring_cut(
+fn extend_empty_selection_for_kill_ring_cut(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
     line_count: i32,
 ) {
-    if line_count > 0 {
-        if line_count == 1 {
-            selection.end = movement::line_end(map, selection.end, false);
+    let cursor_display_point = selection.head();
+    let cursor_buffer_point = cursor_display_point.to_point(map);
+
+    match line_count.cmp(&0) {
+        Ordering::Greater if line_count == 1 => {
+            selection.end = movement::line_end(map, cursor_display_point, false);
             if selection.is_empty() {
                 selection.end = DisplayPoint::new(selection.end.row() + 1_u32, 0);
             }
-        } else {
-            let point = selection.end.to_point(map);
+        }
+        Ordering::Greater => {
             let max_point = map.buffer_snapshot().max_point();
-            let target_row = point.row.saturating_add(line_count as u32);
+            // Positive kill-line prefixes kill N whole line intervals, so the
+            // endpoint is row + N at column 0 rather than row + N - 1.
+            let target_row = cursor_buffer_point.row.saturating_add(line_count as u32);
             selection.end = if target_row > max_point.row {
                 map.point_to_display_point(max_point, Bias::Right)
             } else {
                 map.point_to_display_point(Point::new(target_row, 0), Bias::Right)
             };
         }
-    } else {
-        let point = selection.start.to_point(map);
-        let target_row = point.row.saturating_sub(line_count.unsigned_abs());
-        selection.start = map.point_to_display_point(Point::new(target_row, 0), Bias::Left);
+        Ordering::Equal | Ordering::Less => {
+            let target_row = cursor_buffer_point
+                .row
+                .saturating_sub(line_count.unsigned_abs());
+            selection.start = map.point_to_display_point(Point::new(target_row, 0), Bias::Left);
+        }
     }
 
     selection.goal = SelectionGoal::None;
@@ -25103,12 +25110,16 @@ fn universal_argument_yank_index(value: i32, entry_count: usize) -> usize {
     }
 }
 
-fn universal_argument_line_target_row(current_row: u32, count: i32, max_row: u32) -> u32 {
-    let row_delta = count.saturating_sub(1);
-    if row_delta >= 0 {
-        current_row.saturating_add(row_delta as u32).min(max_row)
+fn universal_argument_line_motion_target_row(current_row: u32, count: i32, max_row: u32) -> u32 {
+    // Line motions count the current row as repetition 1, unlike kill-line's
+    // forward range endpoint which advances to the start of the following row.
+    let signed_row_offset = count.saturating_sub(1);
+    if signed_row_offset >= 0 {
+        current_row
+            .saturating_add(signed_row_offset as u32)
+            .min(max_row)
     } else {
-        current_row.saturating_sub(row_delta.unsigned_abs())
+        current_row.saturating_sub(signed_row_offset.unsigned_abs())
     }
 }
 
