@@ -8137,6 +8137,7 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
                         |cx| {
                             cx.new(|cx| {
                                 MessageNotification::new("Failed to load the database file.", cx)
+                                    .severity(Severity::Error)
                                     .primary_message("File an Issue")
                                     .primary_icon(IconName::Plus)
                                     .primary_on_click(|window, cx| {

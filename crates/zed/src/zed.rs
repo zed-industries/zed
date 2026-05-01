@@ -1720,6 +1720,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                                         ),
                                         cx,
                                     )
+                                    .severity(Severity::Error)
                                 })
                             },
                         );
@@ -1797,6 +1798,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
+                            .severity(Severity::Error)
                             .primary_message("Open Settings File")
                             .primary_icon(IconName::Settings)
                             .primary_on_click(|window, cx| {
@@ -1833,6 +1835,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
                             ),
                             cx,
                         )
+                        .severity(Severity::Error)
                         .primary_message("Open Settings File")
                         .primary_icon(IconName::Settings)
                         .primary_on_click(|window, cx| {
@@ -1991,6 +1994,7 @@ fn show_keymap_file_json_error(
     show_app_notification(notification_id, cx, move |cx| {
         cx.new(|cx| {
             MessageNotification::new(message.clone(), cx)
+                .severity(Severity::Error)
                 .primary_message("Open Keymap File")
                 .primary_icon(IconName::Settings)
                 .primary_on_click(|window, cx| {

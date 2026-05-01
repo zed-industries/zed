@@ -728,6 +728,8 @@ pub mod simple_message_notification {
         show_suppress_button: bool,
         title: Option<SharedString>,
         scroll_handle: ScrollHandle,
+        copyable_text: Option<SharedString>,
+        severity: Severity,
     }
 
     impl Focusable for MessageNotification {
@@ -747,9 +749,11 @@ pub mod simple_message_notification {
             S: Into<SharedString>,
         {
             let message = message.into();
+            let copyable = message.clone();
             Self::new_from_builder(cx, move |_, _| {
                 Label::new(message.clone()).into_any_element()
             })
+            .copyable_text(copyable)
         }
 
         pub fn new_from_builder<F>(cx: &mut App, content: F) -> MessageNotification
@@ -773,7 +777,22 @@ pub mod simple_message_notification {
                 title: None,
                 focus_handle: cx.focus_handle(),
                 scroll_handle: ScrollHandle::new(),
+                copyable_text: None,
+                severity: Severity::Info,
             }
+        }
+
+        pub fn severity(mut self, severity: Severity) -> Self {
+            self.severity = severity;
+            self
+        }
+
+        pub fn copyable_text<S>(mut self, text: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.copyable_text = Some(text.into());
+            self
         }
 
         pub fn primary_message<S>(mut self, message: S) -> Self
@@ -913,6 +932,17 @@ pub mod simple_message_notification {
                 .with_suffix(
                     h_flex()
                         .gap_1()
+                        .when_some(
+                            matches!(self.severity, Severity::Error | Severity::Warning)
+                                .then(|| self.copyable_text.clone())
+                                .flatten(),
+                            |this, text| {
+                                this.child(
+                                    ui::CopyButton::new("copy-notification-message", text)
+                                        .tooltip_label("Copy Message"),
+                                )
+                            },
+                        )
                         .children(self.primary_message.iter().map(|message| {
                             let mut button = Button::new(message.clone(), message.clone())
                                 .label_size(LabelSize::Small)
