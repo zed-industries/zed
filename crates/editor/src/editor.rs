@@ -3666,6 +3666,7 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         let cleared_universal_argument = self.clear_universal_argument(cx);
+        let cleared_selection_mark_mode = self.selection_mark_mode;
         self.selection_mark_mode = false;
         self.selection_drag_state = SelectionDragState::None;
 
@@ -3691,6 +3692,11 @@ impl Editor {
         if self.mode.is_full()
             && self.change_selections(Default::default(), window, cx, |s| s.try_cancel())
         {
+            cx.notify();
+            return;
+        }
+
+        if cleared_selection_mark_mode {
             cx.notify();
             return;
         }
@@ -24482,6 +24488,8 @@ impl EntityInputHandler for Editor {
         if !self.input_enabled {
             return;
         }
+
+        self.clear_universal_argument(cx);
 
         let transaction = self.transact(window, cx, |this, window, cx| {
             let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
