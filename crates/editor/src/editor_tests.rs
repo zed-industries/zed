@@ -8822,6 +8822,342 @@ fn simulate_emacs_keystrokes(cx: &mut EditorTestContext, keystrokes: &[&str]) {
     }
 }
 
+fn resolved_universal_argument(cx: &mut EditorTestContext) -> Option<ResolvedUniversalArgument> {
+    cx.update_editor(|_, _, cx| {
+        cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+            .state
+            .map(UniversalArgumentState::resolve)
+    })
+}
+
+fn has_editor_key_context(cx: &mut EditorTestContext, token: &str) -> bool {
+    cx.update_editor(|editor, window, cx| editor.key_context(window, cx).contains(token))
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_plain_inserts_four(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "a"]);
+
+    cx.assert_editor_state("aaaaˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_double_ctrl_u_inserts_sixteen(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "ctrl-u", "a"]);
+
+    let expected = format!("{}ˇ", "a".repeat(16));
+    cx.assert_editor_state(&expected);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_triple_ctrl_u_inserts_sixty_four(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "ctrl-u", "ctrl-u", "a"]);
+
+    let expected = format!("{}ˇ", "a".repeat(64));
+    cx.assert_editor_state(&expected);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_single_digit_count(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "5", "a"]);
+
+    cx.assert_editor_state("aaaaaˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_multi_digit_accumulates(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "1", "0", "0", "a"]);
+
+    let expected = format!("{}ˇ", "a".repeat(100));
+    cx.assert_editor_state(&expected);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_zero_count_suppresses_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "0", "a"]);
+
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_bare_minus_is_negative_one(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("abcdˇef");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "ctrl-f"]);
+
+    cx.assert_editor_state("abcˇdef");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_double_minus_cancels_negative(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "-"]);
+    assert_eq!(
+        resolved_universal_argument(&mut cx),
+        Some(ResolvedUniversalArgument::Numeric(1))
+    );
+
+    simulate_emacs_keystrokes(&mut cx, &["a"]);
+    cx.assert_editor_state("aˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_digits_then_ctrl_u_restarts_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "3", "ctrl-u", "a"]);
+
+    cx.assert_editor_state("aaaaˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_digits_then_minus_self_inserts(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "3", "-"]);
+
+    cx.assert_editor_state("---ˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_count_saturates_at_cap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(
+        &mut cx,
+        &["ctrl-u", "9", "9", "9", "9", "9", "9", "9", "9", "9"],
+    );
+
+    assert_eq!(
+        resolved_universal_argument(&mut cx),
+        Some(ResolvedUniversalArgument::Numeric(1_000_000))
+    );
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_huge_digit_run_does_not_panic(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let mut keystrokes = vec!["ctrl-u"];
+    keystrokes.extend(std::iter::repeat_n("9", 20));
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &keystrokes);
+
+    assert_eq!(
+        resolved_universal_argument(&mut cx),
+        Some(ResolvedUniversalArgument::Numeric(1_000_000))
+    );
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_take_is_single_shot(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, cx| {
+        let universal_argument_globals =
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>();
+        universal_argument_globals.state = Some(UniversalArgumentState::new_plain());
+        universal_argument_globals.consumed_this_dispatch = false;
+
+        assert_eq!(
+            editor.take_universal_argument(cx),
+            Some(ResolvedUniversalArgument::Plain(4))
+        );
+        assert_eq!(editor.take_universal_argument(cx), None);
+        assert!(
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+                .state
+                .is_none()
+        );
+        assert!(
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+                .consumed_this_dispatch
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_cancel_is_idempotent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇ");
+    cx.run_until_parked();
+    cx.update_editor(|_, _, cx| {
+        cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+            .consumed_this_dispatch = true;
+    });
+    let notification_count = Rc::new(RefCell::new(0));
+    let editor = cx.editor.clone();
+    let _subscription = cx.update({
+        let notification_count = notification_count.clone();
+        move |_, cx| {
+            cx.observe(&editor, move |_, _| {
+                *notification_count.borrow_mut() += 1;
+            })
+        }
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        assert!(!editor.clear_universal_argument(cx));
+        assert!(!editor.clear_universal_argument(cx));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(*notification_count.borrow(), 0);
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+    cx.update_editor(|_, _, cx| {
+        assert!(
+            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
+                .consumed_this_dispatch
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_key_context_token_active(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u"]);
+    assert!(has_editor_key_context(&mut cx, "universal_argument"));
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-g"]);
+    assert!(!has_editor_key_context(&mut cx, "universal_argument"));
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_extender_keys_preserve_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u"]);
+    assert_eq!(
+        resolved_universal_argument(&mut cx),
+        Some(ResolvedUniversalArgument::Plain(4))
+    );
+    assert!(has_editor_key_context(&mut cx, "universal_argument"));
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u"]);
+    assert_eq!(
+        resolved_universal_argument(&mut cx),
+        Some(ResolvedUniversalArgument::Plain(16))
+    );
+    assert!(has_editor_key_context(&mut cx, "universal_argument"));
+
+    simulate_emacs_keystrokes(&mut cx, &["3"]);
+    assert_eq!(
+        resolved_universal_argument(&mut cx),
+        Some(ResolvedUniversalArgument::Numeric(3))
+    );
+    assert!(has_editor_key_context(&mut cx, "universal_argument"));
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_non_extender_clears_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇabcdef");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "3", "ctrl-f"]);
+
+    cx.assert_editor_state("abcˇdef");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+    assert!(!has_editor_key_context(&mut cx, "universal_argument"));
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_pending_keystrokes_preserve_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("abˇcd");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "3", "ctrl-x"]);
+    assert_eq!(
+        resolved_universal_argument(&mut cx),
+        Some(ResolvedUniversalArgument::Numeric(3))
+    );
+    assert!(has_editor_key_context(&mut cx, "universal_argument"));
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-x"]);
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+    assert!(!has_editor_key_context(&mut cx, "universal_argument"));
+}
+
 #[gpui::test]
 async fn test_emacs_universal_argument_kill_ring_cut_plain_prefix(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

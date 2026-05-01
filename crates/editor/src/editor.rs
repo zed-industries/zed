@@ -2891,8 +2891,12 @@ impl Editor {
             key_context.add("selection_mode");
         }
 
-        if cx.default_global::<UniversalArgumentGlobals>().has_state() {
+        let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
+        if universal_argument_globals.has_state() {
             key_context.add("universal_argument");
+        }
+        if universal_argument_globals.accepts_minus() {
+            key_context.add("universal_argument_accepts_minus");
         }
 
         let disjoint = self.selections.disjoint_anchors();

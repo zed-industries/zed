@@ -1,5 +1,7 @@
 use gpui::Global;
 
+pub const MAX_UNIVERSAL_REPEAT: i32 = 1_000_000;
+
 #[derive(Default)]
 pub struct UniversalArgumentGlobals {
     pub(crate) state: Option<UniversalArgumentState>,
@@ -11,6 +13,11 @@ impl UniversalArgumentGlobals {
         self.state.is_some()
     }
 
+    pub fn accepts_minus(&self) -> bool {
+        self.state
+            .is_some_and(UniversalArgumentState::accepts_minus)
+    }
+
     pub(crate) fn take(&mut self) -> Option<ResolvedUniversalArgument> {
         let argument = self.state.take().map(UniversalArgumentState::resolve);
         if argument.is_some() {
@@ -20,9 +27,12 @@ impl UniversalArgumentGlobals {
     }
 
     pub(crate) fn clear(&mut self) -> bool {
-        let did_clear = self.state.take().is_some();
-        self.consumed_this_dispatch = false;
-        did_clear
+        if self.state.take().is_some() {
+            self.consumed_this_dispatch = false;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -42,9 +52,9 @@ impl UniversalArgumentState {
     pub fn multiply(self) -> Self {
         match self {
             Self::Plain { value } => Self::Plain {
-                value: value.saturating_mul(4),
+                value: cap_universal_argument_magnitude(value.saturating_mul(4)),
             },
-            Self::Numeric(numeric) => Self::Numeric(numeric),
+            Self::Numeric(_) => Self::new_plain(),
         }
     }
 
@@ -71,6 +81,13 @@ impl UniversalArgumentState {
         }
     }
 
+    pub fn accepts_minus(self) -> bool {
+        match self {
+            Self::Plain { .. } => true,
+            Self::Numeric(numeric) => !numeric.has_digits(),
+        }
+    }
+
     pub fn resolve(self) -> ResolvedUniversalArgument {
         match self {
             Self::Plain { value } => ResolvedUniversalArgument::Plain(value),
@@ -88,7 +105,9 @@ pub struct UniversalArgumentNumericState {
 
 impl UniversalArgumentNumericState {
     fn push_digit(mut self, digit: i32) -> Self {
-        self.magnitude = self.magnitude.saturating_mul(10).saturating_add(digit);
+        self.magnitude = cap_universal_argument_magnitude(
+            self.magnitude.saturating_mul(10).saturating_add(digit),
+        );
         self.has_digits = true;
         self
     }
@@ -96,6 +115,10 @@ impl UniversalArgumentNumericState {
     fn apply_minus(mut self) -> Self {
         self.is_negative = !self.is_negative;
         self
+    }
+
+    fn has_digits(self) -> bool {
+        self.has_digits
     }
 
     fn value(self) -> i32 {
@@ -120,4 +143,8 @@ impl ResolvedUniversalArgument {
             Self::Plain(value) | Self::Numeric(value) => value,
         }
     }
+}
+
+fn cap_universal_argument_magnitude(value: i32) -> i32 {
+    value.clamp(-MAX_UNIVERSAL_REPEAT, MAX_UNIVERSAL_REPEAT)
 }

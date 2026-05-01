@@ -88,10 +88,15 @@
     },
   },
   {
+    "context": "Editor && universal_argument_accepts_minus",
+    "bindings": {
+      "-": "editor::UniversalArgumentMinus"
+    },
+  },
+  {
     "context": "Editor && universal_argument",
     "bindings": {
       "ctrl-u": "editor::UniversalArgument",
-      "-": "editor::UniversalArgumentMinus",
       "0": ["editor::UniversalArgumentDigit", 0],
       "1": ["editor::UniversalArgumentDigit", 1],
       "2": ["editor::UniversalArgumentDigit", 2],
