@@ -7,17 +7,16 @@ use cloud_api_client::{
 };
 use cloud_llm_client::{CurrentUsage, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
-use gpui::{AppContext as _, Entity, TestAppContext};
+use gpui::{AppContext as _, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
 use parking_lot::Mutex;
 use rpc::{ConnectionId, Peer, Receipt, TypedEnvelope, proto};
 
-use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
+use crate::{Client, Connection, Credentials, EstablishConnectionError};
 
 pub struct FakeServer {
     peer: Arc<Peer>,
     state: Arc<Mutex<FakeServerState>>,
-    user_id: u64,
 }
 
 #[derive(Default)]
@@ -38,7 +37,6 @@ impl FakeServer {
         let server = Self {
             peer: Peer::new(0),
             state: Default::default(),
-            user_id: client_user_id,
         };
 
         client.http_client().as_fake().replace_handler({
@@ -212,23 +210,6 @@ impl FakeServer {
 
     fn connection_id(&self) -> ConnectionId {
         self.state.lock().connection_id.expect("not connected")
-    }
-
-    pub async fn build_user_store(
-        &self,
-        client: Arc<Client>,
-        cx: &mut TestAppContext,
-    ) -> Entity<UserStore> {
-        let user_store = cx.new(|cx| UserStore::new(client, cx));
-        assert_eq!(
-            self.receive::<proto::GetUsers>()
-                .await
-                .unwrap()
-                .payload
-                .user_ids,
-            &[self.user_id]
-        );
-        user_store
     }
 }
 
