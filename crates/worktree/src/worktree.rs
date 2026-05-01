@@ -3964,19 +3964,22 @@ impl BackgroundScanner {
         let repo = if scanning_enabled {
             let (ignores, exclude, repo) =
                 discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
-            self.state
-                .lock()
-                .await
-                .snapshot
-                .ignores_by_parent_abs_path
-                .extend(ignores);
+            let mut state = self.state.lock().await;
+            state.snapshot.ignores_by_parent_abs_path.extend(ignores);
             if let Some(exclude) = exclude {
-                self.state
-                    .lock()
-                    .await
+                let work_directory_abs_path: Arc<Path> = repo
+                    .as_ref()
+                    .map(|(_, work_directory)| {
+                        state
+                            .snapshot
+                            .work_directory_abs_path(work_directory)
+                            .into()
+                    })
+                    .unwrap_or_else(|| root_abs_path.as_path().into());
+                state
                     .snapshot
                     .repo_exclude_by_work_dir_abs_path
-                    .insert(root_abs_path.as_path().into(), (exclude, false));
+                    .insert(work_directory_abs_path, (exclude, false));
             }
 
             repo
@@ -5078,12 +5081,8 @@ impl BackgroundScanner {
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
                             if let Some(exclude) = exclude {
-                                let work_directory_abs_path = self
-                                    .state
-                                    .lock()
-                                    .await
-                                    .snapshot
-                                    .work_directory_abs_path(&work_directory);
+                                let work_directory_abs_path =
+                                    state.snapshot.work_directory_abs_path(&work_directory);
 
                                 state
                                     .snapshot

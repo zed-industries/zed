@@ -2999,6 +2999,10 @@ async fn test_root_repo_common_dir_for_relative_gitdir(
                 ".git": "gitdir: ../.bare",
                 "file.txt": "content",
                 "ignored.txt": "ignored",
+                "subdir": {
+                    "file.txt": "content",
+                    "ignored.txt": "ignored",
+                },
             },
         }),
     )
@@ -3027,6 +3031,26 @@ async fn test_root_repo_common_dir_for_relative_gitdir(
                 .map(|path| path.as_ref()),
             Some(Path::new(path!("/repo/.bare"))),
         );
+        check_worktree_entries(tree, &[], &["ignored.txt"], &["file.txt"], &[]);
+    });
+
+    let nested_tree = Worktree::local(
+        path!("/repo/feature-a/subdir").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(1),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    nested_tree
+        .update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    nested_tree.read_with(cx, |tree, _| {
         check_worktree_entries(tree, &[], &["ignored.txt"], &["file.txt"], &[]);
     });
 }
