@@ -5,6 +5,7 @@ use crate::{
     SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
     buffer_search::registrar::WithResultsOrExternalQuery,
+    persistence::{BufferSearchHistoryDB, HistoryKind},
     search_bar::{
         ActionButtonState, HistoryNavigationDirection, alignment_element,
         filter_search_results_input, input_base_styles, render_action_button, render_text_input,
@@ -20,9 +21,9 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action as _, App, ClickEvent, Context, Entity, EventEmitter, Focusable,
+    Action as _, Anchor, App, ClickEvent, Context, Entity, EventEmitter, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, WeakEntity, Window, div,
+    Styled, Subscription, Task, WeakEntity, Window, div, point,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -32,14 +33,14 @@ use project::{
 
 use fs::Fs;
 use settings::{DiffViewStyle, Settings, update_settings_file};
-use std::{any::TypeId, sync::Arc};
+use std::{any::TypeId, sync::Arc, time::Duration};
 use zed_actions::{
     OpenSettingsAt, outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath,
 };
 
 use ui::{
-    BASE_REM_SIZE_IN_PX, IconButtonShape, PlatformStyle, TextSize, Tooltip, prelude::*,
-    render_modifiers, utils::SearchInputWidth,
+    BASE_REM_SIZE_IN_PX, ContextMenu, IconButtonShape, PlatformStyle, PopoverMenu, TextSize,
+    Tooltip, prelude::*, render_modifiers, utils::SearchInputWidth,
 };
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
@@ -55,6 +56,10 @@ pub use registrar::{DivRegistrar, register_pane_search_actions};
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
+/// Wait this long after the most recent search input before committing the
+/// query to the search history. Prevents prefixes of an in-progress query
+/// from polluting the history (e.g. "f", "fo", "foo" when typing "foo").
+const SEARCH_HISTORY_DEBOUNCE: Duration = Duration::from_millis(1000);
 
 pub use zed_actions::buffer_search::{
     Deploy, DeployReplace, Dismiss, FocusEditor, UseSelectionForFind,
@@ -68,6 +73,19 @@ pub enum Event {
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| BufferSearchBar::register(workspace))
         .detach();
+}
+
+fn display_history_entry(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 pub struct BufferSearchBar {
@@ -94,6 +112,10 @@ pub struct BufferSearchBar {
     dismissed: bool,
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
+    pending_search_history_save: Option<Task<()>>,
+    replacement_history: SearchHistory,
+    replacement_history_cursor: SearchHistoryCursor,
+    history_persistence_enabled: bool,
     replace_enabled: bool,
     selection_search_enabled: Option<FilteredSearchRange>,
     scroll_handle: ScrollHandle,
@@ -331,6 +353,13 @@ impl Render for BufferSearchBar {
         let should_show_replace_input = self.replace_enabled && replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
 
+        let find_history_dropdown = (!find_in_results)
+            .then(|| self.render_history_dropdown(HistoryKind::Find, cx).into_any_element());
+        let replace_history_dropdown = should_show_replace_input.then(|| {
+            self.render_history_dropdown(HistoryKind::Replace, cx)
+                .into_any_element()
+        });
+
         let theme_colors = cx.theme().colors();
         let query_border = if self.query_error.is_some() {
             Color::Error.color(cx)
@@ -352,6 +381,7 @@ impl Render for BufferSearchBar {
         };
 
         let query_column = input_style
+            .children(find_history_dropdown)
             .child(div().flex_1().min_w_0().py_1().child(render_text_input(
                 &self.query_editor,
                 color_override,
@@ -500,12 +530,14 @@ impl Render for BufferSearchBar {
             .child(mode_column);
 
         let replace_line = should_show_replace_input.then(|| {
-            let replace_column = input_base_styles(replacement_border).child(
-                div()
-                    .flex_1()
-                    .py_1()
-                    .child(render_text_input(&self.replacement_editor, None, cx)),
-            );
+            let replace_column = input_base_styles(replacement_border)
+                .children(replace_history_dropdown)
+                .child(
+                    div()
+                        .flex_1()
+                        .py_1()
+                        .child(render_text_input(&self.replacement_editor, None, cx)),
+                );
             let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
 
             let replace_actions = h_flex()
@@ -870,7 +902,23 @@ impl BufferSearchBar {
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
-        let search_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+        let editor_search_settings = EditorSettings::get_global(cx).search;
+        let search_options = SearchOptions::from_settings(&editor_search_settings);
+        let history_persistence_enabled = editor_search_settings.history_enabled;
+
+        let (initial_find_history, initial_replacement_history) = if history_persistence_enabled {
+            let db = BufferSearchHistoryDB::global(cx);
+            (
+                db.list(HistoryKind::Find).unwrap_or_default(),
+                db.list(HistoryKind::Replace).unwrap_or_default(),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        cx.observe_global::<settings::SettingsStore>(Self::on_settings_changed)
+            .detach();
+
         if let Some(languages) = languages {
             let query_buffer = query_editor
                 .read(cx)
@@ -919,11 +967,26 @@ impl BufferSearchBar {
             pending_search: None,
             query_error: None,
             dismissed: true,
-            search_history: SearchHistory::new(
-                Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
-                project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
-            ),
+            search_history: {
+                let mut history = SearchHistory::new(
+                    Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
+                    project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
+                );
+                history.bulk_load(initial_find_history);
+                history
+            },
             search_history_cursor: Default::default(),
+            pending_search_history_save: None,
+            replacement_history: {
+                let mut history = SearchHistory::new(
+                    Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
+                    project::search_history::QueryInsertionBehavior::AlwaysInsert,
+                );
+                history.bulk_load(initial_replacement_history);
+                history
+            },
+            replacement_history_cursor: Default::default(),
+            history_persistence_enabled,
             active_search: None,
             replace_enabled: false,
             selection_search_enabled: None,
@@ -1654,8 +1717,7 @@ impl BufferSearchBar {
                             this.update_match_index(window, cx);
 
                             if add_to_history {
-                                this.search_history
-                                    .add(&mut this.search_history_cursor, query_text);
+                                this.schedule_search_history_save(query_text, cx);
                             }
                             if !this.dismissed {
                                 let (matches, token) = this
@@ -1825,6 +1887,8 @@ impl BufferSearchBar {
 
     fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
         let mut should_propagate = true;
+        let replacement_text = self.replacement(cx);
+        let mut performed_replace = false;
         if !self.dismissed
             && self.active_search.is_some()
             && let Some(searchable_item) = self.active_searchable_item.as_ref()
@@ -1837,11 +1901,15 @@ impl BufferSearchBar {
                 let query = query
                     .as_ref()
                     .clone()
-                    .with_replacement(self.replacement(cx));
+                    .with_replacement(replacement_text.clone());
                 searchable_item.replace(matches.at(active_index), &query, *token, window, cx);
                 self.select_next_match(&SelectNextMatch, window, cx);
+                performed_replace = true;
             }
             should_propagate = false;
+        }
+        if performed_replace {
+            self.record_replacement_history(replacement_text, cx);
         }
         if !should_propagate {
             cx.stop_propagation();
@@ -1849,6 +1917,8 @@ impl BufferSearchBar {
     }
 
     pub fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
+        let replacement_text = self.replacement(cx);
+        let mut performed_replace = false;
         if !self.dismissed
             && self.active_search.is_some()
             && let Some(searchable_item) = self.active_searchable_item.as_ref()
@@ -1860,8 +1930,130 @@ impl BufferSearchBar {
             let query = query
                 .as_ref()
                 .clone()
-                .with_replacement(self.replacement(cx));
+                .with_replacement(replacement_text.clone());
             searchable_item.replace_all(&mut matches.iter(), &query, *token, window, cx);
+            performed_replace = true;
+        }
+        if performed_replace {
+            self.record_replacement_history(replacement_text, cx);
+        }
+    }
+
+    fn schedule_search_history_save(&mut self, query: String, cx: &mut Context<Self>) {
+        self.pending_search_history_save = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SEARCH_HISTORY_DEBOUNCE)
+                .await;
+            this.update(cx, |this, cx| {
+                this.search_history
+                    .add(&mut this.search_history_cursor, query.clone());
+                this.persist_history_entry(HistoryKind::Find, query, cx);
+                this.pending_search_history_save = None;
+            })
+            .ok();
+        }));
+    }
+
+    fn record_replacement_history(&mut self, value: String, cx: &mut Context<Self>) {
+        if value.is_empty() {
+            return;
+        }
+        self.replacement_history
+            .add(&mut self.replacement_history_cursor, value.clone());
+        self.persist_history_entry(HistoryKind::Replace, value, cx);
+    }
+
+    fn persist_history_entry(&self, kind: HistoryKind, value: String, cx: &mut Context<Self>) {
+        if !self.history_persistence_enabled || value.is_empty() {
+            return;
+        }
+        let db = BufferSearchHistoryDB::global(cx);
+        cx.background_spawn(async move { db.record(kind, value).await })
+            .detach_and_log_err(cx);
+    }
+
+    fn render_history_dropdown(
+        &self,
+        kind: HistoryKind,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let raw_entries = match kind {
+            HistoryKind::Find => self.search_history.recent_entries(),
+            HistoryKind::Replace => self.replacement_history.recent_entries(),
+        };
+        let mut seen = collections::HashSet::default();
+        let entries: Vec<(SharedString, String)> = raw_entries
+            .into_iter()
+            .filter(|entry| seen.insert(entry.clone()))
+            .map(|original| {
+                let display: SharedString = display_history_entry(&original).into();
+                (display, original)
+            })
+            .collect();
+        let (id, tooltip) = match kind {
+            HistoryKind::Find => ("buffer-search-history-find", "Recent searches"),
+            HistoryKind::Replace => ("buffer-search-history-replace", "Recent replacements"),
+        };
+        let weak_self = cx.entity().downgrade();
+        let trigger = IconButton::new(id, IconName::ChevronDown)
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .disabled(entries.is_empty());
+
+        PopoverMenu::new(id)
+            .trigger_with_tooltip(trigger, Tooltip::text(tooltip))
+            .anchor(Anchor::TopLeft)
+            .offset(point(px(0.), px(8.)))
+            .menu(move |window, cx| {
+                if entries.is_empty() {
+                    return None;
+                }
+                let weak_self = weak_self.clone();
+                let entries = entries.clone();
+                Some(ContextMenu::build(window, cx, move |menu, _, _| {
+                    entries
+                        .into_iter()
+                        .fold(menu, |menu, (display, value)| {
+                            let weak_self = weak_self.clone();
+                            menu.entry(display, None, move |window, cx| {
+                                let value = value.clone();
+                                if let Some(this) = weak_self.upgrade() {
+                                    this.update(cx, |this, cx| {
+                                        let editor = match kind {
+                                            HistoryKind::Find => this.query_editor.clone(),
+                                            HistoryKind::Replace => {
+                                                this.replacement_editor.clone()
+                                            }
+                                        };
+                                        editor.update(cx, |editor, cx| {
+                                            editor.set_text(value.clone(), window, cx);
+                                        });
+                                    });
+                                }
+                            })
+                        })
+                        .with_vertical_scrollbar()
+                }))
+            })
+    }
+
+    fn on_settings_changed(&mut self, cx: &mut Context<Self>) {
+        let new_enabled = EditorSettings::get_global(cx).search.history_enabled;
+        if new_enabled == self.history_persistence_enabled {
+            return;
+        }
+        self.history_persistence_enabled = new_enabled;
+        if !new_enabled {
+            self.search_history.clear();
+            self.search_history_cursor = SearchHistoryCursor::default();
+            self.replacement_history.clear();
+            self.replacement_history_cursor = SearchHistoryCursor::default();
+            cx.notify();
+            let db = BufferSearchHistoryDB::global(cx);
+            cx.background_spawn(async move { db.clear_all().await })
+                .detach_and_log_err(cx);
         }
     }
 
@@ -3647,6 +3839,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                history_enabled: true,
             },
             cx,
         );
@@ -3710,6 +3903,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                history_enabled: true,
             },
             cx,
         );
@@ -3748,6 +3942,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                history_enabled: true,
             },
             cx,
         );
@@ -3893,6 +4088,91 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_replacement_history_records_replacements(cx: &mut TestAppContext) {
+        let (_editor, search_bar, cx) = init_test(cx);
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("expression", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("first_replace", window, cx);
+            });
+            search_bar.replace_next(&ReplaceNext, window, cx);
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("second_replace", window, cx);
+            });
+            search_bar.replace_all(&ReplaceAll, window, cx);
+        });
+
+        search_bar.update(cx, |search_bar, _cx| {
+            assert_eq!(
+                search_bar.replacement_history.recent_entries(),
+                vec![
+                    "second_replace".to_string(),
+                    "first_replace".to_string(),
+                ],
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disabling_history_setting_clears_in_memory_history(cx: &mut TestAppContext) {
+        let (_editor, search_bar, cx) = init_test(cx);
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("expression", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("foo", window, cx);
+            });
+            search_bar.replace_next(&ReplaceNext, window, cx);
+        });
+
+        search_bar.update(cx, |search_bar, _cx| {
+            assert_eq!(
+                search_bar.search_history.recent_entries(),
+                vec!["expression".to_string()]
+            );
+            assert_eq!(
+                search_bar.replacement_history.recent_entries(),
+                vec!["foo".to_string()]
+            );
+            assert!(search_bar.history_persistence_enabled);
+        });
+
+        update_search_settings(
+            SearchSettings {
+                button: true,
+                whole_word: false,
+                case_sensitive: false,
+                include_ignored: false,
+                regex: false,
+                center_on_match: false,
+                history_enabled: false,
+            },
+            cx,
+        );
+
+        search_bar.update(cx, |search_bar, _cx| {
+            assert!(!search_bar.history_persistence_enabled);
+            assert!(search_bar.search_history.recent_entries().is_empty());
+            assert!(search_bar.replacement_history.recent_entries().is_empty());
+        });
+    }
+
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -3904,6 +4184,7 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
+                        history_enabled: Some(search_settings.history_enabled),
                     });
                 });
             });

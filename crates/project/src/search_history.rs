@@ -51,6 +51,21 @@ impl SearchHistory {
         }
     }
 
+    /// Replaces the history with the given entries, ordered from oldest to
+    /// newest. Used to seed the in-memory history from a persisted store
+    /// without triggering insertion-behavior side effects. Any existing
+    /// `SearchHistoryCursor` should be reset by the caller after this call.
+    pub fn bulk_load(&mut self, entries: Vec<String>) {
+        self.history.clear();
+        let cap = self.max_history_len.unwrap_or(usize::MAX);
+        let skip = entries.len().saturating_sub(cap);
+        self.history.extend(entries.into_iter().skip(skip));
+    }
+
+    pub fn clear(&mut self) {
+        self.history.clear();
+    }
+
     pub fn add(&mut self, cursor: &mut SearchHistoryCursor, search_string: String) {
         cursor.draft = None;
 
@@ -119,5 +134,10 @@ impl SearchHistory {
 
     pub fn len(&self) -> usize {
         self.history.len()
+    }
+
+    /// Returns the entries in most-recent-first order.
+    pub fn recent_entries(&self) -> Vec<String> {
+        self.history.iter().rev().cloned().collect()
     }
 }

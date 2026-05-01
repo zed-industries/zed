@@ -1,11 +1,11 @@
 use crate::{
     ButtonCommon, ButtonStyle, IconButtonShape, KeyBinding, List, ListItem, ListSeparator,
-    ListSubHeader, Tooltip, prelude::*, utils::WithRemSize,
+    ListSubHeader, Tooltip, components::scrollbar::WithScrollbar, prelude::*, utils::WithRemSize,
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
-    Subscription, anchored, canvas, prelude::*, px,
+    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollHandle, Size, Subscription, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -233,6 +233,8 @@ pub struct ContextMenu {
     submenu_trigger_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     submenu_trigger_mouse_down: bool,
     ignore_blur_until: Option<Instant>,
+    show_vertical_scrollbar: bool,
+    scroll_handle: Option<ScrollHandle>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -320,6 +322,8 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                show_vertical_scrollbar: false,
+                scroll_handle: None,
             },
             window,
             cx,
@@ -397,6 +401,8 @@ impl ContextMenu {
                     submenu_trigger_bounds: Rc::new(Cell::new(None)),
                     submenu_trigger_mouse_down: false,
                     ignore_blur_until: None,
+                    show_vertical_scrollbar: false,
+                    scroll_handle: None,
                 },
                 window,
                 cx,
@@ -466,6 +472,8 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                show_vertical_scrollbar: false,
+                scroll_handle: None,
             },
             window,
             cx,
@@ -517,6 +525,14 @@ impl ContextMenu {
 
     pub fn push_item(&mut self, item: impl Into<ContextMenuItem>) {
         self.items.push(item.into());
+    }
+
+    /// Renders a vertical scrollbar on the right side of the menu, using the
+    /// menu's existing max-height. Useful when the entry list may overflow.
+    pub fn with_vertical_scrollbar(mut self) -> Self {
+        self.show_vertical_scrollbar = true;
+        self.scroll_handle.get_or_insert_with(ScrollHandle::default);
+        self
     }
 
     pub fn entry(
@@ -1262,6 +1278,8 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                show_vertical_scrollbar: false,
+                scroll_handle: None,
             };
 
             menu = (builder)(menu, window, cx);
@@ -2146,6 +2164,11 @@ impl Render for ContextMenu {
             .top_0()
             .left_0();
 
+            let vertical_scrollbar_handle = self
+                .show_vertical_scrollbar
+                .then(|| self.scroll_handle.clone())
+                .flatten();
+
             WithRemSize::new(ui_font_size)
                 .occlude()
                 .elevation_2(cx)
@@ -2165,6 +2188,10 @@ impl Render for ContextMenu {
                             this.min_w(px(200.)).flex_1()
                         })
                         .overflow_y_scroll()
+                        .when_some(vertical_scrollbar_handle, |this, handle| {
+                            this.track_scroll(&handle)
+                                .vertical_scrollbar_for(&handle, window, cx)
+                        })
                         .track_focus(&self.focus_handle(cx))
                         .key_context(self.key_context.as_ref())
                         .on_action(cx.listener(ContextMenu::select_first))
