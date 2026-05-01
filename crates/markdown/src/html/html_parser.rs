@@ -810,6 +810,24 @@ mod tests {
     use gpui::TextAlign;
 
     #[test]
+    fn parses_deeply_nested_html_without_stack_overflow() {
+        let depth = 2_000;
+        let mut markdown = String::new();
+
+        for index in 0..depth {
+            markdown.push_str(&format!("<details><summary>L{index}</summary>\n"));
+        }
+        markdown.push_str("leaf\n");
+        for _ in 0..depth {
+            markdown.push_str("</details>\n");
+        }
+
+        let parsed = parse_html_block(&markdown, 0..markdown.len()).unwrap();
+
+        assert!(!parsed.children.is_empty());
+    }
+
+    #[test]
     fn parses_html_styled_text() {
         let parsed = parse_html_block(
             "<p>Some text <strong>strong</strong> <a href=\"https://example.com\">link</a></p>",
