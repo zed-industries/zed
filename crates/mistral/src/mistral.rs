@@ -65,6 +65,13 @@ pub enum Model {
     #[serde(rename = "devstral-medium-latest", alias = "devstral-medium-latest")]
     DevstralMediumLatest,
 
+    #[serde(rename = "ministral-3b-latest", alias = "ministral-3b-latest")]
+    Ministral3bLatest,
+    #[serde(rename = "ministral-8b-latest", alias = "ministral-8b-latest")]
+    Ministral8bLatest,
+    #[serde(rename = "ministral-14b-latest", alias = "ministral-14b-latest")]
+    Ministral14bLatest,
+
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -106,6 +113,9 @@ impl Model {
             Self::MagistralMediumLatest => "magistral-medium-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::DevstralMediumLatest => "devstral-medium-latest",
+            Self::Ministral3bLatest => "ministral-3b-latest",
+            Self::Ministral8bLatest => "ministral-8b-latest",
+            Self::Ministral14bLatest => "ministral-14b-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -119,6 +129,9 @@ impl Model {
             Self::MagistralMediumLatest => "magistral-medium-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::DevstralMediumLatest => "devstral-medium-latest",
+            Self::Ministral3bLatest => "ministral-3b-latest",
+            Self::Ministral8bLatest => "ministral-8b-latest",
+            Self::Ministral14bLatest => "ministral-14b-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -134,6 +147,9 @@ impl Model {
             Self::MagistralMediumLatest => 128000,
             Self::OpenMistralNemo => 128000,
             Self::DevstralMediumLatest => 256000,
+            Self::Ministral3bLatest => 256000,
+            Self::Ministral8bLatest => 256000,
+            Self::Ministral14bLatest => 256000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -155,7 +171,10 @@ impl Model {
             | Self::MistralSmallLatest
             | Self::MagistralMediumLatest
             | Self::OpenMistralNemo
-            | Self::DevstralMediumLatest => true,
+            | Self::DevstralMediumLatest
+            | Self::Ministral3bLatest
+            | Self::Ministral8bLatest
+            | Self::Ministral14bLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
@@ -165,7 +184,10 @@ impl Model {
             Self::MistralLargeLatest
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
-            | Self::MagistralMediumLatest => true,
+            | Self::MagistralMediumLatest
+            | Self::Ministral3bLatest
+            | Self::Ministral8bLatest
+            | Self::Ministral14bLatest => true,
             Self::CodestralLatest | Self::OpenMistralNemo | Self::DevstralMediumLatest => false,
             Self::Custom {
                 supports_images, ..
