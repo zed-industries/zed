@@ -5200,7 +5200,11 @@ impl BackgroundScanner {
 
                 if *needs_update {
                     *needs_update = false;
-                    ignores_to_update.push(work_dir_abs_path.clone());
+                    if work_dir_abs_path.starts_with(abs_path.as_path()) {
+                        ignores_to_update.push(work_dir_abs_path.clone());
+                    } else {
+                        ignores_to_update.push(abs_path.as_path().into());
+                    }
 
                     if let Some((_, repository)) = repository {
                         let exclude_abs_path = repository.common_dir_abs_path.join(REPO_EXCLUDE);

@@ -2988,15 +2988,22 @@ async fn test_root_repo_common_dir_for_relative_gitdir(
     fs.insert_tree(
         path!("/repo"),
         json!({
-            ".bare": {
+            ".git": {
                 "HEAD": "ref: refs/heads/main",
-                "config": "[core]\n\tbare = true\n",
+                "config": "[core]\n\tbare = false\n",
                 "info": {
                     "exclude": "ignored.txt\n",
                 },
+                "worktrees": {
+                    "feature-a": {
+                        "HEAD": "ref: refs/heads/feature-a",
+                        "commondir": "../..",
+                        "gitdir": "/repo/feature-a/.git",
+                    },
+                },
             },
             "feature-a": {
-                ".git": "gitdir: ../.bare",
+                ".git": "gitdir: ../.git/worktrees/feature-a",
                 "file.txt": "content",
                 "ignored.txt": "ignored",
                 "subdir": {
@@ -3029,7 +3036,7 @@ async fn test_root_repo_common_dir_for_relative_gitdir(
             tree.snapshot()
                 .root_repo_common_dir()
                 .map(|path| path.as_ref()),
-            Some(Path::new(path!("/repo/.bare"))),
+            Some(Path::new(path!("/repo/.git"))),
         );
         check_worktree_entries(tree, &[], &["ignored.txt"], &["file.txt"], &[]);
     });
@@ -3052,6 +3059,31 @@ async fn test_root_repo_common_dir_for_relative_gitdir(
 
     nested_tree.read_with(cx, |tree, _| {
         check_worktree_entries(tree, &[], &["ignored.txt"], &["file.txt"], &[]);
+    });
+
+    fs.write(
+        Path::new(path!("/repo/.git")).join(REPO_EXCLUDE).as_ref(),
+        "file.txt\n".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    feature_tree
+        .flush_fs_events_in_root_git_repository(cx)
+        .await;
+    feature_tree.read_with(cx, |tree, _| {
+        check_worktree_entries(
+            tree,
+            &[],
+            &["file.txt", "subdir/file.txt"],
+            &["ignored.txt", "subdir/ignored.txt"],
+            &[],
+        );
+    });
+
+    nested_tree.flush_fs_events_in_root_git_repository(cx).await;
+    nested_tree.read_with(cx, |tree, _| {
+        check_worktree_entries(tree, &[], &["file.txt"], &["ignored.txt"], &[]);
     });
 }
 
