@@ -2951,22 +2951,12 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
     });
 }
 
+#[derive(Default)]
 struct WorktreeExpectations {
     excluded_paths: &'static [&'static str],
     ignored_paths: &'static [&'static str],
     tracked_paths: &'static [&'static str],
     included_paths: &'static [&'static str],
-}
-
-impl Default for WorktreeExpectations {
-    fn default() -> Self {
-        Self {
-            excluded_paths: &[],
-            ignored_paths: &[],
-            tracked_paths: &[],
-            included_paths: &[],
-        }
-    }
 }
 
 #[track_caller]
