@@ -3,6 +3,7 @@ use html5ever::{
     tendril::{Tendril, TendrilSink, fmt::UTF8},
 };
 use markup5ever_rcdom::{Node, NodeData, RcDom};
+use stacksafe::stacksafe;
 use std::{cell::RefCell, io, rc::Rc, str};
 
 #[derive(Default)]
@@ -50,6 +51,7 @@ where
         self.minify_node(&None, &dom.document)
     }
 
+    #[stacksafe]
     fn minify_node<'b>(&mut self, ctx: &'b Option<Context>, node: &'b Node) -> io::Result<()> {
         match &node.data {
             NodeData::Text { contents } => {
@@ -320,6 +322,7 @@ where
     }
 
     #[allow(clippy::needless_pass_by_value)]
+    #[stacksafe]
     fn minify_children(&mut self, ctx: &Option<Context>, node: &Node) -> io::Result<()> {
         let children = node.children.borrow();
         let l = children.len();
