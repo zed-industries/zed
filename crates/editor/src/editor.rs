@@ -11528,7 +11528,8 @@ impl Editor {
             self.deactivate_selection_mark_mode(cx);
             return;
         }
-        let allow_append = self.should_append_to_kill_ring(cx);
+        let push_mode =
+            KillRingPushMode::append_after_previous_kill(self.should_append_to_kill_ring(cx));
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, sel| {
                 if sel.is_empty() {
@@ -11537,7 +11538,7 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        self.push_to_kill_ring(item, allow_append, false, true, cx);
+        self.push_to_kill_ring(item, push_mode, cx);
         self.deactivate_selection_mark_mode(cx);
     }
 
@@ -11551,9 +11552,10 @@ impl Editor {
             return;
         }
 
-        let allow_append = self.should_append_to_kill_ring(cx);
+        let push_mode =
+            KillRingPushMode::append_after_previous_kill(self.should_append_to_kill_ring(cx));
         let item = self.cut_common(false, window, cx);
-        self.push_to_kill_ring(item, allow_append, false, true, cx);
+        self.push_to_kill_ring(item, push_mode, cx);
         self.deactivate_selection_mark_mode(cx);
     }
 
@@ -11562,7 +11564,7 @@ impl Editor {
             return;
         };
 
-        self.push_to_kill_ring(item, false, false, false, cx);
+        self.push_to_kill_ring(item, KillRingPushMode::new_entry(), cx);
         self.deactivate_selection_mark_mode(cx);
     }
 
@@ -11700,7 +11702,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let allow_append = self.should_append_to_kill_ring(cx);
+        let push_mode =
+            KillRingPushMode::append_after_previous_kill(self.should_append_to_kill_ring(cx));
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 if selection.is_empty() {
@@ -11713,7 +11716,7 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        self.push_to_kill_ring(item, allow_append, false, true, cx);
+        self.push_to_kill_ring(item, push_mode, cx);
     }
 
     pub fn kill_ring_backward_kill_word(
@@ -11740,7 +11743,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let allow_append = self.should_append_to_kill_ring(cx);
+        let push_mode =
+            KillRingPushMode::prepend_before_previous_kill(self.should_append_to_kill_ring(cx));
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 if selection.is_empty() {
@@ -11753,7 +11757,7 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        self.push_to_kill_ring(item, allow_append, true, true, cx);
+        self.push_to_kill_ring(item, push_mode, cx);
     }
 
     pub fn copy_and_trim(&mut self, _: &CopyAndTrim, _: &mut Window, cx: &mut Context<Self>) {
@@ -11842,9 +11846,7 @@ impl Editor {
     fn push_to_kill_ring(
         &mut self,
         item: ClipboardItem,
-        allow_append: bool,
-        prepend: bool,
-        set_pending_append: bool,
+        mode: KillRingPushMode,
         cx: &mut Context<Self>,
     ) {
         let Some(entry) = KillRingEntry::from_clipboard_item(&item) else {
@@ -11852,12 +11854,13 @@ impl Editor {
             return;
         };
 
-        let selections = self.selections.disjoint_anchors_arc();
+        let next_append_selections = mode
+            .records_pending_append()
+            .then(|| self.selections.disjoint_anchors_arc());
         let item = cx.default_global::<KillRingState>().push(
             entry,
-            allow_append,
-            prepend,
-            set_pending_append.then_some(selections),
+            mode.append_request(),
+            next_append_selections,
         );
 
         if let Some(item) = item {
@@ -11892,6 +11895,11 @@ impl Editor {
         let buffer_snapshot = display_snapshot.buffer_snapshot();
         let current_selections = self.selections.all::<Point>(&display_snapshot);
         if current_selections.len() != anchors.len() {
+            log::warn!(
+                "could not restore kill-ring yank selections: anchor count {} did not match selection count {}",
+                anchors.len(),
+                current_selections.len()
+            );
             return;
         }
 
@@ -25200,6 +25208,64 @@ impl ResolvedUniversalArgument {
 
 const KILL_RING_MAX: usize = 60;
 
+#[derive(Clone, Copy)]
+enum KillRingAppendOrder {
+    Append,
+    Prepend,
+}
+
+#[derive(Clone, Copy)]
+struct KillRingAppendRequest {
+    append_to_latest: bool,
+    order: KillRingAppendOrder,
+}
+
+#[derive(Clone, Copy)]
+enum KillRingPushMode {
+    ChainWithPreviousKill {
+        append_to_latest: bool,
+        order: KillRingAppendOrder,
+    },
+    NewEntry,
+}
+
+impl KillRingPushMode {
+    fn append_after_previous_kill(append_to_latest: bool) -> Self {
+        Self::ChainWithPreviousKill {
+            append_to_latest,
+            order: KillRingAppendOrder::Append,
+        }
+    }
+
+    fn prepend_before_previous_kill(append_to_latest: bool) -> Self {
+        Self::ChainWithPreviousKill {
+            append_to_latest,
+            order: KillRingAppendOrder::Prepend,
+        }
+    }
+
+    fn new_entry() -> Self {
+        Self::NewEntry
+    }
+
+    fn records_pending_append(self) -> bool {
+        matches!(self, Self::ChainWithPreviousKill { .. })
+    }
+
+    fn append_request(self) -> Option<KillRingAppendRequest> {
+        match self {
+            Self::ChainWithPreviousKill {
+                append_to_latest,
+                order,
+            } => Some(KillRingAppendRequest {
+                append_to_latest,
+                order,
+            }),
+            Self::NewEntry => None,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct KillRingState {
     entries: VecDeque<KillRingEntry>,
@@ -25241,8 +25307,7 @@ impl KillRingState {
     fn push(
         &mut self,
         entry: KillRingEntry,
-        allow_append: bool,
-        prepend: bool,
+        append_request: Option<KillRingAppendRequest>,
         next_append_selections: Option<Arc<[Selection<Anchor>]>>,
     ) -> Option<ClipboardItem> {
         if entry.is_empty() {
@@ -25250,9 +25315,10 @@ impl KillRingState {
             return None;
         }
 
-        if allow_append
+        if let Some(append_request) = append_request
+            && append_request.append_to_latest
             && let Some(latest_entry) = self.entries.front_mut()
-            && latest_entry.append(entry.clone(), prepend)
+            && latest_entry.append(entry.clone(), append_request.order)
         {
             self.pending_append =
                 next_append_selections.map(|selections| KillRingAppendState { selections });
@@ -25330,7 +25396,7 @@ impl KillRingEntry {
             .all(|selection| selection.text.is_empty())
     }
 
-    fn append(&mut self, other: Self, prepend: bool) -> bool {
+    fn append(&mut self, other: Self, order: KillRingAppendOrder) -> bool {
         if self.selections.len() != other.selections.len() {
             return false;
         }
@@ -25345,10 +25411,9 @@ impl KillRingEntry {
         }
 
         for (this, other) in self.selections.iter_mut().zip(other.selections) {
-            if prepend {
-                this.text.insert_str(0, &other.text);
-            } else {
-                this.text.push_str(&other.text);
+            match order {
+                KillRingAppendOrder::Append => this.text.push_str(&other.text),
+                KillRingAppendOrder::Prepend => this.text.insert_str(0, &other.text),
             }
             this.metadata.len = this.text.len();
         }
