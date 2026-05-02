@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use copilot::{
     Copilot, GlobalCopilotAuth, Status,
     request::{self, PromptUserDeviceFlow},
@@ -6,7 +5,7 @@ use copilot::{
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, Window, WindowBounds, WindowOptions, div, point,
+    Subscription, Window, div,
 };
 use project::project_settings::ProjectSettings;
 use settings::Settings as _;
@@ -53,30 +52,13 @@ pub fn reinstall_and_sign_in(copilot: Entity<Copilot>, window: &mut Window, cx: 
     initiate_sign_in_impl(copilot, is_reinstall, window, cx);
 }
 
-fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Window, cx: &mut App) {
-    let current_window_center = window.bounds().center();
-    let height = px(450.);
-    let width = px(350.);
-    let window_bounds = WindowBounds::Windowed(gpui::bounds(
-        current_window_center - point(height / 2.0, width / 2.0),
-        gpui::size(height, width),
-    ));
-    cx.open_window(
-        WindowOptions {
-            kind: gpui::WindowKind::PopUp,
-            window_bounds: Some(window_bounds),
-            is_resizable: false,
-            is_movable: true,
-            titlebar: Some(gpui::TitlebarOptions {
-                appears_transparent: true,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        |window, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, window, cx)),
-    )
-    .context("Failed to open Copilot code verification window")
-    .log_err();
+fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &mut Window, cx: &mut App) {
+    let Some(workspace) = Workspace::for_window(window, cx) else {
+        return;
+    };
+    workspace.update(cx, |workspace, cx| {
+        workspace.toggle_modal(window, cx, |window, cx| CopilotCodeVerification::new(copilot, window, cx))
+    });
 }
 
 fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
@@ -150,6 +132,7 @@ pub struct CopilotCodeVerification {
     copilot: Entity<Copilot>,
     _subscription: Subscription,
     sign_up_url: Option<String>,
+    dismiss_allowed: bool,
 }
 
 impl Focusable for CopilotCodeVerification {
@@ -161,24 +144,7 @@ impl Focusable for CopilotCodeVerification {
 impl EventEmitter<DismissEvent> for CopilotCodeVerification {}
 
 impl CopilotCodeVerification {
-    pub fn new(copilot: &Entity<Copilot>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        window.on_window_should_close(cx, |window, cx| {
-            if let Some(this) = window.root::<CopilotCodeVerification>().flatten() {
-                this.update(cx, |this, cx| {
-                    this.before_dismiss(cx);
-                });
-            }
-            true
-        });
-        cx.subscribe_in(
-            &cx.entity(),
-            window,
-            |this, _, _: &DismissEvent, window, cx| {
-                window.remove_window();
-                this.before_dismiss(cx);
-            },
-        )
-        .detach();
+    pub fn new(copilot: &Entity<Copilot>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
 
         let status = copilot.read(cx).status();
         Self {
@@ -187,13 +153,17 @@ impl CopilotCodeVerification {
             focus_handle: cx.focus_handle(),
             copilot: copilot.clone(),
             sign_up_url: None,
+            dismiss_allowed: false,
             _subscription: cx.observe(copilot, |this, copilot, cx| {
                 let status = copilot.read(cx).status();
                 match status {
                     Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
                         this.set_status(status, cx)
                     }
-                    _ => cx.emit(DismissEvent),
+                    _ => {
+                        this.dismiss_allowed = true;
+                        cx.emit(DismissEvent);
+                    }
                 }
             }),
         }
@@ -320,7 +290,13 @@ impl CopilotCodeVerification {
                         Button::new("copilot-enable-cancel-button", "Cancel")
                             .full_width()
                             .size(ButtonSize::Medium)
-                            .on_click(cx.listener(|_, _, _, cx| {
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.copilot.update(cx, |copilot, cx| {
+                                    if matches!(copilot.status(), Status::SigningIn { .. }) {
+                                        copilot.sign_out(cx).detach_and_log_err(cx);
+                                    }
+                                });
+                                this.dismiss_allowed = true;
                                 cx.emit(DismissEvent);
                             })),
                     ),
@@ -339,7 +315,10 @@ impl CopilotCodeVerification {
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .size(ButtonSize::Medium)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.dismiss_allowed = true;
+                        cx.emit(DismissEvent);
+                    })),
             )
     }
 
@@ -371,7 +350,15 @@ impl CopilotCodeVerification {
                 Button::new("copilot-subscribe-cancel-button", "Cancel")
                     .full_width()
                     .size(ButtonSize::Medium)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.copilot.update(cx, |copilot, cx| {
+                            if matches!(copilot.status(), Status::SigningIn { .. }) {
+                                copilot.sign_out(cx).detach_and_log_err(cx);
+                            }
+                        });
+                        this.dismiss_allowed = true;
+                        cx.emit(DismissEvent);
+                    })),
             )
     }
 
@@ -397,17 +384,19 @@ impl CopilotCodeVerification {
                     }),
             )
     }
+}
 
-    fn before_dismiss(
+impl workspace::ModalView for CopilotCodeVerification {
+    fn fade_out_background(&self) -> bool {
+        true
+    }
+
+    fn on_before_dismiss(
         &mut self,
-        cx: &mut Context<'_, CopilotCodeVerification>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> workspace::DismissDecision {
-        self.copilot.update(cx, |copilot, cx| {
-            if matches!(copilot.status(), Status::SigningIn { .. }) {
-                copilot.sign_out(cx).detach_and_log_err(cx);
-            }
-        });
-        workspace::DismissDecision::Dismiss(true)
+        workspace::DismissDecision::Dismiss(self.dismiss_allowed)
     }
 }
 
@@ -441,14 +430,20 @@ impl Render for CopilotCodeVerification {
         v_flex()
             .id("copilot_code_verification")
             .track_focus(&self.focus_handle(cx))
-            .size_full()
+            .w(px(450.))
+            .occlude()
+            .bg(cx.theme().colors().elevated_surface_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_lg()
             .px_4()
             .py_8()
             .gap_2()
             .items_center()
             .justify_center()
             .elevation_3(cx)
-            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                this.dismiss_allowed = true;
                 cx.emit(DismissEvent);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, cx| {
