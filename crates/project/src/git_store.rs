@@ -7396,10 +7396,11 @@ impl Repository {
                 let Some(this) = this.upgrade() else {
                     return Ok(());
                 };
-                let RepositoryState::Local(LocalRepositoryState { backend, .. }) = state else {
+                let RepositoryState::Local(LocalRepositoryState { backend, fs, .. }) = state else {
                     bail!("not a local repository")
                 };
-                let snapshot = compute_snapshot(this.clone(), backend.clone(), &mut cx).await?;
+                let snapshot =
+                    compute_snapshot(this.clone(), backend.clone(), fs.clone(), &mut cx).await?;
                 this.update(&mut cx, |this, cx| {
                     this.clear_pending_ops(cx);
                 });
@@ -7622,7 +7623,7 @@ impl Repository {
                         mem::take(&mut this.paths_needing_status_update),
                     )
                 })?;
-                let RepositoryState::Local(LocalRepositoryState { backend, .. }) = state else {
+                let RepositoryState::Local(LocalRepositoryState { backend, fs, .. }) = state else {
                     bail!("not a local repository")
                 };
 
@@ -7654,13 +7655,22 @@ impl Repository {
 
                         let diff_stats: HashMap<RepoPath, DiffStat> =
                             HashMap::from_iter(diff_stats.entries.into_iter().cloned());
+                        let work_directory_abs_path = prev_snapshot.work_directory_abs_path.clone();
 
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
                         for (repo_path, status) in &*statuses.entries {
-                            let current_diff_stat = diff_stats.get(repo_path).copied();
+                            let mut current_diff_stat = diff_stats.get(repo_path).copied();
+                            if current_diff_stat.is_none() && status.is_created() {
+                                current_diff_stat = created_file_diff_stat(
+                                    &fs,
+                                    &work_directory_abs_path,
+                                    repo_path,
+                                )
+                                .await;
+                            }
 
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
@@ -8274,6 +8284,7 @@ mod tests {
     use super::*;
     use crate::Project;
     use fs::FakeFs;
+    use git::repository::repo_path;
     use gpui::TestAppContext;
     use gpui::proptest::prelude::*;
     use rand::{SeedableRng, rngs::StdRng};
@@ -8285,6 +8296,45 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_untracked_files_get_added_line_diff_stat(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "existing.txt": "changed\n",
+                "new.txt": "first\nsecond\nthird\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/.git"),
+            &[("existing.txt", "original\n".into())],
+        );
+
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.git_store().read(cx).active_repository().unwrap()
+        });
+
+        repository.read_with(cx, |repository, _| {
+            assert_eq!(
+                repository.diff_stat_for_path(&repo_path("new.txt")),
+                Some(DiffStat {
+                    added: 3,
+                    deleted: 0,
+                }),
+            );
         });
     }
 
@@ -8604,6 +8654,32 @@ mod tests {
     }
 }
 
+fn added_line_count(text: &str) -> u32 {
+    text.lines().count().try_into().unwrap_or(u32::MAX)
+}
+
+async fn created_file_diff_stat(
+    fs: &Arc<dyn Fs>,
+    work_directory_abs_path: &Path,
+    repo_path: &RepoPath,
+) -> Option<DiffStat> {
+    let path = work_directory_abs_path.join(repo_path.as_std_path());
+    let text = match fs.load(&path).await {
+        Ok(text) => text,
+        Err(error) => {
+            log::debug!(
+                "failed to compute diff stat for created file {}: {error:#}",
+                repo_path.display(PathStyle::local())
+            );
+            return None;
+        }
+    };
+    Some(DiffStat {
+        added: added_line_count(&text),
+        deleted: 0,
+    })
+}
+
 /// This snapshot computes the repository state on the foreground thread while
 /// running the git commands on the background thread. We update branch, head,
 /// remotes, and worktrees first so the UI can react sooner, then compute file
@@ -8611,6 +8687,7 @@ mod tests {
 async fn compute_snapshot(
     this: Entity<Repository>,
     backend: Arc<dyn GitRepository>,
+    fs: Arc<dyn Fs>,
     cx: &mut AsyncApp,
 ) -> Result<RepositorySnapshot> {
     let (id, work_directory_abs_path, prev_snapshot) = this.update(cx, |this, _| {
@@ -8730,19 +8807,23 @@ async fn compute_snapshot(
     let diff_stat_map: HashMap<&RepoPath, DiffStat> =
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
     let mut conflicted_paths = Vec::new();
-    let statuses_by_path = SumTree::from_iter(
-        statuses.entries.iter().map(|(repo_path, status)| {
-            if status.is_conflicted() {
-                conflicted_paths.push(repo_path.clone());
-            }
-            StatusEntry {
-                repo_path: repo_path.clone(),
-                status: *status,
-                diff_stat: diff_stat_map.get(repo_path).copied(),
-            }
-        }),
-        (),
-    );
+    let mut status_entries = Vec::with_capacity(statuses.entries.len());
+    for (repo_path, status) in statuses.entries.iter() {
+        if status.is_conflicted() {
+            conflicted_paths.push(repo_path.clone());
+        }
+        let mut diff_stat = diff_stat_map.get(repo_path).copied();
+        if diff_stat.is_none() && status.is_created() {
+            diff_stat =
+                created_file_diff_stat(&fs, &snapshot.work_directory_abs_path, repo_path).await;
+        }
+        status_entries.push(StatusEntry {
+            repo_path: repo_path.clone(),
+            status: *status,
+            diff_stat,
+        });
+    }
+    let statuses_by_path = SumTree::from_iter(status_entries, ());
 
     let merge_details = cx
         .background_spawn({

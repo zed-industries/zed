@@ -676,6 +676,68 @@ struct BulkStaging {
     anchor: RepoPath,
 }
 
+#[derive(Default)]
+struct CommitMessageThinkingBlockSanitizer {
+    pending: String,
+    in_thinking_block: bool,
+}
+
+impl CommitMessageThinkingBlockSanitizer {
+    const START_TAG: &'static str = "<think>";
+    const END_TAG: &'static str = "</think>";
+
+    fn sanitize_chunk(&mut self, chunk: &str) -> String {
+        self.pending.push_str(chunk);
+        let mut sanitized = String::new();
+
+        loop {
+            if self.in_thinking_block {
+                if let Some(end_tag_start) = self.pending.find(Self::END_TAG) {
+                    let after_end_tag = end_tag_start + Self::END_TAG.len();
+                    self.pending.drain(..after_end_tag);
+                    self.in_thinking_block = false;
+                    continue;
+                }
+
+                let suffix_len = Self::partial_tag_suffix_len(&self.pending, Self::END_TAG);
+                let keep_from = self.pending.len() - suffix_len;
+                self.pending.drain(..keep_from);
+                return sanitized;
+            }
+
+            if let Some(start_tag_start) = self.pending.find(Self::START_TAG) {
+                sanitized.push_str(&self.pending[..start_tag_start]);
+                let after_start_tag = start_tag_start + Self::START_TAG.len();
+                self.pending.drain(..after_start_tag);
+                self.in_thinking_block = true;
+                continue;
+            }
+
+            let suffix_len = Self::partial_tag_suffix_len(&self.pending, Self::START_TAG);
+            let emit_len = self.pending.len() - suffix_len;
+            sanitized.push_str(&self.pending[..emit_len]);
+            self.pending.drain(..emit_len);
+            return sanitized;
+        }
+    }
+
+    fn finish(&mut self) -> String {
+        if self.in_thinking_block {
+            self.pending.clear();
+            String::new()
+        } else {
+            std::mem::take(&mut self.pending)
+        }
+    }
+
+    fn partial_tag_suffix_len(text: &str, tag: &str) -> usize {
+        (1..tag.len())
+            .rev()
+            .find(|&suffix_len| text.ends_with(&tag[..suffix_len]))
+            .unwrap_or(0)
+    }
+}
+
 const MAX_PANEL_EDITOR_LINES: usize = 6;
 
 pub(crate) fn commit_message_editor(
@@ -2771,9 +2833,15 @@ impl GitPanel {
                             })?;
                         }
 
+                        let mut sanitizer = CommitMessageThinkingBlockSanitizer::default();
+                        let mut stream_failed = false;
                         while let Some(message) = messages.stream.next().await {
                             match message {
                                 Ok(text) => {
+                                    let text = sanitizer.sanitize_chunk(&text);
+                                    if text.is_empty() {
+                                        continue;
+                                    }
                                     this.update(cx, |this, cx| {
                                         this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                                             let insert_position = buffer.anchor_before(buffer.len());
@@ -2783,9 +2851,24 @@ impl GitPanel {
                                 }
                                 Err(e) => {
                                     Self::show_commit_message_error(&this, &e, cx);
+                                    stream_failed = true;
                                     break;
                                 }
                             }
+                        }
+
+                        if stream_failed {
+                            return anyhow::Ok(());
+                        }
+
+                        let text = sanitizer.finish();
+                        if !text.is_empty() {
+                            this.update(cx, |this, cx| {
+                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                    let insert_position = buffer.anchor_before(buffer.len());
+                                    buffer.edit([(insert_position..insert_position, text)], None, cx);
+                                });
+                            })?;
                         }
                     }
                     Err(e) => {
@@ -6893,6 +6976,29 @@ mod tests {
         assert_eq!(
             message,
             "Your local changes to the following files would be overwritten by merge"
+        );
+    }
+
+    #[test]
+    fn test_commit_message_thinking_block_sanitizer_handles_chunk_boundaries() {
+        let mut sanitizer = CommitMessageThinkingBlockSanitizer::default();
+        let mut sanitized = String::new();
+
+        for chunk in [
+            "Fix generated ",
+            "commit<th",
+            "ink>Need to reason",
+            " about the diff</thi",
+            "nk> messages\n\nPreserve <thi",
+            "s literal text",
+        ] {
+            sanitized.push_str(&sanitizer.sanitize_chunk(chunk));
+        }
+        sanitized.push_str(&sanitizer.finish());
+
+        assert_eq!(
+            sanitized,
+            "Fix generated commit messages\n\nPreserve <this literal text"
         );
     }
 

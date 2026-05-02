@@ -104,9 +104,12 @@ impl TextDiffView {
 
         let source_buffer_snapshot = source_buffer.read(cx).snapshot();
         let mut clipboard_text = diff_data.clipboard_text.clone();
+        let selected_text = source_buffer_snapshot
+            .text_for_range(expanded_selection_range.clone())
+            .collect::<String>();
 
-        if !clipboard_text.ends_with("\n") {
-            clipboard_text.push_str("\n");
+        if selected_text.ends_with('\n') && !clipboard_text.ends_with('\n') {
+            clipboard_text.push('\n');
         }
 
         let workspace = workspace.weak_handle();
@@ -548,6 +551,23 @@ mod tests {
             ),
             "Clipboard ↔ text.txt @ L1:1-3",
             &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_final_line_without_trailing_newline_is_clean(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "a",
+            "«aˇ»",
+            "ˇa",
+            "Clipboard ↔ text.txt @ L1:1-2",
+            &format!("Clipboard ↔ {} @ L1:1-2", path!("test/text.txt")),
             cx,
         )
         .await;

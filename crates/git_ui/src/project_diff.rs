@@ -1763,6 +1763,36 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_new_files_are_counted_as_added_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "new.txt": "first\nsecond\nthird\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(Path::new(path!("/project/.git")), &[]);
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.calculate_changed_lines(cx), (3, 0));
+        });
+    }
+
+    #[gpui::test]
     async fn test_save_after_restore(cx: &mut TestAppContext) {
         init_test(cx);
 
