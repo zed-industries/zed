@@ -8801,6 +8801,11 @@ fn kill_ring_texts(cx: &mut EditorTestContext) -> Vec<String> {
     })
 }
 
+fn push_text_to_kill_ring(cx: &mut EditorTestContext, text: &str) {
+    cx.set_state(&format!("ˇ{text}"));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+}
+
 fn selection_mark_mode(cx: &mut EditorTestContext) -> bool {
     cx.editor(|editor, _, _| editor.selection_mark_mode)
 }
@@ -9719,6 +9724,186 @@ async fn test_emacs_universal_argument_kill_ring_yank_numeric_prefix(cx: &mut Te
 
     simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
     cx.assert_editor_state("firstˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_empty_ring_noop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("before ˇ after");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y"]);
+    cx.assert_editor_state("before ˇ after");
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "ctrl-y"]);
+    cx.assert_editor_state("before ˇ after");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "3", "ctrl-y"]);
+    cx.assert_editor_state("before ˇ after");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "2", "ctrl-y"]);
+    cx.assert_editor_state("before ˇ after");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+    assert!(kill_ring_texts(&mut cx).is_empty());
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_no_prefix_cursor_after(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "alpha");
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y"]);
+
+    cx.assert_editor_state("alphaˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_numeric_one_is_latest(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "first");
+    push_text_to_kill_ring(&mut cx, "second");
+    push_text_to_kill_ring(&mut cx, "third");
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "1", "ctrl-y"]);
+    cx.assert_editor_state("thirdˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+    cx.assert_editor_state("secondˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_numeric_zero_pastes_latest(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "first");
+    push_text_to_kill_ring(&mut cx, "second");
+    push_text_to_kill_ring(&mut cx, "third");
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "0", "ctrl-y"]);
+    cx.assert_editor_state("thirdˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+    cx.assert_editor_state("secondˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_numeric_wraps(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "first");
+    push_text_to_kill_ring(&mut cx, "second");
+    push_text_to_kill_ring(&mut cx, "third");
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "5", "ctrl-y"]);
+    cx.assert_editor_state("secondˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+    cx.assert_editor_state("firstˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_negative_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "first");
+    push_text_to_kill_ring(&mut cx, "second");
+    push_text_to_kill_ring(&mut cx, "third");
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "2", "ctrl-y"]);
+    cx.assert_editor_state("secondˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+    cx.assert_editor_state("firstˇ");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_plain_vs_numeric_distinct_for_yank(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "first");
+    push_text_to_kill_ring(&mut cx, "second");
+    push_text_to_kill_ring(&mut cx, "third");
+    push_text_to_kill_ring(&mut cx, "fourth");
+
+    cx.set_state("plain ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "ctrl-y"]);
+    cx.assert_editor_state("plain ˇfourth");
+
+    cx.set_state("numeric ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "4", "ctrl-y"]);
+    cx.assert_editor_state("numeric firstˇ");
+}
+
+#[gpui::test]
+async fn test_yank_cursor_position_with_and_without_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇone\ntwo\nthree\nfour\nfive");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "ctrl-k"]);
+    assert_eq!(
+        kill_ring_texts(&mut cx),
+        vec!["one\ntwo\nthree\nfour\n".to_string()]
+    );
+
+    cx.set_state("without prefix ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y"]);
+    cx.assert_editor_state("without prefix one\ntwo\nthree\nfour\nˇ");
+
+    cx.set_state("with prefix ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "ctrl-y"]);
+    cx.assert_editor_state("with prefix ˇone\ntwo\nthree\nfour\n");
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_plain_yank_seeds_yank_pop_state(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "first");
+    push_text_to_kill_ring(&mut cx, "second");
+    push_text_to_kill_ring(&mut cx, "third");
+
+    cx.set_state("before ˇ after");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "ctrl-y"]);
+    cx.assert_editor_state("before ˇthird after");
+
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+    cx.assert_editor_state("before secondˇ after");
 }
 
 #[gpui::test]

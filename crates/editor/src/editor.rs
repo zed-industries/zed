@@ -11638,12 +11638,14 @@ impl Editor {
         cx.default_global::<KillRingState>().clear_pending_append();
         let start_anchors = self.yank_start_anchors(cx);
         self.do_paste(&text, metadata, false, window, cx);
+        let end_anchors = self.yank_end_anchors(cx);
         if !cursor_after_yank {
             self.restore_selections_to_anchors(&start_anchors, window, cx);
         }
         self.kill_ring_yank_state = Some(KillRingYankState {
             index: entry_index,
             start_anchors,
+            end_anchors,
         });
     }
 
@@ -11677,20 +11679,24 @@ impl Editor {
         let display_snapshot = self.display_snapshot(cx);
         let buffer_snapshot = display_snapshot.buffer_snapshot();
         let current_selections = self.selections.all::<Point>(&display_snapshot);
-        if current_selections.len() != yank_state.start_anchors.len() {
+        if current_selections.len() != yank_state.start_anchors.len()
+            || yank_state.end_anchors.len() != yank_state.start_anchors.len()
+        {
             return;
         }
 
         let new_selections: Vec<_> = yank_state
             .start_anchors
             .iter()
+            .zip(yank_state.end_anchors.iter())
             .zip(current_selections.iter())
-            .map(|(start_anchor, current)| {
+            .map(|((start_anchor, end_anchor), current)| {
                 let start = start_anchor.to_point(buffer_snapshot);
+                let end = end_anchor.to_point(buffer_snapshot);
                 Selection {
                     id: current.id,
                     start,
-                    end: current.head(),
+                    end,
                     reversed: false,
                     goal: SelectionGoal::None,
                 }
@@ -11707,11 +11713,13 @@ impl Editor {
 
         cx.default_global::<KillRingState>().clear_pending_append();
         let start_anchors = yank_state.start_anchors;
+        let end_anchors = self.yank_end_anchors(cx);
         self.in_kill_ring_yank = false;
 
         self.kill_ring_yank_state = Some(KillRingYankState {
             index: next_index,
             start_anchors,
+            end_anchors,
         });
     }
 
@@ -11901,6 +11909,16 @@ impl Editor {
             .all::<Point>(&display_snapshot)
             .iter()
             .map(|selection| buffer.anchor_before(selection.head()))
+            .collect()
+    }
+
+    fn yank_end_anchors(&self, cx: &mut Context<Self>) -> Vec<Anchor> {
+        let display_snapshot = self.display_snapshot(cx);
+        let buffer = display_snapshot.buffer_snapshot();
+        self.selections
+            .all::<Point>(&display_snapshot)
+            .iter()
+            .map(|selection| buffer.anchor_after(selection.head()))
             .collect()
     }
 
@@ -25208,6 +25226,7 @@ struct KillRingAppendState {
 struct KillRingYankState {
     index: usize,
     start_anchors: Vec<Anchor>,
+    end_anchors: Vec<Anchor>,
 }
 
 #[derive(Clone)]
