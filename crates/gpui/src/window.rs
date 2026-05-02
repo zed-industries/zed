@@ -2188,24 +2188,50 @@ impl Window {
         let entity = self.current_view();
         if *GPUI_INVALIDATION_STATS_ENABLED {
             let caller = std::panic::Location::caller();
-            let entity_type = self
-                .next_frame
-                .view_type_names
-                .get(&entity)
-                .or_else(|| self.rendered_frame.view_type_names.get(&entity))
-                .copied()
-                .map(frame_stats_short_type_name)
-                .unwrap_or("<unknown>");
             log::info!(
                 target: "gpui::notify_stats",
                 "gpui request_animation_frame entity={} type={} caller={}:{}",
                 entity.as_u64(),
-                entity_type,
+                self.frame_stats_view_type_name(entity),
                 caller.file(),
                 caller.line()
             );
         }
         self.on_next_frame(move |_, cx| cx.notify(entity));
+    }
+
+    pub(crate) fn log_animation_frame_request(
+        &self,
+        element_id: &ElementId,
+        animation_ix: usize,
+        duration: Duration,
+        repeats: bool,
+    ) {
+        if !*GPUI_INVALIDATION_STATS_ENABLED {
+            return;
+        }
+
+        let entity = self.current_view();
+        log::info!(
+            target: "gpui::notify_stats",
+            "gpui animation_frame_request entity={} type={} element_id={:?} animation_ix={} duration_ms={:.3} repeats={}",
+            entity.as_u64(),
+            self.frame_stats_view_type_name(entity),
+            element_id,
+            animation_ix,
+            duration_ms(duration),
+            repeats,
+        );
+    }
+
+    fn frame_stats_view_type_name(&self, entity: EntityId) -> &'static str {
+        self.next_frame
+            .view_type_names
+            .get(&entity)
+            .or_else(|| self.rendered_frame.view_type_names.get(&entity))
+            .copied()
+            .map(frame_stats_short_type_name)
+            .unwrap_or("<unknown>")
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
