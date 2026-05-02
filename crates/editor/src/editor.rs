@@ -39,6 +39,7 @@ mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
 pub mod semantic_tokens;
+mod smooth_cursor;
 mod split;
 pub mod split_editor_view;
 pub mod tasks;
@@ -193,6 +194,7 @@ use settings::{
     SettingsStore, update_settings_file,
 };
 use smallvec::{SmallVec, smallvec};
+use smooth_cursor::SmoothCursorAnimationState;
 use snippet::Snippet;
 use std::{
     any::{Any, TypeId},
@@ -1249,6 +1251,7 @@ pub struct Editor {
     completion_provider: Option<Rc<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Entity<BlinkManager>,
+    smooth_cursor_animations: HashMap<usize, SmoothCursorAnimationState>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
@@ -2570,6 +2573,7 @@ impl Editor {
             style: None,
             show_cursor_names: false,
             hovered_cursors: HashMap::default(),
+            smooth_cursor_animations: HashMap::default(),
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
             edit_predictions_hidden_for_vim_mode: false,

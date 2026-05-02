@@ -212,6 +212,21 @@
   //
   // Default: "bar"
   "cursor_shape": "bar",
+  // Smooth cursor animation settings for local editor cursors.
+  "smooth_cursor": {
+    // Whether to animate the local cursor toward its target position.
+    "enabled": true,
+    // Whether to draw a smear trail behind the animated local cursor.
+    "trail": true,
+    // How long the trailing edge of the cursor animation takes to settle, in milliseconds.
+    "smooth_time": 55,
+    // How long the leading edge of the cursor animation takes to settle, in milliseconds.
+    "leading_smooth_time": 30,
+    // Opacity of the smear trail. Values range from 0.0 to 1.0.
+    "trail_opacity": 0.16,
+    // Minimum distance in pixels before drawing the smear trail.
+    "trail_min_distance": 1.5
+  },
   // Determines when the mouse cursor should be hidden in an editor or input box.
   //
   // 1. Never hide the mouse cursor:

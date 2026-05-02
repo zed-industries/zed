@@ -1237,6 +1237,150 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn smooth_cursor_section() -> [SettingsPageItem; 7] {
+        [
+            SettingsPageItem::SectionHeader("Smooth Cursor"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enabled",
+                description: "Whether to animate the local cursor toward its target position.",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_cursor.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .as_ref()
+                            .and_then(|settings| settings.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Trail",
+                description: "Whether to draw a smear trail behind the animated local cursor.",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_cursor.trail"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .as_ref()
+                            .and_then(|settings| settings.trail.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .get_or_insert_default()
+                            .trail = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Smooth Time",
+                description: "Trailing-edge decay time in milliseconds.",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_cursor.smooth_time"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .as_ref()
+                            .and_then(|settings| settings.smooth_time.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .get_or_insert_default()
+                            .smooth_time = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Leading Smooth Time",
+                description: "Leading-edge decay time in milliseconds.",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_cursor.leading_smooth_time"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .as_ref()
+                            .and_then(|settings| settings.leading_smooth_time.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .get_or_insert_default()
+                            .leading_smooth_time = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Trail Opacity",
+                description: "Opacity of the smear trail (0.0 - 1.0).",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_cursor.trail_opacity"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .as_ref()
+                            .and_then(|settings| settings.trail_opacity.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .get_or_insert_default()
+                            .trail_opacity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Trail Min Distance",
+                description: "Minimum cursor travel distance in pixels before drawing the trail.",
+                field: Box::new(SettingField {
+                    json_path: Some("smooth_cursor.trail_min_distance"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .as_ref()
+                            .and_then(|settings| settings.trail_min_distance.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .smooth_cursor
+                            .get_or_insert_default()
+                            .trail_min_distance = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     let items: Box<[SettingsPageItem]> = concat_sections!(
         theme_section(),
         buffer_font_section(),
@@ -1244,6 +1388,7 @@ fn appearance_page() -> SettingsPage {
         agent_panel_font_section(),
         text_rendering_section(),
         cursor_section(),
+        smooth_cursor_section(),
         highlighting_section(),
         guides_section(),
     );

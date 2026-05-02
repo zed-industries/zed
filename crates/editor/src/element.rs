@@ -32,9 +32,10 @@ use crate::{
         ActiveScrollbarState, Autoscroll, ScrollOffset, ScrollPixelOffset, ScrollbarThumbState,
         UpdateResponse, scroll_amount::ScrollAmount,
     },
+    smooth_cursor::{SmoothCursorAnimationState, SmoothCursorTrail, cursor_bounds},
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -111,6 +112,7 @@ struct LineHighlightSpec {
 
 #[derive(Debug)]
 struct SelectionLayout {
+    id: usize,
     head: DisplayPoint,
     cursor_shape: CursorShape,
     is_newest: bool,
@@ -173,6 +175,7 @@ impl SelectionLayout {
         }
 
         Self {
+            id: selection.id,
             head,
             cursor_shape,
             is_newest,
@@ -1798,20 +1801,38 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<CursorLayout> {
         let mut autoscroll_bounds = None;
-        let cursor_layouts = self.editor.update(cx, |editor, cx| {
+        let (cursor_layouts, any_animated_cursor) = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
+            let mut any_animated_cursor = false;
 
             let show_local_cursors = editor.show_local_cursors(window, cx);
+            let active_local_cursor_ids = editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|selection| selection.id)
+                .chain(
+                    editor
+                        .selections
+                        .pending_anchor()
+                        .iter()
+                        .map(|selection| selection.id),
+                )
+                .collect::<HashSet<_>>();
+            let smooth_cursor_settings = EditorSettings::get_global(cx).smooth_cursor.clone();
+            let smooth_cursor_enabled = smooth_cursor_settings.enabled && !editor.mode.is_minimap();
+            let now = Instant::now();
+
+            if !smooth_cursor_enabled {
+                editor.smooth_cursor_animations.clear();
+            }
 
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !show_local_cursors)
-                        || !in_range
-                        || row_block_types.get(&cursor_position.row()) == Some(&true)
-                    {
+                    if !in_range || row_block_types.get(&cursor_position.row()) == Some(&true) {
                         continue;
                     }
 
@@ -1898,6 +1919,7 @@ impl EditorElement {
                     let y = ((cursor_position.row().as_f64() - scroll_position.y)
                         * ScrollPixelOffset::from(line_height))
                     .into();
+                    let target_origin = point(x, y);
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1933,14 +1955,48 @@ impl EditorElement {
                         }
                     }
 
+                    let mut smooth_trail = None;
+                    let hide_local_cursor = selection.is_local && !show_local_cursors;
+                    if smooth_cursor_enabled && selection.is_local {
+                        let target_bounds = cursor_bounds(
+                            target_origin,
+                            block_width,
+                            line_height,
+                            selection.cursor_shape,
+                        );
+                        let state = editor
+                            .smooth_cursor_animations
+                            .entry(selection.id)
+                            .or_insert_with(|| SmoothCursorAnimationState::new(target_bounds, now));
+                        if hide_local_cursor {
+                            state.snap_to(target_bounds, now);
+                        } else {
+                            state.retarget(target_bounds);
+                            let smooth_frame =
+                                state.step(now, player_color.cursor, &smooth_cursor_settings);
+                            any_animated_cursor |= smooth_frame.animating;
+                            smooth_trail = smooth_frame.trail;
+                            if smooth_frame.animating
+                                && selection.cursor_shape == CursorShape::Block
+                            {
+                                block_text = None;
+                            }
+                        }
+                    }
+
+                    if hide_local_cursor {
+                        continue;
+                    }
+
                     let mut cursor = CursorLayout {
                         color: player_color.cursor,
                         block_width,
-                        origin: point(x, y),
+                        origin: target_origin,
                         line_height,
                         shape: selection.cursor_shape,
                         block_text,
                         cursor_name: None,
+                        smooth_trail,
                     };
                     let cursor_name = selection.user_name.clone().map(|name| CursorName {
                         string: name,
@@ -1952,11 +2008,19 @@ impl EditorElement {
                 }
             }
 
-            cursors
+            editor
+                .smooth_cursor_animations
+                .retain(|selection_id, _| active_local_cursor_ids.contains(selection_id));
+
+            (cursors, any_animated_cursor)
         });
 
         if let Some(bounds) = autoscroll_bounds {
             window.request_autoscroll(bounds);
+        }
+
+        if any_animated_cursor {
+            window.request_animation_frame();
         }
 
         cursor_layouts
@@ -7920,6 +7984,7 @@ impl EditorElement {
                         let start = range.start.to_display_point(display_snapshot);
                         let end = range.end.to_display_point(display_snapshot);
                         let selection_layout = SelectionLayout {
+                            id: 0,
                             head: start,
                             range: start..end,
                             cursor_shape: CursorShape::Bar,
@@ -11963,6 +12028,7 @@ pub struct CursorLayout {
     shape: CursorShape,
     block_text: Option<ShapedLine>,
     cursor_name: Option<AnyElement>,
+    smooth_trail: Option<SmoothCursorTrail>,
 }
 
 #[derive(Debug)]
@@ -11989,6 +12055,7 @@ impl CursorLayout {
             shape,
             block_text,
             cursor_name: None,
+            smooth_trail: None,
         }
     }
 
@@ -12070,6 +12137,10 @@ impl CursorLayout {
 
         if let Some(name) = &mut self.cursor_name {
             name.paint(window, cx);
+        }
+
+        if let Some(trail) = &self.smooth_trail {
+            trail.paint(origin, window);
         }
 
         window.paint_quad(cursor);
@@ -13208,6 +13279,7 @@ mod tests {
             };
 
             let spanning_selection = SelectionLayout {
+                id: 0,
                 head: DisplayPoint::new(DisplayRow(3), 7),
                 cursor_shape: CursorShape::Bar,
                 is_newest: true,
@@ -13257,6 +13329,7 @@ mod tests {
             };
 
             let selection = SelectionLayout {
+                id: 0,
                 head: DisplayPoint::new(DisplayRow(2), 0),
                 cursor_shape: CursorShape::Bar,
                 is_newest: true,

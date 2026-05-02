@@ -250,6 +250,7 @@ impl VsCodeSettings {
                 "underline" | "underline-thin" => Some(CursorShape::Underline),
                 _ => None,
             }),
+            smooth_cursor: None,
             current_line_highlight: self.read_enum("editor.renderLineHighlight", |s| match s {
                 "gutter" => Some(CurrentLineHighlight::Gutter),
                 "line" => Some(CurrentLineHighlight::Line),

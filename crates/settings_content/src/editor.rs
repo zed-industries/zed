@@ -22,6 +22,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: bar
     pub cursor_shape: Option<CursorShape>,
+    /// Smooth cursor animation settings for local editor cursors.
+    pub smooth_cursor: Option<SmoothCursorContent>,
     /// Determines when the mouse cursor should be hidden in an editor or input box.
     ///
     /// Default: on_typing_and_movement
@@ -237,6 +239,41 @@ pub struct EditorSettingsContent {
     /// Default: 0.25
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub split_diff_font_decrease: Option<f32>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct SmoothCursorContent {
+    /// Whether to animate the local cursor toward its target position.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+
+    /// Whether to draw a smear trail behind the animated local cursor.
+    ///
+    /// Default: true
+    pub trail: Option<bool>,
+
+    /// How long the trailing edge of the cursor animation takes to settle, in milliseconds.
+    ///
+    /// Default: 55
+    pub smooth_time: Option<DelayMs>,
+
+    /// How long the leading edge of the cursor animation takes to settle, in milliseconds.
+    ///
+    /// Default: 30
+    pub leading_smooth_time: Option<DelayMs>,
+
+    /// Opacity of the smear trail.
+    ///
+    /// Values range from 0.0 to 1.0.
+    /// Default: 0.16
+    pub trail_opacity: Option<f32>,
+
+    /// Minimum distance in pixels before drawing the smear trail.
+    ///
+    /// Default: 1.5
+    pub trail_min_distance: Option<f32>,
 }
 
 #[derive(

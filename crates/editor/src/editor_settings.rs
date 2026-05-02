@@ -1,4 +1,5 @@
 use core::num;
+use std::time::Duration;
 
 use gpui::App;
 use language::CursorShape;
@@ -18,6 +19,7 @@ use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
+    pub smooth_cursor: SmoothCursorSettings,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
@@ -63,6 +65,30 @@ pub struct EditorSettings {
     pub completion_detail_alignment: CompletionDetailAlignment,
     pub split_diff_font_decrease: f32,
 }
+
+#[derive(Debug, Clone)]
+pub struct SmoothCursorSettings {
+    pub enabled: bool,
+    pub trail: bool,
+    pub smooth_time: Duration,
+    pub leading_smooth_time: Duration,
+    pub trail_opacity: f32,
+    pub trail_min_distance: f32,
+}
+
+impl Default for SmoothCursorSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            trail: true,
+            smooth_time: Duration::from_millis(55),
+            leading_smooth_time: Duration::from_millis(30),
+            trail_opacity: 0.16,
+            trail_min_distance: 1.5,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Jupyter {
     /// Whether the Jupyter feature is enabled.
@@ -204,9 +230,41 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let smooth_cursor = editor.smooth_cursor.clone().unwrap_or_default();
+        let smooth_cursor_defaults = SmoothCursorSettings::default();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
+            smooth_cursor: SmoothCursorSettings {
+                enabled: smooth_cursor
+                    .enabled
+                    .unwrap_or(smooth_cursor_defaults.enabled),
+                trail: smooth_cursor.trail.unwrap_or(smooth_cursor_defaults.trail),
+                smooth_time: Duration::from_millis(
+                    smooth_cursor
+                        .smooth_time
+                        .unwrap_or_else(|| {
+                            DelayMs::from(smooth_cursor_defaults.smooth_time.as_millis() as u64)
+                        })
+                        .0,
+                ),
+                leading_smooth_time: Duration::from_millis(
+                    smooth_cursor
+                        .leading_smooth_time
+                        .unwrap_or_else(|| {
+                            DelayMs::from(
+                                smooth_cursor_defaults.leading_smooth_time.as_millis() as u64
+                            )
+                        })
+                        .0,
+                ),
+                trail_opacity: smooth_cursor
+                    .trail_opacity
+                    .unwrap_or(smooth_cursor_defaults.trail_opacity),
+                trail_min_distance: smooth_cursor
+                    .trail_min_distance
+                    .unwrap_or(smooth_cursor_defaults.trail_min_distance),
+            },
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),
