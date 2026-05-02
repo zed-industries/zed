@@ -793,13 +793,13 @@ mod tests {
     #[test]
     fn test_parse_absolute_file_path_with_row() {
         let file_path = "/path/to/file.rs:42";
-        let parsed = MentionUri::parse(file_path, PathStyle::local()).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
             } => {
-                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
                 assert_eq!(line_range.start(), &41);
                 assert_eq!(line_range.end(), &41);
             }
@@ -810,13 +810,13 @@ mod tests {
     #[test]
     fn test_parse_absolute_file_path_with_fragment_line() {
         let file_path = "/path/to/file.rs#L42";
-        let parsed = MentionUri::parse(file_path, PathStyle::local()).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
             } => {
-                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
                 assert_eq!(line_range.start(), &41);
                 assert_eq!(line_range.end(), &41);
             }
@@ -837,12 +837,52 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_absolute_windows_file_path_with_row() {
+        let file_path = "C:\\Users\\zed\\project\\main.rs:42";
+        let parsed = MentionUri::parse(file_path, PathStyle::Windows).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(
+                    path.as_ref().unwrap(),
+                    Path::new("C:\\Users\\zed\\project\\main.rs")
+                );
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_windows_file_path_with_fragment_line() {
+        let file_path = "C:\\Users\\zed\\project\\main.rs#L42";
+        let parsed = MentionUri::parse(file_path, PathStyle::Windows).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(
+                    path.as_ref().unwrap(),
+                    Path::new("C:\\Users\\zed\\project\\main.rs")
+                );
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
     fn test_parse_backticked_absolute_file_path() {
         let file_path = "`/path/to/file.rs`";
-        let parsed = MentionUri::parse(file_path, PathStyle::local()).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
         match &parsed {
             MentionUri::File { abs_path } => {
-                assert_eq!(abs_path, Path::new(path!("/path/to/file.rs")));
+                assert_eq!(abs_path, Path::new("/path/to/file.rs"));
             }
             _ => panic!("Expected File variant"),
         }
@@ -851,13 +891,33 @@ mod tests {
     #[test]
     fn test_parse_backticked_absolute_file_path_with_fragment_line() {
         let file_path = "`/path/to/file.rs#L42`";
-        let parsed = MentionUri::parse(file_path, PathStyle::local()).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
             } => {
-                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_backticked_absolute_windows_file_path_with_fragment_line() {
+        let file_path = "`C:\\Users\\zed\\project\\main.rs#L42`";
+        let parsed = MentionUri::parse(file_path, PathStyle::Windows).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(
+                    path.as_ref().unwrap(),
+                    Path::new("C:\\Users\\zed\\project\\main.rs")
+                );
                 assert_eq!(line_range.start(), &41);
                 assert_eq!(line_range.end(), &41);
             }
