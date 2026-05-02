@@ -46,9 +46,9 @@ use gpui::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
     MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement, WeakEntity, Window,
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    Style, Styled, StyledText, TextAlign, TextRun, TextStyle, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -62,7 +62,7 @@ use multi_buffer::{
 };
 
 use project::{
-    DisableAiSettings, Entry,
+    DisableAiSettings, Entry, InlayId,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::ProjectSettings,
 };
@@ -8964,6 +8964,18 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
+    fn font_for_chunk(
+        inlay_type: Option<InlayId>,
+        text_style: &TextStyle,
+        editor_style: &EditorStyle,
+    ) -> gpui::Font {
+        match inlay_type {
+            Some(InlayId::EditPrediction(_)) => editor_style.edit_prediction_font.clone(),
+            Some(_) => editor_style.inlay_hints_font.clone(),
+            None => text_style.font(),
+        }
+    }
+
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         editor_style: &EditorStyle,
@@ -9074,7 +9086,11 @@ impl LineWithInvisibles {
 
                         let run = TextRun {
                             len: x.len(),
-                            font: text_style.font(),
+                            font: Self::font_for_chunk(
+                                highlighted_chunk.inlay_type,
+                                &text_style,
+                                editor_style,
+                            ),
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
@@ -9146,7 +9162,11 @@ impl LineWithInvisibles {
 
                         styles.push(TextRun {
                             len: line_chunk.len(),
-                            font: text_style.font(),
+                            font: Self::font_for_chunk(
+                                highlighted_chunk.inlay_type,
+                                &text_style,
+                                editor_style,
+                            ),
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
