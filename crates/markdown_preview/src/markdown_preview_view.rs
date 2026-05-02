@@ -1023,26 +1023,26 @@ impl Render for MarkdownPreviewView {
                         .track_scroll(&self.scroll_handle)
                         .p_4()
                         .child({
-                        let markdown_element =
-                            self.render_markdown_element(&preview_theme, window, cx);
-                        let markdown = self.markdown.clone();
-                        right_click_menu("markdown-preview-context-menu")
-                            .trigger(move |_, _, _| markdown_element)
-                            .menu(move |window, cx| {
-                                let focus = window.focused(cx);
-                                let context_menu_link =
-                                    markdown.read(cx).context_menu_link().cloned();
-                                ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                    menu.when_some(focus, |menu, focus| menu.context(focus))
-                                        .when_some(context_menu_link, |menu, url| {
-                                            menu.entry("Copy Link", None, move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    url.to_string(),
-                                                ));
+                            let markdown_element =
+                                self.render_markdown_element(&preview_theme, window, cx);
+                            let markdown = self.markdown.clone();
+                            right_click_menu("markdown-preview-context-menu")
+                                .trigger(move |_, _, _| markdown_element)
+                                .menu(move |window, cx| {
+                                    let focus = window.focused(cx);
+                                    let context_menu_link =
+                                        markdown.read(cx).context_menu_link().cloned();
+                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        menu.when_some(focus, |menu, focus| menu.context(focus))
+                                            .when_some(context_menu_link, |menu, url| {
+                                                menu.entry("Copy Link", None, move |_, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(url.to_string()),
+                                                    );
+                                                })
                                             })
-                                        })
+                                    })
                                 })
-                            })
                         }),
                 ),
             )
