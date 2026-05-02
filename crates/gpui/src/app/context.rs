@@ -226,6 +226,7 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 
     /// Tell GPUI that this entity has changed and observers of it should be notified.
+    #[track_caller]
     pub fn notify(&mut self) {
         self.app.notify(self.entity_state.entity_id);
     }

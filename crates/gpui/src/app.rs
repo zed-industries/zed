@@ -7,7 +7,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::{Arc, LazyLock, atomic::Ordering::SeqCst},
     time::Duration,
 };
 
@@ -69,6 +69,13 @@ mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+
+static GPUI_NOTIFY_STATS_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("ZED_GPUI_NOTIFY_STATS").is_some());
+
+fn gpui_diagnostics_short_type_name(type_name: &'static str) -> &'static str {
+    type_name.rsplit("::").next().unwrap_or(type_name)
+}
 
 /// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
@@ -2320,6 +2327,7 @@ impl App {
     }
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
+    #[track_caller]
     pub fn notify(&mut self, entity_id: EntityId) {
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
@@ -2340,6 +2348,25 @@ impl App {
             })
             .map(|(_, invalidator)| invalidator.clone())
             .collect();
+
+        if *GPUI_NOTIFY_STATS_ENABLED {
+            let caller = std::panic::Location::caller();
+            let entity_type = self
+                .entities
+                .type_name(entity_id)
+                .map(gpui_diagnostics_short_type_name)
+                .unwrap_or("<unknown>");
+            log::info!(
+                target: "gpui::notify_stats",
+                "gpui notify entity={} type={} tracked_windows={} live_windows={} caller={}:{}",
+                entity_id.as_u64(),
+                entity_type,
+                window_invalidators.len(),
+                live_invalidators.len(),
+                caller.file(),
+                caller.line(),
+            );
+        }
 
         if live_invalidators.is_empty() {
             if self.pending_notifications.insert(entity_id) {

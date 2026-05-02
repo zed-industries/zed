@@ -30,6 +30,7 @@ struct ViewCacheKey {
 pub struct AnyView {
     entity: AnyEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    type_name: &'static str,
     cached_style: Option<Rc<StyleRefinement>>,
 }
 
@@ -38,6 +39,7 @@ impl<V: Render> From<Entity<V>> for AnyView {
         AnyView {
             entity: value.into_any(),
             render: any_view::render::<V>,
+            type_name: std::any::type_name::<V>(),
             cached_style: None,
         }
     }
@@ -57,6 +59,7 @@ impl AnyView {
         AnyWeakView {
             entity: self.entity.downgrade(),
             render: self.render,
+            type_name: self.type_name,
         }
     }
 
@@ -68,6 +71,7 @@ impl AnyView {
             Err(entity) => Err(Self {
                 entity,
                 render: self.render,
+                type_name: self.type_name,
                 cached_style: self.cached_style,
             }),
         }
@@ -81,6 +85,11 @@ impl AnyView {
     /// Gets the entity id of this handle.
     pub fn entity_id(&self) -> EntityId {
         self.entity.entity_id()
+    }
+
+    /// Gets the type name of the underlying view.
+    pub fn entity_type_name(&self) -> &'static str {
+        self.type_name
     }
 }
 
@@ -111,6 +120,7 @@ impl Element for AnyView {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        window.record_view_type_name(self.entity_id(), self.type_name);
         window.with_rendered_view(self.entity_id(), |window| {
             // Disable caching when inspecting so that mouse_hit_test has all hitboxes.
             let caching_disabled = window.is_inspector_picking(cx);
@@ -260,6 +270,7 @@ impl IntoElement for AnyView {
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    type_name: &'static str,
 }
 
 impl AnyWeakView {
@@ -269,6 +280,7 @@ impl AnyWeakView {
         Some(AnyView {
             entity,
             render: self.render,
+            type_name: self.type_name,
             cached_style: None,
         })
     }
@@ -279,6 +291,7 @@ impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
         AnyWeakView {
             entity: view.into(),
             render: any_view::render::<V>,
+            type_name: std::any::type_name::<V>(),
         }
     }
 }

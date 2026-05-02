@@ -38,6 +38,24 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+#[expect(missing_docs)]
+pub struct SceneStats {
+    pub paint_operation_count: usize,
+    pub primitive_count: usize,
+    pub batch_count: usize,
+    pub shadow_count: usize,
+    pub quad_count: usize,
+    pub path_count: usize,
+    pub underline_count: usize,
+    pub monochrome_sprite_count: usize,
+    pub subpixel_sprite_count: usize,
+    pub polychrome_sprite_count: usize,
+    pub surface_count: usize,
+    pub quad_area: f32,
+    pub clipped_quad_area: f32,
+}
+
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
@@ -56,6 +74,38 @@ impl Scene {
 
     pub fn len(&self) -> usize {
         self.paint_operations.len()
+    }
+
+    pub fn stats(&self) -> SceneStats {
+        let quad_area = self.quads.iter().map(|quad| bounds_area(quad.bounds)).sum();
+        let clipped_quad_area = self
+            .quads
+            .iter()
+            .map(|quad| bounds_area(quad.bounds.intersect(&quad.content_mask.bounds)))
+            .sum();
+
+        SceneStats {
+            paint_operation_count: self.paint_operations.len(),
+            primitive_count: self.shadows.len()
+                + self.quads.len()
+                + self.paths.len()
+                + self.underlines.len()
+                + self.monochrome_sprites.len()
+                + self.subpixel_sprites.len()
+                + self.polychrome_sprites.len()
+                + self.surfaces.len(),
+            batch_count: self.batches().count(),
+            shadow_count: self.shadows.len(),
+            quad_count: self.quads.len(),
+            path_count: self.paths.len(),
+            underline_count: self.underlines.len(),
+            monochrome_sprite_count: self.monochrome_sprites.len(),
+            subpixel_sprite_count: self.subpixel_sprites.len(),
+            polychrome_sprite_count: self.polychrome_sprites.len(),
+            surface_count: self.surfaces.len(),
+            quad_area,
+            clipped_quad_area,
+        }
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
@@ -175,6 +225,10 @@ impl Scene {
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
+}
+
+fn bounds_area(bounds: Bounds<ScaledPixels>) -> f32 {
+    bounds.size.width.0.max(0.) * bounds.size.height.0.max(0.)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
