@@ -464,6 +464,16 @@ fn handle_result<'local>(
 /// The fixed `Java_dev_zed_gpui_NativeBridge_*` symbol name lets us bind
 /// without per-app `RegisterNatives` glue — every host project just needs
 /// to ship the matching `dev/zed/gpui/NativeBridge.java` shim.
+///
+/// # Safety
+///
+/// This function is only ever called by the JVM through the matching
+/// `native` declaration in `dev.zed.gpui.NativeBridge`. The JVM is
+/// responsible for passing a valid `JNIEnv` and a `data` `jobject` that
+/// is either null or a local reference owned by the calling Java frame.
+/// `EnvUnowned::with_env` re-acquires the frame's lifetime and
+/// `JObject::from_raw` (used inside the closure) wraps the raw `jobject`
+/// without taking ownership.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_zed_gpui_NativeBridge_onActivityResult<'caller>(
     mut unowned_env: EnvUnowned<'caller>,

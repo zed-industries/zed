@@ -162,6 +162,9 @@ impl HasWindowHandle for WindowSurface {
 
 impl HasDisplayHandle for WindowSurface {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        // SAFETY: Android exposes a single global display via the
+        // zero-sized `AndroidDisplayHandle`; no per-process resource is
+        // attached, so the borrow lifetime is trivially valid.
         Ok(unsafe {
             DisplayHandle::borrow_raw(RawDisplayHandle::Android(AndroidDisplayHandle::new()))
         })
@@ -1092,6 +1095,9 @@ impl HasWindowHandle for AndroidWindow {
 
 impl HasDisplayHandle for AndroidWindow {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        // SAFETY: same as `impl HasDisplayHandle for WindowSurface` —
+        // Android's display handle is a zero-sized marker with no
+        // resource attached, so the borrow lifetime is trivially valid.
         Ok(unsafe {
             DisplayHandle::borrow_raw(RawDisplayHandle::Android(AndroidDisplayHandle::new()))
         })
