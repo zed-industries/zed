@@ -62,6 +62,30 @@ https://github.com/zed-industries/zed/compare/main...Dima-369:zed:dima
 - exclude unnamed/scratch buffers (tabs without a file) from project search results (`crates/project/src/project_search.rs`)
 - patch `settings_changed()` in `crates/editor/src/editor.rs` to properly reload the buffer font family, so I can switch trivially between a monospace and proportional font (I am not sure why only my fork needs it, and `Zed.app` doesn't)
 
+## Smooth animated cursor with trail (not in terminal)
+
+Based on the `smooth-cursor` branch from <https://github.com/NVSRahul/zedmod> with several tweaks.
+The animation code is pretty much the same as kitty's implementation. It still looks slightly different, but satisfying!
+
+- fixed that mouse clicks would not animate
+- fixed that actions like `jump::Toggle`, `editor::GoToPreviousGlobalChange` or `pane::GoBack` would not animate (same for forward)
+- added `large_jump_multiplier` (ignored if set below 1.0) which is potentially useful for large jumps to top/bottom of editor since I also have smooth scroll and the 2 animation systems 
+
+Example `settings.json` configuration:
+
+```json
+"smooth_cursor": {
+  "enabled": true,
+  "trail": true,
+  // same as kitty's defaut 400 and 100
+  "smooth_time": 400,
+  "leading_smooth_time": 100,
+  "trail_opacity": 0.6,
+  "trail_min_distance": 10, // set higher to avoid triggering on simple typing
+  "large_jump_multiplier": 1.0, // disable the multiplier (was a test anyway, but with kitty's defaults it is not required)
+},
+```
+
 ## Motion system to make Zed feel fluid and intentional
 
 **Experimental**. I will see if it causes annoying merge conflicts in the future and if I like keeping those animations personally.
