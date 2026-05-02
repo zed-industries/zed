@@ -7116,7 +7116,7 @@ impl LineWithInvisibles {
             text: "\n",
             style: None,
             is_tab: false,
-            is_inlay: false,
+            inlay_type: None,
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
@@ -7283,7 +7283,7 @@ impl LineWithInvisibles {
                             strikethrough: text_style.strikethrough,
                         });
 
-                        if editor_mode.is_full() && !highlighted_chunk.is_inlay {
+                        if editor_mode.is_full() && highlighted_chunk.inlay_type.is_none() {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
                             let is_soft_wrapped = is_row_soft_wrapped(row);
