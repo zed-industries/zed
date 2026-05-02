@@ -180,6 +180,7 @@ message GitCreateBranch {
   reserved 2;
   uint64 repository_id = 3;
   string branch_name = 4;
+  optional string base_branch = 5;
 }
 
 message GitChangeBranch {

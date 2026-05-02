@@ -282,6 +282,10 @@ actions!(
         OpenCommitView,
         /// Focuses the search field.
         FocusSearch,
+        /// Focuses the next git graph tab stop.
+        FocusNextTabStop,
+        /// Focuses the previous git graph tab stop.
+        FocusPreviousTabStop,
         /// Selects a commit half a page above the current selection.
         ScrollUp,
         /// Selects a commit half a page below the current selection.
@@ -1128,7 +1132,11 @@ impl GitGraph {
             editor
         });
 
-        let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
+        let table_interaction_state = cx.new(|cx| {
+            let mut state = TableInteractionState::new(cx);
+            state.focus_handle = state.focus_handle.tab_index(1).tab_stop(true);
+            state
+        });
 
         let column_widths = if matches!(log_source, LogSource::Path(_)) {
             cx.new(|_cx| {
@@ -1634,6 +1642,39 @@ impl GitGraph {
         self.search(query, cx);
     }
 
+    fn activate_search_editor_if_focused(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_state.editor.update(cx, |editor, cx| {
+            if editor.is_focused(window) {
+                editor.select_all(&Default::default(), window, cx);
+                editor.show_cursor(cx);
+            }
+        });
+    }
+
+    fn focus_next_tab_stop(
+        &mut self,
+        _: &FocusNextTabStop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_next(cx);
+        self.activate_search_editor_if_focused(window, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn focus_previous_tab_stop(
+        &mut self,
+        _: &FocusPreviousTabStop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_prev(cx);
+        self.activate_search_editor_if_focused(window, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     fn select_entry(
         &mut self,
         idx: usize,
@@ -1815,7 +1856,12 @@ impl GitGraph {
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
-        let query_focus_handle = self.search_state.editor.focus_handle(cx);
+        let query_focus_handle = self
+            .search_state
+            .editor
+            .focus_handle(cx)
+            .tab_index(1)
+            .tab_stop(true);
         let search_options = {
             let mut options = SearchOptions::NONE;
             options.set(
@@ -1826,6 +1872,10 @@ impl GitGraph {
         };
 
         h_flex()
+            .key_context("GitGraphSearchBar")
+            .tab_index(1)
+            .tab_group()
+            .tab_stop(false)
             .w_full()
             .p_1p5()
             .gap_1p5()
@@ -1838,6 +1888,7 @@ impl GitGraph {
                     .min_w_0()
                     .px_1p5()
                     .gap_1()
+                    .track_focus(&query_focus_handle)
                     .border_1()
                     .border_color(color.border_variant)
                     .rounded_md()
@@ -2843,6 +2894,8 @@ impl Render for GitGraph {
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
+                            let table_focus_handle =
+                                self.table_interaction_state.read(cx).focus_handle.clone();
 
                             let graph_canvas = div()
                                 .id("graph-canvas")
@@ -2872,7 +2925,9 @@ impl Render for GitGraph {
                                 .map_row(move |(index, row), window, cx| {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
-                                    let is_focused = focus_handle.is_focused(window);
+                                    let table_focus_handle = table_focus_handle.clone();
+                                    let is_focused = focus_handle.is_focused(window)
+                                        || table_focus_handle.is_focused(window);
                                     let weak = weak_self.clone();
                                     let weak_for_hover = weak.clone();
 
@@ -2905,6 +2960,7 @@ impl Render for GitGraph {
                                         })
                                         .on_click(move |event, window, cx| {
                                             let click_count = event.click_count();
+                                            table_focus_handle.focus(window, cx);
                                             weak.update(cx, |this, cx| {
                                                 this.select_entry(
                                                     index,
@@ -2946,6 +3002,9 @@ impl Render for GitGraph {
                                             })
                                             .child(
                                                 div()
+                                                    .tab_index(2)
+                                                    .tab_group()
+                                                    .tab_stop(false)
                                                     .w(DefiniteLength::Fraction(table_fraction))
                                                     .h_full()
                                                     .min_w_0()
@@ -2990,6 +3049,7 @@ impl Render for GitGraph {
                 this.search_state
                     .editor
                     .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
+                this.activate_search_editor_if_focused(window, cx);
             }))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
@@ -2998,6 +3058,8 @@ impl Render for GitGraph {
             .on_action(cx.listener(Self::scroll_up))
             .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::focus_next_tab_stop))
+            .on_action(cx.listener(Self::focus_previous_tab_stop))
             .on_action(cx.listener(|this, _: &SelectNextMatch, _window, cx| {
                 this.select_next_match(cx);
             }))
