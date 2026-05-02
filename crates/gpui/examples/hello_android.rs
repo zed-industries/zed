@@ -245,7 +245,7 @@ impl Gallery {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let outcome = receiver.await;
-            let _ = this.update(cx, |this, cx| {
+            let update_result = this.update(cx, |this, cx| {
                 match outcome {
                     Ok(Ok(Some(paths))) => {
                         this.picker_status = format!("{kind} picked ({})", paths.len()).into();
@@ -266,6 +266,12 @@ impl Gallery {
                 }
                 cx.notify();
             });
+            // The Gallery entity is owned by the running app, so a drop
+            // here only happens during shutdown — log so it's visible if
+            // it ever fires unexpectedly.
+            if let Err(error) = update_result {
+                log::debug!("picker callback could not update Gallery: {error}");
+            }
         })
         .detach();
     }

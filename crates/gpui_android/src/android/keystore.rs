@@ -34,7 +34,14 @@ pub(crate) fn write(
     let alias = make_alias(url);
     let storage_path = storage_path_for(app, url)?;
     if let Some(parent) = storage_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        // `AlreadyExists` is the no-op case (idempotent mkdir); anything
+        // else is a real problem worth surfacing in the log even though
+        // the subsequent `fs::write` will report it too.
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                log::warn!("create credential dir {}: {error}", parent.display());
+            }
+        }
     }
 
     let mut plaintext = Vec::with_capacity(username.len() + 1 + password.len());
@@ -62,15 +69,15 @@ pub(crate) fn read(app: &AndroidApp, url: &str) -> Result<Option<(String, Vec<u8
         return Ok(None);
     }
     let blob = std::fs::read(&storage_path).context("reading credential blob")?;
-    if blob.len() < 4 {
+    let Some(len_bytes) = blob.get(..4).and_then(|s| <[u8; 4]>::try_from(s).ok()) else {
         return Ok(None);
-    }
-    let iv_len = u32::from_le_bytes(blob[..4].try_into().unwrap()) as usize;
-    if blob.len() < 4 + iv_len {
+    };
+    let iv_len = u32::from_le_bytes(len_bytes) as usize;
+    let Some(iv_slice) = blob.get(4..4 + iv_len) else {
         return Ok(None);
-    }
-    let iv = blob[4..4 + iv_len].to_vec();
-    let ciphertext = blob[4 + iv_len..].to_vec();
+    };
+    let iv = iv_slice.to_vec();
+    let ciphertext = blob.get(4 + iv_len..).unwrap_or(&[]).to_vec();
 
     let plaintext = with_activity(app, |env, _| decrypt(env, &alias, &iv, &ciphertext))?;
     let mut split = plaintext.splitn(2, |b| *b == SEPARATOR);
@@ -85,8 +92,16 @@ pub(crate) fn read(app: &AndroidApp, url: &str) -> Result<Option<(String, Vec<u8
 pub(crate) fn delete(app: &AndroidApp, url: &str) -> Result<()> {
     let alias = make_alias(url);
     let storage_path = storage_path_for(app, url)?;
-    let _ = std::fs::remove_file(&storage_path);
-    let _ = with_activity(app, |env, _| delete_key(env, &alias));
+    // `NotFound` here means there was nothing to delete in the first
+    // place — same end state as a successful delete, no need to log.
+    if let Err(error) = std::fs::remove_file(&storage_path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            log::warn!("delete credential file {}: {error}", storage_path.display());
+        }
+    }
+    if let Err(error) = with_activity(app, |env, _| delete_key(env, &alias)) {
+        log::warn!("delete keystore alias {alias}: {error:#}");
+    }
     Ok(())
 }
 

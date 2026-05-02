@@ -85,12 +85,25 @@ fn register(sender: oneshot::Sender<PickResult>) -> i32 {
 fn complete(code: i32, result: PickResult) {
     let sender = pending().as_mut().and_then(|map| map.remove(&code));
     match sender {
-        Some(sender) => {
-            // Receiver dropped is a benign no-op (the caller cancelled the
-            // future before the picker resolved).
-            let _ = sender.send(result);
-        }
+        Some(sender) => match sender.send(result) {
+            Ok(()) => {}
+            // Receiver dropped — caller cancelled the future before the
+            // picker resolved. Benign; nothing to do.
+            Err(_dropped_payload) => {}
+        },
         None => log::warn!("Activity result for unknown request code {code}"),
+    }
+}
+
+/// Best-effort send of a synchronous error onto a freshly-created
+/// picker channel. The only way `send` can fail here is if the caller
+/// dropped the receiver before we ran (a race that's effectively
+/// impossible from the same task), so we log instead of swallowing.
+fn report_launch_error(sender: oneshot::Sender<PickResult>, error: anyhow::Error) {
+    let message = format!("{error:#}");
+    match sender.send(Err(error)) {
+        Ok(()) => {}
+        Err(_) => log::warn!("picker launch error dropped: {message}"),
     }
 }
 
@@ -103,7 +116,7 @@ pub fn pick_files(
 ) -> oneshot::Receiver<PickResult> {
     let (tx, rx) = oneshot::channel();
     let Some(app) = android_app() else {
-        let _ = tx.send(Err(anyhow!("AndroidApp not registered")));
+        report_launch_error(tx, anyhow!("AndroidApp not registered"));
         return rx;
     };
     let code = register(tx);
@@ -120,7 +133,7 @@ pub fn pick_files(
 pub fn pick_directory() -> oneshot::Receiver<PickResult> {
     let (tx, rx) = oneshot::channel();
     let Some(app) = android_app() else {
-        let _ = tx.send(Err(anyhow!("AndroidApp not registered")));
+        report_launch_error(tx, anyhow!("AndroidApp not registered"));
         return rx;
     };
     let code = register(tx);
@@ -140,7 +153,7 @@ pub fn pick_directory() -> oneshot::Receiver<PickResult> {
 pub fn pick_images(multiple: bool) -> oneshot::Receiver<PickResult> {
     let (tx, rx) = oneshot::channel();
     let Some(app) = android_app() else {
-        let _ = tx.send(Err(anyhow!("AndroidApp not registered")));
+        report_launch_error(tx, anyhow!("AndroidApp not registered"));
         return rx;
     };
     let code = register(tx);

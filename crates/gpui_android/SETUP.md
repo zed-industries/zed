@@ -340,10 +340,11 @@ keyboard on tap (and `gpui_android` won't ask it to via
 top of GPUI's `PlatformInputHandler` API, the keyboard will pop up
 automatically.
 
-For a working reference, `gpui_android::widgets::TextField` is a
-single-line text field that handles the focus → IME plumbing for you.
-Drop it into your view as `cx.new(|cx| TextField::new(cx, "placeholder",
-FieldKind::Text))` and the keyboard pops on tap.
+For a working reference, GPUI ships [`gpui::TextInput`](https://docs.rs/gpui/latest/gpui/struct.TextInput.html)
+out of the box — a single-line text field that handles focus, IME and
+caret painting on every platform. Drop it into your view as
+`cx.new(|cx| TextInput::new(cx).placeholder("…"))` and the keyboard pops
+on tap. For a numeric pad, chain `.ime_kind(gpui::ImeKind::Number)`.
 
 ### Soft keyboard covers the focused input
 

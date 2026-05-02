@@ -1605,7 +1605,7 @@ pub enum WindowKind {
 ///
 /// Hints the platform IME about the kind of text the focused widget
 /// expects, so soft-keyboard backends can show the right keyboard
-/// layout (numeric pad, email keyboard, URL keyboard, …).
+/// layout.
 ///
 /// Backends with a hardware keyboard (macOS, Linux, Windows) treat this
 /// as advisory — `set_ime_kind` is a no-op there. The widget remains
@@ -1620,17 +1620,6 @@ pub enum ImeKind {
     /// Decimal numbers. Soft keyboards show a numeric pad with `-` and
     /// `.` keys.
     Number,
-    /// An email address. Soft keyboards typically expose `@` and `.` on
-    /// the primary layer.
-    Email,
-    /// A URL. Soft keyboards typically expose `/`, `.`, and `.com`-style
-    /// shortcuts.
-    Url,
-    /// A telephone number. Soft keyboards show a phone-style dial pad.
-    Phone,
-    /// A password. Soft keyboards disable autocorrect / autosuggest and
-    /// clear the typed glyph after a brief delay.
-    Password,
 }
 
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)

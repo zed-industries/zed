@@ -19,7 +19,12 @@ static MAIN_THREAD_ID: OnceLock<thread::ThreadId> = OnceLock::new();
 /// first call wins. Should be invoked early in `android_main` (or whichever
 /// thread will pump the foreground executor).
 pub(crate) fn record_main_thread_id() {
-    let _ = MAIN_THREAD_ID.set(thread::current().id());
+    // `set` returns `Err` when the cell was already initialised, which
+    // is the documented idempotent case — explicitly accept it.
+    match MAIN_THREAD_ID.set(thread::current().id()) {
+        Ok(()) => {}
+        Err(_already_set) => {}
+    }
 }
 
 const MIN_BACKGROUND_THREADS: usize = 2;

@@ -514,9 +514,17 @@ impl Platform for AndroidPlatform {
         // the read pickers in subtle ways. Wire that up alongside the
         // first feature that actually needs to *write* a picked file.
         let (tx, rx) = oneshot::channel();
-        let _ = tx.send(Err(anyhow::anyhow!(
+        let error = anyhow::anyhow!(
             "prompt_for_new_path is not implemented on Android (CREATE_DOCUMENT not yet wired up)"
-        )));
+        );
+        // The receiver was just constructed and is returned below, so the
+        // only way `send` can fail is if the caller dropped `rx` between
+        // construction and our send — effectively impossible from a
+        // single task — log instead of swallowing.
+        match tx.send(Err(error)) {
+            Ok(()) => {}
+            Err(_) => log::warn!("prompt_for_new_path: receiver dropped before send"),
+        }
         rx
     }
 
@@ -877,7 +885,7 @@ fn load_android_system_fonts(text_system: &gpui_wgpu::CosmicTextSystem) {
 /// `Context.getApplicationInfo().nativeLibraryDir` — used to resolve auxiliary
 /// `.so` plugins.
 fn native_library_dir(app: &AndroidApp) -> Result<String> {
-    use jni::{jni_sig, jni_str, objects::JValue};
+    use jni::{jni_sig, jni_str};
     use super::jni_glue::{java_string_to_rust, with_activity};
     with_activity(app, |env, activity| {
         let info = env
@@ -895,7 +903,6 @@ fn native_library_dir(app: &AndroidApp) -> Result<String> {
                 jni_sig!("java.lang.String"),
             )?
             .l()?;
-        let _ = JValue::Bool;
         java_string_to_rust(env, dir_obj)
     })
 }

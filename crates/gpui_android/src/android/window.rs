@@ -153,10 +153,7 @@ struct WindowSurface(NativeWindow);
 
 impl HasWindowHandle for WindowSurface {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        let mut handle = AndroidNdkWindowHandle::new(self.0.ptr().cast());
-        // Pre-rotation transforms are handled inside the renderer once we
-        // wire surface configuration; for now we just hand off the raw window.
-        let _ = &mut handle;
+        let handle = AndroidNdkWindowHandle::new(self.0.ptr().cast());
         // SAFETY: the underlying ANativeWindow is kept alive for the
         // lifetime of `self` via the refcounted `NativeWindow` handle.
         Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::AndroidNdk(handle)) })
@@ -1285,13 +1282,11 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn set_ime_kind(&self, kind: gpui::ImeKind) {
-        // Translate GPUI's portable hint to Android's `InputType` /
-        // `TextInputAction` pair and stash it in the IME module's
-        // thread-local. The platform's `reconcile_keyboard` reads it
-        // on the next iteration, calls `set_ime_editor_info`, then
-        // `restartInput` so the soft keyboard actually swaps layouts
-        // even if it was already up.
         use android_activity::input::{InputType, TextInputAction};
+        // The IME module's thread-local is drained by
+        // `reconcile_keyboard`, which calls `set_ime_editor_info` then
+        // `restartInput` so the keyboard layout actually swaps even
+        // when the IME is already visible.
         let (input_type, action) = match kind {
             gpui::ImeKind::Text => (
                 InputType::TYPE_CLASS_TEXT
@@ -1303,19 +1298,6 @@ impl PlatformWindow for AndroidWindow {
                 InputType::TYPE_CLASS_NUMBER
                     | InputType::TYPE_NUMBER_FLAG_DECIMAL
                     | InputType::TYPE_NUMBER_FLAG_SIGNED,
-                TextInputAction::Done,
-            ),
-            gpui::ImeKind::Email => (
-                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
-                TextInputAction::Next,
-            ),
-            gpui::ImeKind::Url => (
-                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_VARIATION_URI,
-                TextInputAction::Go,
-            ),
-            gpui::ImeKind::Phone => (InputType::TYPE_CLASS_PHONE, TextInputAction::Done),
-            gpui::ImeKind::Password => (
-                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_VARIATION_PASSWORD,
                 TextInputAction::Done,
             ),
         };

@@ -68,8 +68,8 @@ use crate::{
     App, Bounds, Context, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
     FocusHandle, Focusable, GlobalElementId, Hsla, ImeKind, IntoElement, LayoutId, MouseButton,
     MouseDownEvent, PaintQuad, Pixels, Point, Render, ScrollAnchor, ShapedLine, SharedString,
-    Style, TextRun, UTF16Selection, Window, div, fill, hsla, point, prelude::*, px, relative, rgb,
-    size,
+    Style, TextRun, UTF16Selection, Window, WindowAppearance, div, fill, hsla, point, prelude::*,
+    px, relative, rgb, size,
 };
 
 /// Visual theme for a [`TextInput`]. All colours are in GPUI's `Hsla`.
@@ -95,8 +95,27 @@ pub struct TextInputTheme {
     pub selection: Hsla,
 }
 
-impl Default for TextInputTheme {
-    fn default() -> Self {
+impl TextInputTheme {
+    /// Bundled neutral light theme — high-contrast text on a near-white
+    /// surface, used when the window's [`WindowAppearance`] is `Light`
+    /// or `VibrantLight`.
+    pub fn light() -> Self {
+        Self {
+            text: hsla(0.0, 0.0, 0.05, 1.0),
+            placeholder: hsla(0.0, 0.0, 0.5, 1.0),
+            background: rgb(0xffffff).into(),
+            background_focused: rgb(0xf5f7fa).into(),
+            border: rgb(0xd1d5db).into(),
+            border_focused: rgb(0x2563eb).into(),
+            cursor: hsla(0.0, 0.0, 0.05, 1.0),
+            selection: hsla(214.0 / 360.0, 0.84, 0.6, 0.35),
+        }
+    }
+
+    /// Bundled neutral dark theme — high-contrast text on a near-black
+    /// surface, used when the window's [`WindowAppearance`] is `Dark`
+    /// or `VibrantDark`.
+    pub fn dark() -> Self {
         Self {
             text: hsla(0.0, 0.0, 0.95, 1.0),
             placeholder: hsla(0.0, 0.0, 0.6, 1.0),
@@ -107,6 +126,26 @@ impl Default for TextInputTheme {
             cursor: hsla(0.0, 0.0, 0.95, 1.0),
             selection: hsla(214.0 / 360.0, 0.84, 0.6, 0.35),
         }
+    }
+
+    /// Pick the bundled theme that matches `appearance`. Used as the
+    /// implicit default when no theme has been set explicitly.
+    pub fn for_appearance(appearance: WindowAppearance) -> Self {
+        match appearance {
+            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::light(),
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::dark(),
+        }
+    }
+}
+
+impl Default for TextInputTheme {
+    /// Defaults to [`TextInputTheme::dark`] for backwards compatibility
+    /// with code that constructs the theme outside of a render cycle.
+    /// Most callers should let [`TextInput`] auto-pick via
+    /// [`TextInputTheme::for_appearance`] instead — the widget does this
+    /// for you when no explicit theme has been set.
+    fn default() -> Self {
+        Self::dark()
     }
 }
 
@@ -121,7 +160,11 @@ pub struct TextInput {
     content: SharedString,
     placeholder: SharedString,
     ime_kind: ImeKind,
-    theme: TextInputTheme,
+    /// `Some` only when the caller passed an explicit theme via
+    /// [`TextInput::theme`]. Otherwise the widget picks
+    /// [`TextInputTheme::for_appearance`] at render time so the field
+    /// follows the window's light/dark appearance.
+    theme: Option<TextInputTheme>,
     /// Selection range in **UTF-8 byte offsets** (not UTF-16 code units —
     /// IME ranges are translated through `range_from_utf16`).
     selected_range: Range<usize>,
@@ -147,7 +190,7 @@ impl TextInput {
             content: SharedString::default(),
             placeholder: SharedString::default(),
             ime_kind: ImeKind::Text,
-            theme: TextInputTheme::default(),
+            theme: None,
             selected_range: 0..0,
             marked_range: None,
             last_layout: None,
@@ -171,9 +214,12 @@ impl TextInput {
         self
     }
 
-    /// Override the visual theme. Defaults to [`TextInputTheme::default`].
+    /// Override the visual theme. By default the widget picks
+    /// [`TextInputTheme::light`] or [`TextInputTheme::dark`] at render
+    /// time based on the window's [`WindowAppearance`]; setting an
+    /// explicit theme opts out of that behaviour.
     pub fn theme(mut self, theme: TextInputTheme) -> Self {
-        self.theme = theme;
+        self.theme = Some(theme);
         self
     }
 
@@ -221,19 +267,13 @@ impl TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // 1. Focus the field — GPUI's IME bridge sees the new focus
-        //    and asks the platform to surface the keyboard / wire up
-        //    the input handler.
         window.focus(&self.focus_handle, cx);
-        // 2. Tell the platform what keyboard layout to request. On
-        //    desktop this is a no-op; on Android / iOS / web it picks
-        //    the right layout (numeric pad, email keyboard, …).
         window.set_ime_kind(self.ime_kind);
-        // 3. Schedule a scroll-into-view if a [`ScrollAnchor`] was
-        //    wired. The soft-keyboard slide-up can take ~250ms during
-        //    which window bounds shrink, so re-fire across the next
-        //    handful of frames — one of them lands after the IME has
-        //    settled and the parent's bounds are correct.
+        // The soft-keyboard slide-up takes ~250ms on Android during
+        // which `bounds()` shrinks. A single `scroll_to` here would
+        // see only the pre-shrink parent bounds, so re-fire across
+        // the next ~18 frames — one of them lands after the IME has
+        // settled and computes the right offset.
         if let Some(anchor) = self.scroll_anchor.clone() {
             for _ in 0..18 {
                 anchor.scroll_to(window, cx);
@@ -243,29 +283,11 @@ impl TextInput {
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-        for ch in self.content.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-        utf8_offset
+        offset_from_utf16(&self.content, offset)
     }
 
     fn offset_to_utf16(&self, offset: usize) -> usize {
-        let mut utf16_offset = 0;
-        let mut utf8_count = 0;
-        for ch in self.content.chars() {
-            if utf8_count >= offset {
-                break;
-            }
-            utf8_count += ch.len_utf8();
-            utf16_offset += ch.len_utf16();
-        }
-        utf16_offset
+        offset_to_utf16(&self.content, offset)
     }
 
     fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
@@ -276,25 +298,58 @@ impl TextInput {
         self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
     }
 
-    /// Walk down to the nearest UTF-8 char boundary on or before `idx`,
-    /// clamping to `[0, content.len()]`. Used to keep stale selection
-    /// or marked ranges from panicking when sliced after a content
-    /// change (e.g. an IME delta arriving for a position that no
-    /// longer exists).
     fn snap_to_boundary(&self, idx: usize) -> usize {
-        let len = self.content.len();
-        let mut idx = idx.min(len);
-        while idx > 0 && !self.content.is_char_boundary(idx) {
-            idx -= 1;
-        }
-        idx
+        snap_to_boundary(&self.content, idx)
     }
 
     fn clamp_range(&self, range: Range<usize>) -> Range<usize> {
-        let start = self.snap_to_boundary(range.start);
-        let end = self.snap_to_boundary(range.end).max(start);
-        start..end
+        clamp_range(&self.content, range)
     }
+}
+
+fn offset_from_utf16(content: &str, offset: usize) -> usize {
+    let mut utf8_offset = 0;
+    let mut utf16_count = 0;
+    for ch in content.chars() {
+        if utf16_count >= offset {
+            break;
+        }
+        utf16_count += ch.len_utf16();
+        utf8_offset += ch.len_utf8();
+    }
+    utf8_offset
+}
+
+fn offset_to_utf16(content: &str, offset: usize) -> usize {
+    let mut utf16_offset = 0;
+    let mut utf8_count = 0;
+    for ch in content.chars() {
+        if utf8_count >= offset {
+            break;
+        }
+        utf8_count += ch.len_utf8();
+        utf16_offset += ch.len_utf16();
+    }
+    utf16_offset
+}
+
+/// Walk down to the nearest UTF-8 char boundary on or before `idx`,
+/// clamping to `[0, content.len()]`. Used to keep stale selection or
+/// marked ranges from panicking when sliced after a content change
+/// (e.g. an IME delta arriving for a position that no longer exists).
+fn snap_to_boundary(content: &str, idx: usize) -> usize {
+    let len = content.len();
+    let mut idx = idx.min(len);
+    while idx > 0 && !content.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn clamp_range(content: &str, range: Range<usize>) -> Range<usize> {
+    let start = snap_to_boundary(content, range.start);
+    let end = snap_to_boundary(content, range.end).max(start);
+    start..end
 }
 
 impl Focusable for TextInput {
@@ -501,7 +556,9 @@ impl Element for TextInputElement {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
-        let theme = input.theme;
+        let theme = input
+            .theme
+            .unwrap_or_else(|| TextInputTheme::for_appearance(window.appearance()));
         let content = input.content.clone();
         let cursor_offset = input.cursor_offset();
         let selected = input.clamp_range(input.selected_range.clone());
@@ -573,22 +630,27 @@ impl Element for TextInputElement {
         if let Some(selection) = prepaint.selection.take() {
             window.paint_quad(selection);
         }
-        let line = prepaint.line.take().expect("prepaint always sets line");
-        line.paint(
+        let Some(line) = prepaint.line.take() else {
+            log::error!("TextInput paint: prepaint did not produce a shaped line");
+            return;
+        };
+        if let Err(error) = line.paint(
             bounds.origin,
             window.line_height(),
             crate::TextAlign::Left,
             None,
             window,
             cx,
-        )
-        .ok();
-        if focus_handle.is_focused(window)
+        ) {
+            log::warn!("TextInput paint: line.paint failed: {error}");
+        }
+        let focused = focus_handle.is_focused(window);
+        if focused
             && let Some(cursor) = prepaint.cursor.take()
         {
             window.paint_quad(cursor);
         }
-        if focus_handle.is_focused(window) {
+        if focused {
             window.invalidate_character_coordinates();
         }
         self.input.update(cx, |input, _| {
@@ -602,7 +664,9 @@ impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let focused = focus_handle.is_focused(window);
-        let theme = self.theme;
+        let theme = self
+            .theme
+            .unwrap_or_else(|| TextInputTheme::for_appearance(window.appearance()));
         let border = if focused {
             theme.border_focused
         } else {
@@ -633,5 +697,105 @@ impl Render for TextInput {
             .child(TextInputElement {
                 input: cx.entity(),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clamp_range, offset_from_utf16, offset_to_utf16, snap_to_boundary};
+
+    #[test]
+    fn snap_to_boundary_clamps_above_length() {
+        assert_eq!(snap_to_boundary("abc", 100), 3);
+        assert_eq!(snap_to_boundary("", 5), 0);
+    }
+
+    #[test]
+    fn snap_to_boundary_walks_into_multibyte_char() {
+        // "é" is 2 bytes (0xC3, 0xA9). Index 1 is mid-char.
+        let s = "aé";
+        assert_eq!(s.len(), 3);
+        assert_eq!(snap_to_boundary(s, 1), 1);
+        assert_eq!(snap_to_boundary(s, 2), 1);
+        assert_eq!(snap_to_boundary(s, 3), 3);
+    }
+
+    #[test]
+    fn snap_to_boundary_walks_into_4_byte_emoji() {
+        // 😀 (U+1F600) is 4 bytes in UTF-8 starting at offset 0.
+        let s = "😀";
+        assert_eq!(s.len(), 4);
+        assert_eq!(snap_to_boundary(s, 0), 0);
+        assert_eq!(snap_to_boundary(s, 1), 0);
+        assert_eq!(snap_to_boundary(s, 3), 0);
+        assert_eq!(snap_to_boundary(s, 4), 4);
+    }
+
+    #[test]
+    fn clamp_range_orders_endpoints() {
+        // A reversed range collapses to start..start instead of panicking
+        // when sliced. Built with `Range { start, end }` rather than `5..1`
+        // so clippy doesn't flag the literal as `reversed_empty_ranges`.
+        let r = clamp_range(
+            "abc",
+            std::ops::Range {
+                start: 5,
+                end: 1,
+            },
+        );
+        assert_eq!(r.start, 3);
+        assert_eq!(r.end, 3);
+    }
+
+    #[test]
+    fn clamp_range_snaps_both_endpoints() {
+        // start lands mid-char and gets snapped down; end is past length
+        // and gets clamped, then ordering is preserved.
+        let s = "aé";
+        let r = clamp_range(s, 2..100);
+        assert_eq!(r.start, 1);
+        assert_eq!(r.end, 3);
+        assert!(s.get(r).is_some());
+    }
+
+    #[test]
+    fn offset_to_utf16_handles_ascii() {
+        assert_eq!(offset_to_utf16("hello", 0), 0);
+        assert_eq!(offset_to_utf16("hello", 3), 3);
+        assert_eq!(offset_to_utf16("hello", 5), 5);
+    }
+
+    #[test]
+    fn offset_to_utf16_handles_bmp_and_supplementary() {
+        // 'é' is 2 UTF-8 bytes / 1 UTF-16 code unit.
+        // '😀' is 4 UTF-8 bytes / 2 UTF-16 code units (surrogate pair).
+        let s = "aé😀";
+        assert_eq!(s.len(), 1 + 2 + 4);
+        assert_eq!(offset_to_utf16(s, 0), 0);
+        assert_eq!(offset_to_utf16(s, 1), 1);
+        assert_eq!(offset_to_utf16(s, 3), 2);
+        assert_eq!(offset_to_utf16(s, 7), 4);
+    }
+
+    #[test]
+    fn offset_from_utf16_is_inverse_of_offset_to_utf16() {
+        let s = "aé😀b";
+        for byte_offset in 0..=s.len() {
+            if !s.is_char_boundary(byte_offset) {
+                continue;
+            }
+            let units = offset_to_utf16(s, byte_offset);
+            assert_eq!(
+                offset_from_utf16(s, units),
+                byte_offset,
+                "round-trip failed at byte {byte_offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn offset_from_utf16_clamps_past_end() {
+        let s = "abc";
+        assert_eq!(offset_from_utf16(s, 100), 3);
     }
 }
