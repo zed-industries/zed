@@ -1994,11 +1994,6 @@ impl EditorElement {
                                 state.step(now, player_color.cursor, &smooth_cursor_settings);
                             any_animated_cursor |= smooth_frame.animating;
                             smooth_trail = smooth_frame.trail;
-                            if smooth_frame.animating
-                                && selection.cursor_shape == CursorShape::Block
-                            {
-                                block_text = None;
-                            }
                         }
                         editor
                             .smooth_cursor_animations
