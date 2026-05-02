@@ -530,7 +530,9 @@ pub struct EditorStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
     pub inlay_hints_style: HighlightStyle,
+    pub inlay_hints_font: gpui::Font,
     pub edit_prediction_styles: EditPredictionStyles,
+    pub edit_prediction_font: gpui::Font,
     pub unnecessary_code_fade: f32,
     pub show_underlines: bool,
 }
@@ -551,10 +553,12 @@ impl Default for EditorStyle {
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
             inlay_hints_style: HighlightStyle::default(),
+            inlay_hints_font: TextStyle::default().font(),
             edit_prediction_styles: EditPredictionStyles {
                 insertion: HighlightStyle::default(),
                 whitespace: HighlightStyle::default(),
             },
+            edit_prediction_font: TextStyle::default().font(),
             unnecessary_code_fade: Default::default(),
             show_underlines: true,
         }
@@ -10884,7 +10888,9 @@ impl Editor {
             syntax: cx.theme().syntax().clone(),
             status: cx.theme().status().clone(),
             inlay_hints_style: make_inlay_hints_style(cx),
+            inlay_hints_font: settings.inlay_hints_font.clone(),
             edit_prediction_styles: make_suggestion_styles(cx),
+            edit_prediction_font: settings.edit_predictions_font.clone(),
             unnecessary_code_fade: settings.unnecessary_code_fade,
             show_underlines: self.diagnostics_enabled(),
         }
