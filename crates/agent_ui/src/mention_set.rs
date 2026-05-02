@@ -1,7 +1,7 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -18,7 +18,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
 use language::Buffer;
-use language_model::LanguageModelImage;
+use language_model::{LanguageModelImage, LanguageModelImageExt};
 use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -154,7 +154,7 @@ impl MentionSet {
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
-            MentionUri::PastedImage
+            MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -174,17 +174,16 @@ impl MentionSet {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }
 
+    pub fn mention_uri_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
+        self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
+    }
+
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
         self.mentions = mentions;
     }
 
     pub fn clear(&mut self) -> impl Iterator<Item = (CreaseId, (MentionUri, MentionTask))> {
         self.mentions.drain()
-    }
-
-    #[cfg(test)]
-    pub fn has_thread_store(&self) -> bool {
-        self.thread_store.is_some()
     }
 
     pub fn confirm_mention_completion(
@@ -212,10 +211,7 @@ impl MentionSet {
         );
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
-            && let Some(extension) = abs_path.extension()
-            && let Some(extension) = extension.to_str()
-            && Img::extensions().contains(&extension)
-            && !extension.contains("svg")
+            && is_raster_image_path(abs_path)
         {
             let Some(project_path) = project
                 .read(cx)
@@ -283,7 +279,7 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
-            MentionUri::PastedImage => {
+            MentionUri::PastedImage { .. } => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
                     "pasted imaged URI should not be included in completions"
@@ -344,12 +340,8 @@ impl MentionSet {
         else {
             return Task::ready(Err(anyhow!("project path not found")));
         };
-        let extension = abs_path
-            .extension()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default();
 
-        if Img::extensions().contains(&extension) && !extension.contains("svg") {
+        if is_raster_image_path(&abs_path) {
             if !supports_images {
                 return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
@@ -724,6 +716,25 @@ mod tests {
             other => panic!("Expected selection mention to resolve as text, got {other:?}"),
         }
     }
+
+    #[test]
+    fn test_is_raster_image_path_is_case_insensitive() {
+        // Regression test for #54308: drag-and-dropping a file whose extension
+        // is uppercase (e.g. `.PNG`) used to be treated as a non-image file.
+        assert!(is_raster_image_path(Path::new("/tmp/image.png")));
+        assert!(is_raster_image_path(Path::new("/tmp/image.PNG")));
+        assert!(is_raster_image_path(Path::new("/tmp/image.Png")));
+        assert!(is_raster_image_path(Path::new("/tmp/photo.JPEG")));
+        assert!(is_raster_image_path(Path::new("/tmp/animation.GIF")));
+
+        // SVG is handled via a different code path and must not be reported here.
+        assert!(!is_raster_image_path(Path::new("/tmp/icon.svg")));
+        assert!(!is_raster_image_path(Path::new("/tmp/icon.SVG")));
+
+        // Non-image extensions and paths with no extension.
+        assert!(!is_raster_image_path(Path::new("/tmp/notes.txt")));
+        assert!(!is_raster_image_path(Path::new("/tmp/README")));
+    }
 }
 
 /// Inserts a list of images into the editor as context mentions.
@@ -739,9 +750,11 @@ pub(crate) async fn insert_images_as_context(
         return;
     }
 
-    let replacement_text = MentionUri::PastedImage.as_link().to_string();
-
     for (image, name) in images {
+        let mention_uri = MentionUri::PastedImage {
+            name: name.to_string(),
+        };
+        let replacement_text = mention_uri.as_link().to_string();
         let Some((text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
@@ -804,7 +817,13 @@ pub(crate) async fn insert_images_as_context(
             .shared();
 
         mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            mention_set.insert_mention(
+                crease_id,
+                MentionUri::PastedImage {
+                    name: name.to_string(),
+                },
+                task.clone(),
+            )
         });
 
         if task
@@ -831,8 +850,26 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
         image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
         image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
         image::ImageFormat::Ico => Some(ImageFormat::Ico),
-        _ => None,
+        image::ImageFormat::Pnm => Some(ImageFormat::Pnm),
+        _ => {
+            debug_panic!("An unhandled image format: {format:?}");
+            None
+        }
     }
+}
+
+// Case-insensitive so that e.g. `foo.PNG` is recognized the same as `foo.png`.
+// SVG is excluded because it is handled separately.
+fn is_raster_image_path(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(OsStr::to_str) else {
+        return false;
+    };
+    if extension.eq_ignore_ascii_case("svg") {
+        return false;
+    }
+    Img::extensions()
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(extension))
 }
 
 pub(crate) fn load_external_image_from_path(
@@ -873,7 +910,7 @@ pub(crate) fn paste_images_as_context(
 
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let default_name: SharedString = MentionUri::PastedImage.name().into();
+        let default_name: SharedString = "Image".into();
         let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {

@@ -5,7 +5,7 @@ use edit_prediction::{
     open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
-use gpui::{Entity, ScrollHandle, prelude::*};
+use gpui::{App, Entity, ScrollHandle, prelude::*};
 use language::language_settings::AllLanguageSettings;
 
 use settings::Settings as _;
@@ -185,9 +185,15 @@ fn render_api_key_provider(
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
+    let credentials_provider = zed_credentials_provider::global(cx);
     _ = window.use_keyed_state(current_url(cx), cx, |_, cx| {
         let task = api_key_state.update(cx, |key_state, cx| {
-            key_state.load_if_needed(current_url(cx), |state| state, cx)
+            key_state.load_if_needed(
+                current_url(cx),
+                |state| state,
+                credentials_provider.clone(),
+                cx,
+            )
         });
         cx.spawn(async move |_, cx| {
             task.await.ok();
@@ -208,10 +214,17 @@ fn render_api_key_provider(
     });
 
     let write_key = move |api_key: Option<String>, cx: &mut App| {
+        let credentials_provider = zed_credentials_provider::global(cx);
         api_key_state
             .update(cx, |key_state, cx| {
                 let url = current_url(cx);
-                key_state.store(url, api_key, |key_state| key_state, cx)
+                key_state.store(
+                    url,
+                    api_key,
+                    |key_state| key_state,
+                    credentials_provider,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     };
@@ -360,7 +373,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -393,7 +406,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -426,7 +439,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .prompt_format
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -456,7 +469,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -491,7 +504,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -524,7 +537,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -557,7 +570,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .prompt_format
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -587,7 +600,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -622,7 +635,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -655,7 +668,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .max_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -685,7 +698,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages

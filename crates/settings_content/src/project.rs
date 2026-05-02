@@ -90,12 +90,6 @@ pub struct ProjectSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or null, the root directory name
-    /// will be displayed.
-    ///
-    /// Default: null
-    pub project_name: Option<String>,
-
     /// Whether to prevent this project from being shared in public channels.
     ///
     /// Default: false
@@ -274,6 +268,18 @@ pub struct SemanticTokenRule {
     pub strikethrough: Option<SemanticTokenColorOverride>,
     pub font_weight: Option<SemanticTokenFontWeight>,
     pub font_style: Option<SemanticTokenFontStyle>,
+}
+
+impl SemanticTokenRule {
+    pub fn no_style_defined(&self) -> bool {
+        self.style.is_empty()
+            && self.foreground_color.is_none()
+            && self.background_color.is_none()
+            && self.underline.is_none()
+            && self.strikethrough.is_none()
+            && self.font_weight.is_none()
+            && self.font_style.is_none()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]

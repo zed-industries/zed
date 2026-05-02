@@ -65,6 +65,7 @@ CREATE TABLE "worktrees" (
     "scan_id" INTEGER NOT NULL,
     "is_complete" BOOL NOT NULL DEFAULT FALSE,
     "completed_scan_id" INTEGER NOT NULL,
+    "root_repo_common_dir" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
@@ -111,6 +112,8 @@ CREATE TABLE "project_repositories" (
     "remote_upstream_url" VARCHAR,
     "remote_origin_url" VARCHAR,
     "linked_worktrees" VARCHAR,
+    "repository_dir_abs_path" VARCHAR,
+    "common_dir_abs_path" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 

@@ -14,7 +14,7 @@ doctest = false
 
 [features]
 default = []
-stories = ["dep:story"]
+
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -29,8 +29,10 @@ test-support = [
 ]
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
 auto_update.workspace = true
+fs.workspace = true
 platform_title_bar.workspace = true
 call.workspace = true
 channel.workspace = true
@@ -53,13 +55,13 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-story = { workspace = true, optional = true }
 telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+arrayvec = "0.7.6"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

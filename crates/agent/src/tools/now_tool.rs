@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use chrono::{Local, Utc};
 use gpui::{App, SharedString, Task};
 use schemars::JsonSchema;
@@ -13,8 +13,10 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 #[schemars(inline)]
 pub enum Timezone {
     /// Use UTC for the datetime.
+    #[serde(alias = "UTC", alias = "Utc")]
     Utc,
     /// Use local time for the datetime.
+    #[serde(alias = "LOCAL", alias = "Local")]
     Local,
 }
 

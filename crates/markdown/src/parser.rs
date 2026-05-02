@@ -1,12 +1,12 @@
+use collections::{BTreeMap, HashMap, HashSet};
 use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
     Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-use std::{collections::BTreeMap, ops::Range, sync::Arc};
-
-use collections::HashSet;
+use std::{ops::Range, sync::Arc};
+use util::markdown::generate_heading_slug;
 
 use crate::{html, path_range::PathWithRange};
 
@@ -37,6 +37,8 @@ pub(crate) struct ParsedMarkdownData {
     pub language_paths: HashSet<Arc<str>>,
     pub root_block_starts: Vec<usize>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub heading_slugs: HashMap<SharedString, usize>,
+    pub footnote_definitions: HashMap<SharedString, usize>,
 }
 
 impl ParseState {
@@ -80,7 +82,78 @@ impl ParseState {
     }
 }
 
-pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> ParsedMarkdownData {
+const MAX_DUPLICATE_HEADING_SLUGS: usize = 128;
+
+fn build_heading_slugs(
+    source: &str,
+    events: &[(Range<usize>, MarkdownEvent)],
+) -> HashMap<SharedString, usize> {
+    let mut slugs = HashMap::default();
+    let mut slug_counts: HashMap<String, usize> = HashMap::default();
+    let mut inside_heading = false;
+    let mut heading_text = String::new();
+    let mut heading_source_start: Option<usize> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::Heading { .. }) => {
+                inside_heading = true;
+                heading_text.clear();
+                heading_source_start = None;
+            }
+            MarkdownEvent::End(MarkdownTagEnd::Heading(_)) => {
+                if inside_heading {
+                    let source_offset = heading_source_start.unwrap_or(range.start);
+                    let base_slug = generate_heading_slug(&heading_text);
+                    let count = slug_counts.entry(base_slug.clone()).or_insert(0);
+                    let mut slug = if *count == 0 {
+                        base_slug.clone()
+                    } else {
+                        format!("{base_slug}-{count}")
+                    };
+                    *count += 1;
+                    while slugs.contains_key(slug.as_str()) {
+                        let Some(count) = slug_counts.get_mut(&base_slug) else {
+                            slug.clear();
+                            break;
+                        };
+                        if *count >= MAX_DUPLICATE_HEADING_SLUGS {
+                            slug.clear();
+                            break;
+                        }
+                        slug = format!("{base_slug}-{count}");
+                        *count += 1;
+                    }
+                    if !slug.is_empty() {
+                        slugs.insert(SharedString::from(slug), source_offset);
+                    }
+                    inside_heading = false;
+                }
+            }
+            MarkdownEvent::Text | MarkdownEvent::Code if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(&source[range.clone()]);
+            }
+            MarkdownEvent::SubstitutedText(substituted) if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(substituted);
+            }
+            _ => {}
+        }
+    }
+
+    slugs
+}
+
+pub(crate) fn parse_markdown_with_options(
+    text: &str,
+    parse_html: bool,
+    parse_heading_slugs: bool,
+) -> ParsedMarkdownData {
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
@@ -220,7 +293,7 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
                             attrs,
                         }
                     }
-                    pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
+                    pulldown_cmark::Tag::BlockQuote(kind) => MarkdownTag::BlockQuote(kind),
                     pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
                     pulldown_cmark::Tag::Item => MarkdownTag::Item,
                     pulldown_cmark::Tag::FootnoteDefinition(label) => {
@@ -427,9 +500,10 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
             pulldown_cmark::Event::InlineHtml(_) => {
                 state.push_event(range, MarkdownEvent::InlineHtml)
             }
-            pulldown_cmark::Event::FootnoteReference(_) => {
-                state.push_event(range, MarkdownEvent::FootnoteReference)
-            }
+            pulldown_cmark::Event::FootnoteReference(label) => state.push_event(
+                range,
+                MarkdownEvent::FootnoteReference(SharedString::from(label.to_string())),
+            ),
             pulldown_cmark::Event::SoftBreak => state.push_event(range, MarkdownEvent::SoftBreak),
             pulldown_cmark::Event::HardBreak => state.push_event(range, MarkdownEvent::HardBreak),
             pulldown_cmark::Event::Rule => state.push_event(range, MarkdownEvent::Rule),
@@ -440,13 +514,48 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
         }
     }
 
+    let heading_slugs = if parse_heading_slugs {
+        build_heading_slugs(text, &state.events)
+    } else {
+        HashMap::default()
+    };
+    let footnote_definitions = build_footnote_definitions(&state.events);
+
     ParsedMarkdownData {
         events: state.events,
         language_names,
         language_paths,
         root_block_starts: state.root_block_starts,
         html_blocks,
+        heading_slugs,
+        footnote_definitions,
     }
+}
+
+fn build_footnote_definitions(
+    events: &[(Range<usize>, MarkdownEvent)],
+) -> HashMap<SharedString, usize> {
+    let mut definitions = HashMap::default();
+    let mut current_label: Option<SharedString> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(label)) => {
+                current_label = Some(label.clone());
+            }
+            MarkdownEvent::End(MarkdownTagEnd::FootnoteDefinition) => {
+                current_label = None;
+            }
+            MarkdownEvent::Text if current_label.is_some() => {
+                if let Some(label) = current_label.take() {
+                    definitions.entry(label).or_insert(range.start);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    definitions
 }
 
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -510,7 +619,7 @@ pub enum MarkdownEvent {
     /// A reference to a footnote with given label, which may or may not be defined
     /// by an event with a `Tag::FootnoteDefinition` tag. Definitions and references to them may
     /// occur in any order.
-    FootnoteReference,
+    FootnoteReference(SharedString),
     /// A soft line break.
     SoftBreak,
     /// A hard line break.
@@ -543,7 +652,7 @@ pub enum MarkdownTag {
         attrs: Vec<(SharedString, Option<SharedString>)>,
     },
 
-    BlockQuote,
+    BlockQuote(Option<pulldown_cmark::BlockQuoteKind>),
 
     /// A code block.
     CodeBlock {
@@ -697,7 +806,7 @@ mod tests {
     #[test]
     fn test_html_comments() {
         assert_eq!(
-            parse_markdown_with_options("  <!--\nrdoc-file=string.c\n-->\nReturns", false),
+            parse_markdown_with_options("  <!--\nrdoc-file=string.c\n-->\nReturns", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (2..30, RootStart),
@@ -725,7 +834,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text",
-                false
+                false,
+                false,
             ),
             ParsedMarkdownData {
                 events: vec![
@@ -764,7 +874,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "You can use the [GitHub Search API](https://docs.github.com/en",
-                false
+                false,
+                false,
             )
             .events,
             vec![
@@ -797,7 +908,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "-- --- ... \"double quoted\" 'single quoted' ----------",
-                false
+                false,
+                false,
             ),
             ParsedMarkdownData {
                 events: vec![
@@ -830,7 +942,7 @@ mod tests {
     #[test]
     fn test_code_block_metadata() {
         assert_eq!(
-            parse_markdown_with_options("```rust\nfn main() {\n let a = 1;\n}\n```", false),
+            parse_markdown_with_options("```rust\nfn main() {\n let a = 1;\n}\n```", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (0..37, RootStart),
@@ -858,7 +970,7 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_markdown_with_options("    fn main() {}", false),
+            parse_markdown_with_options("    fn main() {}", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (4..16, RootStart),
@@ -883,7 +995,7 @@ mod tests {
     }
 
     fn assert_code_block_does_not_emit_links(markdown: &str) {
-        let parsed = parse_markdown_with_options(markdown, false);
+        let parsed = parse_markdown_with_options(markdown, false, false);
         let mut code_block_depth = 0;
         let mut code_block_count = 0;
         let mut saw_text_inside_code_block = false;
@@ -937,7 +1049,7 @@ mod tests {
     #[test]
     fn test_metadata_blocks_do_not_affect_root_blocks() {
         assert_eq!(
-            parse_markdown_with_options("+++\ntitle = \"Example\"\n+++\n\nParagraph", false),
+            parse_markdown_with_options("+++\ntitle = \"Example\"\n+++\n\nParagraph", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (27..36, RootStart),
@@ -959,7 +1071,7 @@ mod tests {
 |------|---------|
 | [x]  | Fix bug |
 | [ ]  | Add feature |";
-        let parsed = parse_markdown_with_options(markdown, false);
+        let parsed = parse_markdown_with_options(markdown, false, false);
 
         let mut in_table = false;
         let mut saw_task_list_marker = false;
@@ -1030,6 +1142,48 @@ mod tests {
     }
 
     #[test]
+    fn test_footnotes() {
+        let parsed = parse_markdown_with_options(
+            "Text with a footnote[^1] and some more text.\n\n[^1]: This is the footnote content.",
+            false,
+            false,
+        );
+        assert_eq!(
+            parsed.events,
+            vec![
+                (0..45, RootStart),
+                (0..45, Start(Paragraph)),
+                (0..20, Text),
+                (20..24, FootnoteReference("1".into())),
+                (24..44, Text),
+                (0..45, End(MarkdownTagEnd::Paragraph)),
+                (0..45, RootEnd(0)),
+                (46..81, RootStart),
+                (46..81, Start(FootnoteDefinition("1".into()))),
+                (52..81, Start(Paragraph)),
+                (52..81, Text),
+                (52..81, End(MarkdownTagEnd::Paragraph)),
+                (46..81, End(MarkdownTagEnd::FootnoteDefinition)),
+                (46..81, RootEnd(1)),
+            ]
+        );
+        assert_eq!(parsed.footnote_definitions.len(), 1);
+        assert_eq!(parsed.footnote_definitions.get("1").copied(), Some(52));
+    }
+
+    #[test]
+    fn test_footnote_definitions_multiple() {
+        let parsed = parse_markdown_with_options(
+            "Text[^a] and[^b].\n\n[^a]: First.\n\n[^b]: Second.",
+            false,
+            false,
+        );
+        assert_eq!(parsed.footnote_definitions.len(), 2);
+        assert!(parsed.footnote_definitions.contains_key("a"));
+        assert!(parsed.footnote_definitions.contains_key("b"));
+    }
+
+    #[test]
     fn test_links_split_across_fragments() {
         // This test verifies that links split across multiple text fragments due to escaping or other issues
         // are correctly detected and processed
@@ -1038,7 +1192,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "https:/\\/example.com is equivalent to https://example&#46;com!",
-                false
+                false,
+                false,
             )
             .events,
             vec![
@@ -1079,7 +1234,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "Visit https://example.com/cat\\/é&#8205;☕ for coffee!",
-                false
+                false,
+                false,
             )
             .events,
             [
@@ -1103,6 +1259,73 @@ mod tests {
                 (43..55, Text),
                 (0..55, End(MarkdownTagEnd::Paragraph)),
                 (0..55, RootEnd(0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_heading_slugs() {
+        let parsed = parse_markdown_with_options(
+            "# Hello World\n\n## Code `block`\n\n### Third Level\n\n#### Fourth Level\n\n## Hello World",
+            false,
+            true,
+        );
+        assert_eq!(parsed.heading_slugs.len(), 5);
+        assert!(parsed.heading_slugs.contains_key("hello-world"));
+        assert!(parsed.heading_slugs.contains_key("code-block"));
+        assert!(parsed.heading_slugs.contains_key("third-level"));
+        assert!(parsed.heading_slugs.contains_key("fourth-level"));
+        assert!(parsed.heading_slugs.contains_key("hello-world-1"));
+    }
+
+    #[test]
+    fn test_heading_source_index_for_slug() {
+        let parsed = parse_markdown_with_options(
+            "# Duplicate\n\nText\n\n## Duplicate\n\nMore text",
+            false,
+            true,
+        );
+        let first = parsed.heading_slugs.get("duplicate").copied();
+        let second = parsed.heading_slugs.get("duplicate-1").copied();
+        assert!(first.is_some());
+        assert!(second.is_some());
+        assert!(first.expect("first slug missing") < second.expect("second slug missing"));
+    }
+
+    #[test]
+    fn test_heading_slug_collision_with_dedup_suffix() {
+        let parsed = parse_markdown_with_options("# Foo\n\n## Foo\n\n## Foo 1", false, true);
+        assert_eq!(parsed.heading_slugs.len(), 3);
+        assert!(parsed.heading_slugs.contains_key("foo"));
+        assert!(parsed.heading_slugs.contains_key("foo-1"));
+        assert!(parsed.heading_slugs.contains_key("foo-1-1"));
+    }
+
+    #[test]
+    fn test_gfm_alert_block_quote_kinds() {
+        use pulldown_cmark::BlockQuoteKind;
+
+        let markdown = "\n> [!NOTE]\n> A note.\n\n> [!TIP]\n> A tip.\n\n> [!IMPORTANT]\n> Important.\n\n> [!WARNING]\n> A warning.\n\n> [!CAUTION]\n> A caution.\n\n> Plain quote.\n";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        let block_quote_kinds: Vec<_> = parsed
+            .events
+            .iter()
+            .filter_map(|(_, event)| match event {
+                Start(BlockQuote(kind)) => Some(*kind),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            block_quote_kinds,
+            vec![
+                Some(BlockQuoteKind::Note),
+                Some(BlockQuoteKind::Tip),
+                Some(BlockQuoteKind::Important),
+                Some(BlockQuoteKind::Warning),
+                Some(BlockQuoteKind::Caution),
+                None,
             ]
         );
     }

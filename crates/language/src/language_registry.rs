@@ -33,7 +33,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{ResultExt, maybe, post_inc};
+use util::{maybe, post_inc};
 
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
@@ -319,6 +319,8 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached.name.clone(), cached.clone());
+        state.version += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     /// Register a fake language server and adapter
@@ -354,6 +356,8 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached_adapter.name(), cached_adapter);
+        state.version += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     /// Register a fake language server (without the adapter)
@@ -1091,18 +1095,6 @@ impl LanguageRegistry {
         &self,
     ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
-    }
-
-    pub async fn delete_server_container(&self, name: LanguageServerName) {
-        log::info!("deleting server container");
-        let Some(dir) = self.language_server_download_dir(&name) else {
-            return;
-        };
-
-        smol::fs::remove_dir_all(dir)
-            .await
-            .context("server container removal")
-            .log_err();
     }
 }
 

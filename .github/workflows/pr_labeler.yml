@@ -37,6 +37,7 @@ jobs:
               '11happy',
               'AidanV',
               'AmaanBilwar',
+              'MostlyKIGuess',
               'OmChillure',
               'Palanikannan1437',
               'Shivansh-25',
@@ -48,7 +49,6 @@ jobs:
               'arjunkomath',
               'austincummings',
               'ayushk-1801',
-              'claiwe',
               'criticic',
               'dongdong867',
               'emamulandalib',
@@ -61,7 +61,6 @@ jobs:
               'loadingalias',
               'marcocondrache',
               'mchisolm0',
-              'mostlyKIGuess',
               'nairadithya',
               'nihalxkumar',
               'notJoon',
@@ -72,6 +71,7 @@ jobs:
               'seanstrom',
               'th0jensen',
               'tommyming',
+              'transitoryangel',
               'virajbhartiya',
             ];
 
@@ -114,7 +114,11 @@ jobs:
               return;
             }
 
-            if (GUILD_MEMBERS.includes(author)) {
+            const authorLower = author.toLowerCase();
+            const isGuildMember = GUILD_MEMBERS.some(
+              (member) => member.toLowerCase() === authorLower
+            );
+            if (isGuildMember) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
