@@ -491,7 +491,9 @@ message Envelope {
     ResolveDocumentLinkResponse resolve_document_link_response = 456;
     GitWorktreeCreatedAt git_worktree_created_at = 457;
     GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
-    TelemetryEvent telemetry_event = 459; // current max
+    TelemetryEvent telemetry_event = 459;
+    LoadCommitTemplate load_commit_template = 460;
+    LoadCommitTemplateResponse load_commit_template_response = 461; // current max
   }
 
   reserved 87 to 88;
