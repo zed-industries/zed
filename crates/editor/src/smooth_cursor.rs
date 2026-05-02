@@ -78,6 +78,7 @@ impl SmoothCursorAnimationState {
         now: Instant,
         color: Hsla,
         settings: &SmoothCursorSettings,
+        line_height: Pixels,
     ) -> SmoothCursorFrame {
         let dt = now
             .duration_since(self.last_frame)
@@ -123,8 +124,21 @@ impl SmoothCursorAnimationState {
         if animating {
             let min_dot = dot.iter().copied().fold(f32::MAX, f32::min);
             let max_dot = dot.iter().copied().fold(f32::MIN, f32::max);
-            let decay_fast = settings.leading_smooth_time.as_secs_f32().clamp(0.01, 2.0);
-            let decay_slow = settings.smooth_time.as_secs_f32().clamp(0.04, 2.0);
+            let mut decay_fast = settings.leading_smooth_time.as_secs_f32().clamp(0.01, 2.0);
+            let mut decay_slow = settings.smooth_time.as_secs_f32().clamp(0.04, 2.0);
+
+            // For large jumps (>= 20 lines), increase the decay times so the
+            // trail remains visible even when smooth scroll is racing the
+            // cursor to the destination.
+            let lh: f32 = line_height.into();
+            if lh > 0.0 {
+                let max_dy = dy.iter().copied().map(f32::abs).fold(0.0f32, f32::max);
+                let line_distance = max_dy / lh;
+                if line_distance >= 20.0 {
+                    decay_fast *= 2.0;
+                    decay_slow *= 2.0;
+                }
+            }
 
             for i in 0..4 {
                 if dx[i] == 0.0 && dy[i] == 0.0 {

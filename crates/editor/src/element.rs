@@ -2020,7 +2020,7 @@ impl EditorElement {
                         } else {
                             state.retarget(target_bounds);
                             let smooth_frame =
-                                state.step(now, player_color.cursor, &smooth_cursor_settings);
+                                state.step(now, player_color.cursor, &smooth_cursor_settings, line_height);
                             any_animated_cursor |= smooth_frame.animating;
                             smooth_trail = smooth_frame.trail;
                         }
