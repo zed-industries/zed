@@ -1043,6 +1043,9 @@ pub mod tests {
                 show_other_hints: Some(allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
@@ -1237,6 +1240,9 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -1347,6 +1353,9 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -1596,6 +1605,9 @@ pub mod tests {
                 show_other_hints: Some(allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -1761,6 +1773,9 @@ pub mod tests {
                     show_other_hints: Some(new_allowed_hint_kinds.contains(&None)),
                     show_background: Some(false),
                     toggle_on_modifiers_press: None,
+                    font_family: None,
+                    font_weight: None,
+                    font_features: None,
                 })
             });
             cx.executor().run_until_parked();
@@ -1808,6 +1823,9 @@ pub mod tests {
                 show_other_hints: Some(another_allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
         cx.executor().run_until_parked();
@@ -1881,6 +1899,9 @@ pub mod tests {
                 show_other_hints: Some(final_allowed_hint_kinds.contains(&None)),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
         cx.executor().run_until_parked();
@@ -1955,6 +1976,9 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -2317,6 +2341,9 @@ pub mod tests {
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -2933,6 +2960,9 @@ let c = 3;"#
                 show_other_hints: Some(false),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -3126,6 +3156,9 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3165,6 +3198,9 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -3276,6 +3312,9 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -3358,6 +3397,9 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3424,6 +3466,9 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -3650,6 +3695,9 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
@@ -4595,6 +4643,9 @@ let c = 3;"#
                 show_other_hints: Some(true),
                 show_background: Some(false),
                 toggle_on_modifiers_press: None,
+                font_family: None,
+                font_weight: None,
+                font_features: None,
             })
         });
 
