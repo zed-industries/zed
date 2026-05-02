@@ -2452,7 +2452,7 @@ fn find_matching_bracket_text_based(
         .find_map(|(ch, char_offset)| get_bracket_pair(ch).map(|info| (info, char_offset)));
 
     if bracket_info.is_none() {
-        return find_matching_c_preprocessor_directive(map, line_range);
+        return find_matching_c_preprocessor_directive(map, line_range, offset);
     }
 
     let (open, close, is_opening) = bracket_info?.0;
@@ -2489,18 +2489,20 @@ fn find_matching_bracket_text_based(
 fn find_matching_c_preprocessor_directive(
     map: &DisplaySnapshot,
     line_range: Range<MultiBufferOffset>,
+    offset: MultiBufferOffset,
 ) -> Option<MultiBufferOffset> {
     let line_start = map
         .buffer_chars_at(line_range.start)
         .skip_while(|(c, _)| *c == ' ' || *c == '\t')
+        .take_while(|(c, char_offset)| *char_offset < line_range.end && !c.is_whitespace())
         .map(|(c, _)| c)
-        .take(6)
         .collect::<String>();
 
-    if line_start.starts_with("#if")
-        || line_start.starts_with("#else")
-        || line_start.starts_with("#elif")
-    {
+    if line_range.start + line_start.len() < offset {
+        return None;
+    }
+
+    if line_start.starts_with("#if") || line_start.starts_with("#el") {
         let mut depth = 0i32;
         for (ch, char_offset) in map.buffer_chars_at(line_range.end) {
             if ch != '\n' {
@@ -2620,6 +2622,26 @@ fn matching(
     let mut line_end = map.next_line_boundary(point).0;
     if line_end == point {
         line_end = map.max_point().to_point(map);
+    }
+
+    let line_range = map.prev_line_boundary(point).0..line_end;
+    let line_range = line_range.start.to_offset(&map.buffer_snapshot())
+        ..line_range.end.to_offset(&map.buffer_snapshot());
+
+    if let Some(preproc_range) =
+        find_matching_c_preprocessor_directive(map, line_range.clone(), offset)
+    {
+        return preproc_range.to_display_point(map);
+    }
+
+    if let Some((open_range, close_range)) = comment_delimiter_pair(map, offset) {
+        if open_range.contains(&offset) {
+            return close_range.start.to_display_point(map);
+        }
+
+        if close_range.contains(&offset) {
+            return open_range.start.to_display_point(map);
+        }
     }
 
     let is_quote_char = |ch: char| matches!(ch, '\'' | '"' | '`');
@@ -3673,48 +3695,53 @@ mod test {
     async fn test_matching_preprocessor_directives(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state(indoc! {r"#ˇif
+        cx.set_shared_state(indoc! {r"
+          #ˇif
 
-            #else
+          #else
 
-            #endif
-            "})
+          #endif
+        "})
             .await;
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"#if
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if
 
           ˇ#else
 
           #endif
-          "});
+        "});
 
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"#if
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if
 
           #else
 
           ˇ#endif
-          "});
+        "});
 
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"ˇ#if
+        cx.shared_state().await.assert_eq(indoc! {r"
+          ˇ#if
 
           #else
 
           #endif
-          "});
+        "});
 
         cx.set_shared_state(indoc! {r"
-            #ˇif
-              #if
-
-              #else
-
-              #endif
+          #ˇif
+            #if
 
             #else
+
             #endif
-            "})
+
+          #else
+
+          #endif
+        "})
             .await;
 
         cx.simulate_shared_keystrokes("%").await;
@@ -3727,8 +3754,9 @@ mod test {
               #endif
 
             ˇ#else
+
             #endif
-            "});
+          "});
 
         cx.simulate_shared_keystrokes("% %").await;
         cx.shared_state().await.assert_eq(indoc! {r"
@@ -3740,8 +3768,9 @@ mod test {
               #endif
 
             #else
+
             #endif
-            "});
+          "});
         cx.simulate_shared_keystrokes("j % % %").await;
         cx.shared_state().await.assert_eq(indoc! {r"
             #if
@@ -3752,8 +3781,28 @@ mod test {
               #endif
 
             #else
+
             #endif
-            "});
+          "});
+
+        cx.set_shared_state(indoc! {r"
+          #if definedˇ(something)
+
+          #endif
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if defined(somethingˇ)
+
+          #endif
+        "});
+        cx.simulate_shared_keystrokes("0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+          #if defined(something)
+
+          ˇ#endif
+        "});
     }
 
     #[gpui::test]
