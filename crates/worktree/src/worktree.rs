@@ -5568,7 +5568,9 @@ async fn discover_ancestor_git_repo(
                 };
             }
 
-            let repo_exclude_abs_path = ancestor_dot_git.join(REPO_EXCLUDE);
+            let dot_git_arc: Arc<Path> = Arc::from(ancestor_dot_git.as_path());
+            let (_, common_dir) = discover_git_paths(&dot_git_arc, fs.as_ref()).await;
+            let repo_exclude_abs_path = common_dir.join(REPO_EXCLUDE);
             if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
                 exclude = Some(Arc::new(repo_exclude));
             }

@@ -2933,6 +2933,81 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
     });
 }
 
+#[gpui::test]
+async fn test_repo_exclude_in_git_worktree(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+
+    // Set up the main repository with info/exclude
+    let main_repo = Path::new(path!("/main-repo"));
+    fs.insert_tree(
+        main_repo,
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": ".env.*"
+                },
+                "worktrees": {
+                    "my-branch": {
+                        "commondir": "../../"
+                    }
+                }
+            },
+        }),
+    )
+    .await;
+
+    // Set up the git worktree: .git is a file pointing to the main repo
+    let worktree_dir = Path::new(path!("/worktree"));
+    fs.insert_tree(
+        worktree_dir,
+        json!({
+            ".git": "gitdir: /main-repo/.git/worktrees/my-branch",
+            ".env.local": "secret=1234",
+            "README.md": "# Hello",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        worktree_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // .env.local should be ignored via the main repo's info/exclude
+    worktree.update(cx, |worktree, _cx| {
+        let expected_excluded_paths = [];
+        let expected_ignored_paths = [".env.local"];
+        let expected_tracked_paths = ["README.md", "src/main.rs"];
+        let expected_included_paths = [];
+
+        check_worktree_entries(
+            worktree,
+            &expected_excluded_paths,
+            &expected_ignored_paths,
+            &expected_tracked_paths,
+            &expected_included_paths,
+        );
+    });
+}
+
 #[track_caller]
 fn check_worktree_entries(
     tree: &Worktree,
