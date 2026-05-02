@@ -23,6 +23,7 @@ use project::search::SearchQuery;
 use settings::Settings;
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
+use ui::utils::WithRemSize;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use util::normalize_path;
@@ -997,6 +998,7 @@ impl Render for MarkdownPreviewView {
             .as_ref()
             .map(|theme| theme.colors().editor_background)
             .unwrap_or_else(|| cx.theme().colors().editor_background);
+        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
@@ -1013,13 +1015,14 @@ impl Render for MarkdownPreviewView {
             .size_full()
             .bg(bg_color)
             .child(
-                div()
-                    .id("markdown-preview-scroll-container")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .p_4()
-                    .child({
+                WithRemSize::new(buffer_font_size).size_full().child(
+                    div()
+                        .id("markdown-preview-scroll-container")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .p_4()
+                        .child({
                         let markdown_element =
                             self.render_markdown_element(&preview_theme, window, cx);
                         let markdown = self.markdown.clone();
@@ -1040,7 +1043,8 @@ impl Render for MarkdownPreviewView {
                                         })
                                 })
                             })
-                    }),
+                        }),
+                ),
             )
             .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }

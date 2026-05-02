@@ -191,7 +191,11 @@ impl MarkdownStyle {
             font_family: Some(body_font_family),
             font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
             font_features: Some(theme_settings.ui_font.features.clone()),
-            font_size: Some(ui_font_size.into()),
+            font_size: Some(if is_preview {
+                rems(1.0).into()
+            } else {
+                ui_font_size.into()
+            }),
             line_height: Some(line_height.into()),
             color: Some(text_color),
             ..Default::default()
@@ -3967,5 +3971,78 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
+    }
+
+    #[gpui::test]
+    fn test_themed_body_font_size_per_font_flavor(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+
+        cx.update(|window, cx| {
+            // Preview body is rem-based so it scales inside the preview's `WithRemSize` subtree.
+            let preview = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+            assert!(
+                matches!(
+                    preview.base_text_style.font_size,
+                    AbsoluteLength::Rems(r) if r == rems(1.0)
+                ),
+                "preview body font_size should be Rems(1.0), got {:?}",
+                preview.base_text_style.font_size
+            );
+
+            // Editor and Agent are not wrapped in `WithRemSize`, so their bodies stay in absolute pixels.
+            for font in [MarkdownFont::Editor, MarkdownFont::Agent] {
+                let style = MarkdownStyle::themed(font, window, cx);
+                assert!(
+                    matches!(style.base_text_style.font_size, AbsoluteLength::Pixels(_)),
+                    "{:?} body font_size should be Pixels(_), got {:?}",
+                    match font {
+                        MarkdownFont::Editor => "Editor",
+                        MarkdownFont::Agent => "Agent",
+                        MarkdownFont::Preview => unreachable!(),
+                    },
+                    style.base_text_style.font_size
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_themed_heading_level_styles_per_font_flavor(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+
+        cx.update(|window, cx| {
+            // Only Agent overrides per-level heading sizes; Editor/Preview rely on rem-based defaults.
+            assert!(
+                MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+                    .heading_level_styles
+                    .is_some()
+            );
+            assert!(
+                MarkdownStyle::themed(MarkdownFont::Editor, window, cx)
+                    .heading_level_styles
+                    .is_none()
+            );
+            assert!(
+                MarkdownStyle::themed(MarkdownFont::Preview, window, cx)
+                    .heading_level_styles
+                    .is_none()
+            );
+        });
     }
 }
