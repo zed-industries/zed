@@ -5,7 +5,8 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
+    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, ImeKind,
+    InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
@@ -2226,6 +2227,18 @@ impl Window {
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
         self.platform_window.set_app_id(app_id);
+    }
+
+    /// Hint the platform IME about the kind of text the focused widget
+    /// expects. On platforms with a soft keyboard (Android, iOS, web)
+    /// this drives the keyboard layout; on desktop it's a no-op. See
+    /// [`ImeKind`] for the supported variants.
+    ///
+    /// Built-in input widgets (e.g. [`crate::TextInput`]) call this on
+    /// focus. Custom widgets that want the same behaviour should call
+    /// it from their focus handler.
+    pub fn set_ime_kind(&self, kind: ImeKind) {
+        self.platform_window.set_ime_kind(kind);
     }
 
     /// Sets the window background appearance.

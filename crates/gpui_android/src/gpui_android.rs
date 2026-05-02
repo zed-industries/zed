@@ -92,9 +92,14 @@
 mod android;
 
 pub use android::{
-    AndroidPlatform, android_app, current_platform, pick_directory, pick_files, pick_images,
-    set_android_app, widgets,
+    AndroidPlatform, android_app, current_platform, ime, keyboard_bottom_inset, pick_directory,
+    pick_files, pick_images, request_ime_input_type, set_android_app,
 };
+
+/// Re-exported from [`android_activity::input`] so consumers can pass an
+/// `InputType` to [`request_ime_input_type`] without having to add
+/// `android-activity` to their own `Cargo.toml`.
+pub use android_activity::input::{ImeOptions, InputType, TextInputAction};
 
 /// Re-export of [`android_activity::AndroidApp`] so applications don't have
 /// to add `android-activity` to their `Cargo.toml` directly when wiring up

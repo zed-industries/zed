@@ -140,7 +140,7 @@ fn do_write<'local>(
     let label = env.new_string("gpui").context("alloc clipboard label")?;
     let value = env.new_string(text).context("alloc clipboard text")?;
     let clip_data_class = env
-        .find_class(jni_str!("android.content.ClipData"))
+        .find_class(jni_str!("android/content/ClipData"))
         .context("FindClass android.content.ClipData")?;
     let clip = env
         .call_static_method(

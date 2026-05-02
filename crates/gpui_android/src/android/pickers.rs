@@ -215,7 +215,7 @@ fn launch_pick_images<'local>(
 fn build_intent<'local>(env: &mut Env<'local>, action: &str) -> Result<JObject<'local>> {
     let action_jstr = env.new_string(action).context("alloc Intent action")?;
     let intent_class = env
-        .find_class(jni_str!("android.content.Intent"))
+        .find_class(jni_str!("android/content/Intent"))
         .context("FindClass android.content.Intent")?;
     env.new_object(
         &intent_class,
@@ -322,7 +322,7 @@ fn string_array<'local>(
 ) -> Result<JObjectArray<'local>> {
     let initial = env.new_string("").context("alloc empty initial string")?;
     let array = env
-        .new_object_array(items.len() as jint, jni_str!("java.lang.String"), &initial)
+        .new_object_array(items.len() as jint, jni_str!("java/lang/String"), &initial)
         .context("alloc String[]")?;
     for (i, item) in items.iter().enumerate() {
         let jstr = env.new_string(item).context("alloc array element")?;

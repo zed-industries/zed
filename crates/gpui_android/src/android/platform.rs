@@ -817,6 +817,9 @@ impl PlatformWindow for AndroidWindowHandle {
     fn update_ime_position(&self, bounds: gpui::Bounds<gpui::Pixels>) {
         self.0.update_ime_position(bounds)
     }
+    fn set_ime_kind(&self, kind: gpui::ImeKind) {
+        self.0.set_ime_kind(kind)
+    }
     fn play_system_bell(&self) {
         self.0.play_system_bell()
     }

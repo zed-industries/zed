@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use android_activity::input::{ImeOptions, InputType, TextInputAction, TextInputState, TextSpan};
+use android_activity::input::{ImeOptions, TextInputState, TextSpan};
 use anyhow::{Context as _, Result};
 use gpui::{
     AnyWindowHandle, AtlasKey, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
@@ -310,7 +310,19 @@ impl AndroidWindow {
     /// Called from [`super::AndroidPlatform`] when Android publishes a new
     /// surface (`MainEvent::InitWindow` or `MainEvent::Resume` with a
     /// non-null window). Initialises a [`WgpuRenderer`] tied to the new
-    /// surface.
+    /// surface, or — if a renderer already exists from a previous
+    /// `attach_surface` cycle — *re-binds* the existing one to the new
+    /// surface via [`WgpuRenderer::replace_surface`].
+    ///
+    /// **Why re-bind instead of recreate.** Returning from a child
+    /// Activity (file picker, photo picker, Settings, …) tears down the
+    /// `ANativeWindow` and gives us a fresh one. Dropping the renderer
+    /// in that path is fatal: GPUI's Scene caches `AtlasTextureId`s into
+    /// the *old* atlas, and the next paint after re-attach asks the new
+    /// atlas about texture indices it doesn't have, which panics with
+    /// "index out of bounds" inside [`WgpuAtlas::get_texture_info`].
+    /// `replace_surface` keeps the device, queue, atlas and pipelines —
+    /// only the surface itself swaps out, so the cached IDs stay valid.
     pub(crate) fn attach_surface(
         &self,
         native_window: NativeWindow,
@@ -325,33 +337,55 @@ impl AndroidWindow {
             transparent: false,
             preferred_present_mode: Some(gpui_wgpu::wgpu::PresentMode::Mailbox),
         };
-        let renderer = WgpuRenderer::new(self.gpu_context.clone(), &surface, config, None)
-            .context("failed to initialise WgpuRenderer for the Android surface")?;
 
-        let gpu_specs = renderer.gpu_specs();
-        let sprite_atlas: Arc<dyn PlatformAtlas> = renderer.sprite_atlas().clone();
         let mut state = self.state.borrow_mut();
         state.physical_size = physical_size;
-        state.renderer = Some(renderer);
-        state.sprite_atlas = Some(sprite_atlas);
-        state.gpu_specs = Some(gpu_specs);
+        if let Some(renderer) = state.renderer.as_mut() {
+            // Same renderer / device / atlas, fresh surface. Pull the
+            // wgpu instance out of the shared `GpuContext`; it's the
+            // same one the renderer was built with, so the device
+            // recognises it.
+            let context_borrow = self.gpu_context.borrow();
+            let context = context_borrow
+                .as_ref()
+                .context("WgpuContext not initialised on attach_surface re-bind")?;
+            renderer
+                .replace_surface(&surface, config, &context.instance)
+                .context("failed to re-bind Android surface on resume")?;
+        } else {
+            // First attach in the window's lifetime — build the renderer.
+            let renderer = WgpuRenderer::new(self.gpu_context.clone(), &surface, config, None)
+                .context("failed to initialise WgpuRenderer for the Android surface")?;
+            let gpu_specs = renderer.gpu_specs();
+            let sprite_atlas: Arc<dyn PlatformAtlas> = renderer.sprite_atlas().clone();
+            state.renderer = Some(renderer);
+            state.sprite_atlas = Some(sprite_atlas);
+            state.gpu_specs = Some(gpu_specs);
+        }
         Ok(())
     }
 
     /// Called from [`super::AndroidPlatform`] on `MainEvent::TerminateWindow`
-    /// or `MainEvent::Pause` to drop the GPU surface synchronously before
-    /// returning to the JVM (the wgpu/Vulkan-on-Android contract).
+    /// or `MainEvent::Pause` to release surface-bound GPU resources before
+    /// the JVM destroys the `ANativeWindow`.
+    ///
+    /// **Keeps the renderer alive** — only the surface-bound state inside
+    /// it is unconfigured. The atlas, device, queue and pipelines all
+    /// survive the trip, so when [`Self::attach_surface`] runs next
+    /// (after the picker / Settings activity returns), GPUI's cached
+    /// scene sprites resolve to the same atlas they were uploaded to.
     pub(crate) fn detach_surface(&self) {
         self.surface_alive.set(false);
         let mut state = self.state.borrow_mut();
-        // Drop renderer first; this releases the wgpu surface, which the
-        // adapter requires before we drop the underlying NativeWindow.
-        state.renderer = None;
-        // Fall back to a NoopAtlas so any subsequent `sprite_atlas()` call
-        // (e.g. during a redraw that arrives between TerminateWindow and
-        // process shutdown) hands callers a real `Arc<dyn PlatformAtlas>`
-        // instead of `None`/panicking.
-        state.sprite_atlas = Some(Arc::new(NoopAtlas) as Arc<dyn PlatformAtlas>);
+        if let Some(renderer) = state.renderer.as_mut() {
+            // Just unconfigure — `destroy()` would drop the GPU
+            // resources, and `replace_surface` on next attach would
+            // panic without them. The wgpu `Surface` inside the
+            // renderer still holds an internal refcount on the
+            // `ANativeWindow` until `replace_surface` swaps it out, so
+            // dropping our own `WindowSurface` reference here is safe.
+            renderer.unconfigure_surface();
+        }
         drop(state);
         *self.surface.lock() = None;
     }
@@ -713,7 +747,7 @@ impl AndroidWindow {
             compose_changed,
         );
 
-        if text_changed {
+        let edited = if text_changed {
             let inserted_utf16_len = utf16_len(&inserted);
             let inserted_end_utf16 = diff_range.start + inserted_utf16_len;
             // Mark the just-inserted span if the IME's compose region
@@ -736,17 +770,77 @@ impl AndroidWindow {
                 // up on marking — falling through here is better than
                 // mis-aligning the marked region with the document.
             }
+            true
         } else if compose_changed && new_compose.is_none() {
             // Pure compose-region clear (e.g. IME finalised without text
             // change). Drop any existing marked range so subsequent edits
             // don't keep underlining stale text.
             handler_ref.unmark_text();
+            true
+        } else {
+            false
+        };
+
+        // After applying the IME's delta, check whether the editor's
+        // post-edit text actually matches what the IME sent us. If it
+        // does (the common case — normal typing), do nothing: the IME's
+        // view and the editor's view are already in sync, and pushing
+        // anything back would cancel the IME's composing state mid-word
+        // and make Samsung's keyboard re-commit its in-progress word as
+        // fresh text (random duplicate letters).
+        //
+        // If they differ — number-field filtering, max-length truncation,
+        // regex validation, etc. — push the editor's authoritative state
+        // so the next IME delta diffs against the editor's view, not the
+        // IME's stale buffer. Composition has to be cancelled in this
+        // path because the editor's post-filter content can't be a valid
+        // continuation of the IME's pre-filter compose region anyway.
+        let edited_state = if edited {
+            let mut adjusted: Option<Range<usize>> = None;
+            let editor_text = handler_ref
+                .text_for_range(0..usize::MAX, &mut adjusted)
+                .unwrap_or_default();
+            if editor_text == new_text {
+                None
+            } else {
+                let selection = handler_ref
+                    .selected_text_range(true)
+                    .map(|s| s.range)
+                    .unwrap_or(0..0);
+                let utf16_total = utf16_len(&editor_text);
+                let sel_start = selection.start.min(utf16_total);
+                let sel_end = selection.end.min(utf16_total);
+                Some(TextInputState {
+                    text: editor_text,
+                    selection: TextSpan {
+                        start: sel_start,
+                        end: sel_end,
+                    },
+                    compose_region: None,
+                })
+            }
+        } else {
+            None
+        };
+
+        // Restore the handler so the IME push (which can echo a TextEvent
+        // synchronously on some Android versions) can re-enter
+        // dispatch_text_event without panicking.
+        {
+            let mut state_borrow = self.state.borrow_mut();
+            state_borrow.input_handler = handler;
+            state_borrow.last_ime_state = Some(snapshot);
         }
 
-        // Restore the handler and stash the new snapshot for the next diff.
-        let mut state_borrow = self.state.borrow_mut();
-        state_borrow.input_handler = handler;
-        state_borrow.last_ime_state = Some(snapshot);
+        if let Some(authoritative) = edited_state
+            && let Some(app) = super::android_app()
+        {
+            let our_snapshot = TextInputStateSnapshot::from(&authoritative);
+            app.set_text_input_state(authoritative);
+            // Treat our push as the new "last delivery" so the IME's echo
+            // diffs to a no-op instead of replaying the same edit.
+            self.state.borrow_mut().last_ime_state = Some(our_snapshot);
+        }
     }
 
     pub(crate) fn dispatch_request_frame(&self, options: RequestFrameOptions) {
@@ -809,20 +903,34 @@ impl AndroidWindow {
     pub(crate) fn reconcile_keyboard(&self) {
         let want_visible = self.state.borrow().input_handler.is_some();
         let already_visible = self.state.borrow().keyboard_visible;
-        if want_visible == already_visible {
-            return;
-        }
+        // Drain the widget-supplied IME descriptor every iteration so that
+        // focus-switching between e.g. a text field and a number field
+        // updates the keyboard layout even when the IME was already up
+        // (which short-circuits the visibility-transition branch below).
+        let requested = super::ime::take_requested_ime_type();
         let Some(app) = super::android_app() else {
             return;
         };
+        if let Some((input_type, action)) = requested {
+            app.set_ime_editor_info(input_type, action, ImeOptions::IME_FLAG_NO_FULLSCREEN);
+            // Editor-info changes alone are silently ignored by Samsung's
+            // IME (and others) until `InputMethodManager.restartInput`
+            // runs — without this call, switching from a text field to a
+            // number field while the keyboard is up wouldn't change the
+            // keyboard layout. Cheap to call always; restartInput on a
+            // visible IME is what natively-built EditTexts do too.
+            super::ime::restart_input(&app);
+        }
+        if want_visible == already_visible {
+            return;
+        }
         if want_visible {
-            app.set_ime_editor_info(
-                InputType::TYPE_CLASS_TEXT
-                    | InputType::TYPE_TEXT_FLAG_MULTI_LINE
-                    | InputType::TYPE_TEXT_FLAG_NO_SUGGESTIONS,
-                TextInputAction::None,
-                ImeOptions::IME_FLAG_NO_FULLSCREEN,
-            );
+            // No widget claimed this focus → apply the default text
+            // editor info so the IME has *something* to work with.
+            if requested.is_none() {
+                let (input_type, action, options) = super::ime::default_descriptor();
+                app.set_ime_editor_info(input_type, action, options);
+            }
             app.show_soft_input(false);
             // Sync the IME's view of the editor with what the input handler
             // thinks is current. Without this the IME starts with an empty
@@ -1174,6 +1282,44 @@ impl PlatformWindow for AndroidWindow {
         // where the focused field sits so the run loop can keep it visible
         // when the keyboard appears.
         self.state.borrow_mut().focused_field_bottom_y = Some(bounds.bottom());
+    }
+
+    fn set_ime_kind(&self, kind: gpui::ImeKind) {
+        // Translate GPUI's portable hint to Android's `InputType` /
+        // `TextInputAction` pair and stash it in the IME module's
+        // thread-local. The platform's `reconcile_keyboard` reads it
+        // on the next iteration, calls `set_ime_editor_info`, then
+        // `restartInput` so the soft keyboard actually swaps layouts
+        // even if it was already up.
+        use android_activity::input::{InputType, TextInputAction};
+        let (input_type, action) = match kind {
+            gpui::ImeKind::Text => (
+                InputType::TYPE_CLASS_TEXT
+                    | InputType::TYPE_TEXT_FLAG_MULTI_LINE
+                    | InputType::TYPE_TEXT_FLAG_NO_SUGGESTIONS,
+                TextInputAction::None,
+            ),
+            gpui::ImeKind::Number => (
+                InputType::TYPE_CLASS_NUMBER
+                    | InputType::TYPE_NUMBER_FLAG_DECIMAL
+                    | InputType::TYPE_NUMBER_FLAG_SIGNED,
+                TextInputAction::Done,
+            ),
+            gpui::ImeKind::Email => (
+                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+                TextInputAction::Next,
+            ),
+            gpui::ImeKind::Url => (
+                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_VARIATION_URI,
+                TextInputAction::Go,
+            ),
+            gpui::ImeKind::Phone => (InputType::TYPE_CLASS_PHONE, TextInputAction::Done),
+            gpui::ImeKind::Password => (
+                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_VARIATION_PASSWORD,
+                TextInputAction::Done,
+            ),
+        };
+        super::ime::request_ime_input_type(input_type, action);
     }
 
     fn play_system_bell(&self) {

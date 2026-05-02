@@ -154,7 +154,7 @@ fn open_keystore<'local>(env: &mut Env<'local>) -> Result<JObject<'local>> {
         .new_string("AndroidKeyStore")
         .context("alloc provider")?;
     let class = env
-        .find_class(jni_str!("java.security.KeyStore"))
+        .find_class(jni_str!("java/security/KeyStore"))
         .context("FindClass KeyStore")?;
     let store = env
         .call_static_method(
@@ -181,7 +181,7 @@ fn generate_key<'local>(env: &mut Env<'local>, alias: &str) -> Result<()> {
     //     new KeyGenParameterSpec.Builder(alias, ENCRYPT|DECRYPT);
     let alias_jstr = env.new_string(alias).context("alloc alias")?;
     let builder_class = env
-        .find_class(jni_str!("android.security.keystore.KeyGenParameterSpec$Builder"))
+        .find_class(jni_str!("android/security/keystore/KeyGenParameterSpec$Builder"))
         .context("FindClass KeyGenParameterSpec.Builder")?;
     // KeyProperties.PURPOSE_ENCRYPT (1) | KeyProperties.PURPOSE_DECRYPT (2) = 3
     let builder = env
@@ -196,7 +196,7 @@ fn generate_key<'local>(env: &mut Env<'local>, alias: &str) -> Result<()> {
         .new_string("GCM")
         .context("alloc GCM mode")?;
     let block_modes_array = env
-        .new_object_array(1, jni_str!("java.lang.String"), &block_modes)
+        .new_object_array(1, jni_str!("java/lang/String"), &block_modes)
         .context("alloc String[] for block modes")?;
     env.call_method(
         &builder,
@@ -212,7 +212,7 @@ fn generate_key<'local>(env: &mut Env<'local>, alias: &str) -> Result<()> {
         .new_string("NoPadding")
         .context("alloc NoPadding")?;
     let padding_array = env
-        .new_object_array(1, jni_str!("java.lang.String"), &padding)
+        .new_object_array(1, jni_str!("java/lang/String"), &padding)
         .context("alloc String[] for padding")?;
     env.call_method(
         &builder,
@@ -252,7 +252,7 @@ fn generate_key<'local>(env: &mut Env<'local>, alias: &str) -> Result<()> {
         .new_string("AndroidKeyStore")
         .context("alloc provider")?;
     let gen_class = env
-        .find_class(jni_str!("javax.crypto.KeyGenerator"))
+        .find_class(jni_str!("javax/crypto/KeyGenerator"))
         .context("FindClass KeyGenerator")?;
     let generator = env
         .call_static_method(
@@ -394,7 +394,7 @@ fn init_cipher<'local>(
         .new_string("AES/GCM/NoPadding")
         .context("alloc transform")?;
     let cipher_class = env
-        .find_class(jni_str!("javax.crypto.Cipher"))
+        .find_class(jni_str!("javax/crypto/Cipher"))
         .context("FindClass Cipher")?;
     let cipher = env
         .call_static_method(
@@ -412,7 +412,7 @@ fn init_cipher<'local>(
     if let Some(iv_bytes) = iv {
         let iv_array = new_byte_array(env, iv_bytes)?;
         let spec_class = env
-            .find_class(jni_str!("javax.crypto.spec.GCMParameterSpec"))
+            .find_class(jni_str!("javax/crypto/spec/GCMParameterSpec"))
             .context("FindClass GCMParameterSpec")?;
         let spec = env
             .new_object(

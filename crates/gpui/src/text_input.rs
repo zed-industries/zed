@@ -1,106 +1,82 @@
-//! Reusable Android-aware GPUI widgets.
+//! A built-in single-line text input widget.
 //!
-//! Apps targeting Android often need UI primitives that hand back a
-//! [`PlatformInputHandler`] so the soft keyboard pops on tap. The existing
-//! GPUI examples ship per-example text fields, but each one duplicates the
-//! same UTF-8 / UTF-16 conversion logic, IME marking handling and focus
-//! plumbing. This module collapses that into a single
-//! [`TextField`] consumers can drop into any view.
+//! [`TextInput`] is the canonical reusable input GPUI ships out of the
+//! box — most apps shouldn't need to roll their own. It hooks GPUI's
+//! [`EntityInputHandler`] / [`PlatformInputHandler`] bridge so the
+//! platform's IME (macOS NSTextInput, Linux IBus / IME-kit, Windows
+//! TSF, Android `TextInputState`, web `<input>`) drives the field
+//! without per-platform widget code.
+//!
+//! ## Usage
 //!
 //! ```ignore
-//! use gpui_android::widgets::{FieldKind, TextField};
+//! use gpui::{Context, Entity, ImeKind, ScrollAnchor, ScrollHandle, TextInput, div, prelude::*};
 //!
 //! struct Form {
-//!     name: Entity<TextField>,
-//!     amount: Entity<TextField>,
+//!     name: Entity<TextInput>,
+//!     amount: Entity<TextInput>,
+//!     scroll: ScrollHandle,
 //! }
 //!
 //! impl Form {
 //!     fn new(cx: &mut Context<Self>) -> Self {
-//!         let name = cx.new(|cx| TextField::new(cx, "your name", FieldKind::Text));
-//!         let amount = cx.new(|cx| TextField::new(cx, "0.00", FieldKind::Number));
+//!         let scroll = ScrollHandle::new();
+//!         let name_anchor = ScrollAnchor::for_handle(scroll.clone());
+//!         let amount_anchor = ScrollAnchor::for_handle(scroll.clone());
+//!         let name = cx.new(|cx| {
+//!             TextInput::new(cx)
+//!                 .placeholder("Your name")
+//!                 .scroll_anchor(name_anchor)
+//!         });
+//!         let amount = cx.new(|cx| {
+//!             TextInput::new(cx)
+//!                 .placeholder("Amount")
+//!                 .ime_kind(ImeKind::Number)
+//!                 .scroll_anchor(amount_anchor)
+//!         });
 //!         cx.observe(&name, |_, _, cx| cx.notify()).detach();
 //!         cx.observe(&amount, |_, _, cx| cx.notify()).detach();
-//!         Self { name, amount }
+//!         Self { name, amount, scroll }
 //!     }
 //! }
 //! ```
 //!
-//! ## Why widget owns the focus handle
+//! ## What you get
 //!
-//! GPUI's IME bridge keys off `FocusHandle`s — see [`Window::handle_input`].
-//! If the parent view owned the handle and merely passed it to the widget on
-//! render, the platform layer would still bind input to the parent (because
-//! that's the handle that's "focused"), and `EntityInputHandler` would never
-//! be called on the field. Owning the handle inside [`TextField`] keeps the
-//! IME → field path straight.
+//! - Tap / click to focus → soft keyboard pops on Android (no extra glue
+//!   needed), or hardware keyboard input on desktop.
+//! - Composition / preedit support (CJK IMEs, voice input,
+//!   autocorrect): handled through [`EntityInputHandler::replace_and_mark_text_in_range`].
+//! - Selection, caret, placeholder, theme.
+//! - Optional [`ScrollAnchor`] so tapping the field scrolls it into the
+//!   parent scrollable's viewport — important on mobile to keep the
+//!   field above the soft keyboard.
+//! - Optional [`ImeKind`] hint so soft keyboards open with the right
+//!   layout (numeric pad, email keyboard, …). On desktop the hint is a
+//!   no-op (hardware keyboards have one layout).
 //!
-//! [`PlatformInputHandler`]: gpui::PlatformInputHandler
-//! [`Window::handle_input`]: gpui::Window::handle_input
+//! ## What you *don't* get out of the box
+//!
+//! Multi-line editing, syntax highlighting, drag-select, undo/redo,
+//! keyboard-shortcut-driven cursor movement (cmd-left, etc.) — these
+//! belong in higher-level editor widgets. `TextInput` covers the
+//! "form field" use case; for an editor surface use `editor::Editor`.
 
 use std::ops::Range;
 
-use gpui::{
+use crate::{
     App, Bounds, Context, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, Focusable, GlobalElementId, Hsla, IntoElement, LayoutId, MouseButton,
-    MouseDownEvent, PaintQuad, Pixels, Render, ShapedLine, SharedString, Style, TextRun,
-    UTF16Selection, Window, div, fill, hsla, point, prelude::*, px, relative, rgb, size,
+    FocusHandle, Focusable, GlobalElementId, Hsla, ImeKind, IntoElement, LayoutId, MouseButton,
+    MouseDownEvent, PaintQuad, Pixels, Point, Render, ScrollAnchor, ShapedLine, SharedString,
+    Style, TextRun, UTF16Selection, Window, div, fill, hsla, point, prelude::*, px, relative, rgb,
+    size,
 };
 
-/// Variant hint for the field. `Number` filters the IME-delivered text down
-/// to digit / sign / decimal characters at write time.
-///
-/// The soft keyboard *layout* itself stays the default text layout: switching
-/// the keyboard to a numeric pad requires per-focus `InputType`, which the
-/// `gpui_android` IME bridge doesn't yet plumb through. Applying the filter
-/// at write time at least keeps the captured string parseable as a number.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FieldKind {
-    /// Free-form text. No filter; whatever the IME inserts is kept.
-    Text,
-    /// Decimal numbers. Drops everything except ASCII digits, `-` and `.` at
-    /// IME write time.
-    Number,
-}
-
-/// Single-line text field that participates in GPUI's IME bridge.
-///
-/// Tapping the field focuses its [`FocusHandle`] which, on Android, causes
-/// `gpui_android` to push a `PlatformInputHandler` to the platform on the
-/// next paint and pop the soft keyboard.
-///
-/// `content` and `placeholder` are exposed as public fields so callers can
-/// read the current value or push an initial value before the user types.
-/// External edits should pair with `cx.notify()` so any observers re-render.
-pub struct TextField {
-    /// Focus owned by the field. See module docs for why the field — not
-    /// the parent view — owns this.
-    pub focus_handle: FocusHandle,
-    /// Current content. Empty `SharedString` renders the placeholder.
-    pub content: SharedString,
-    /// Placeholder shown when `content` is empty.
-    pub placeholder: SharedString,
-    /// Whether the field filters IME input as a decimal number.
-    pub kind: FieldKind,
-    /// Selection range in **UTF-8 byte offsets** (not UTF-16 code units —
-    /// callers from the IME side go through `range_from_utf16`).
-    selected_range: Range<usize>,
-    /// Pending IME composition region, in UTF-8 byte offsets.
-    marked_range: Option<Range<usize>>,
-    /// Cached layout from the last paint, used by `bounds_for_range` and
-    /// `character_index_for_point`.
-    last_layout: Option<ShapedLine>,
-    last_bounds: Option<Bounds<Pixels>>,
-    /// Theme colours applied to the field's chrome. `None` falls back to a
-    /// neutral dark theme.
-    theme: Option<TextFieldTheme>,
-}
-
-/// Visual theme for a [`TextField`]. All colours are in GPUI's `Hsla`. Use
-/// `TextFieldTheme::default()` for the bundled neutral dark theme, or
-/// construct one explicitly to integrate with your app's palette.
+/// Visual theme for a [`TextInput`]. All colours are in GPUI's `Hsla`.
+/// Use [`TextInputTheme::default`] for the bundled neutral dark theme,
+/// or construct one explicitly to integrate with your app's palette.
 #[derive(Clone, Copy, Debug)]
-pub struct TextFieldTheme {
+pub struct TextInputTheme {
     /// Text colour for entered content.
     pub text: Hsla,
     /// Text colour for the placeholder shown when content is empty.
@@ -113,13 +89,13 @@ pub struct TextFieldTheme {
     pub border: Hsla,
     /// Border colour for the focused field.
     pub border_focused: Hsla,
-    /// Cursor colour, painted only while the field is focused.
+    /// Caret colour, painted only while the field is focused.
     pub cursor: Hsla,
     /// Selection-highlight fill for selected text.
     pub selection: Hsla,
 }
 
-impl Default for TextFieldTheme {
+impl Default for TextInputTheme {
     fn default() -> Self {
         Self {
             text: hsla(0.0, 0.0, 0.95, 1.0),
@@ -134,43 +110,105 @@ impl Default for TextFieldTheme {
     }
 }
 
-impl TextField {
-    /// Allocate a new field with the given placeholder + filter kind. The
-    /// returned `TextField` is meant to be wrapped in `cx.new(...)` to
-    /// yield an `Entity<TextField>`.
-    pub fn new(
-        cx: &mut Context<Self>,
-        placeholder: impl Into<SharedString>,
-        kind: FieldKind,
-    ) -> Self {
+/// Single-line text input that participates in GPUI's IME bridge.
+///
+/// See the module-level docs for usage. Construct via [`TextInput::new`]
+/// and configure with the chained builder methods. Read / write the
+/// current value through [`TextInput::content`] /
+/// [`TextInput::set_content`].
+pub struct TextInput {
+    focus_handle: FocusHandle,
+    content: SharedString,
+    placeholder: SharedString,
+    ime_kind: ImeKind,
+    theme: TextInputTheme,
+    /// Selection range in **UTF-8 byte offsets** (not UTF-16 code units —
+    /// IME ranges are translated through `range_from_utf16`).
+    selected_range: Range<usize>,
+    /// Pending IME composition region, in UTF-8 byte offsets.
+    marked_range: Option<Range<usize>>,
+    /// Cached layout from the last paint, used by [`bounds_for_range`]
+    /// and [`character_index_for_point`].
+    last_layout: Option<ShapedLine>,
+    last_bounds: Option<Bounds<Pixels>>,
+    /// Optional [`ScrollAnchor`] so taps auto-scroll the field into the
+    /// parent's viewport. Required on mobile to keep the field above
+    /// the soft keyboard.
+    scroll_anchor: Option<ScrollAnchor>,
+}
+
+impl TextInput {
+    /// Allocate a new field. Wrap the result in `cx.new(|cx| TextInput::new(cx))`
+    /// to obtain an `Entity<TextInput>` and configure with the builder
+    /// methods on the resulting binding.
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             content: SharedString::default(),
-            placeholder: placeholder.into(),
-            kind,
+            placeholder: SharedString::default(),
+            ime_kind: ImeKind::Text,
+            theme: TextInputTheme::default(),
             selected_range: 0..0,
             marked_range: None,
             last_layout: None,
             last_bounds: None,
-            theme: None,
+            scroll_anchor: None,
         }
     }
 
-    /// Override the visual theme. Call before mounting the field if you need
-    /// colours different from the default neutral dark scheme.
-    pub fn with_theme(mut self, theme: TextFieldTheme) -> Self {
-        self.theme = Some(theme);
+    /// Set the placeholder text shown while [`content`](Self::content)
+    /// is empty.
+    pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
+        self.placeholder = placeholder.into();
         self
     }
 
-    /// Replace the field's content programmatically. Resets selection to the
-    /// end and clears any in-flight IME composition. Call `cx.notify()` after
-    /// to schedule a redraw.
+    /// Set the IME kind hint requested when the field gains focus. On
+    /// soft-keyboard platforms this drives the keyboard layout; on
+    /// desktop it's a no-op. Defaults to [`ImeKind::Text`].
+    pub fn ime_kind(mut self, kind: ImeKind) -> Self {
+        self.ime_kind = kind;
+        self
+    }
+
+    /// Override the visual theme. Defaults to [`TextInputTheme::default`].
+    pub fn theme(mut self, theme: TextInputTheme) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    /// Bind a [`ScrollAnchor`] so the field auto-scrolls itself into
+    /// its parent's viewport whenever it takes focus. The scrollable
+    /// container should `track_scroll(&handle)` with the same handle
+    /// the anchor was built from.
+    ///
+    /// Without an anchor wired up, opening the soft keyboard on mobile
+    /// can leave the focused field hidden behind the IME — the platform
+    /// shrinks the window bounds, but the existing scroll offset of
+    /// the parent doesn't auto-adjust.
+    pub fn scroll_anchor(mut self, anchor: ScrollAnchor) -> Self {
+        self.scroll_anchor = Some(anchor);
+        self
+    }
+
+    /// Read the field's current content.
+    pub fn content(&self) -> &SharedString {
+        &self.content
+    }
+
+    /// Replace the field's content programmatically. Resets the caret
+    /// to the end and clears any in-flight IME composition. Pair with
+    /// `cx.notify()` to schedule a redraw.
     pub fn set_content(&mut self, content: impl Into<SharedString>) {
         self.content = content.into();
         let len = self.content.len();
         self.selected_range = len..len;
         self.marked_range = None;
+    }
+
+    /// Read the field's IME kind hint.
+    pub fn current_ime_kind(&self) -> ImeKind {
+        self.ime_kind
     }
 
     fn cursor_offset(&self) -> usize {
@@ -183,10 +221,24 @@ impl TextField {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Tapping the field focuses it; focus triggers
-        // `PlatformWindow::set_input_handler` on the next paint, which on
-        // Android pops the soft keyboard.
+        // 1. Focus the field — GPUI's IME bridge sees the new focus
+        //    and asks the platform to surface the keyboard / wire up
+        //    the input handler.
         window.focus(&self.focus_handle, cx);
+        // 2. Tell the platform what keyboard layout to request. On
+        //    desktop this is a no-op; on Android / iOS / web it picks
+        //    the right layout (numeric pad, email keyboard, …).
+        window.set_ime_kind(self.ime_kind);
+        // 3. Schedule a scroll-into-view if a [`ScrollAnchor`] was
+        //    wired. The soft-keyboard slide-up can take ~250ms during
+        //    which window bounds shrink, so re-fire across the next
+        //    handful of frames — one of them lands after the IME has
+        //    settled and the parent's bounds are correct.
+        if let Some(anchor) = self.scroll_anchor.clone() {
+            for _ in 0..18 {
+                anchor.scroll_to(window, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -225,8 +277,10 @@ impl TextField {
     }
 
     /// Walk down to the nearest UTF-8 char boundary on or before `idx`,
-    /// clamping to `[0, content.len()]`. Used to keep stale selection /
-    /// marked ranges from panicking when sliced after a content change.
+    /// clamping to `[0, content.len()]`. Used to keep stale selection
+    /// or marked ranges from panicking when sliced after a content
+    /// change (e.g. an IME delta arriving for a position that no
+    /// longer exists).
     fn snap_to_boundary(&self, idx: usize) -> usize {
         let len = self.content.len();
         let mut idx = idx.min(len);
@@ -236,29 +290,20 @@ impl TextField {
         idx
     }
 
-    /// Clamp a byte range against `content`, snapping each endpoint to the
-    /// nearest valid char boundary and ensuring `start <= end`. Returning a
-    /// well-formed range here is what keeps the slicing in
-    /// [`Self::replace_text_in_range`] from panicking when the range was
-    /// derived from a stale `selected_range` or `marked_range`.
     fn clamp_range(&self, range: Range<usize>) -> Range<usize> {
         let start = self.snap_to_boundary(range.start);
         let end = self.snap_to_boundary(range.end).max(start);
         start..end
     }
-
-    fn theme(&self) -> TextFieldTheme {
-        self.theme.unwrap_or_default()
-    }
 }
 
-impl Focusable for TextField {
+impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl EntityInputHandler for TextField {
+impl EntityInputHandler for TextInput {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -305,24 +350,12 @@ impl EntityInputHandler for TextField {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let filtered_storage;
-        let new_text = if matches!(self.kind, FieldKind::Number) {
-            filtered_storage = new_text
-                .chars()
-                .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
-                .collect::<String>();
-            filtered_storage.as_str()
-        } else {
-            new_text
-        };
-
         let range = range_utf16
             .as_ref()
             .map(|r| self.range_from_utf16(r))
             .or_else(|| self.marked_range.clone())
             .unwrap_or_else(|| self.selected_range.clone());
         let range = self.clamp_range(range);
-
         let mut next = String::with_capacity(
             self.content.len() - (range.end - range.start) + new_text.len(),
         );
@@ -330,7 +363,6 @@ impl EntityInputHandler for TextField {
         next.push_str(new_text);
         next.push_str(&self.content[range.end..]);
         self.content = next.into();
-
         let cursor = range.start + new_text.len();
         self.selected_range = cursor..cursor;
         self.marked_range = None;
@@ -351,7 +383,6 @@ impl EntityInputHandler for TextField {
             .or_else(|| self.marked_range.clone())
             .unwrap_or_else(|| self.selected_range.clone());
         let range = self.clamp_range(range);
-
         let mut next = String::with_capacity(
             self.content.len() - (range.end - range.start) + new_text.len(),
         );
@@ -359,50 +390,31 @@ impl EntityInputHandler for TextField {
         next.push_str(new_text);
         next.push_str(&self.content[range.end..]);
         self.content = next.into();
-
         if !new_text.is_empty() {
             self.marked_range = Some(range.start..range.start + new_text.len());
         } else {
             self.marked_range = None;
         }
-
-        // `new_selected_range_utf16`, when present, is documented as the
-        // selection *within the inserted text*, expressed in UTF-16 code
-        // units. Translate it to absolute UTF-8 byte offsets within the
-        // updated content (anchored at `range.start`), then snap to char
-        // boundaries — without snapping, downstream slicing can panic for
-        // multi-byte UTF-8 inserts.
-        self.selected_range = if let Some(selected) = new_selected_range_utf16 {
-            let inserted_utf8: Vec<usize> =
-                std::iter::once(0)
-                    .chain(new_text.char_indices().skip(1).map(|(i, _)| i))
-                    .chain(std::iter::once(new_text.len()))
-                    .collect();
-            let inserted_utf16: Vec<usize> = {
-                let mut acc = 0usize;
-                let mut v = vec![0usize];
-                for ch in new_text.chars() {
-                    acc += ch.len_utf16();
-                    v.push(acc);
+        let cursor = if let Some(selected) = new_selected_range_utf16 {
+            // `new_selected_range_utf16` is the caret position within
+            // the inserted text, in UTF-16 code units. Map it to a
+            // UTF-8 offset within `new_text`, then anchor at
+            // `range.start`.
+            let mut utf16 = 0usize;
+            let mut utf8 = new_text.len();
+            for (i, ch) in new_text.char_indices() {
+                if utf16 >= selected.end {
+                    utf8 = i;
+                    break;
                 }
-                v
-            };
-            let map = |units: usize| -> usize {
-                inserted_utf16
-                    .iter()
-                    .position(|u| *u >= units)
-                    .map(|idx| inserted_utf8[idx.min(inserted_utf8.len() - 1)])
-                    .unwrap_or(new_text.len())
-            };
-            let start = range.start + map(selected.start);
-            let end = range.start + map(selected.end);
-            let start = self.snap_to_boundary(start);
-            let end = self.snap_to_boundary(end).max(start);
-            start..end
+                utf16 += ch.len_utf16();
+            }
+            range.start + utf8
         } else {
-            let cursor = range.start + new_text.len();
-            cursor..cursor
+            range.start + new_text.len()
         };
+        let cursor = self.snap_to_boundary(cursor);
+        self.selected_range = cursor..cursor;
         cx.notify();
     }
 
@@ -423,7 +435,7 @@ impl EntityInputHandler for TextField {
 
     fn character_index_for_point(
         &mut self,
-        p: gpui::Point<Pixels>,
+        p: Point<Pixels>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
@@ -434,30 +446,30 @@ impl EntityInputHandler for TextField {
     }
 }
 
-/// Custom element that lays out the field's text and paints a cursor at the
-/// current offset. The element is the only place `window.handle_input(...)`
-/// can be called (must run during paint), which is what plumbs the platform
-/// IME → `EntityInputHandler` chain.
-struct TextLineElement {
-    input: Entity<TextField>,
+/// Inner element that lays out the field's text and paints the caret /
+/// selection. Hidden — its sole purpose is to bind the
+/// [`ElementInputHandler`] from inside `paint`, which is the only
+/// place GPUI lets you do that.
+struct TextInputElement {
+    input: Entity<TextInput>,
 }
 
-struct TextLinePrepaint {
+struct TextInputPrepaint {
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
 }
 
-impl IntoElement for TextLineElement {
+impl IntoElement for TextInputElement {
     type Element = Self;
     fn into_element(self) -> Self::Element {
         self
     }
 }
 
-impl Element for TextLineElement {
+impl Element for TextInputElement {
     type RequestLayoutState = ();
-    type PrepaintState = TextLinePrepaint;
+    type PrepaintState = TextInputPrepaint;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -469,7 +481,7 @@ impl Element for TextLineElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        _inspector_id: Option<&crate::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -482,14 +494,14 @@ impl Element for TextLineElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        _inspector_id: Option<&crate::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         let input = self.input.read(cx);
-        let theme = input.theme();
+        let theme = input.theme;
         let content = input.content.clone();
         let cursor_offset = input.cursor_offset();
         let selected = input.clamp_range(input.selected_range.clone());
@@ -511,7 +523,6 @@ impl Element for TextLineElement {
         let line = window
             .text_system()
             .shape_line(display, font_size, &[run], None);
-
         let cursor_x = line.x_for_index(cursor_offset.min(line.text.len()));
         let cursor = fill(
             Bounds::new(
@@ -533,7 +544,7 @@ impl Element for TextLineElement {
                 theme.selection,
             ))
         };
-        TextLinePrepaint {
+        TextInputPrepaint {
             line: Some(line),
             cursor: Some(cursor),
             selection,
@@ -543,7 +554,7 @@ impl Element for TextLineElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        _inspector_id: Option<&crate::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -551,9 +562,9 @@ impl Element for TextLineElement {
         cx: &mut App,
     ) {
         let focus_handle = self.input.read(cx).focus_handle.clone();
-        // Bind `EntityInputHandler` so platform IME events reach us. Has to
-        // be called every paint: `handle_input` only registers for *the next
-        // frame*.
+        // Bind the input handler so the platform IME can route events
+        // back into our `EntityInputHandler` impl. Must run every paint
+        // — `handle_input` only registers for the *next* frame.
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.input.clone()),
@@ -566,7 +577,7 @@ impl Element for TextLineElement {
         line.paint(
             bounds.origin,
             window.line_height(),
-            gpui::TextAlign::Left,
+            crate::TextAlign::Left,
             None,
             window,
             cx,
@@ -577,12 +588,6 @@ impl Element for TextLineElement {
         {
             window.paint_quad(cursor);
         }
-        // When the field is focused, ask GPUI to push the cursor's
-        // candidate-window position to the IME via
-        // `PlatformWindow::update_ime_position`. The Android backend uses
-        // the bounds it receives to remember where the focused field sits
-        // so the run loop can scroll it into view if the keyboard would
-        // cover it. This is a no-op when the field isn't focused.
         if focus_handle.is_focused(window) {
             window.invalidate_character_coordinates();
         }
@@ -593,16 +598,30 @@ impl Element for TextLineElement {
     }
 }
 
-impl Render for TextField {
+impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let focused = focus_handle.is_focused(window);
-        let theme = self.theme();
-        let border = if focused { theme.border_focused } else { theme.border };
-        let bg = if focused { theme.background_focused } else { theme.background };
+        let theme = self.theme;
+        let border = if focused {
+            theme.border_focused
+        } else {
+            theme.border
+        };
+        let bg = if focused {
+            theme.background_focused
+        } else {
+            theme.background
+        };
+        let scroll_anchor = self.scroll_anchor.clone();
+        // The root needs an id so `anchor_scroll` (on
+        // `StatefulInteractiveElement`) is reachable. Use the entity
+        // id — unique and stable for the field's lifetime.
         div()
-            .key_context("AndroidTextField")
+            .id(ElementId::View(cx.entity().entity_id()))
+            .key_context("TextInput")
             .track_focus(&focus_handle)
+            .anchor_scroll(scroll_anchor)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .h(px(44.0))
             .px(px(12.0))
@@ -611,6 +630,8 @@ impl Render for TextField {
             .border_1()
             .border_color(border)
             .bg(bg)
-            .child(TextLineElement { input: cx.entity() })
+            .child(TextInputElement {
+                input: cx.entity(),
+            })
     }
 }

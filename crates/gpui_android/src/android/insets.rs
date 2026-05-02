@@ -54,7 +54,7 @@ fn query(app: &AndroidApp, scale_factor: f32) -> Result<f32> {
 
 fn sdk_int<'local>(env: &mut Env<'local>) -> Result<i32> {
     let class = env
-        .find_class(jni_str!("android.os.Build$VERSION"))
+        .find_class(jni_str!("android/os/Build$VERSION"))
         .context("FindClass Build$VERSION")?;
     let value = env
         .get_static_field(&class, jni_str!("SDK_INT"), jni_sig!(jint))
@@ -100,7 +100,7 @@ fn ime_bottom_pixels<'local>(env: &mut Env<'local>, activity: &JObject<'local>) 
     }
 
     let type_class = env
-        .find_class(jni_str!("android.view.WindowInsets$Type"))
+        .find_class(jni_str!("android/view/WindowInsets$Type"))
         .context("FindClass WindowInsets$Type")?;
     let ime_type = env
         .call_static_method(

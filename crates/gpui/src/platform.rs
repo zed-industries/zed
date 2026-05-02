@@ -690,6 +690,19 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
+    /// Hint the platform IME about the kind of text the focused widget
+    /// expects. On platforms with a soft keyboard (Android, iOS, web)
+    /// this drives the keyboard layout — numeric pad for
+    /// [`ImeKind::Number`], an email keyboard for [`ImeKind::Email`],
+    /// etc. On desktop platforms with a hardware keyboard the hint is
+    /// usually a no-op (the default impl does nothing); validation /
+    /// filtering of typed text remains the widget's responsibility.
+    ///
+    /// Built-in input widgets (e.g. [`crate::TextInput`]) call this on
+    /// focus. Custom widgets that want the same behaviour should call it
+    /// from their focus handler.
+    fn set_ime_kind(&self, _kind: ImeKind) {}
+
     fn play_system_bell(&self) {}
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1590,6 +1603,36 @@ pub enum WindowKind {
 
 /// The appearance of the window, as defined by the operating system.
 ///
+/// Hints the platform IME about the kind of text the focused widget
+/// expects, so soft-keyboard backends can show the right keyboard
+/// layout (numeric pad, email keyboard, URL keyboard, …).
+///
+/// Backends with a hardware keyboard (macOS, Linux, Windows) treat this
+/// as advisory — `set_ime_kind` is a no-op there. The widget remains
+/// responsible for filtering / validating typed content; the hint only
+/// affects the *keyboard layout* shown to the user, not what bytes
+/// arrive at the input handler.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum ImeKind {
+    /// Free-form text. The default.
+    #[default]
+    Text,
+    /// Decimal numbers. Soft keyboards show a numeric pad with `-` and
+    /// `.` keys.
+    Number,
+    /// An email address. Soft keyboards typically expose `@` and `.` on
+    /// the primary layer.
+    Email,
+    /// A URL. Soft keyboards typically expose `/`, `.`, and `.com`-style
+    /// shortcuts.
+    Url,
+    /// A telephone number. Soft keyboards show a phone-style dial pad.
+    Phone,
+    /// A password. Soft keyboards disable autocorrect / autosuggest and
+    /// clear the typed glyph after a brief delay.
+    Password,
+}
+
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
 /// values.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]

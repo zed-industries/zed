@@ -14,13 +14,21 @@
 //! adb install -r .../app-debug.apk
 //! adb shell am start -n dev.zed.gpui.gallery/.GalleryActivity
 //! ```
+//!
+//! ## What this demonstrates about GPUI's input model
+//!
+//! There is **no Android-specific widget code in this file**. The text
+//! and number inputs are plain [`gpui::TextInput`] entities — the same
+//! widget you'd use on macOS, Linux, Windows, or web. The IME kind hint
+//! ([`gpui::ImeKind::Number`]) is the only knob that influences which
+//! soft keyboard layout Android shows; on desktop it's a no-op.
 #![cfg(target_os = "android")]
 
 use gpui::{
-    App, Bounds, ClickEvent, Context, Entity, IntoElement, ParentElement, Render, SharedString,
-    Styled, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+    App, Bounds, ClickEvent, Context, Entity, ImeKind, IntoElement, ParentElement, Render,
+    ScrollAnchor, ScrollHandle, SharedString, Styled, TextInput, Window, WindowBounds,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
-use gpui_android::widgets::{FieldKind, TextField};
 use gpui_platform::application;
 use std::path::PathBuf;
 
@@ -31,17 +39,20 @@ struct Gallery {
     accent: AccentColor,
     appearance: Appearance,
     last_action: SharedString,
-    /// Live text input: tap → soft keyboard pops → typing edits the
-    /// `content`. Owned by the gallery so its render value can be read
-    /// for the "echo" panel.
-    text_field: Entity<TextField>,
-    /// Numeric input: same widget, `FieldKind::Number` filters
-    /// non-digit characters at IME-write time.
-    number_field: Entity<TextField>,
+    /// Free-form text input — `gpui::TextInput` with `ImeKind::Text`.
+    text_field: Entity<TextInput>,
+    /// Numeric input — `gpui::TextInput` with `ImeKind::Number`. The
+    /// platform requests Android's numeric pad so only digits / `-` /
+    /// `.` can be typed.
+    number_field: Entity<TextInput>,
     /// URI(s) returned by the most recent file/image/directory picker, or
     /// a status string while a pick is in flight.
     picker_status: SharedString,
     picker_results: Vec<PathBuf>,
+    /// Scroll handle for the gallery's outer `overflow_y_scroll` container.
+    /// Both inputs anchor to it so tapping a field scrolls it above the
+    /// keyboard.
+    scroll_handle: ScrollHandle,
 }
 
 /// One of a fixed palette of accent colors the user can pick.
@@ -125,8 +136,20 @@ impl Appearance {
 
 impl Gallery {
     fn new(cx: &mut Context<Self>) -> Self {
-        let text_field = cx.new(|cx| TextField::new(cx, "type something…", FieldKind::Text));
-        let number_field = cx.new(|cx| TextField::new(cx, "0", FieldKind::Number));
+        let scroll_handle = ScrollHandle::new();
+        let text_anchor = ScrollAnchor::for_handle(scroll_handle.clone());
+        let number_anchor = ScrollAnchor::for_handle(scroll_handle.clone());
+        let text_field = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder("type something…")
+                .scroll_anchor(text_anchor)
+        });
+        let number_field = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder("0")
+                .ime_kind(ImeKind::Number)
+                .scroll_anchor(number_anchor)
+        });
         // Re-render the gallery whenever either input notifies (i.e. any
         // edit) so the echo panel stays in sync with the field.
         cx.observe(&text_field, |_, _, cx| cx.notify()).detach();
@@ -140,6 +163,7 @@ impl Gallery {
             number_field,
             picker_status: "idle".into(),
             picker_results: Vec::new(),
+            scroll_handle,
         }
     }
 
@@ -208,11 +232,6 @@ impl Gallery {
         self.spawn_picker(cx, "directory", receiver);
     }
 
-    /// Awaits a picker receiver on the foreground executor and writes the
-    /// outcome into [`Self::picker_status`] / [`Self::picker_results`] for
-    /// the next render. The receiver is a `oneshot::Receiver` rather than
-    /// a `Task<_>`, so we wrap it in `cx.spawn` to thread the result back
-    /// onto the entity.
     fn spawn_picker(
         &mut self,
         cx: &mut Context<Self>,
@@ -229,11 +248,7 @@ impl Gallery {
             let _ = this.update(cx, |this, cx| {
                 match outcome {
                     Ok(Ok(Some(paths))) => {
-                        this.picker_status = format!(
-                            "{kind} picked ({})",
-                            paths.len()
-                        )
-                        .into();
+                        this.picker_status = format!("{kind} picked ({})", paths.len()).into();
                         this.picker_results = paths;
                     }
                     Ok(Ok(None)) => {
@@ -301,9 +316,7 @@ impl Gallery {
                         "+",
                         cx.listener(Self::on_increment),
                     ))
-                    .child(
-                        div().w(px(8.)), // spacer
-                    )
+                    .child(div().w(px(8.)))
                     .child(button(
                         self.appearance,
                         "reset",
@@ -400,15 +413,15 @@ impl Gallery {
 
     fn input_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let appearance = self.appearance;
-        let text_value = self.text_field.read(cx).content.clone();
-        let number_value = self.number_field.read(cx).content.clone();
+        let text_value = self.text_field.read(cx).content().clone();
+        let number_value = self.number_field.read(cx).content().clone();
         let echo_color = rgb(self.accent.rgb());
         section(appearance, "inputs")
             .child(
                 div()
                     .text_xs()
                     .text_color(rgb(appearance.text_secondary()))
-                    .child("tap a field — the soft keyboard pops via the platform IME"),
+                    .child("tap a field — `gpui::TextInput` drives the IME for you"),
             )
             .child(
                 div()
@@ -432,7 +445,7 @@ impl Gallery {
                         div()
                             .text_xs()
                             .text_color(rgb(appearance.text_secondary()))
-                            .child("number (digits + . + - only)"),
+                            .child("number (numeric pad)"),
                     )
                     .child(self.number_field.clone()),
             )
@@ -454,7 +467,11 @@ impl Gallery {
             .gap_3()
             .items_center()
             .child(button(appearance, "file", cx.listener(Self::on_pick_file)))
-            .child(button(appearance, "files…", cx.listener(Self::on_pick_files)))
+            .child(button(
+                appearance,
+                "files…",
+                cx.listener(Self::on_pick_files),
+            ))
             .child(button(appearance, "image", cx.listener(Self::on_pick_image)))
             .child(button(
                 appearance,
@@ -487,9 +504,7 @@ impl Gallery {
                 div()
                     .text_xs()
                     .text_color(rgb(appearance.text_secondary()))
-                    .child(
-                        "tap to launch SAF / PhotoPicker — results come back via NativeBridge",
-                    ),
+                    .child("tap to launch SAF / PhotoPicker — results come back via NativeBridge"),
             )
             .child(buttons)
             .child(
@@ -554,20 +569,21 @@ impl Gallery {
 impl Render for Gallery {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let appearance = self.appearance;
-        // `overflow_y_scroll` requires a stateful element (hence `.id(...)`).
-        // The synthetic ScrollWheel events emitted from
-        // `AndroidWindow::dispatch_input` drive the scroll position.
+        let keyboard_inset = gpui_android::keyboard_bottom_inset();
+        // Pad the bottom by the IME inset so the focused input sits
+        // above the keyboard once we scroll to it.
         div()
             .id("gallery-root")
             .size_full()
             .bg(rgb(appearance.surface()))
             .pt(px(80.)) // status-bar inset
-            .pb(px(48.)) // gesture/nav-bar inset
+            .pb(px(48.) + keyboard_inset)
             .px(px(20.))
             .flex()
             .flex_col()
             .gap_5()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .child(self.header())
             .child(self.counter_section(cx))
             .child(self.appearance_section(cx))
@@ -580,13 +596,7 @@ impl Render for Gallery {
     }
 }
 
-/// Wraps an inner panel in the surface/border/padding of a "card" with a
-/// section title above it. Centralises the visual identity so individual
-/// sections stay focused on their own state.
-fn section(
-    appearance: Appearance,
-    title: &'static str,
-) -> gpui::Div {
+fn section(appearance: Appearance, title: &'static str) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -604,9 +614,6 @@ fn section(
         )
 }
 
-/// Pill button rendered with the current appearance. Elevated background +
-/// subtle border so it's tappable on either theme without designing a
-/// separate widget set.
 fn button(
     appearance: Appearance,
     label: &str,
@@ -629,7 +636,6 @@ fn button(
         .on_click(on_click)
 }
 
-/// Static facts about the host environment, captured once at first paint.
 fn info_lines() -> Vec<(&'static str, String)> {
     let app = gpui_android::android_app();
     let config = app.as_ref().map(|a| a.config());
@@ -642,18 +648,13 @@ fn info_lines() -> Vec<(&'static str, String)> {
     let sdk = config.as_ref().map(|c| c.sdk_version()).unwrap_or(0);
     vec![
         ("renderer", "wgpu / Vulkan".into()),
-        (
-            "scale factor",
-            format!("{scale:.2} (density {density})"),
-        ),
+        ("scale factor", format!("{scale:.2} (density {density})")),
         ("sdk version", format!("API {sdk}")),
         ("backend", "android-activity / GameActivity".into()),
         ("text", "cosmic-text + /system/fonts".into()),
     ]
 }
 
-/// Entry point invoked by the `android-activity` glue once `GameActivity`
-/// has spawned its native thread.
 #[unsafe(no_mangle)]
 fn android_main(app: gpui_android::AndroidApp) {
     android_logger::init_once(

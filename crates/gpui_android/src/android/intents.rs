@@ -53,7 +53,7 @@ fn start_view_intent<'local>(
     // android.net.Uri uri = Uri.parse(url);
     let url_jstr = env.new_string(url).context("alloc URL string")?;
     let uri_class = env
-        .find_class(jni_str!("android.net.Uri"))
+        .find_class(jni_str!("android/net/Uri"))
         .context("FindClass android.net.Uri")?;
     let uri = env
         .call_static_method(
@@ -71,7 +71,7 @@ fn start_view_intent<'local>(
         .new_string("android.intent.action.VIEW")
         .context("alloc ACTION_VIEW")?;
     let intent_class = env
-        .find_class(jni_str!("android.content.Intent"))
+        .find_class(jni_str!("android/content/Intent"))
         .context("FindClass android.content.Intent")?;
     let intent = env
         .new_object(

@@ -53,6 +53,7 @@ mod tab_stop;
 mod taffy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+mod text_input;
 mod text_system;
 mod util;
 mod view;
@@ -117,6 +118,7 @@ pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shared_uri::*;
+pub use text_input::{TextInput, TextInputTheme};
 use std::{any::Any, future::Future};
 pub use style::*;
 pub use styled::*;
