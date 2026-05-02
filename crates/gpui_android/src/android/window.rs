@@ -8,10 +8,10 @@ use android_activity::input::{ImeOptions, InputType, TextInputAction, TextInputS
 use anyhow::{Context as _, Result};
 use gpui::{
     AnyWindowHandle, AtlasKey, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
-    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    GpuSpecs, Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowParams, px,
+    Scene, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, px,
 };
 
 /// Stand-in atlas returned by [`AndroidWindow::sprite_atlas`] when no surface
@@ -151,6 +151,12 @@ pub(crate) struct AndroidWindow {
     /// the JNI-driven event-thread can swap it in/out without `RefCell`'s
     /// thread-locality complaints.
     surface: Mutex<Option<WindowSurface>>,
+    /// Most-recent finger position observed during a touch drag, used to
+    /// synthesise [`PlatformInput::ScrollWheel`] events with phase
+    /// [`TouchPhase::Moved`] so `overflow_scroll` containers can react. We
+    /// reset to `None` on `MouseUp`/`MouseDown` so a fresh gesture starts
+    /// from a clean delta.
+    last_scroll_pos: Cell<Option<Point<Pixels>>>,
     /// Mirrors whether the surface is currently alive. Read by `draw` to skip
     /// frames that arrive after `surfaceDestroyed`.
     surface_alive: Cell<bool>,
@@ -198,6 +204,7 @@ impl AndroidWindow {
             gpu_context,
             surface: Mutex::new(None),
             surface_alive: Cell::new(false),
+            last_scroll_pos: Cell::new(None),
         }
     }
 
@@ -334,11 +341,76 @@ impl AndroidWindow {
         if let PlatformInput::MouseMove(ev) = &event {
             self.state.borrow_mut().mouse_position = ev.position;
         }
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(handler) = callbacks.input.as_mut() {
-            handler(event)
-        } else {
-            DispatchEventResult::default()
+        // Touch screens have no scroll wheel; GPUI's `overflow_scroll`
+        // primitive only reacts to `PlatformInput::ScrollWheel` events. To
+        // make `.overflow_y_scroll()` work on Android we synthesise a
+        // companion `ScrollWheel` event for every touch-drag, with delta =
+        // (current - previous finger position) negated so finger-up =
+        // scroll-down (the touch convention every other mobile OS uses).
+        // Click handlers still fire normally on quick taps because their
+        // hit-test requires `MouseDown` and `MouseUp` to land on the same
+        // element — which is true for taps but not for drags.
+        let scroll_companion = self.scroll_companion(&event);
+
+        let result = {
+            let mut callbacks = self.callbacks.borrow_mut();
+            if let Some(handler) = callbacks.input.as_mut() {
+                handler(event)
+            } else {
+                DispatchEventResult::default()
+            }
+        };
+
+        if let Some(scroll_event) = scroll_companion {
+            let mut callbacks = self.callbacks.borrow_mut();
+            if let Some(handler) = callbacks.input.as_mut() {
+                handler(scroll_event);
+            }
+        }
+
+        result
+    }
+
+    /// Build a `ScrollWheel` event mirroring this touch event, or `None` if
+    /// the input isn't part of a left-button drag. Updates
+    /// `last_scroll_pos` so the next `MouseMove` can compute its delta.
+    fn scroll_companion(&self, event: &PlatformInput) -> Option<PlatformInput> {
+        match event {
+            PlatformInput::MouseDown(ev) if ev.button == MouseButton::Left => {
+                self.last_scroll_pos.set(Some(ev.position));
+                Some(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position: ev.position,
+                    delta: ScrollDelta::Pixels(Point::default()),
+                    modifiers: ev.modifiers,
+                    touch_phase: TouchPhase::Started,
+                }))
+            }
+            PlatformInput::MouseMove(ev) if ev.pressed_button == Some(MouseButton::Left) => {
+                let last = self.last_scroll_pos.replace(Some(ev.position))?;
+                let delta = Point {
+                    // Negate so a finger swipe up scrolls content up (i.e.
+                    // reveals what's below) — the natural touch convention.
+                    x: -(ev.position.x - last.x),
+                    y: -(ev.position.y - last.y),
+                };
+                Some(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position: ev.position,
+                    delta: ScrollDelta::Pixels(delta),
+                    modifiers: ev.modifiers,
+                    touch_phase: TouchPhase::Moved,
+                }))
+            }
+            PlatformInput::MouseUp(ev) if ev.button == MouseButton::Left => {
+                self.last_scroll_pos.take().map(|_| {
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: ev.position,
+                        delta: ScrollDelta::Pixels(Point::default()),
+                        modifiers: ev.modifiers,
+                        touch_phase: TouchPhase::Ended,
+                    })
+                })
+            }
+            _ => None,
         }
     }
 

@@ -308,6 +308,48 @@ impl Gallery {
         section(appearance, "device").child(col)
     }
 
+    fn scroll_section(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        let appearance = self.appearance;
+        let accent = rgb(self.accent.rgb());
+        let mut col = div().flex().flex_col().gap_2();
+        for i in 0..30 {
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .px(px(12.))
+                    .py(px(10.))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(appearance.border()))
+                    .bg(rgb(appearance.surface()))
+                    .child(
+                        div()
+                            .min_w(px(28.))
+                            .text_sm()
+                            .text_color(accent)
+                            .child(format!("#{i:02}")),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(appearance.text_primary()))
+                            .child(format!("scroll item {i} — drag to verify")),
+                    ),
+            );
+        }
+        section(appearance, "scroll test")
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(appearance.text_secondary()))
+                    .child("drag a finger up/down — touch is synthesised as ScrollWheel events"),
+            )
+            .child(col)
+    }
+
     fn footer(&self) -> impl IntoElement {
         div()
             .text_xs()
@@ -319,7 +361,11 @@ impl Gallery {
 impl Render for Gallery {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let appearance = self.appearance;
+        // `overflow_y_scroll` requires a stateful element (hence `.id(...)`).
+        // The synthetic ScrollWheel events emitted from
+        // `AndroidWindow::dispatch_input` drive the scroll position.
         div()
+            .id("gallery-root")
             .size_full()
             .bg(rgb(appearance.surface()))
             .pt(px(80.)) // status-bar inset
@@ -328,10 +374,12 @@ impl Render for Gallery {
             .flex()
             .flex_col()
             .gap_5()
+            .overflow_y_scroll()
             .child(self.header())
             .child(self.counter_section(cx))
             .child(self.appearance_section(cx))
             .child(self.accent_section(cx))
+            .child(self.scroll_section(cx))
             .child(self.info_section(cx))
             .child(self.footer())
     }
