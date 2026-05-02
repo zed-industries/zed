@@ -1584,6 +1584,193 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_mcp_tools_individually_disabled(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Set up a profile with enable_all_context_servers=true but one tool explicitly disabled.
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {
+                            EchoTool::NAME: true,
+                        },
+                        "context_servers": {
+                            "test_server": {
+                                "tools": {
+                                    "allowed_tool": true,
+                                    "blocked_tool": false
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // Register a context server with two tools.
+    let _mcp_tool_calls = setup_context_server(
+        "test_server",
+        vec![
+            context_server::types::Tool {
+                name: "allowed_tool".into(),
+                title: None,
+                description: Some("An allowed tool".into()),
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "blocked_tool".into(),
+                title: None,
+                description: Some("A blocked tool".into()),
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+        ],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hey"], cx).unwrap()
+    });
+    cx.run_until_parked();
+
+    // Only the allowed tool should appear in the completion request.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_names = tool_names_for_completion(&completion);
+    assert!(
+        tool_names.contains(&"allowed_tool".to_string()),
+        "allowed_tool should be present, got: {:?}",
+        tool_names
+    );
+    assert!(
+        !tool_names.contains(&"blocked_tool".to_string()),
+        "blocked_tool should NOT be present, got: {:?}",
+        tool_names
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("OK");
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
+async fn test_mcp_tools_all_disabled_by_default(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Set up a profile with enable_all_context_servers=false and only one tool enabled.
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": false,
+                        "tools": {
+                            EchoTool::NAME: true,
+                        },
+                        "context_servers": {
+                            "test_server": {
+                                "tools": {
+                                    "enabled_tool": true
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // Register a context server with two tools.
+    let _mcp_tool_calls = setup_context_server(
+        "test_server",
+        vec![
+            context_server::types::Tool {
+                name: "enabled_tool".into(),
+                title: None,
+                description: Some("An enabled tool".into()),
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+            context_server::types::Tool {
+                name: "not_enabled_tool".into(),
+                title: None,
+                description: Some("Not explicitly enabled".into()),
+                input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
+            },
+        ],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread.send(UserMessageId::new(), ["Hey"], cx).unwrap()
+    });
+    cx.run_until_parked();
+
+    // Only the explicitly enabled tool should appear.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_names = tool_names_for_completion(&completion);
+    assert!(
+        tool_names.contains(&"enabled_tool".to_string()),
+        "enabled_tool should be present, got: {:?}",
+        tool_names
+    );
+    assert!(
+        !tool_names.contains(&"not_enabled_tool".to_string()),
+        "not_enabled_tool should NOT be present, got: {:?}",
+        tool_names
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("OK");
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
 async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
     let ThreadTest {
         model,

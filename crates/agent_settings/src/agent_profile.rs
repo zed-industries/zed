@@ -208,3 +208,102 @@ impl From<settings::ContextServerPresetContent> for ContextServerPreset {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile_with_all_servers_enabled() -> AgentProfileSettings {
+        let mut context_servers = IndexMap::default();
+        let mut tools = IndexMap::default();
+        tools.insert(Arc::from("enabled_tool"), true);
+        tools.insert(Arc::from("disabled_tool"), false);
+        context_servers.insert(Arc::from("my_server"), ContextServerPreset { tools });
+
+        AgentProfileSettings {
+            name: "Test".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers: true,
+            context_servers,
+            default_model: None,
+        }
+    }
+
+    fn profile_with_all_servers_disabled() -> AgentProfileSettings {
+        let mut context_servers = IndexMap::default();
+        let mut tools = IndexMap::default();
+        tools.insert(Arc::from("enabled_tool"), true);
+        tools.insert(Arc::from("disabled_tool"), false);
+        context_servers.insert(Arc::from("my_server"), ContextServerPreset { tools });
+
+        AgentProfileSettings {
+            name: "Test".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers: false,
+            context_servers,
+            default_model: None,
+        }
+    }
+
+    #[test]
+    fn test_enable_all_servers_respects_explicit_false() {
+        let profile = profile_with_all_servers_enabled();
+
+        // Explicitly enabled tool is enabled
+        assert!(profile.is_context_server_tool_enabled("my_server", "enabled_tool"));
+
+        // Explicitly disabled tool is disabled even with enable_all_context_servers=true
+        assert!(!profile.is_context_server_tool_enabled("my_server", "disabled_tool"));
+
+        // Tool with no explicit entry defaults to enabled
+        assert!(profile.is_context_server_tool_enabled("my_server", "unlisted_tool"));
+
+        // Tool on an unknown server defaults to enabled
+        assert!(profile.is_context_server_tool_enabled("unknown_server", "any_tool"));
+    }
+
+    #[test]
+    fn test_disable_all_servers_requires_explicit_true() {
+        let profile = profile_with_all_servers_disabled();
+
+        // Explicitly enabled tool is enabled
+        assert!(profile.is_context_server_tool_enabled("my_server", "enabled_tool"));
+
+        // Explicitly disabled tool is disabled
+        assert!(!profile.is_context_server_tool_enabled("my_server", "disabled_tool"));
+
+        // Tool with no explicit entry defaults to disabled
+        assert!(!profile.is_context_server_tool_enabled("my_server", "unlisted_tool"));
+
+        // Tool on an unknown server defaults to disabled
+        assert!(!profile.is_context_server_tool_enabled("unknown_server", "any_tool"));
+    }
+
+    #[test]
+    fn test_enable_all_servers_no_server_preset() {
+        let profile = AgentProfileSettings {
+            name: "Test".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers: true,
+            context_servers: IndexMap::default(),
+            default_model: None,
+        };
+
+        // With no server presets at all, everything defaults to enabled
+        assert!(profile.is_context_server_tool_enabled("any_server", "any_tool"));
+    }
+
+    #[test]
+    fn test_disable_all_servers_no_server_preset() {
+        let profile = AgentProfileSettings {
+            name: "Test".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers: false,
+            context_servers: IndexMap::default(),
+            default_model: None,
+        };
+
+        // With no server presets at all, everything defaults to disabled
+        assert!(!profile.is_context_server_tool_enabled("any_server", "any_tool"));
+    }
+}
