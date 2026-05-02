@@ -4585,12 +4585,15 @@ impl Workspace {
             pane::Event::ActivateItem {
                 local,
                 focus_changed,
+                is_transient,
             } => {
                 window.invalidate_character_coordinates();
 
-                pane.update(cx, |pane, _| {
-                    pane.track_alternate_file_items();
-                });
+                if !is_transient {
+                    pane.update(cx, |pane, _| {
+                        pane.track_alternate_file_items();
+                    });
+                }
                 if *local {
                     self.unfollow_in_pane(pane, window, cx);
                 }

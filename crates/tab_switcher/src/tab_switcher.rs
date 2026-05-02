@@ -31,7 +31,7 @@ use workspace::{
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
-/// Toggles the tab switcher interface.
+/// Opens the tab switcher, or cycles the selection if it's already open.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = tab_switcher)]
 #[serde(deny_unknown_fields)]
@@ -652,7 +652,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             .pane
             .update(cx, |pane, cx| {
                 if let Some(index) = pane.index_for_item(selected_match.item.as_ref()) {
-                    pane.activate_item(index, false, false, window, cx);
+                    pane.activate_item_transiently(index, false, false, window, cx);
                 }
             })
             .ok();

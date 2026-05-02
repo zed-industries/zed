@@ -409,6 +409,7 @@ See `crates/workspace/src/confirmation_dialog.rs`. The dismiss action is current
   - as recommended in `Refactoring UI > Baseline, not center`
 - lower excessive tab height
 - switch system tab background color from `title_bar_background` to `tab_bar_background`, so I can style active tabs far nicer because the default just uses a slightly different foreground color which is hard to spot
+- improved `tab_switcher::ToggleAll` to not interfere with `pane::AlternateFile` (before just cycling through the tab list always tracked it for the alternate file action which is annoying)
 
 ### Vertical stacking tabs
 

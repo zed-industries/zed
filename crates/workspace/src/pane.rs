@@ -298,6 +298,7 @@ pub enum Event {
     ActivateItem {
         local: bool,
         focus_changed: bool,
+        is_transient: bool,
     },
     Remove {
         focus_on_pane: Option<Entity<Pane>>,
@@ -330,9 +331,11 @@ impl fmt::Debug for Event {
                 .debug_struct("AddItem")
                 .field("item", &item.item_id())
                 .finish(),
-            Event::ActivateItem { local, .. } => f
+            Event::ActivateItem { local, focus_changed, is_transient } => f
                 .debug_struct("ActivateItem")
                 .field("local", local)
+                .field("focus_changed", focus_changed)
+                .field("is_transient", is_transient)
                 .finish(),
             Event::Remove { .. } => f.write_str("Remove"),
             Event::RemovedItem { item } => f
@@ -1433,6 +1436,32 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.activate_item_internal(index, activate_pane, focus_item, false, window, cx)
+    }
+
+    /// Activates an item without triggering side effects like updating
+    /// activation history or alternate file tracking. Used for UI-only previews
+    /// such as cycling through items in the tab switcher.
+    pub fn activate_item_transiently(
+        &mut self,
+        index: usize,
+        activate_pane: bool,
+        focus_item: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.activate_item_internal(index, activate_pane, focus_item, true, window, cx)
+    }
+
+    fn activate_item_internal(
+        &mut self,
+        index: usize,
+        activate_pane: bool,
+        focus_item: bool,
+        is_transient: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
@@ -1442,7 +1471,9 @@ impl Pane {
             {
                 prev_item.deactivated(window, cx);
             }
-            self.update_history(index);
+            if !is_transient {
+                self.update_history(index);
+            }
             self.update_toolbar(window, cx);
             self.update_status_bar(window, cx);
 
@@ -1453,6 +1484,7 @@ impl Pane {
             cx.emit(Event::ActivateItem {
                 local: activate_pane,
                 focus_changed: focus_item,
+                is_transient,
             });
 
             self.update_active_tab(index);
