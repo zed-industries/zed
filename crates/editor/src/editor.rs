@@ -5084,12 +5084,14 @@ impl Editor {
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
         let snapshot = self.display_snapshot(cx);
+        let old_ids = self.selection_ids_for_smooth_cursor();
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);
             state.effects.completions = effects.completions;
             state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
             let (changed, result) = self.selections.change_with(&snapshot, change);
             state.changed |= changed;
+            self.remap_smooth_cursor_animations(&old_ids);
             return result;
         }
         let mut state = DeferredSelectionEffectsState {
@@ -5105,6 +5107,7 @@ impl Editor {
         };
         let (changed, result) = self.selections.change_with(&snapshot, change);
         state.changed = state.changed || changed;
+        self.remap_smooth_cursor_animations(&old_ids);
         if self.defer_selection_effects {
             self.deferred_selection_effects_state = Some(state);
         } else {
@@ -5133,6 +5136,53 @@ impl Editor {
             }
         }
         result
+    }
+
+    /// Collect current selection IDs for smooth cursor animation remapping.
+    fn selection_ids_for_smooth_cursor(&self) -> Vec<usize> {
+        if self.smooth_cursor_animations.is_empty() {
+            return Vec::new();
+        }
+        self.selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.id)
+            .chain(self.selections.pending_anchor().iter().map(|s| s.id))
+            .collect()
+    }
+
+    /// When selection IDs change (e.g. `select_display_ranges` allocates new
+    /// IDs), transfer smooth cursor animation states from old IDs to new IDs
+    /// so the trail animation is continuous rather than lost.
+    fn remap_smooth_cursor_animations(&mut self, old_ids: &[usize]) {
+        if old_ids.is_empty() || self.smooth_cursor_animations.is_empty() {
+            return;
+        }
+        let new_ids: Vec<usize> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.id)
+            .chain(self.selections.pending_anchor().iter().map(|s| s.id))
+            .collect();
+
+        // Fast path: IDs didn't change.
+        if old_ids == new_ids.as_slice() {
+            return;
+        }
+
+        // Transfer animation states positionally (old[i] → new[i]) when
+        // the cursor count is the same, which covers the common case of a
+        // single cursor being replaced by a single cursor.
+        if old_ids.len() == new_ids.len() {
+            for (old_id, new_id) in old_ids.iter().zip(new_ids.iter()) {
+                if old_id != new_id {
+                    if let Some(state) = self.smooth_cursor_animations.remove(old_id) {
+                        self.smooth_cursor_animations.insert(*new_id, state);
+                    }
+                }
+            }
+        }
     }
 
     fn apply_selection_effects(
