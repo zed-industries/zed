@@ -2610,7 +2610,34 @@ impl Thread {
         };
 
         for message in &self.messages {
-            request.messages.extend(message.to_request());
+            let mut messages = message.to_request();
+            // Strip tool-use and tool-result content. Summary generation
+            // doesn't need tool-call history, and including tool calls without
+            // reasoning_details can cause errors with thinking models (e.g.
+            // DeepSeek V4) that require reasoning_details for tool-call turns.
+            // Preserve thinking text as regular text so the summarization
+            // model can use the reasoning context.
+            for msg in &mut messages {
+                msg.content = std::mem::take(&mut msg.content)
+                    .into_iter()
+                    .filter_map(|c| match c {
+                        language_model::MessageContent::Text(_) => Some(c),
+                        language_model::MessageContent::Thinking { text, .. } => Some(
+                            language_model::MessageContent::Text(format!("[Thinking]\n{text}")),
+                        ),
+                        language_model::MessageContent::RedactedThinking(text) => {
+                            Some(language_model::MessageContent::Text(format!(
+                                "[Redacted Thinking]\n{text}"
+                            )))
+                        }
+                        language_model::MessageContent::ToolUse(_)
+                        | language_model::MessageContent::ToolResult(_)
+                        | language_model::MessageContent::Image(_) => None,
+                    })
+                    .collect();
+            }
+            messages.retain(|msg| !msg.content.is_empty());
+            request.messages.extend(messages);
         }
 
         request.messages.push(LanguageModelRequestMessage {
@@ -2669,7 +2696,17 @@ impl Thread {
         };
 
         for message in &self.messages {
-            request.messages.extend(message.to_request());
+            let mut messages = message.to_request();
+            // Strip non-text content. Title generation doesn't need
+            // thinking/tool-call history, and including tool calls without
+            // reasoning_details can cause errors with thinking models (e.g.
+            // DeepSeek V4) that require reasoning_details for tool-call turns.
+            for msg in &mut messages {
+                msg.content
+                    .retain(|c| matches!(c, language_model::MessageContent::Text(_)));
+            }
+            messages.retain(|msg| !msg.content.is_empty());
+            request.messages.extend(messages);
         }
 
         request.messages.push(LanguageModelRequestMessage {
