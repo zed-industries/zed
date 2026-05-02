@@ -18,9 +18,9 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, FocusHandle, Focusable, KeyBinding, Keystroke, Render, Task,
-    TaskExt, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions, actions,
-    div,
+    BackgroundExecutor, DismissEvent, Element, ElementId, FocusHandle, Focusable, GlobalElementId,
+    InputHandler, InspectorElementId, KeyBinding, Keystroke, LayoutId, Render, Style, Task,
+    TaskExt, TestAppContext, UpdateGlobal, VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
@@ -8841,6 +8841,69 @@ fn bind_default_and_emacs_keymaps(cx: &mut TestAppContext) {
     bind_emacs_keymap(cx);
 }
 
+fn bind_universal_argument_text_input_keymap(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-u", UniversalArgument, Some("GenericRepeatTextInput")),
+            KeyBinding::new(
+                "-",
+                UniversalArgumentMinus,
+                Some("GenericRepeatTextInput && universal_argument_accepts_minus"),
+            ),
+            KeyBinding::new(
+                "0",
+                UniversalArgumentDigit(0),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "1",
+                UniversalArgumentDigit(1),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "2",
+                UniversalArgumentDigit(2),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "3",
+                UniversalArgumentDigit(3),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "4",
+                UniversalArgumentDigit(4),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "5",
+                UniversalArgumentDigit(5),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "6",
+                UniversalArgumentDigit(6),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "7",
+                UniversalArgumentDigit(7),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "8",
+                UniversalArgumentDigit(8),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+            KeyBinding::new(
+                "9",
+                UniversalArgumentDigit(9),
+                Some("GenericRepeatTextInput && universal_argument"),
+            ),
+        ]);
+    });
+}
+
 fn simulate_emacs_keystrokes(cx: &mut EditorTestContext, keystrokes: &[&str]) {
     for keystroke in keystrokes {
         cx.simulate_keystroke(keystroke);
@@ -8860,43 +8923,171 @@ fn has_editor_key_context(cx: &mut EditorTestContext, token: &str) -> bool {
     cx.update_editor(|editor, window, cx| editor.key_context(window, cx).contains(token))
 }
 
-actions!(
-    universal_argument_generic_repeat_test,
-    [GenericRepeatTestAction]
-);
-
-struct GenericRepeatTestView {
-    count: usize,
+#[derive(Clone)]
+struct GenericRepeatTextInput {
+    text: Rc<RefCell<String>>,
     focus_handle: FocusHandle,
 }
 
-impl GenericRepeatTestView {
+impl GenericRepeatTextInput {
     fn new(cx: &mut Context<Self>) -> Self {
         Self {
-            count: 0,
+            text: Rc::default(),
             focus_handle: cx.focus_handle(),
         }
     }
 
-    fn increment(&mut self, _: &GenericRepeatTestAction, _: &mut Window, cx: &mut Context<Self>) {
-        self.count += 1;
-        cx.notify();
+    fn text(&self) -> String {
+        self.text.borrow().clone()
     }
 }
 
-impl Focusable for GenericRepeatTestView {
+impl Focusable for GenericRepeatTextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for GenericRepeatTestView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("generic-repeat-test-view")
-            .key_context("GenericRepeatTest")
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::increment))
+impl InputHandler for GenericRepeatTextInput {
+    fn selected_text_range(
+        &mut self,
+        _: bool,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<UTF16Selection> {
+        None
+    }
+
+    fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<std::ops::Range<usize>> {
+        None
+    }
+
+    fn text_for_range(
+        &mut self,
+        _: std::ops::Range<usize>,
+        _: &mut Option<std::ops::Range<usize>>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<String> {
+        None
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        replacement_range: Option<std::ops::Range<usize>>,
+        text: &str,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+        if replacement_range.is_none() {
+            self.text.borrow_mut().push_str(text);
+        }
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        replacement_range: Option<std::ops::Range<usize>>,
+        new_text: &str,
+        _: Option<std::ops::Range<usize>>,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+        if replacement_range.is_none() {
+            self.text.borrow_mut().push_str(new_text);
+        }
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+    fn bounds_for_range(
+        &mut self,
+        _: std::ops::Range<usize>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _: gpui::Point<Pixels>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Option<usize> {
+        None
+    }
+}
+
+impl Element for GenericRepeatTextInput {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some("generic-repeat-text-input".into())
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        (window.request_layout(Style::default(), [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        window.set_focus_handle(&self.focus_handle, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let mut key_context = KeyContext::default();
+        key_context.add("GenericRepeatTextInput");
+        if let Some(universal_argument_globals) = cx.try_global::<UniversalArgumentGlobals>() {
+            if universal_argument_globals.has_state() {
+                key_context.add("universal_argument");
+            }
+            if universal_argument_globals.accepts_minus() {
+                key_context.add("universal_argument_accepts_minus");
+            }
+        }
+        window.set_key_context(key_context);
+        window.handle_input(&self.focus_handle, self.clone(), cx);
+    }
+}
+
+impl IntoElement for GenericRepeatTextInput {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Render for GenericRepeatTextInput {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.clone()
     }
 }
 
@@ -10234,6 +10425,31 @@ async fn test_emacs_universal_argument_generic_repeat_backspace(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_emacs_universal_argument_generic_repeat_zero_bound_actions_noop(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    bind_default_and_emacs_keymaps(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("aˇbc");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "0", "ctrl-f"]);
+    cx.assert_editor_state("aˇbc");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+
+    cx.set_state("ˇabc");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "0", "ctrl-d"]);
+    cx.assert_editor_state("ˇabc");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+
+    cx.set_state("abcˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "0", "backspace"]);
+    cx.assert_editor_state("abcˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
 async fn test_emacs_universal_argument_generic_repeat_word_motion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     bind_emacs_keymap(cx);
@@ -10340,37 +10556,27 @@ fn test_emacs_universal_argument_generic_repeat_global_state_outside_editor(
     cx: &mut TestAppContext,
 ) {
     init_test(cx, |_| {});
-    cx.update(|cx| {
-        cx.bind_keys([KeyBinding::new(
-            "ctrl-t",
-            GenericRepeatTestAction,
-            Some("GenericRepeatTest"),
-        )]);
-    });
+    bind_universal_argument_text_input_keymap(cx);
 
     let window = cx.add_window(|window, cx| {
-        let view = GenericRepeatTestView::new(cx);
+        let view = GenericRepeatTextInput::new(cx);
         view.focus_handle(cx).focus(window, cx);
         view
     });
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     let view = window
         .root(&mut cx)
-        .expect("generic repeat test view should be the window root");
+        .expect("generic repeat text input should be the window root");
 
-    cx.update(|_, cx| {
-        let universal_argument_globals =
-            cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>();
-        universal_argument_globals.state = Some(UniversalArgumentState::new_plain().push_digit(3));
-        universal_argument_globals.consumed_this_dispatch = false;
-    });
-    cx.dispatch_keystroke(
-        window.into(),
-        Keystroke::parse("ctrl-t").expect("valid keystroke"),
-    );
-    cx.background_executor.run_until_parked();
+    for keystroke in ["ctrl-u", "3", "a"] {
+        cx.dispatch_keystroke(
+            window.into(),
+            Keystroke::parse(keystroke).expect("valid keystroke"),
+        );
+        cx.background_executor.run_until_parked();
+    }
 
-    assert_eq!(view.read_with(&cx, |view, _| view.count), 3);
+    assert_eq!(view.read_with(&cx, |view, _| view.text()), "aaa");
     cx.update(|_, cx| {
         assert!(
             cx.default_global::<crate::universal_argument::UniversalArgumentGlobals>()
@@ -10475,6 +10681,26 @@ async fn test_emacs_universal_argument_generic_repeat_negative_prefix_paired_mot
     simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "3", "ctrl-f"]);
 
     cx.assert_editor_state("aˇbcdef");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_generic_repeat_negative_paired_motion_boundaries(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("abcˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "ctrl-f"]);
+    cx.assert_editor_state("abˇc");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+
+    cx.set_state("ˇabc");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "ctrl-b"]);
+    cx.assert_editor_state("aˇbc");
     assert_eq!(resolved_universal_argument(&mut cx), None);
 }
 
@@ -10776,6 +11002,21 @@ async fn test_emacs_universal_argument_backward_kill_word_bob_safe(cx: &mut Test
     simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "5", "alt-backspace"]);
 
     cx.assert_editor_state("ˇone two");
+    assert!(kill_ring_texts(&mut cx).is_empty());
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_backward_kill_word_zero_noop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("one twoˇ three");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "0", "alt-backspace"]);
+
+    cx.assert_editor_state("one twoˇ three");
     assert!(kill_ring_texts(&mut cx).is_empty());
     assert_eq!(resolved_universal_argument(&mut cx), None);
 }

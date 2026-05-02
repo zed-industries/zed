@@ -357,8 +357,19 @@ enum DisplayDiffHunk {
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
     cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
+    cx.intercept_keystrokes(universal_argument::intercept_keystrokes)
+        .detach();
     cx.observe_keystrokes(universal_argument::observe_keystrokes)
         .detach();
+    cx.on_action(|_: &UniversalArgument, cx| {
+        universal_argument::universal_argument(cx);
+    })
+    .on_action(|action: &UniversalArgumentDigit, cx| {
+        universal_argument::universal_argument_digit(action.0, cx);
+    })
+    .on_action(|_: &UniversalArgumentMinus, cx| {
+        universal_argument::universal_argument_minus(cx);
+    });
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
@@ -8715,6 +8726,9 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        if self.take_zero_universal_argument(cx) {
+            return;
+        }
         self.delete_by_char_count(-1, true, window, cx);
     }
 
@@ -8786,6 +8800,9 @@ impl Editor {
     }
 
     pub fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        if self.take_zero_universal_argument(cx) {
+            return;
+        }
         self.delete_by_char_count(1, false, window, cx);
     }
 
@@ -11508,17 +11525,7 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
-        let next_argument = universal_argument_globals.state.map_or_else(
-            UniversalArgumentState::new_plain,
-            UniversalArgumentState::multiply,
-        );
-
-        if universal_argument_globals.state != Some(next_argument)
-            || universal_argument_globals.consumed_this_dispatch
-        {
-            universal_argument_globals.state = Some(next_argument);
-            universal_argument_globals.consumed_this_dispatch = false;
+        if universal_argument::universal_argument(cx) {
             cx.notify();
         }
     }
@@ -11529,14 +11536,9 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
-        let Some(argument) = universal_argument_globals.state.take() else {
-            return;
-        };
-
-        universal_argument_globals.state = Some(argument.push_digit(action.0));
-        universal_argument_globals.consumed_this_dispatch = false;
-        cx.notify();
+        if universal_argument::universal_argument_digit(action.0, cx) {
+            cx.notify();
+        }
     }
 
     pub fn universal_argument_minus(
@@ -11545,14 +11547,9 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
-        let Some(argument) = universal_argument_globals.state.take() else {
-            return;
-        };
-
-        universal_argument_globals.state = Some(argument.apply_minus());
-        universal_argument_globals.consumed_this_dispatch = false;
-        cx.notify();
+        if universal_argument::universal_argument_minus(cx) {
+            cx.notify();
+        }
     }
 
     pub fn kill_ring_cut(&mut self, _: &KillRingCut, window: &mut Window, cx: &mut Context<Self>) {
@@ -12009,6 +12006,17 @@ impl Editor {
     fn take_numeric_universal_argument_or(&mut self, default: i32, cx: &mut Context<Self>) -> i32 {
         self.take_universal_argument(cx)
             .map_or(default, ResolvedUniversalArgument::numeric_value)
+    }
+
+    fn take_zero_universal_argument(&mut self, cx: &mut Context<Self>) -> bool {
+        let is_zero = cx
+            .default_global::<UniversalArgumentGlobals>()
+            .state
+            .is_some_and(|argument| argument.resolve().numeric_value() == 0);
+        if is_zero {
+            self.take_universal_argument(cx);
+        }
+        is_zero
     }
 
     fn clear_universal_argument(&mut self, cx: &mut Context<Self>) -> bool {
@@ -12469,6 +12477,9 @@ impl Editor {
     }
 
     pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
+        if self.take_zero_universal_argument(cx) {
+            return;
+        }
         self.move_right_count(1, window, cx);
     }
 
