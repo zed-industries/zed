@@ -274,6 +274,12 @@ pub struct SmoothCursorContent {
     ///
     /// Default: 1.5
     pub trail_min_distance: Option<f32>,
+
+    /// Multiplier applied to decay times for large cursor jumps (>= 20 lines).
+    ///
+    /// Increase this to make the trail more visible during large jumps.
+    /// Default: 2.0
+    pub large_jump_multiplier: Option<f32>,
 }
 
 #[derive(

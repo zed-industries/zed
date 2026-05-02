@@ -134,9 +134,9 @@ impl SmoothCursorAnimationState {
             if lh > 0.0 {
                 let max_dy = dy.iter().copied().map(f32::abs).fold(0.0f32, f32::max);
                 let line_distance = max_dy / lh;
-                if line_distance >= 20.0 {
-                    decay_fast *= 2.0;
-                    decay_slow *= 2.0;
+                if line_distance >= 20.0 && settings.large_jump_multiplier > 1.0 {
+                    decay_fast *= settings.large_jump_multiplier;
+                    decay_slow *= settings.large_jump_multiplier;
                 }
             }
 

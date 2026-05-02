@@ -225,7 +225,10 @@
     // Opacity of the smear trail. Values range from 0.0 to 1.0.
     "trail_opacity": 0.16,
     // Minimum distance in pixels before drawing the smear trail.
-    "trail_min_distance": 1.5
+    "trail_min_distance": 1.5,
+    // Multiplier applied to decay times for large cursor jumps (>= 20 lines).
+    // Increase this to make the trail more visible during large jumps.
+    "large_jump_multiplier": 2.0
   },
   // Determines when the mouse cursor should be hidden in an editor or input box.
   //

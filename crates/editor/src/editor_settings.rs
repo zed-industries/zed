@@ -74,6 +74,7 @@ pub struct SmoothCursorSettings {
     pub leading_smooth_time: Duration,
     pub trail_opacity: f32,
     pub trail_min_distance: f32,
+    pub large_jump_multiplier: f32,
 }
 
 impl Default for SmoothCursorSettings {
@@ -85,6 +86,7 @@ impl Default for SmoothCursorSettings {
             leading_smooth_time: Duration::from_millis(30),
             trail_opacity: 0.16,
             trail_min_distance: 1.5,
+            large_jump_multiplier: 2.0,
         }
     }
 }
@@ -264,6 +266,9 @@ impl Settings for EditorSettings {
                 trail_min_distance: smooth_cursor
                     .trail_min_distance
                     .unwrap_or(smooth_cursor_defaults.trail_min_distance),
+                large_jump_multiplier: smooth_cursor
+                    .large_jump_multiplier
+                    .unwrap_or(smooth_cursor_defaults.large_jump_multiplier),
             },
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
