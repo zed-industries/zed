@@ -227,9 +227,15 @@ impl Vim {
                     }
                 )
             {
-                let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
+                let (preserve_goal, skip_wrapped_rows) = match motion {
+                    Motion::Up { display_lines } | Motion::Down { display_lines } => {
+                        (true, !display_lines)
+                    }
+                    _ => (false, false),
+                };
                 vim.visual_block_motion(
-                    is_up_or_down,
+                    preserve_goal,
+                    skip_wrapped_rows,
                     editor,
                     window,
                     cx,
@@ -299,6 +305,7 @@ impl Vim {
     pub fn visual_block_motion(
         &mut self,
         preserve_goal: bool,
+        skip_wrapped_rows: bool,
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -416,9 +423,15 @@ impl Vim {
 
                 // Find the next or previous buffer row where the `row` should
                 // be moved to, so that wrapped lines are skipped.
-                row = map
-                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
-                    .row();
+                if skip_wrapped_rows {
+                    row = map
+                        .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                        .row();
+                } else if going_up {
+                    row = row - 1;
+                } else {
+                    row = row + 1;
+                }
             }
 
             s.select(selections);
@@ -934,7 +947,10 @@ impl Vim {
 }
 #[cfg(test)]
 mod test {
+    use gpui::UpdateGlobal;
     use indoc::indoc;
+    use language::language_settings::SoftWrap;
+    use settings::SettingsStore;
     use workspace::item::Item;
 
     use crate::{
@@ -1651,6 +1667,31 @@ mod test {
             «1ˇ»2345678901234567890
             "
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_wrapped_display_line_motions(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(12);
+                });
+            })
+        });
+
+        cx.set_state("ˇ12345678901234567890", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-v g j");
+        cx.assert_state("«1ˇ»23456789012«3ˇ»4567890", Mode::VisualBlock);
+
+        cx.set_state("123456789012«3ˇ»4567890", Mode::VisualBlock);
+        cx.simulate_keystrokes("g k");
+        cx.assert_state("«1ˇ»23456789012«3ˇ»4567890", Mode::VisualBlock);
     }
 
     #[gpui::test]

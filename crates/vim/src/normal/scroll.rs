@@ -259,7 +259,7 @@ impl Vim {
             };
 
             if vim.mode == Mode::VisualBlock {
-                vim.visual_block_motion(true, editor, window, cx, &mut move_cursor);
+                vim.visual_block_motion(true, true, editor, window, cx, &mut move_cursor);
             } else {
                 editor.change_selections(
                     SelectionEffects::no_scroll().nav_history(false),
