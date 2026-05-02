@@ -11,11 +11,11 @@ use git::{
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
 use gpui::{
-    Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength, DragMoveEvent,
-    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, PathBuilder, Pixels,
-    Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, uniform_list,
+    Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
+    DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
+    PathBuilder, Pixels, Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    point, prelude::*, px, uniform_list,
 };
 use language::line_diff;
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -282,6 +282,10 @@ actions!(
         OpenCommitView,
         /// Focuses the search field.
         FocusSearch,
+        /// Selects a commit half a page above the current selection.
+        ScrollUp,
+        /// Selects a commit half a page below the current selection.
+        ScrollDown,
     ]
 );
 
@@ -1021,6 +1025,20 @@ impl GitGraph {
         (raw * scale).round() / scale
     }
 
+    fn visible_row_count(&self, window: &Window, cx: &App) -> usize {
+        let row_height = Self::row_height(window, cx);
+        let viewport_height = self
+            .table_interaction_state
+            .read(cx)
+            .scroll_handle
+            .0
+            .borrow()
+            .last_item_size
+            .map_or(window.viewport_size().height, |size| size.item.height);
+
+        (viewport_height / row_height).ceil() as usize
+    }
+
     fn graph_canvas_content_width(&self) -> Pixels {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
@@ -1524,6 +1542,20 @@ impl GitGraph {
             ScrollStrategy::Nearest,
             cx,
         );
+    }
+
+    fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
+        let step = (self.visible_row_count(window, cx) / 2).max(1);
+        let target_idx = self.selected_entry_idx.unwrap_or(0).saturating_sub(step);
+
+        self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
+    }
+
+    fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
+        let step = (self.visible_row_count(window, cx) / 2).max(1);
+        let target_idx = self.selected_entry_idx.unwrap_or(0).saturating_add(step);
+
+        self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -2963,6 +2995,8 @@ impl Render for GitGraph {
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::scroll_up))
+            .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(|this, _: &SelectNextMatch, _window, cx| {
                 this.select_next_match(cx);
@@ -5111,8 +5145,8 @@ mod tests {
             workspace::MultiWorkspace::test_new(project.clone(), window, cx)
         });
 
-        let workspace_weak =
-            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
 
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
@@ -5126,6 +5160,11 @@ mod tests {
         });
         cx.run_until_parked();
 
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
         git_graph.update_in(cx, |graph, window, cx| {
             graph.focus_handle(cx).focus(window, cx);
         });
@@ -5134,8 +5173,13 @@ mod tests {
         cx.draw(
             point(px(0.), px(0.)),
             gpui::size(px(1200.), px(800.)),
-            |_, _| git_graph.clone().into_any_element(),
+            |_, _| multi_workspace.clone().into_any_element(),
         );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
         cx.run_until_parked();
 
         git_graph.read_with(&*cx, |graph, _| {
@@ -5148,6 +5192,22 @@ mod tests {
         git_graph.update_in(cx, |graph, window, cx| {
             graph.select_first(&menu::SelectFirst, window, cx);
         });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+        });
+
+        let scroll_step = git_graph.update_in(cx, |graph, window, cx| {
+            (graph.visible_row_count(window, cx) / 2).max(1)
+        });
+
+        cx.dispatch_action(ScrollDown);
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(scroll_step));
+        });
+
+        cx.dispatch_action(ScrollUp);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(0));
