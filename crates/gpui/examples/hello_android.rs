@@ -17,10 +17,12 @@
 #![cfg(target_os = "android")]
 
 use gpui::{
-    App, Bounds, ClickEvent, Context, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+    App, Bounds, ClickEvent, Context, Entity, IntoElement, ParentElement, Render, SharedString,
+    Styled, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
+use gpui_android::widgets::{FieldKind, TextField};
 use gpui_platform::application;
+use std::path::PathBuf;
 
 /// Top-level state for the gallery view. Mutable fields drive re-renders
 /// when paired with `cx.notify()` inside click listeners.
@@ -29,6 +31,17 @@ struct Gallery {
     accent: AccentColor,
     appearance: Appearance,
     last_action: SharedString,
+    /// Live text input: tap → soft keyboard pops → typing edits the
+    /// `content`. Owned by the gallery so its render value can be read
+    /// for the "echo" panel.
+    text_field: Entity<TextField>,
+    /// Numeric input: same widget, `FieldKind::Number` filters
+    /// non-digit characters at IME-write time.
+    number_field: Entity<TextField>,
+    /// URI(s) returned by the most recent file/image/directory picker, or
+    /// a status string while a pick is in flight.
+    picker_status: SharedString,
+    picker_results: Vec<PathBuf>,
 }
 
 /// One of a fixed palette of accent colors the user can pick.
@@ -111,12 +124,22 @@ impl Appearance {
 }
 
 impl Gallery {
-    fn new() -> Self {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let text_field = cx.new(|cx| TextField::new(cx, "type something…", FieldKind::Text));
+        let number_field = cx.new(|cx| TextField::new(cx, "0", FieldKind::Number));
+        // Re-render the gallery whenever either input notifies (i.e. any
+        // edit) so the echo panel stays in sync with the field.
+        cx.observe(&text_field, |_, _, cx| cx.notify()).detach();
+        cx.observe(&number_field, |_, _, cx| cx.notify()).detach();
         Self {
             counter: 0,
             accent: AccentColor::Cobalt,
             appearance: Appearance::Dark,
             last_action: "tap a button".into(),
+            text_field,
+            number_field,
+            picker_status: "idle".into(),
+            picker_results: Vec::new(),
         }
     }
 
@@ -163,6 +186,73 @@ impl Gallery {
         self.accent = color;
         self.last_action = format!("accent → {}", color.name()).into();
         cx.notify();
+    }
+
+    fn on_pick_file(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let receiver = gpui_android::pick_files(false, &[]);
+        self.spawn_picker(cx, "file", receiver);
+    }
+
+    fn on_pick_files(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let receiver = gpui_android::pick_files(true, &[]);
+        self.spawn_picker(cx, "files", receiver);
+    }
+
+    fn on_pick_image(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let receiver = gpui_android::pick_images(false);
+        self.spawn_picker(cx, "image", receiver);
+    }
+
+    fn on_pick_directory(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let receiver = gpui_android::pick_directory();
+        self.spawn_picker(cx, "directory", receiver);
+    }
+
+    /// Awaits a picker receiver on the foreground executor and writes the
+    /// outcome into [`Self::picker_status`] / [`Self::picker_results`] for
+    /// the next render. The receiver is a `oneshot::Receiver` rather than
+    /// a `Task<_>`, so we wrap it in `cx.spawn` to thread the result back
+    /// onto the entity.
+    fn spawn_picker(
+        &mut self,
+        cx: &mut Context<Self>,
+        kind: &'static str,
+        receiver: futures::channel::oneshot::Receiver<
+            anyhow::Result<Option<Vec<PathBuf>>>,
+        >,
+    ) {
+        self.picker_status = format!("waiting for {kind}…").into();
+        self.picker_results.clear();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let outcome = receiver.await;
+            let _ = this.update(cx, |this, cx| {
+                match outcome {
+                    Ok(Ok(Some(paths))) => {
+                        this.picker_status = format!(
+                            "{kind} picked ({})",
+                            paths.len()
+                        )
+                        .into();
+                        this.picker_results = paths;
+                    }
+                    Ok(Ok(None)) => {
+                        this.picker_status = format!("{kind}: cancelled").into();
+                        this.picker_results.clear();
+                    }
+                    Ok(Err(error)) => {
+                        this.picker_status = format!("{kind}: error — {error}").into();
+                        this.picker_results.clear();
+                    }
+                    Err(_) => {
+                        this.picker_status = format!("{kind}: dropped").into();
+                        this.picker_results.clear();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn header(&self) -> impl IntoElement {
@@ -308,6 +398,109 @@ impl Gallery {
         section(appearance, "device").child(col)
     }
 
+    fn input_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let appearance = self.appearance;
+        let text_value = self.text_field.read(cx).content.clone();
+        let number_value = self.number_field.read(cx).content.clone();
+        let echo_color = rgb(self.accent.rgb());
+        section(appearance, "inputs")
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(appearance.text_secondary()))
+                    .child("tap a field — the soft keyboard pops via the platform IME"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(appearance.text_secondary()))
+                            .child("text"),
+                    )
+                    .child(self.text_field.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(appearance.text_secondary()))
+                            .child("number (digits + . + - only)"),
+                    )
+                    .child(self.number_field.clone()),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(echo_color)
+                    .child(format!(
+                        "echo → text=\"{text_value}\"  number=\"{number_value}\""
+                    )),
+            )
+    }
+
+    fn pickers_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let appearance = self.appearance;
+        let buttons = div()
+            .flex()
+            .flex_row()
+            .gap_3()
+            .items_center()
+            .child(button(appearance, "file", cx.listener(Self::on_pick_file)))
+            .child(button(appearance, "files…", cx.listener(Self::on_pick_files)))
+            .child(button(appearance, "image", cx.listener(Self::on_pick_image)))
+            .child(button(
+                appearance,
+                "folder",
+                cx.listener(Self::on_pick_directory),
+            ));
+
+        let mut results = div().flex().flex_col().gap_1();
+        if self.picker_results.is_empty() {
+            results = results.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(appearance.text_secondary()))
+                    .child("(no URI yet)"),
+            );
+        } else {
+            for (i, path) in self.picker_results.iter().enumerate() {
+                let display = path.display().to_string();
+                results = results.child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(appearance.text_primary()))
+                        .child(format!("{i}: {display}")),
+                );
+            }
+        }
+
+        section(appearance, "pickers")
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(appearance.text_secondary()))
+                    .child(
+                        "tap to launch SAF / PhotoPicker — results come back via NativeBridge",
+                    ),
+            )
+            .child(buttons)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(self.accent.rgb()))
+                    .child(format!("status: {}", self.picker_status)),
+            )
+            .child(results)
+    }
+
     fn scroll_section(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let appearance = self.appearance;
         let accent = rgb(self.accent.rgb());
@@ -379,6 +572,8 @@ impl Render for Gallery {
             .child(self.counter_section(cx))
             .child(self.appearance_section(cx))
             .child(self.accent_section(cx))
+            .child(self.input_section(cx))
+            .child(self.pickers_section(cx))
             .child(self.scroll_section(cx))
             .child(self.info_section(cx))
             .child(self.footer())
@@ -475,7 +670,7 @@ fn android_main(app: gpui_android::AndroidApp) {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| Gallery::new()),
+            |_, cx| cx.new(Gallery::new),
         ) {
             log::error!("failed to open Android window: {error:#}");
         }

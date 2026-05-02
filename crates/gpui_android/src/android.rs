@@ -8,17 +8,22 @@ mod clipboard;
 mod dispatcher;
 mod display;
 mod input;
+mod insets;
 mod intents;
 mod jni_glue;
 mod keyboard;
 mod keystore;
+mod pickers;
 mod platform;
+pub mod widgets;
 mod window;
 
 pub use app::{android_app, set_android_app};
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
+pub(crate) use insets::ime_bottom_inset_logical;
 pub(crate) use keyboard::*;
+pub use pickers::{pick_directory, pick_files, pick_images};
 pub use platform::AndroidPlatform;
 pub(crate) use window::*;
 

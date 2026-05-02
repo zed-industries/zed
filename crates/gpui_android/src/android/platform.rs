@@ -19,7 +19,7 @@ use gpui_wgpu::GpuContext;
 
 use super::{
     AndroidDispatcher, AndroidDisplay, AndroidKeyboardLayout, AndroidWindow, MainThreadMailbox,
-    android_app, clipboard, input, intents, keystore,
+    android_app, clipboard, ime_bottom_inset_logical, input, intents, keystore, pickers,
 };
 
 #[derive(Default)]
@@ -182,8 +182,16 @@ impl AndroidPlatform {
             }
             MainEvent::ContentRectChanged { .. } | MainEvent::InsetsChanged { .. } => {
                 if let Some(window) = self.window.borrow().as_ref() {
+                    let scale_factor = scale_factor_from_app(app);
                     let rect = app.content_rect();
-                    window.update_content_rect(rect, scale_factor_from_app(app));
+                    window.update_content_rect(rect, scale_factor);
+                    // The IME inset rides on InsetsChanged in modern
+                    // edge-to-edge apps — query it here so layouts shrink
+                    // when the keyboard slides up. Stale insets from prior
+                    // events would otherwise leave the field hidden behind
+                    // the keyboard.
+                    let inset = ime_bottom_inset_logical(app, scale_factor);
+                    window.update_ime_inset(inset);
                 }
             }
             _ => {}
@@ -211,11 +219,19 @@ impl AndroidPlatform {
         loop {
             let read_event = iter.next(|event| {
                 match input::translate(event, scale_factor) {
-                    input::Translated::Inputs(events) => {
+                    input::Translated::Motion {
+                        events,
+                        event_time_nanos,
+                    } => {
                         for translated in events {
                             if let Some(window) = self.window.borrow().as_ref() {
-                                window.dispatch_input(translated);
+                                window.dispatch_motion_input(translated, event_time_nanos);
                             }
+                        }
+                    }
+                    input::Translated::Key(translated) => {
+                        if let Some(window) = self.window.borrow().as_ref() {
+                            window.dispatch_input(translated);
                         }
                     }
                     input::Translated::TextState(state) => {
@@ -341,7 +357,31 @@ impl Platform for AndroidPlatform {
             // touch is broken.
             if launched {
                 if let Some(window) = self.window.borrow().as_ref() {
+                    // Drive any in-flight touch fling first, so the
+                    // `request_frame` that follows picks up the new scroll
+                    // offset and repaints in the same iteration.
+                    window.tick_fling();
                     window.dispatch_request_frame(RequestFrameOptions::default());
+                    // After the frame has settled, reconcile the soft
+                    // keyboard with whatever input handler GPUI ended up
+                    // wanting registered. Inside the same frame the
+                    // handler may have been taken and re-set — only the
+                    // post-frame snapshot represents real focus state.
+                    window.reconcile_keyboard();
+                    // The IME inset animates over ~250ms when the keyboard
+                    // slides up; `MainEvent::InsetsChanged` fires at the
+                    // start and the end on most devices, but not for the
+                    // intermediate frames. Polling here while the keyboard
+                    // is alive (or while the inset is non-zero, to catch
+                    // the slide-down) keeps the layout matching the live
+                    // keyboard rect during the animation. We skip the JNI
+                    // round-trip when neither condition holds so idle
+                    // frames stay cheap.
+                    if window.keyboard_visible() || window.ime_bottom_inset() > gpui::px(0.0) {
+                        let scale_factor = scale_factor_from_app(&app);
+                        let inset = ime_bottom_inset_logical(&app, scale_factor);
+                        window.update_ime_inset(inset);
+                    }
                 }
             }
 
@@ -447,13 +487,19 @@ impl Platform for AndroidPlatform {
 
     fn prompt_for_paths(
         &self,
-        _options: PathPromptOptions,
+        options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
-        let (tx, rx) = oneshot::channel();
-        let _ = tx.send(Err(anyhow::anyhow!(
-            "prompt_for_paths is not implemented on Android (Storage Access Framework integration pending)"
-        )));
-        rx
+        // SAF gives us either a file picker (`ACTION_OPEN_DOCUMENT`) or a
+        // directory picker (`ACTION_OPEN_DOCUMENT_TREE`); there's no
+        // single intent that yields both. When the caller asks for the
+        // mixed case we honour the file picker (and document the
+        // limitation via [`Self::can_select_mixed_files_and_dirs`] which
+        // returns `false`).
+        if options.directories && !options.files {
+            pickers::pick_directory()
+        } else {
+            pickers::pick_files(options.multiple, &[])
+        }
     }
 
     fn prompt_for_new_path(
@@ -461,9 +507,15 @@ impl Platform for AndroidPlatform {
         _directory: &Path,
         _suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+        // `ACTION_CREATE_DOCUMENT` would land here, but its return value
+        // is a `content://` URI we'd have to map back into a single
+        // `PathBuf`, the suggested name has to be threaded through as
+        // `EXTRA_TITLE`, and the activity-result plumbing differs from
+        // the read pickers in subtle ways. Wire that up alongside the
+        // first feature that actually needs to *write* a picked file.
         let (tx, rx) = oneshot::channel();
         let _ = tx.send(Err(anyhow::anyhow!(
-            "prompt_for_new_path is not implemented on Android (Storage Access Framework integration pending)"
+            "prompt_for_new_path is not implemented on Android (CREATE_DOCUMENT not yet wired up)"
         )));
         rx
     }
@@ -662,12 +714,16 @@ impl PlatformWindow for AndroidWindowHandle {
         self.0.capslock()
     }
     fn set_input_handler(&mut self, handler: gpui::PlatformInputHandler) {
-        if let Some(window) = Rc::get_mut(&mut self.0) {
-            window.set_input_handler(handler);
-        }
+        // Skip `Rc::get_mut` here — we know the platform keeps a parallel
+        // strong handle to the same `AndroidWindow`, so `get_mut` always
+        // returns `None` and the call would be a silent no-op (which is
+        // exactly what was happening before: the IME never popped). The
+        // `_inner` helper takes `&self` and uses interior mutability,
+        // which is sound for the same reason.
+        self.0.set_input_handler_inner(handler);
     }
     fn take_input_handler(&mut self) -> Option<gpui::PlatformInputHandler> {
-        Rc::get_mut(&mut self.0).and_then(|w| w.take_input_handler())
+        self.0.take_input_handler_inner()
     }
     fn prompt(
         &self,

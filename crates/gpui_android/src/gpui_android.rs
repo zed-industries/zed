@@ -91,7 +91,10 @@
 
 mod android;
 
-pub use android::{AndroidPlatform, android_app, current_platform, set_android_app};
+pub use android::{
+    AndroidPlatform, android_app, current_platform, pick_directory, pick_files, pick_images,
+    set_android_app, widgets,
+};
 
 /// Re-export of [`android_activity::AndroidApp`] so applications don't have
 /// to add `android-activity` to their `Cargo.toml` directly when wiring up

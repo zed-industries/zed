@@ -14,9 +14,19 @@ use gpui::{
 
 /// Outcome of translating one android-activity input event.
 pub(crate) enum Translated {
-    /// Conventional pointer/keyboard events that flow through GPUI's
-    /// `PlatformInput::on_input` path.
-    Inputs(Vec<PlatformInput>),
+    /// Touch / mouse / stylus events. Carries the source `MotionEvent`'s
+    /// `event_time` (nanoseconds since boot) so downstream code can compute
+    /// release velocities — `Instant::now()` is wrong here because
+    /// android-activity delivers a whole batch of pointer events in a
+    /// single `InputAvailable` poll, so all the wall-clock timestamps would
+    /// land within a millisecond of each other regardless of when the
+    /// finger was actually at each position.
+    Motion {
+        events: Vec<PlatformInput>,
+        event_time_nanos: i64,
+    },
+    /// Hardware keyboard input.
+    Key(PlatformInput),
     /// IME state delivered via `MainEvent::InputAvailable` + `TextEvent`.
     /// Routed to `PlatformInputHandler` instead of the input callback.
     TextState(android_activity::input::TextInputState),
@@ -31,9 +41,12 @@ pub(crate) enum Translated {
 /// `Pixels`, so we divide by the scale factor here.
 pub(crate) fn translate(event: &InputEvent, scale_factor: f32) -> Translated {
     match event {
-        InputEvent::MotionEvent(motion) => Translated::Inputs(translate_motion(motion, scale_factor)),
+        InputEvent::MotionEvent(motion) => Translated::Motion {
+            events: translate_motion(motion, scale_factor),
+            event_time_nanos: motion.event_time(),
+        },
         InputEvent::KeyEvent(key) => match translate_key(key) {
-            Some(input) => Translated::Inputs(vec![input]),
+            Some(input) => Translated::Key(input),
             None => Translated::None,
         },
         InputEvent::TextEvent(state) => Translated::TextState(state.clone()),

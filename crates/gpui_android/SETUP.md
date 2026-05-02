@@ -194,6 +194,21 @@ and `./gradlew :app:assembleDebug`.
 These all blew up the example at some point. Each is a one-line fix once
 you know it; the order below is roughly the order you'll hit them.
 
+### Touch drag → `ScrollWheel` synthesis
+
+GPUI's `overflow_scroll` only reacts to `PlatformInput::ScrollWheel`
+events, not to `MouseMove`. Touchscreens have no wheel, so
+`gpui_android` synthesises a companion `ScrollWheel` for every touch
+drag inside `AndroidWindow::dispatch_input`: phase `Started` on
+`MouseDown`, `Moved` with `delta = -(current - previous)` finger
+position on each `MouseMove`, and `Ended` on `MouseUp`. The negation
+makes a finger-up swipe scroll content *up* (i.e. reveal what's below) —
+the natural touch convention. Quick taps still fire click handlers
+because their hit-test only requires the down/up pair to land on the
+same element. Containers you want to scroll need an `id(...)` and
+`overflow_y_scroll()` (or `overflow_scroll`) just like on every other
+platform.
+
 ### `request_frame` has to be driven continuously
 
 GPUI marks the active entity dirty whenever `cx.notify()` runs, but it
@@ -324,6 +339,32 @@ keyboard on tap (and `gpui_android` won't ask it to via
 `PlatformInputHandler`); when you write a real text input element on
 top of GPUI's `PlatformInputHandler` API, the keyboard will pop up
 automatically.
+
+For a working reference, `gpui_android::widgets::TextField` is a
+single-line text field that handles the focus → IME plumbing for you.
+Drop it into your view as `cx.new(|cx| TextField::new(cx, "placeholder",
+FieldKind::Text))` and the keyboard pops on tap.
+
+### Soft keyboard covers the focused input
+
+With edge-to-edge enabled (the default on `targetSdk >= 35`), Android no
+longer auto-resizes the GameActivity surface when the IME slides up,
+even with `windowSoftInputMode="adjustResize"`. The window stays full
+screen and the IME draws on top.
+
+`gpui_android` queries `WindowInsets.Type.ime()` over JNI on every
+`MainEvent::InsetsChanged` event (and again every iteration of the run
+loop while the keyboard is up, to track the slide-up animation), and
+shrinks the bounds it reports to GPUI by the IME's bottom inset. As
+long as your root container uses `overflow_y_scroll()` (or any
+flex/scroll layout that respects the window's `content_size`), the
+focused input stays above the keyboard. The query only runs while the
+keyboard is alive, so idle frames stay cheap.
+
+Pre-API-30 devices don't expose the typed `ime()` inset; on those the
+inset reads as `0` and the IME overlaps content. There's no good
+fallback because `getSystemWindowInsets()` doesn't separate the IME
+from the nav bar.
 
 ---
 
