@@ -1,9 +1,13 @@
 mod app;
+mod bell;
 mod clipboard;
 mod dispatcher;
 mod display;
 mod input;
+mod intents;
+mod jni_glue;
 mod keyboard;
+mod keystore;
 mod platform;
 mod window;
 

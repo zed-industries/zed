@@ -11,15 +11,16 @@ use anyhow::{Context as _, Result, anyhow};
 use android_activity::AndroidApp;
 use gpui::{ClipboardEntry, ClipboardItem};
 use jni::{
-    Env, JavaVM, jni_sig, jni_str,
-    objects::{JObject, JString, JValue},
-    sys::{JavaVM as RawJavaVM, jobject},
+    Env, jni_sig, jni_str,
+    objects::{JObject, JValue},
 };
+
+use super::jni_glue::{java_string_to_rust, with_activity};
 
 /// Read the system clipboard as a single plain-text [`ClipboardItem`], or
 /// `None` if the clipboard is empty / not text / unavailable.
 pub(crate) fn read(app: &AndroidApp) -> Option<ClipboardItem> {
-    match read_inner(app) {
+    match with_activity(app, do_read) {
         Ok(item) => item,
         Err(error) => {
             log::warn!("clipboard read failed: {error:#}");
@@ -40,37 +41,14 @@ pub(crate) fn write(app: &AndroidApp, item: ClipboardItem) {
         })
         .collect::<Vec<_>>()
         .join("");
-    if let Err(error) = write_inner(app, &text) {
+    if let Err(error) = with_activity(app, |env, activity| do_write(env, activity, &text)) {
         log::warn!("clipboard write failed: {error:#}");
     }
 }
 
-fn vm_and_activity(app: &AndroidApp) -> Result<(JavaVM, jobject)> {
-    let vm_ptr = app.vm_as_ptr();
-    if vm_ptr.is_null() {
-        return Err(anyhow!("AndroidApp::vm_as_ptr returned null"));
-    }
-    // SAFETY: android-activity guarantees the pointer is a live `JavaVM*` for
-    // the lifetime of the process. `from_raw` checks for null and stores the
-    // pointer in a process-singleton, so racing with android-activity's own
-    // initialisation is safe.
-    let vm = unsafe { JavaVM::from_raw(vm_ptr as *mut RawJavaVM) };
-
-    let activity_ptr = app.activity_as_ptr();
-    if activity_ptr.is_null() {
-        return Err(anyhow!("AndroidApp::activity_as_ptr returned null"));
-    }
-    Ok((vm, activity_ptr as jobject))
-}
-
-fn read_inner(app: &AndroidApp) -> Result<Option<ClipboardItem>> {
-    let (vm, activity) = vm_and_activity(app)?;
-    vm.attach_current_thread(|env| do_read(env, activity))
-}
-
 fn do_read<'local>(
     env: &mut Env<'local>,
-    activity: jobject,
+    activity: &JObject<'local>,
 ) -> Result<Option<ClipboardItem>> {
     let clipboard = system_service(env, activity, "clipboard")?;
     if clipboard.is_null() {
@@ -92,12 +70,7 @@ fn do_read<'local>(
     }
 
     let count = env
-        .call_method(
-            &primary,
-            jni_str!("getItemCount"),
-            jni_sig!(() -> jint),
-            &[],
-        )
+        .call_method(&primary, jni_str!("getItemCount"), jni_sig!(() -> jint), &[])
         .context("ClipData.getItemCount")?
         .i()
         .context("ClipData.getItemCount returned non-int")?;
@@ -147,28 +120,18 @@ fn do_read<'local>(
         return Ok(None);
     }
 
-    let jstring: JString<'_> = env
-        .cast_local::<JString>(text_str)
-        .context("CharSequence.toString did not return java.lang.String")?;
-    if jstring.is_null() {
-        return Ok(None);
-    }
-    let mutf8 = jstring
-        .mutf8_chars(env)
-        .context("acquiring MUTF-8 chars from clipboard String")?;
-    let text = mutf8.to_str().into_owned();
+    let text = java_string_to_rust(env, text_str)?;
     if text.is_empty() {
         return Ok(None);
     }
     Ok(Some(ClipboardItem::new_string(text)))
 }
 
-fn write_inner(app: &AndroidApp, text: &str) -> Result<()> {
-    let (vm, activity) = vm_and_activity(app)?;
-    vm.attach_current_thread(|env| do_write(env, activity, text))
-}
-
-fn do_write<'local>(env: &mut Env<'local>, activity: jobject, text: &str) -> Result<()> {
+fn do_write<'local>(
+    env: &mut Env<'local>,
+    activity: &JObject<'local>,
+    text: &str,
+) -> Result<()> {
     let clipboard = system_service(env, activity, "clipboard")?;
     if clipboard.is_null() {
         return Err(anyhow!("getSystemService(\"clipboard\") returned null"));
@@ -203,20 +166,16 @@ fn do_write<'local>(env: &mut Env<'local>, activity: jobject, text: &str) -> Res
     Ok(())
 }
 
-/// Wraps the cached activity `jobject` and calls `getSystemService(name)`.
-fn system_service<'local>(
+/// `(Activity)context.getSystemService(name)`.
+pub(crate) fn system_service<'local>(
     env: &mut Env<'local>,
-    activity: jobject,
+    activity: &JObject<'local>,
     name: &str,
 ) -> Result<JObject<'local>> {
-    // SAFETY: `activity` is the global JNI ref kept alive by android-activity
-    // for the whole process; we wrap it in a transient `JObject` to use its
-    // `call_method` machinery without taking ownership.
-    let activity_obj = unsafe { JObject::from_raw(env, activity) };
     let name_str = env.new_string(name).context("alloc system-service name")?;
     let service = env
         .call_method(
-            &activity_obj,
+            activity,
             jni_str!("getSystemService"),
             jni_sig!((name: "java.lang.String") -> "java.lang.Object"),
             &[JValue::Object(&name_str)],

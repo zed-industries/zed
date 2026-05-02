@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use android_activity::input::TextInputState;
+use android_activity::input::{ImeOptions, InputType, TextInputAction, TextInputState};
 use anyhow::{Context as _, Result};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, GpuSpecs, Modifiers,
@@ -59,6 +59,31 @@ struct WindowState {
     /// Most-recent `GpuSpecs` reported by wgpu, captured the first time the
     /// renderer initialised.
     gpu_specs: Option<GpuSpecs>,
+    /// Last `TextInputState` we *received* from the IME. Used to suppress
+    /// echo: when we apply an edit and Android re-broadcasts the resulting
+    /// state, the broadcast matches `last_ime_state` and we drop it.
+    last_ime_state: Option<TextInputStateSnapshot>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct TextInputStateSnapshot {
+    text: String,
+    selection_start: usize,
+    selection_end: usize,
+    compose_start: Option<usize>,
+    compose_end: Option<usize>,
+}
+
+impl From<&TextInputState> for TextInputStateSnapshot {
+    fn from(state: &TextInputState) -> Self {
+        Self {
+            text: state.text.clone(),
+            selection_start: state.selection.start,
+            selection_end: state.selection.end,
+            compose_start: state.compose_region.as_ref().map(|s| s.start),
+            compose_end: state.compose_region.as_ref().map(|s| s.end),
+        }
+    }
 }
 
 /// Cheap clone-able handle to a `NativeWindow` that satisfies wgpu's
@@ -140,6 +165,7 @@ impl AndroidWindow {
                 renderer: None,
                 sprite_atlas: None,
                 gpu_specs: None,
+                last_ime_state: None,
             }),
             callbacks: RefCell::new(WindowCallbacks::default()),
             gpu_context,
@@ -212,6 +238,34 @@ impl AndroidWindow {
         *self.surface.lock() = None;
     }
 
+    /// Notify the window of a new content rect (the area not covered by
+    /// system bars or the IME). For now this is plumbed onto the bounds
+    /// reported via `content_size()`; once GPUI gains a first-class
+    /// "safe area inset" concept it should be exposed there directly.
+    pub(crate) fn update_content_rect(
+        &self,
+        rect: android_activity::Rect,
+        scale_factor: f32,
+    ) {
+        let logical_origin = Point {
+            x: px(rect.left as f32 / scale_factor),
+            y: px(rect.top as f32 / scale_factor),
+        };
+        let logical_size = Size {
+            width: px(((rect.right - rect.left).max(0)) as f32 / scale_factor),
+            height: px(((rect.bottom - rect.top).max(0)) as f32 / scale_factor),
+        };
+        let mut state = self.state.borrow_mut();
+        state.bounds = Bounds {
+            origin: logical_origin,
+            size: logical_size,
+        };
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(resize) = callbacks.resize.as_mut() {
+            resize(logical_size, scale_factor);
+        }
+    }
+
     /// Update the window's logical bounds + physical pixel size from a
     /// configuration change (rotation, fold, font-scale).
     pub(crate) fn update_size(&self, new_size: Size<DevicePixels>, scale_factor: f32) {
@@ -252,16 +306,24 @@ impl AndroidWindow {
     /// editor's text) into GPUI's `PlatformInputHandler` calls.
     ///
     /// Composing edits go through `replace_and_mark_text_in_range`, committed
-    /// edits through `replace_text_in_range`. We naively replace the whole
-    /// document with the IME's view each time — this is correct (the IME
-    /// already mirrors the editor's state) but inefficient for large
-    /// documents; a future pass should diff the two.
+    /// edits through `replace_text_in_range`. The whole-document replace is
+    /// correct because the IME already mirrors the editor's state; a future
+    /// pass should diff the two for efficiency on large documents.
+    ///
+    /// **Echo prevention.** The IME re-broadcasts `TextInputState` every
+    /// time a side updates it — including after our own `set_text_input_state`
+    /// pushes. We snapshot the state we apply and ignore re-deliveries that
+    /// match it bit-for-bit, mirroring the makepad pattern.
     pub(crate) fn dispatch_text_event(&self, state: TextInputState) {
+        let snapshot = TextInputStateSnapshot::from(&state);
         let mut state_borrow = self.state.borrow_mut();
+        if state_borrow.last_ime_state.as_ref() == Some(&snapshot) {
+            return;
+        }
+        state_borrow.last_ime_state = Some(snapshot);
         let Some(handler) = state_borrow.input_handler.as_mut() else {
             return;
         };
-        let selection = state.selection.start..state.selection.end;
         if let Some(compose) = state.compose_region {
             handler.replace_and_mark_text_in_range(
                 None,
@@ -271,9 +333,6 @@ impl AndroidWindow {
         } else {
             handler.replace_text_in_range(None, &state.text);
         }
-        // Drop the borrow so subsequent input dispatches can re-borrow without
-        // the user-supplied handler invalidating it.
-        let _ = selection;
     }
 
     pub(crate) fn dispatch_request_frame(&self, options: RequestFrameOptions) {
@@ -366,9 +425,26 @@ impl PlatformWindow for AndroidWindow {
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.state.borrow_mut().input_handler = Some(input_handler);
+        // Register a sane default `EditorInfo` and pop the soft keyboard so
+        // the user can actually type. Apps can override this later by calling
+        // `set_input_handler` again after re-configuring via JNI.
+        if let Some(app) = super::android_app() {
+            app.set_ime_editor_info(
+                InputType::TYPE_CLASS_TEXT
+                    | InputType::TYPE_TEXT_FLAG_MULTI_LINE
+                    | InputType::TYPE_TEXT_FLAG_NO_SUGGESTIONS,
+                TextInputAction::None,
+                ImeOptions::IME_FLAG_NO_FULLSCREEN,
+            );
+            app.show_soft_input(false);
+        }
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
+        if let Some(app) = super::android_app() {
+            app.hide_soft_input(false);
+        }
+        self.state.borrow_mut().last_ime_state = None;
         self.state.borrow_mut().input_handler.take()
     }
 
@@ -484,5 +560,16 @@ impl PlatformWindow for AndroidWindow {
         self.state.borrow().gpu_specs.clone()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+        // The IME's candidate-window position is normally pushed via
+        // `View.updateCursorAnchorInfo`, but android-activity's
+        // GameActivity has no Rust-visible View handle. Phase 2 (the
+        // android-view client) will implement this for real.
+    }
+
+    fn play_system_bell(&self) {
+        if let Some(app) = super::android_app() {
+            super::bell::ring(&app);
+        }
+    }
 }

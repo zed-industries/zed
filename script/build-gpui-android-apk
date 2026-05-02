@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Build the gpui_android_example APK end-to-end.
+#
+# Usage:
+#   script/build-gpui-android-apk [debug|release]
+#
+# What it does:
+#   1. Builds `libgpui_android_example.so` for every ABI listed in
+#      app/build.gradle.kts (arm64-v8a, x86_64) via `script/build-gpui-android`
+#   2. Copies each `.so` into the Gradle project's
+#      `app/src/main/jniLibs/<abi>/`
+#   3. Invokes Gradle to produce the APK
+#
+# Requirements:
+#   - All the prerequisites of `script/build-gpui-android` (NDK, rustup
+#     targets `aarch64-linux-android` and `x86_64-linux-android`)
+#   - A working `gradle` (or `./gradlew` once it's bootstrapped) — Gradle
+#     downloads its own toolchain on first run
+#   - $ANDROID_SDK_ROOT or $ANDROID_HOME pointing at an Android SDK with
+#     `cmdline-tools` + a `platforms/android-35` installed
+
+set -euo pipefail
+
+profile=${1:-debug}
+case "$profile" in
+  debug)   cargo_subcmd=build         ; gradle_task=:app:assembleDebug   ; rust_dir=debug   ;;
+  release) cargo_subcmd=build-release ; gradle_task=:app:assembleRelease ; rust_dir=release ;;
+  *) echo "unknown profile: $profile (use debug or release)" >&2; exit 1 ;;
+esac
+
+cd "$(git rev-parse --show-toplevel)"
+example_root="crates/gpui_android_example/android"
+
+build_arch() {
+  local arch="$1" abi="$2"
+  echo ">>> building libgpui_android_example.so for $abi"
+  script/build-gpui-android "$cargo_subcmd" "$arch"
+  local target_triple
+  case "$arch" in
+    aarch64) target_triple=aarch64-linux-android   ;;
+    x86_64)  target_triple=x86_64-linux-android    ;;
+    armv7)   target_triple=armv7-linux-androideabi ;;
+  esac
+  local jni_dir="$example_root/app/src/main/jniLibs/$abi"
+  mkdir -p "$jni_dir"
+  cp "target/$target_triple/$rust_dir/libgpui_android_example.so" "$jni_dir/"
+  echo ">>> copied .so to $jni_dir/"
+}
+
+build_arch aarch64 arm64-v8a
+build_arch x86_64 x86_64
+
+cd "$example_root"
+
+if [[ -x "./gradlew" ]]; then
+  ./gradlew "$gradle_task"
+elif command -v gradle >/dev/null; then
+  gradle "$gradle_task"
+else
+  echo "Neither ./gradlew nor a system gradle is available." >&2
+  echo "Run 'gradle wrapper' once inside $example_root, then re-run this script." >&2
+  exit 1
+fi
+
+echo
+echo "APK ready under $example_root/app/build/outputs/apk/$profile/"

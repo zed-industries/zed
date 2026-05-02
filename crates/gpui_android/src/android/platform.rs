@@ -19,7 +19,7 @@ use gpui_wgpu::GpuContext;
 
 use super::{
     AndroidDispatcher, AndroidDisplay, AndroidKeyboardLayout, AndroidWindow, MainThreadMailbox,
-    android_app, clipboard, input,
+    android_app, clipboard, input, intents, keystore,
 };
 
 #[derive(Default)]
@@ -136,6 +136,12 @@ impl AndroidPlatform {
             MainEvent::RedrawNeeded { .. } => {
                 if let Some(window) = self.window.borrow().as_ref() {
                     window.dispatch_request_frame(RequestFrameOptions::default());
+                }
+            }
+            MainEvent::ContentRectChanged { .. } | MainEvent::InsetsChanged { .. } => {
+                if let Some(window) = self.window.borrow().as_ref() {
+                    let rect = app.content_rect();
+                    window.update_content_rect(rect, scale_factor_from_app(app));
                 }
             }
             _ => {}
@@ -351,7 +357,9 @@ impl Platform for AndroidPlatform {
     }
 
     fn open_url(&self, url: &str) {
-        log::warn!("AndroidPlatform::open_url is not implemented (would open {url})");
+        if let Some(app) = android_app() {
+            intents::open_url(&app, url);
+        }
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -391,8 +399,17 @@ impl Platform for AndroidPlatform {
         false
     }
 
-    fn reveal_path(&self, _path: &Path) {}
-    fn open_with_system(&self, _path: &Path) {}
+    fn reveal_path(&self, path: &Path) {
+        if let Some(app) = android_app() {
+            intents::reveal_path(&app, path);
+        }
+    }
+
+    fn open_with_system(&self, path: &Path) {
+        if let Some(app) = android_app() {
+            intents::open_with_system(&app, path);
+        }
+    }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().quit = Some(callback);
@@ -441,9 +458,16 @@ impl Platform for AndroidPlatform {
     }
 
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
-        Err(anyhow::anyhow!(
-            "path_for_auxiliary_executable is not implemented on Android (would resolve {name} via Context.getApplicationInfo().nativeLibraryDir)"
-        ))
+        let app = android_app().ok_or_else(|| anyhow::anyhow!("AndroidApp not registered"))?;
+        let dir = native_library_dir(&app)?;
+        let candidate = std::path::Path::new(&dir).join(format!("lib{name}.so"));
+        if candidate.exists() {
+            Ok(candidate)
+        } else {
+            Err(anyhow::anyhow!(
+                "auxiliary executable {name} not found in nativeLibraryDir ({dir})"
+            ))
+        }
     }
 
     fn set_cursor_style(&self, _style: CursorStyle) {}
@@ -463,20 +487,34 @@ impl Platform for AndroidPlatform {
         }
     }
 
-    fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "credential storage is not implemented on Android (AndroidKeyStore integration pending)"
-        )))
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        let url = url.to_owned();
+        let username = username.to_owned();
+        let password = password.to_vec();
+        self.background_executor.spawn(async move {
+            let app = android_app()
+                .ok_or_else(|| anyhow::anyhow!("AndroidApp not registered"))?;
+            keystore::write(&app, &url, &username, &password)
+        })
     }
 
-    fn read_credentials(&self, _url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        Task::ready(Ok(None))
+    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        let url = url.to_owned();
+        self.background_executor.spawn(async move {
+            let Some(app) = android_app() else {
+                return Ok(None);
+            };
+            keystore::read(&app, &url)
+        })
     }
 
-    fn delete_credentials(&self, _url: &str) -> Task<Result<()>> {
-        Task::ready(Err(anyhow::anyhow!(
-            "credential storage is not implemented on Android (AndroidKeyStore integration pending)"
-        )))
+    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
+        let url = url.to_owned();
+        self.background_executor.spawn(async move {
+            let app = android_app()
+                .ok_or_else(|| anyhow::anyhow!("AndroidApp not registered"))?;
+            keystore::delete(&app, &url)
+        })
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
@@ -650,6 +688,35 @@ impl PlatformWindow for AndroidWindowHandle {
     fn update_ime_position(&self, bounds: gpui::Bounds<gpui::Pixels>) {
         self.0.update_ime_position(bounds)
     }
+    fn play_system_bell(&self) {
+        self.0.play_system_bell()
+    }
+}
+
+/// `Context.getApplicationInfo().nativeLibraryDir` — used to resolve auxiliary
+/// `.so` plugins.
+fn native_library_dir(app: &AndroidApp) -> Result<String> {
+    use jni::{jni_sig, jni_str, objects::JValue};
+    use super::jni_glue::{java_string_to_rust, with_activity};
+    with_activity(app, |env, activity| {
+        let info = env
+            .call_method(
+                activity,
+                jni_str!("getApplicationInfo"),
+                jni_sig!(() -> "android.content.pm.ApplicationInfo"),
+                &[],
+            )?
+            .l()?;
+        let dir_obj = env
+            .get_field(
+                &info,
+                jni_str!("nativeLibraryDir"),
+                jni_sig!("java.lang.String"),
+            )?
+            .l()?;
+        let _ = JValue::Bool;
+        java_string_to_rust(env, dir_obj)
+    })
 }
 
 /// Helper that turns `Option<T>` into `anyhow::Result<T>` with a fixed message
