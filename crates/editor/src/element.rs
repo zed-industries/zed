@@ -1969,14 +1969,20 @@ impl EditorElement {
                             line_height,
                             selection.cursor_shape,
                         );
+                        let scroll_x: gpui::Pixels = scroll_pixel_position.x.into();
+                        let scroll_y = scroll_position.y;
+
                         let mut state = previous_smooth_cursor_animations
                             .remove(&selection.id)
                             .unwrap_or_else(|| {
                                 let mut new_state =
-                                    SmoothCursorAnimationState::new(target_bounds, now);
+                                    SmoothCursorAnimationState::new(target_bounds, now, scroll_x, scroll_y);
                                 if let Some(orphan_id) = nearest_orphan_animation(
                                     &previous_smooth_cursor_animations,
                                     target_origin,
+                                    scroll_x,
+                                    scroll_y,
+                                    line_height,
                                 ) {
                                     if let Some(orphan) =
                                         previous_smooth_cursor_animations.remove(&orphan_id)
@@ -1986,8 +1992,24 @@ impl EditorElement {
                                 }
                                 new_state
                             });
+
+                        // Adjust corners for scroll changes (applies to all cursors, not just new ones)
+                        let delta_x = state.scroll_x - scroll_x;
+                        let delta_rows = state.scroll_y - scroll_y;
+
+                        if f32::from(delta_x).abs() > 1e-6 || delta_rows.abs() > 1e-6 {
+                            let delta_px_y = px((delta_rows as f32) * f32::from(line_height));
+                            for corner in &mut state.corners {
+                                corner.x += delta_x;
+                                corner.y += delta_px_y;
+                            }
+                        }
+                        // Update scroll tracking unconditionally to prevent sub-epsilon drift
+                        state.scroll_x = scroll_x;
+                        state.scroll_y = scroll_y;
+
                         if hide_local_cursor {
-                            state.snap_to(target_bounds, now);
+                            state.snap_to(target_bounds, now, scroll_x, scroll_y);
                         } else {
                             state.retarget(target_bounds);
                             let smooth_frame =
@@ -2024,12 +2046,17 @@ impl EditorElement {
                 }
             }
 
-            // Anything left in `previous_smooth_cursor_animations` belongs to
-            // selections that no longer exist, so we discard it.
-            drop(previous_smooth_cursor_animations);
-            editor
-                .smooth_cursor_animations
-                .retain(|selection_id, _| active_local_cursor_ids.contains(selection_id));
+            // Preserve animations for active selections that were skipped (e.g., out of view).
+            // This ensures they can still draw a trail if they jump back into view.
+            for (id, state) in previous_smooth_cursor_animations {
+                if active_local_cursor_ids.contains(&id) {
+                    editor.smooth_cursor_animations.insert(id, state);
+                }
+            }
+
+            // Note: The previous `editor.smooth_cursor_animations.retain(...)`
+            // is safely removable here, as everything inserted into
+            // `editor.smooth_cursor_animations` is guaranteed to be active.
 
             (cursors, any_animated_cursor)
         });
@@ -12042,12 +12069,27 @@ pub struct IndentGuideLayout {
 fn nearest_orphan_animation(
     orphans: &HashMap<usize, SmoothCursorAnimationState>,
     target_origin: gpui::Point<Pixels>,
+    current_scroll_x: gpui::Pixels,
+    current_scroll_y: f64,
+    line_height: Pixels,
 ) -> Option<usize> {
     orphans
         .iter()
         .min_by(|(_, a), (_, b)| {
-            let da = squared_distance(a.corners_origin(), target_origin);
-            let db = squared_distance(b.corners_origin(), target_origin);
+            // Adjust the orphan origins to match the current scroll coordinate space
+            let adjust = |state: &SmoothCursorAnimationState| {
+                let delta_x = state.scroll_x - current_scroll_x;
+                let delta_rows = state.scroll_y - current_scroll_y;
+                let delta_px_y = px((delta_rows as f32) * f32::from(line_height));
+
+                let mut origin = state.corners_origin();
+                origin.x += delta_x;
+                origin.y += delta_px_y;
+                origin
+            };
+
+            let da = squared_distance(adjust(a), target_origin);
+            let db = squared_distance(adjust(b), target_origin);
             da.partial_cmp(&db).unwrap_or(cmp::Ordering::Equal)
         })
         .map(|(id, _)| *id)

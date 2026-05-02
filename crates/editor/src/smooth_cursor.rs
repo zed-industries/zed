@@ -14,8 +14,14 @@ const SMOOTH_CURSOR_SETTLE_DISTANCE_PX: f32 = 0.35;
 #[derive(Clone, Debug)]
 pub(crate) struct SmoothCursorAnimationState {
     target_bounds: Bounds<Pixels>,
-    corners: [gpui::Point<Pixels>; 4],
+    pub(crate) corners: [gpui::Point<Pixels>; 4],
     last_frame: Instant,
+    /// The scroll x-position (in pixels) when the corners were last set.
+    /// Used to adjust corners when the scroll position changes between frames.
+    pub(crate) scroll_x: gpui::Pixels,
+    /// The scroll y-position (in rows) when the corners were last set.
+    /// Used to adjust corners when the scroll position changes between frames.
+    pub(crate) scroll_y: f64,
 }
 
 pub(crate) struct SmoothCursorFrame {
@@ -30,18 +36,22 @@ pub(crate) struct SmoothCursorTrail {
 }
 
 impl SmoothCursorAnimationState {
-    pub(crate) fn new(bounds: Bounds<Pixels>, now: Instant) -> Self {
+    pub(crate) fn new(bounds: Bounds<Pixels>, now: Instant, scroll_x: gpui::Pixels, scroll_y: f64) -> Self {
         Self {
             target_bounds: bounds,
             corners: bounds_corners(bounds),
             last_frame: now,
+            scroll_x,
+            scroll_y,
         }
     }
 
-    pub(crate) fn snap_to(&mut self, bounds: Bounds<Pixels>, now: Instant) {
+    pub(crate) fn snap_to(&mut self, bounds: Bounds<Pixels>, now: Instant, scroll_x: gpui::Pixels, scroll_y: f64) {
         self.target_bounds = bounds;
         self.corners = bounds_corners(bounds);
         self.last_frame = now;
+        self.scroll_x = scroll_x;
+        self.scroll_y = scroll_y;
     }
 
     pub(crate) fn retarget(&mut self, bounds: Bounds<Pixels>) {
@@ -58,6 +68,8 @@ impl SmoothCursorAnimationState {
     pub(crate) fn inherit_from(&mut self, other: &SmoothCursorAnimationState) {
         self.corners = other.corners;
         self.last_frame = other.last_frame;
+        self.scroll_x = other.scroll_x;
+        self.scroll_y = other.scroll_y;
     }
 
     pub(crate) fn step(
