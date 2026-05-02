@@ -554,8 +554,6 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// Whether this chunk of text was originally an inlay.
-    pub is_inlay: bool,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
 }

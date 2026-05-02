@@ -240,6 +240,8 @@ pub struct InlayChunks<'a> {
 #[derive(Clone)]
 pub struct InlayChunk<'a> {
     pub chunk: Chunk<'a>,
+    /// The inlay this chunk belongs to, if any.
+    pub inlay_id: Option<InlayId>,
     /// Whether the inlay should be customly rendered.
     pub renderer: Option<ChunkRenderer>,
 }
@@ -318,6 +320,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         newlines,
                         ..chunk.clone()
                     },
+                    inlay_id: None,
                     renderer: None,
                 }
             }
@@ -476,9 +479,9 @@ impl<'a> Iterator for InlayChunks<'a> {
                         tabs: new_tabs,
                         newlines: new_newlines,
                         highlight_style,
-                        is_inlay: true,
                         ..Chunk::default()
                     },
+                    inlay_id: Some(inlay.id),
                     renderer,
                 }
             }
@@ -2438,7 +2441,7 @@ mod tests {
         // Verify the highlighted portion includes the complete ellipsis character
         let highlighted_chunks: Vec<_> = chunks
             .iter()
-            .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
+            .filter(|c| c.chunk.highlight_style.is_some() && c.inlay_id.is_some())
             .collect();
 
         assert_eq!(highlighted_chunks.len(), 1);
@@ -2561,7 +2564,7 @@ mod tests {
             // Verify that the highlighted portion matches expectations
             let highlighted_text: String = chunks
                 .iter()
-                .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
+                .filter(|c| c.chunk.highlight_style.is_some() && c.inlay_id.is_some())
                 .map(|c| c.chunk.text)
                 .collect();
             assert_eq!(

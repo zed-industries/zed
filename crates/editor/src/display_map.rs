@@ -1409,7 +1409,7 @@ pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
-    pub is_inlay: bool,
+    pub inlay_type: Option<InlayId>,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -1424,7 +1424,8 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
-        let is_inlay = self.is_inlay;
+        let inlay_type = self.inlay_type;
+
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&chunk) = chunks.peek() {
@@ -1442,7 +1443,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
-                        is_inlay,
+                        inlay_type,
                         replacement: renderer.clone(),
                     });
                 }
@@ -1468,7 +1469,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
-                        is_inlay,
+                        inlay_type,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -1491,7 +1492,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
-                        is_inlay,
+                        inlay_type,
                         replacement: renderer.clone(),
                     });
                 }
@@ -1504,7 +1505,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
-                    is_inlay,
+                    inlay_type,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -1867,7 +1868,7 @@ impl DisplaySnapshot {
                         // For color inlays, blend the color with the editor background
                         // if the color has transparency (alpha < 1.0)
                         color: chunk_highlight.color.map(|color| {
-                            if chunk.is_inlay && !color.is_opaque() {
+                            if chunk.inlay_type.is_some() && !color.is_opaque() {
                                 editor_style.background.blend(color)
                             } else {
                                 color
@@ -1880,7 +1881,7 @@ impl DisplaySnapshot {
                     }
                 });
 
-                let diagnostic_highlight = if chunk.is_inlay {
+                let diagnostic_highlight = if chunk.inlay_type.is_some() {
                     current_diagnostic_underline.map(|underline| HighlightStyle {
                         underline: Some(underline),
                         ..Default::default()
@@ -1930,7 +1931,7 @@ impl DisplaySnapshot {
                     text: chunk.text,
                     style,
                     is_tab: chunk.is_tab,
-                    is_inlay: chunk.is_inlay,
+                    inlay_type: chunk.inlay_type,
                     replacement: chunk.renderer.map(ChunkReplacement::Renderer),
                 }
                 .highlight_invisibles(editor_style)
@@ -4272,7 +4273,7 @@ pub mod tests {
             text: pilot_emoji,
             style: None,
             is_tab: false,
-            is_inlay: false,
+            inlay_type: None,
             replacement: None,
         };
 
