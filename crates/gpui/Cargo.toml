@@ -171,7 +171,6 @@ embed-resource = { version = "3.0", optional = true }
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
-naga.workspace = true
 
 
 
@@ -179,6 +178,10 @@ naga.workspace = true
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
+
+[[example]]
+name = "move_entity_between_windows"
+path = "examples/move_entity_between_windows.rs"
 
 [[example]]
 name = "image"

@@ -1069,6 +1069,8 @@
       "ctrl-shift-enter": "git::Amend",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage",
+      "shift-escape": "git::ExpandCommitEditor",
+      "alt-shift-escape": "git::ToggleFillCommitEditor",
     },
   },
   {
@@ -1226,6 +1228,7 @@
       "ctrl-delete": ["terminal::SendText", "\u001bd"],
       "ctrl-n": "workspace::NewTerminal",
       // Overrides for conflicting keybindings
+      "alt-f4": "workspace::CloseWindow",
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],

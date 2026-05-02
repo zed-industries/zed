@@ -1034,6 +1034,15 @@
     },
   },
   {
+    "context": "GitGraph",
+    "bindings": {
+      "j": "vim::MenuSelectNext",
+      "k": "vim::MenuSelectPrevious",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst"
+    }
+  },
+  {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
     "use_key_equivalents": true,
     "bindings": {

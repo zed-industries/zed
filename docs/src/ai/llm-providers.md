@@ -34,7 +34,6 @@ Zed supports these providers with your own API keys:
 - [OpenCode](#opencode)
 - [OpenRouter](#openrouter)
 - [Vercel AI Gateway](#vercel-ai-gateway)
-- [Vercel](#vercel-v0)
 - [xAI](#xai)
 
 ### Amazon Bedrock {#amazon-bedrock}
@@ -242,7 +241,7 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#deepseek-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
+The Zed agent comes pre-configured to use DeepSeek V4 Flash and DeepSeek V4 Pro.
 If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
@@ -252,15 +251,16 @@ If you wish to use alternate models or customize the API endpoint, you can do so
       "api_url": "https://api.deepseek.com",
       "available_models": [
         {
-          "name": "deepseek-chat",
-          "display_name": "DeepSeek Chat",
-          "max_tokens": 64000
+          "name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
         },
         {
-          "name": "deepseek-reasoner",
-          "display_name": "DeepSeek Reasoner",
-          "max_tokens": 64000,
-          "max_output_tokens": 4096
+          "name": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
         }
       ]
     }
@@ -282,7 +282,7 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
 
-To use Copilot Enterprise with Zed (for both agent and completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
+To use Copilot Enterprise with Zed (for both agent and completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#using-github-copilot-enterprise).
 
 ### Google AI {#google-ai}
 
@@ -662,6 +662,7 @@ The Zed agent comes pre-configured with OpenCode models. If you wish to use newe
           "max_tokens": 123456,
           "max_output_tokens": 98765,
           "protocol": "openai_chat",
+          "reasoning_effort_levels": ["low", "medium", "high"],
           "subscription": "go",
           "custom_model_api_url": "https://example.com/zen"
         }
@@ -678,6 +679,7 @@ The available configuration options for custom models are:
 - `max_tokens` (required): maximum model context window size, for example `1000000`
 - `max_output_tokens` (optional): maximum tokens the model can generate, for example `64000`
 - `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
+- `reasoning_effort_levels` (optional): list of supported reasoning effort levels, for example `["low", "medium", "high"]`. The latest value in the list is used as the default
 - `subscription` (optional): `"zen"`, `"go"`, or `"free"` (defaults to `"zen"`)
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
 
@@ -826,18 +828,6 @@ You can also set a custom endpoint for Vercel AI Gateway in your settings file:
   }
 }
 ```
-
-### Vercel v0 {#vercel-v0}
-
-[Vercel v0](https://v0.app/docs/api/model) is a model for generating full-stack apps, with framework-aware completions for stacks like Next.js and Vercel.
-It supports text and image inputs and provides fast streaming responses.
-
-The v0 models are [OpenAI-compatible models](#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
-
-To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
-Once you have it, paste it directly into the Vercel provider section in the panel's settings view.
-
-You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
 
 ### xAI {#xai}
 

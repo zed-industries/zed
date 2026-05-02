@@ -951,11 +951,19 @@ async fn test_linked_worktrees_sync(
     executor.run_until_parked();
 
     // Verify host now sees 2 linked worktrees (feature-branch and hotfix-branch).
-    let host_linked_after_removal = project_a.read_with(cx_a, |project, cx| {
-        let repos = project.repositories(cx);
-        let repo = repos.values().next().unwrap();
-        repo.read(cx).linked_worktrees().to_vec()
-    });
+    let (host_linked_after_removal, host_git_paths_after_removal) =
+        project_a.read_with(cx_a, |project, cx| {
+            let repos = project.repositories(cx);
+            let repo = repos.values().next().unwrap();
+            let repo = repo.read(cx);
+            (
+                repo.linked_worktrees().to_vec(),
+                (
+                    repo.repository_dir_abs_path.to_path_buf(),
+                    repo.common_dir_abs_path.to_path_buf(),
+                ),
+            )
+        });
     assert_eq!(
         host_linked_after_removal.len(),
         2,
@@ -998,6 +1006,19 @@ async fn test_linked_worktrees_sync(
         late_joiner_linked, host_linked_after_removal,
         "late-joining client's linked_worktrees should match host's (DB roundtrip)"
     );
+    let late_joiner_git_paths = project_c.read_with(cx_c, |project, cx| {
+        let repos = project.repositories(cx);
+        let repo = repos.values().next().unwrap();
+        let repo = repo.read(cx);
+        (
+            repo.repository_dir_abs_path.to_path_buf(),
+            repo.common_dir_abs_path.to_path_buf(),
+        )
+    });
+    assert_eq!(
+        late_joiner_git_paths, host_git_paths_after_removal,
+        "late-joining client's git directory paths should match host's (DB roundtrip)"
+    );
 
     // Test reconnection: disconnect client B (guest) and reconnect.
     // After rejoining, client B should get linked_worktrees back from the DB.
@@ -1010,19 +1031,31 @@ async fn test_linked_worktrees_sync(
     executor.run_until_parked();
 
     // Verify client B still has the correct linked worktrees after reconnection.
-    let guest_linked_after_reconnect = project_b.read_with(cx_b, |project, cx| {
-        let repos = project.repositories(cx);
-        assert_eq!(
-            repos.len(),
-            1,
-            "guest should still have exactly 1 repository after reconnect"
-        );
-        let repo = repos.values().next().unwrap();
-        repo.read(cx).linked_worktrees().to_vec()
-    });
+    let (guest_linked_after_reconnect, guest_git_paths_after_reconnect) =
+        project_b.read_with(cx_b, |project, cx| {
+            let repos = project.repositories(cx);
+            assert_eq!(
+                repos.len(),
+                1,
+                "guest should still have exactly 1 repository after reconnect"
+            );
+            let repo = repos.values().next().unwrap();
+            let repo = repo.read(cx);
+            (
+                repo.linked_worktrees().to_vec(),
+                (
+                    repo.repository_dir_abs_path.to_path_buf(),
+                    repo.common_dir_abs_path.to_path_buf(),
+                ),
+            )
+        });
     assert_eq!(
         guest_linked_after_reconnect, host_linked_after_removal,
         "guest's linked_worktrees should survive guest disconnect/reconnect"
+    );
+    assert_eq!(
+        guest_git_paths_after_reconnect, host_git_paths_after_removal,
+        "guest's git directory paths should survive guest disconnect/reconnect"
     );
 }
 

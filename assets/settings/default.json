@@ -361,6 +361,8 @@
   // 1. Vertically center the target in the viewport: `center` (default)
   // 2. Scroll the minimum amount needed to make the target visible: `minimum`
   // 3. Scroll so the target appears near the top of the viewport: `top`
+  // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
+  //    offscreen: `preserve`
   "go_to_definition_scroll_strategy": "center",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
@@ -2253,7 +2255,16 @@
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "!kanayago", "..."],
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "!kanayago",
+        "!fuzzy-ruby-server",
+        "...",
+      ],
     },
     "Rust": {
       "debuggers": ["CodeLLDB"],
@@ -2349,9 +2360,6 @@
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1",
-    },
-    "vercel": {
-      "api_url": "https://api.v0.dev/v1",
     },
     "vercel_ai_gateway": {
       "api_url": "https://ai-gateway.vercel.sh/v1",

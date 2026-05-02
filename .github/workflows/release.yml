@@ -718,7 +718,7 @@ jobs:
     needs:
     - validate_release_assets
     - release_compliance_check
-    if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
+    if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
@@ -727,10 +727,51 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
-      run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        ref: ${{ github.ref }}
+        token: ${{ steps.generate-token.outputs.token }}
+    - id: auto-release-preview
+      name: release::auto_release_preview::auto_release_preview
+      run: |
+        tag="$GITHUB_REF_NAME"
+        release_published=false
+
+        if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-pre$ ]]; then
+            echo "::error::expected preview release tag in the form vMAJOR.MINOR.PATCH-pre, got $tag"
+            exit 1
+        fi
+
+        major="${BASH_REMATCH[1]}"
+        minor="${BASH_REMATCH[2]}"
+        should_release=true
+
+        released_preview="$(script/get-released-version preview)"
+        if [[ -z "$released_preview" || "$released_preview" == "null" ]]; then
+            echo "::error::could not determine released preview version"
+            exit 1
+        fi
+
+        released_preview_major="$(echo "$released_preview" | cut -d. -f1)"
+        released_preview_minor="$(echo "$released_preview" | cut -d. -f2)"
+
+        if [[ "$released_preview_major" != "$major" || "$released_preview_minor" != "$minor" ]]; then
+            should_release=false
+            echo "Leaving $tag as a draft because it is the first preview release for v${major}.${minor}.x"
+        fi
+
+        if [[ "$should_release" == "true" ]]; then
+            gh release edit "$tag" --repo=zed-industries/zed --draft=false
+            release_published=true
+        fi
+
+        echo "release_published=$release_published" >> "$GITHUB_OUTPUT"
       env:
         GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
+    outputs:
+      release_published: ${{ steps.auto-release-preview.outputs.release_published }}
   push_release_update_notification:
     needs:
     - create_draft_release
@@ -797,10 +838,10 @@ jobs:
                 echo ""
             elif [ "$VALIDATE_RESULT" == "failure" ]; then
                 echo "❌ Release validation failed for $TAG: missing assets: $RUN_URL"
-            elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
-                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
             elif [ "$AUTO_RELEASE_RESULT" == "failure" ]; then
                 echo "❌ Auto release failed for $TAG: $RUN_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "success" ] && [ "$AUTO_RELEASE_PUBLISHED" == "true" ]; then
+                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
             else
                 echo "👀 Release $TAG sitting freshly baked in the oven and waiting to be published: $RELEASE_URL"
             fi
@@ -814,6 +855,7 @@ jobs:
         VALIDATE_RESULT: ${{ needs.validate_release_assets.result }}
         COMPLIANCE_RESULT: ${{ needs.release_compliance_check.result }}
         AUTO_RELEASE_RESULT: ${{ needs.auto_release_preview.result }}
+        AUTO_RELEASE_PUBLISHED: ${{ needs.auto_release_preview.outputs.release_published }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         TAG: ${{ github.ref_name }}
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
