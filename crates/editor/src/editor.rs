@@ -2904,6 +2904,10 @@ impl Editor {
             key_context.add("selection_mode");
         }
 
+        if self.kill_ring_yank_state.is_some() {
+            key_context.add("kill_ring_can_yank_pop");
+        }
+
         let universal_argument_globals = cx.default_global::<UniversalArgumentGlobals>();
         if universal_argument_globals.has_state() {
             key_context.add("universal_argument");
@@ -25232,6 +25236,10 @@ impl KillRingState {
         self.entries.iter()
     }
 
+    pub fn snapshot(&self) -> Vec<KillRingEntrySnapshot> {
+        self.entries().map(KillRingEntrySnapshot::from).collect()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -25297,6 +25305,23 @@ impl KillRingState {
 }
 
 impl Global for KillRingState {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KillRingEntrySnapshot {
+    text: String,
+}
+
+impl KillRingEntrySnapshot {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl From<&KillRingEntry> for KillRingEntrySnapshot {
+    fn from(entry: &KillRingEntry) -> Self {
+        Self { text: entry.text() }
+    }
+}
 
 #[derive(Clone)]
 struct KillRingAppendState {

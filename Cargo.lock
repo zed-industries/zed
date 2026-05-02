@@ -9447,6 +9447,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "kill_ring_picker"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+]
+
+[[package]]
 name = "kqueue"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22471,6 +22479,7 @@ dependencies = [
  "journal",
  "json_schema_store",
  "keymap_editor",
+ "kill_ring_picker",
  "language",
  "language_extension",
  "language_model",

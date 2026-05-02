@@ -111,6 +111,7 @@ members = [
     "crates/journal",
     "crates/json_schema_store",
     "crates/keymap_editor",
+    "crates/kill_ring_picker",
     "crates/language",
     "crates/language_core",
     "crates/language_extension",
@@ -367,6 +368,7 @@ install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
+kill_ring_picker = { path = "crates/kill_ring_picker" }
 language = { path = "crates/language" }
 language_core = { path = "crates/language_core" }
 language_extension = { path = "crates/language_extension" }

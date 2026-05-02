@@ -736,6 +736,7 @@ fn main() {
         ui_prompt::init(cx);
 
         go_to_line::init(cx);
+        kill_ring_picker::init(cx);
         file_finder::init(cx);
         tab_switcher::init(cx);
         outline::init(cx);

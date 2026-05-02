@@ -1,0 +1,17 @@
+[package]
+name = "kill_ring_picker"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/kill_ring_picker.rs"
+doctest = false
+
+[dependencies]
+editor.workspace = true
+gpui.workspace = true

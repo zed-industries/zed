@@ -637,6 +637,8 @@ actions!(
         KillRingSave,
         /// Yanks from kill ring (Emacs-style).
         KillRingYank,
+        /// Opens the kill ring picker and yanks the selected entry (Emacs-style).
+        KillRingPickAndYank,
         /// Cycles through kill ring entries, replacing the last yank (Emacs-style).
         KillRingYankPop,
         /// Starts or extends a universal argument (Emacs-style).

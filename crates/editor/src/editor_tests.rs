@@ -8816,6 +8816,63 @@ fn selection_mark_mode(cx: &mut EditorTestContext) -> bool {
     cx.editor(|editor, _, _| editor.selection_mark_mode)
 }
 
+#[gpui::test]
+async fn test_kill_ring_pick_and_yank_action_registered(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        let action = cx
+            .build_action("editor::KillRingPickAndYank", None)
+            .expect("KillRingPickAndYank action should be registered");
+
+        assert_eq!(action.name(), "editor::KillRingPickAndYank");
+        assert!(action.as_any().is::<KillRingPickAndYank>());
+    });
+}
+
+#[gpui::test]
+async fn test_kill_ring_state_public_snapshot(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    let snapshot_texts = cx.editor(|_, _, cx| {
+        cx.default_global::<KillRingState>()
+            .snapshot()
+            .into_iter()
+            .map(|entry| entry.text().to_owned())
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(
+        snapshot_texts,
+        vec![
+            "third".to_string(),
+            "second".to_string(),
+            "first".to_string()
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_kill_ring_can_yank_pop_key_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    assert!(!has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
+    push_text_to_kill_ring(&mut cx, "alpha");
+    cx.set_state("ˇ");
+    assert!(!has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    assert!(has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
+
+    cx.update_editor(|editor, window, cx| editor.handle_input("x", window, cx));
+    assert!(!has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
+}
+
 fn bind_emacs_keymap(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let key_bindings = KeymapFile::load_asset_allow_partial_failure(
