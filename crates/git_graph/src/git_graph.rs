@@ -1610,10 +1610,11 @@ impl GitGraph {
         self.search(query, cx);
     }
 
-    fn refresh_search_editor_if_focused(&self, window: &Window, cx: &mut Context<Self>) {
+    fn activate_search_editor_if_focused(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.search_state.editor.update(cx, |editor, cx| {
             if editor.is_focused(window) {
-                cx.notify();
+                editor.select_all(&Default::default(), window, cx);
+                editor.show_cursor(cx);
             }
         });
     }
@@ -1625,7 +1626,7 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         window.focus_next(cx);
-        self.refresh_search_editor_if_focused(window, cx);
+        self.activate_search_editor_if_focused(window, cx);
         cx.stop_propagation();
         cx.notify();
     }
@@ -1637,7 +1638,7 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         window.focus_prev(cx);
-        self.refresh_search_editor_if_focused(window, cx);
+        self.activate_search_editor_if_focused(window, cx);
         cx.stop_propagation();
         cx.notify();
     }
@@ -3013,12 +3014,10 @@ impl Render for GitGraph {
             }))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
-                {
-                    let this = &mut *this;
-                    this.search_state
-                        .editor
-                        .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
-                };
+                this.search_state
+                    .editor
+                    .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
+                this.activate_search_editor_if_focused(window, cx);
             }))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
