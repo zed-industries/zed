@@ -1826,6 +1826,11 @@ impl EditorElement {
             if !smooth_cursor_enabled {
                 editor.smooth_cursor_animations.clear();
             }
+            // Drain previous states so we can transfer corners to a freshly
+            // created selection (mouse clicks allocate a new selection.id and
+            // would otherwise initialize at the target with no animation).
+            let mut previous_smooth_cursor_animations =
+                std::mem::take(&mut editor.smooth_cursor_animations);
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1964,10 +1969,23 @@ impl EditorElement {
                             line_height,
                             selection.cursor_shape,
                         );
-                        let state = editor
-                            .smooth_cursor_animations
-                            .entry(selection.id)
-                            .or_insert_with(|| SmoothCursorAnimationState::new(target_bounds, now));
+                        let mut state = previous_smooth_cursor_animations
+                            .remove(&selection.id)
+                            .unwrap_or_else(|| {
+                                let mut new_state =
+                                    SmoothCursorAnimationState::new(target_bounds, now);
+                                if let Some(orphan_id) = nearest_orphan_animation(
+                                    &previous_smooth_cursor_animations,
+                                    target_origin,
+                                ) {
+                                    if let Some(orphan) =
+                                        previous_smooth_cursor_animations.remove(&orphan_id)
+                                    {
+                                        new_state.inherit_from(&orphan);
+                                    }
+                                }
+                                new_state
+                            });
                         if hide_local_cursor {
                             state.snap_to(target_bounds, now);
                         } else {
@@ -1982,6 +2000,9 @@ impl EditorElement {
                                 block_text = None;
                             }
                         }
+                        editor
+                            .smooth_cursor_animations
+                            .insert(selection.id, state);
                     }
 
                     if hide_local_cursor {
@@ -2008,6 +2029,9 @@ impl EditorElement {
                 }
             }
 
+            // Anything left in `previous_smooth_cursor_animations` belongs to
+            // selections that no longer exist, so we discard it.
+            drop(previous_smooth_cursor_animations);
             editor
                 .smooth_cursor_animations
                 .retain(|selection_id, _| active_local_cursor_ids.contains(selection_id));
@@ -12018,6 +12042,26 @@ pub struct IndentGuideLayout {
     depth: u32,
     active: bool,
     settings: IndentGuideSettings,
+}
+
+fn nearest_orphan_animation(
+    orphans: &HashMap<usize, SmoothCursorAnimationState>,
+    target_origin: gpui::Point<Pixels>,
+) -> Option<usize> {
+    orphans
+        .iter()
+        .min_by(|(_, a), (_, b)| {
+            let da = squared_distance(a.corners_origin(), target_origin);
+            let db = squared_distance(b.corners_origin(), target_origin);
+            da.partial_cmp(&db).unwrap_or(cmp::Ordering::Equal)
+        })
+        .map(|(id, _)| *id)
+}
+
+fn squared_distance(a: gpui::Point<Pixels>, b: gpui::Point<Pixels>) -> f32 {
+    let dx: f32 = (a.x - b.x).into();
+    let dy: f32 = (a.y - b.y).into();
+    dx * dx + dy * dy
 }
 
 pub struct CursorLayout {

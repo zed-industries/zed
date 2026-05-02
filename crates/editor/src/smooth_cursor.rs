@@ -51,6 +51,15 @@ impl SmoothCursorAnimationState {
         self.target_bounds = bounds;
     }
 
+    pub(crate) fn corners_origin(&self) -> gpui::Point<Pixels> {
+        self.corners[0]
+    }
+
+    pub(crate) fn inherit_from(&mut self, other: &SmoothCursorAnimationState) {
+        self.corners = other.corners;
+        self.last_frame = other.last_frame;
+    }
+
     pub(crate) fn step(
         &mut self,
         now: Instant,
