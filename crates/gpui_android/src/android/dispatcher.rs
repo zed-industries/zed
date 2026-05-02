@@ -109,6 +109,10 @@ impl MainThreadMailbox {
         self.stop.store(true, Ordering::Release);
         self.notify();
     }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
 }
 
 fn run_with_timing(runnable: RunnableVariant) {

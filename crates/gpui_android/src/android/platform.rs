@@ -3,20 +3,23 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Result;
+use android_activity::{AndroidApp, MainEvent, PollEvent};
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Task, ThermalState, WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, RequestFrameOptions, Size, Task, ThermalState, WindowAppearance, WindowParams,
 };
+use gpui_wgpu::GpuContext;
 
 use super::{
     AndroidDispatcher, AndroidDisplay, AndroidKeyboardLayout, AndroidWindow, MainThreadMailbox,
-    current_native_window,
+    android_app, clipboard, input,
 };
 
 #[derive(Default)]
@@ -33,11 +36,10 @@ struct PlatformCallbacks {
 
 /// GPUI [`Platform`] implementation for Android.
 ///
-/// The current scaffold exposes real executors, a real text system, and stub
-/// implementations for everything that requires deep JNI/SurfaceFlinger
-/// integration (windowing, clipboard, file pickers, credentials). Each stubbed
-/// method is shaped to slot a real implementation in without changing
-/// signatures.
+/// Boots from `android_main(app: AndroidApp)`. Drives the activity's poll
+/// loop (input + lifecycle events), maintains the wgpu surface in lockstep
+/// with `MainEvent::InitWindow`/`MainEvent::TerminateWindow`, and pumps the
+/// foreground executor's mailbox each iteration.
 pub struct AndroidPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
@@ -45,8 +47,13 @@ pub struct AndroidPlatform {
     main_mailbox: Arc<MainThreadMailbox>,
     active_display: Rc<AndroidDisplay>,
     active_window: RefCell<Option<AnyWindowHandle>>,
+    /// Strong handle to the live window, kept here so the activity-event
+    /// pump can route lifecycle/input events without going through the
+    /// trait-object indirection.
+    window: RefCell<Option<Rc<AndroidWindow>>>,
     callbacks: RefCell<PlatformCallbacks>,
     menus: RefCell<Vec<OwnedMenu>>,
+    gpu_context: GpuContext,
     headless: bool,
 }
 
@@ -56,10 +63,8 @@ impl AndroidPlatform {
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
 
-        // CosmicTextSystem walks the system font database. Android's
-        // fontconfig + /system/fonts is auto-discovered by cosmic-text via
-        // fontdb. "Roboto" is the platform default and is guaranteed to be
-        // present on every Android device.
+        // Roboto is bundled with every Android system image. cosmic-text's
+        // default `FontSystem` walks `/system/fonts` automatically.
         let text_system: Arc<dyn PlatformTextSystem> =
             Arc::new(gpui_wgpu::CosmicTextSystem::new("Roboto"));
 
@@ -72,10 +77,145 @@ impl AndroidPlatform {
             main_mailbox,
             active_display,
             active_window: RefCell::new(None),
+            window: RefCell::new(None),
             callbacks: RefCell::new(PlatformCallbacks::default()),
             menus: RefCell::new(Vec::new()),
+            gpu_context: Rc::new(std::cell::RefCell::new(None)),
             headless,
         }
+    }
+
+    fn handle_main_event(&self, app: &AndroidApp, event: MainEvent<'_>) {
+        match event {
+            MainEvent::InitWindow { .. } | MainEvent::WindowResized { .. } => {
+                if let Some(native_window) = app.native_window() {
+                    let physical_size = Size {
+                        width: DevicePixels(native_window.width()),
+                        height: DevicePixels(native_window.height()),
+                    };
+                    let scale_factor = scale_factor_from_app(app);
+                    self.active_display
+                        .set_bounds(logical_bounds(physical_size, scale_factor));
+                    if let Some(window) = self.window.borrow().as_ref() {
+                        match event {
+                            MainEvent::InitWindow { .. } => {
+                                if let Err(error) =
+                                    window.attach_surface(native_window, physical_size)
+                                {
+                                    log::error!("Failed to attach Android surface: {error:#}");
+                                }
+                            }
+                            MainEvent::WindowResized { .. } => {
+                                window.update_size(physical_size, scale_factor);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            MainEvent::TerminateWindow { .. } => {
+                if let Some(window) = self.window.borrow().as_ref() {
+                    window.detach_surface();
+                }
+            }
+            MainEvent::GainedFocus | MainEvent::Resume { .. } => {
+                if let Some(window) = self.window.borrow().as_ref() {
+                    window.dispatch_active_status(true);
+                }
+            }
+            MainEvent::LostFocus | MainEvent::Pause => {
+                if let Some(window) = self.window.borrow().as_ref() {
+                    window.dispatch_active_status(false);
+                }
+            }
+            MainEvent::ConfigChanged { .. } => {
+                if let Some(window) = self.window.borrow().as_ref() {
+                    window.set_appearance(appearance_from_app(app));
+                }
+            }
+            MainEvent::RedrawNeeded { .. } => {
+                if let Some(window) = self.window.borrow().as_ref() {
+                    window.dispatch_request_frame(RequestFrameOptions::default());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn pump_input(&self, app: &AndroidApp) {
+        let scale_factor = self
+            .window
+            .borrow()
+            .as_ref()
+            .map(|w| w.scale_factor())
+            .unwrap_or(1.0);
+
+        // android-activity's input iterator hands us events with a
+        // `&InputEvent`; we translate and dispatch each one synchronously.
+        let mut iter = match app.input_events_iter() {
+            Ok(iter) => iter,
+            Err(error) => {
+                log::warn!("input_events_iter failed: {error:?}");
+                return;
+            }
+        };
+
+        loop {
+            let read_event = iter.next(|event| {
+                match input::translate(event, scale_factor) {
+                    input::Translated::Inputs(events) => {
+                        for translated in events {
+                            if let Some(window) = self.window.borrow().as_ref() {
+                                window.dispatch_input(translated);
+                            }
+                        }
+                    }
+                    input::Translated::TextState(state) => {
+                        if let Some(window) = self.window.borrow().as_ref() {
+                            window.dispatch_text_event(state);
+                        }
+                    }
+                    input::Translated::None => {}
+                }
+                android_activity::InputStatus::Handled
+            });
+            if !read_event {
+                break;
+            }
+        }
+    }
+}
+
+/// Convert physical window metrics + scale factor into a logical bounds tuple
+/// for `PlatformDisplay`.
+fn logical_bounds(
+    physical: Size<DevicePixels>,
+    scale_factor: f32,
+) -> gpui::Bounds<gpui::Pixels> {
+    use gpui::px;
+    gpui::Bounds {
+        origin: gpui::Point::default(),
+        size: Size {
+            width: px(physical.width.0 as f32 / scale_factor),
+            height: px(physical.height.0 as f32 / scale_factor),
+        },
+    }
+}
+
+fn scale_factor_from_app(app: &AndroidApp) -> f32 {
+    app.config()
+        .density()
+        .map(|d| d as f32 / 160.0)
+        .unwrap_or(1.0)
+}
+
+fn appearance_from_app(app: &AndroidApp) -> WindowAppearance {
+    // android-activity exposes the runtime ndk::Configuration; tracking
+    // night-mode here lets us switch GPUI's appearance without going through
+    // a full JNI round-trip on every frame.
+    match app.config().ui_mode_night() {
+        ndk::configuration::UiModeNight::Yes => WindowAppearance::Dark,
+        _ => WindowAppearance::Light,
     }
 }
 
@@ -95,11 +235,41 @@ impl Platform for AndroidPlatform {
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
 
-        // In production, the JNI bridge will pump the main thread mailbox via
-        // an `ALooper` callback. As a fallback (e.g. when running under an
-        // android-activity GameActivity event loop or in CI) we drain the
-        // mailbox here on the calling thread until `quit` is signalled.
-        while self.main_mailbox.drain_blocking() {}
+        let Some(app) = android_app() else {
+            log::warn!(
+                "AndroidPlatform::run called without a registered AndroidApp; \
+                 falling back to a mailbox-only loop"
+            );
+            while self.main_mailbox.drain_blocking() {}
+            return;
+        };
+
+        loop {
+            // Drain anything queued via dispatch_on_main_thread before yielding
+            // to android-activity, so user code that wraps blocking work in
+            // `cx.spawn(...)` makes progress promptly.
+            self.main_mailbox.drain();
+
+            let mut should_quit = false;
+            app.poll_events(Some(Duration::from_millis(16)), |event| match event {
+                PollEvent::Wake => {}
+                PollEvent::Timeout => {}
+                PollEvent::Main(main_event) => {
+                    if matches!(main_event, MainEvent::Destroy) {
+                        should_quit = true;
+                    } else if matches!(main_event, MainEvent::InputAvailable) {
+                        self.pump_input(&app);
+                    } else {
+                        self.handle_main_event(&app, main_event);
+                    }
+                }
+                _ => {}
+            });
+
+            if should_quit || self.main_mailbox.is_stopped() {
+                break;
+            }
+        }
 
         if let Some(mut quit) = self.callbacks.borrow_mut().quit.take() {
             quit();
@@ -111,18 +281,12 @@ impl Platform for AndroidPlatform {
     }
 
     fn restart(&self, _binary_path: Option<PathBuf>) {
-        // Android applications cannot restart themselves; the platform
-        // handles that via Play Store updates or the system's own restart
-        // semantics.
         log::warn!("AndroidPlatform::restart is a no-op on Android");
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {}
-
     fn hide(&self) {}
-
     fn hide_other_apps(&self) {}
-
     fn unhide_other_apps(&self) {}
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -145,23 +309,45 @@ impl Platform for AndroidPlatform {
         if self.headless {
             anyhow::bail!("AndroidPlatform::open_window: cannot open a window in headless mode");
         }
-        if current_native_window().is_none() {
-            anyhow::bail!(
-                "AndroidPlatform::open_window: no NativeWindow registered \
-                 (call gpui_android::set_native_window from surfaceCreated first)"
-            );
+        let app = android_app().context_for(
+            "AndroidPlatform::open_window: no AndroidApp registered \
+             (did you forget to call gpui_android::set_android_app from android_main?)",
+        )?;
+
+        let scale_factor = scale_factor_from_app(&app);
+        let window = Rc::new(AndroidWindow::new(
+            handle,
+            params,
+            self.active_display.clone(),
+            scale_factor,
+            self.gpu_context.clone(),
+        ));
+
+        // If a surface is already alive (e.g. open_window called after the
+        // first MainEvent::InitWindow), wire it up immediately.
+        if let Some(native_window) = app.native_window() {
+            let physical_size = Size {
+                width: DevicePixels(native_window.width()),
+                height: DevicePixels(native_window.height()),
+            };
+            self.active_display
+                .set_bounds(logical_bounds(physical_size, scale_factor));
+            window
+                .attach_surface(native_window, physical_size)
+                .map_err(|error| {
+                    anyhow::anyhow!("failed to attach initial Android surface: {error:#}")
+                })?;
         }
 
-        let window = AndroidWindow::new(handle, params, self.active_display.clone());
+        *self.window.borrow_mut() = Some(window.clone());
         *self.active_window.borrow_mut() = Some(handle);
-        Ok(Box::new(window))
+        Ok(Box::new(AndroidWindowHandle(window)))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
-        // Wired up to `Configuration.uiMode & UI_MODE_NIGHT_MASK` once JNI
-        // bridge is in place. Default to light to match the UI on a fresh
-        // Android install.
-        WindowAppearance::Light
+        android_app()
+            .map(|app| appearance_from_app(&app))
+            .unwrap_or(WindowAppearance::Light)
     }
 
     fn open_url(&self, url: &str) {
@@ -206,7 +392,6 @@ impl Platform for AndroidPlatform {
     }
 
     fn reveal_path(&self, _path: &Path) {}
-
     fn open_with_system(&self, _path: &Path) {}
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
@@ -252,9 +437,6 @@ impl Platform for AndroidPlatform {
     }
 
     fn app_path(&self) -> Result<PathBuf> {
-        // The "app" on Android is the .apk; we report the current executable
-        // path which is the loaded `.so`. Callers usually only need this for
-        // restart, which we don't support anyway.
         Ok(std::env::current_exe()?)
     }
 
@@ -264,20 +446,22 @@ impl Platform for AndroidPlatform {
         ))
     }
 
-    fn set_cursor_style(&self, _style: CursorStyle) {
-        // Pointer cursors only have meaning when a hardware mouse is attached
-        // (e.g. DeX or ChromeOS). Ignored for now.
-    }
+    fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn should_auto_hide_scrollbars(&self) -> bool {
         true
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+        let app = android_app()?;
+        clipboard::read(&app)
     }
 
-    fn write_to_clipboard(&self, _item: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        if let Some(app) = android_app() {
+            clipboard::write(&app, item);
+        }
+    }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
@@ -308,14 +492,174 @@ impl Platform for AndroidPlatform {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Adapter so we can return a `Box<dyn PlatformWindow>` from `open_window`
+/// while the platform itself keeps an `Rc<AndroidWindow>` for event routing.
+struct AndroidWindowHandle(Rc<AndroidWindow>);
 
-    #[test]
-    fn android_platform_constructs_and_quits_cleanly() {
-        let platform = AndroidPlatform::new(true);
-        platform.quit();
-        platform.run(Box::new(|| {}));
+impl raw_window_handle::HasWindowHandle for AndroidWindowHandle {
+    fn window_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError>
+    {
+        self.0.window_handle()
+    }
+}
+
+impl raw_window_handle::HasDisplayHandle for AndroidWindowHandle {
+    fn display_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError>
+    {
+        self.0.display_handle()
+    }
+}
+
+impl PlatformWindow for AndroidWindowHandle {
+    fn bounds(&self) -> gpui::Bounds<gpui::Pixels> {
+        self.0.bounds()
+    }
+    fn is_maximized(&self) -> bool {
+        self.0.is_maximized()
+    }
+    fn window_bounds(&self) -> gpui::WindowBounds {
+        self.0.window_bounds()
+    }
+    fn content_size(&self) -> gpui::Size<gpui::Pixels> {
+        self.0.content_size()
+    }
+    fn resize(&mut self, size: gpui::Size<gpui::Pixels>) {
+        if let Some(window) = Rc::get_mut(&mut self.0) {
+            window.resize(size);
+        }
+    }
+    fn scale_factor(&self) -> f32 {
+        self.0.scale_factor()
+    }
+    fn appearance(&self) -> WindowAppearance {
+        self.0.appearance()
+    }
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        self.0.display()
+    }
+    fn mouse_position(&self) -> gpui::Point<gpui::Pixels> {
+        self.0.mouse_position()
+    }
+    fn modifiers(&self) -> gpui::Modifiers {
+        self.0.modifiers()
+    }
+    fn capslock(&self) -> gpui::Capslock {
+        self.0.capslock()
+    }
+    fn set_input_handler(&mut self, handler: gpui::PlatformInputHandler) {
+        if let Some(window) = Rc::get_mut(&mut self.0) {
+            window.set_input_handler(handler);
+        }
+    }
+    fn take_input_handler(&mut self) -> Option<gpui::PlatformInputHandler> {
+        Rc::get_mut(&mut self.0).and_then(|w| w.take_input_handler())
+    }
+    fn prompt(
+        &self,
+        level: gpui::PromptLevel,
+        msg: &str,
+        detail: Option<&str>,
+        answers: &[gpui::PromptButton],
+    ) -> Option<oneshot::Receiver<usize>> {
+        self.0.prompt(level, msg, detail, answers)
+    }
+    fn activate(&self) {
+        self.0.activate()
+    }
+    fn is_active(&self) -> bool {
+        self.0.is_active()
+    }
+    fn is_hovered(&self) -> bool {
+        self.0.is_hovered()
+    }
+    fn background_appearance(&self) -> gpui::WindowBackgroundAppearance {
+        self.0.background_appearance()
+    }
+    fn set_title(&mut self, title: &str) {
+        if let Some(window) = Rc::get_mut(&mut self.0) {
+            window.set_title(title);
+        }
+    }
+    fn set_background_appearance(&self, b: gpui::WindowBackgroundAppearance) {
+        self.0.set_background_appearance(b)
+    }
+    fn minimize(&self) {
+        self.0.minimize()
+    }
+    fn zoom(&self) {
+        self.0.zoom()
+    }
+    fn toggle_fullscreen(&self) {
+        self.0.toggle_fullscreen()
+    }
+    fn is_fullscreen(&self) -> bool {
+        self.0.is_fullscreen()
+    }
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+        self.0.on_request_frame(callback)
+    }
+    fn on_input(
+        &self,
+        callback: Box<dyn FnMut(gpui::PlatformInput) -> gpui::DispatchEventResult>,
+    ) {
+        self.0.on_input(callback)
+    }
+    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.on_active_status_change(callback)
+    }
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.on_hover_status_change(callback)
+    }
+    fn on_resize(&self, callback: Box<dyn FnMut(gpui::Size<gpui::Pixels>, f32)>) {
+        self.0.on_resize(callback)
+    }
+    fn on_moved(&self, callback: Box<dyn FnMut()>) {
+        self.0.on_moved(callback)
+    }
+    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.on_should_close(callback)
+    }
+    fn on_hit_test_window_control(
+        &self,
+        callback: Box<dyn FnMut() -> Option<gpui::WindowControlArea>>,
+    ) {
+        self.0.on_hit_test_window_control(callback)
+    }
+    fn on_close(&self, callback: Box<dyn FnOnce()>) {
+        self.0.on_close(callback)
+    }
+    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.on_appearance_changed(callback)
+    }
+    fn draw(&self, scene: &gpui::Scene) {
+        self.0.draw(scene)
+    }
+    fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
+        self.0.sprite_atlas()
+    }
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        self.0.is_subpixel_rendering_supported()
+    }
+    fn gpu_specs(&self) -> Option<gpui::GpuSpecs> {
+        self.0.gpu_specs()
+    }
+    fn update_ime_position(&self, bounds: gpui::Bounds<gpui::Pixels>) {
+        self.0.update_ime_position(bounds)
+    }
+}
+
+/// Helper that turns `Option<T>` into `anyhow::Result<T>` with a fixed message
+/// without dragging the full `anyhow::Context` extension into scope.
+trait ContextFor<T> {
+    fn context_for(self, msg: &'static str) -> anyhow::Result<T>;
+}
+
+impl<T> ContextFor<T> for Option<T> {
+    fn context_for(self, msg: &'static str) -> anyhow::Result<T> {
+        self.ok_or_else(|| anyhow::anyhow!(msg))
     }
 }

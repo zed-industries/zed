@@ -1,15 +1,17 @@
+mod app;
+mod clipboard;
 mod dispatcher;
 mod display;
+mod input;
 mod keyboard;
-mod native_window;
 mod platform;
 mod window;
 
+pub use app::set_android_app;
+pub(crate) use app::*;
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use keyboard::*;
-pub use native_window::set_native_window;
-pub(crate) use native_window::*;
 pub use platform::AndroidPlatform;
 pub(crate) use window::*;
 

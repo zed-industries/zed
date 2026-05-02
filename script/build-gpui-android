@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Build gpui_android (or the gpui_android_example .so) for an Android target.
+#
+# Usage:
+#   script/build-gpui-android [check|build|build-release] [aarch64|x86_64|armv7]
+#
+# Defaults: subcommand=check, arch=aarch64.
+#
+# Requirements:
+#   - Android NDK 26+ installed (default search: $ANDROID_NDK_ROOT,
+#     $ANDROID_NDK_HOME, $NDK_HOME, then ~/Android/Sdk/ndk/<latest>)
+#   - rustup target add aarch64-linux-android (or whichever arch you use)
+#
+# Why this script exists:
+#   cargo expects per-target linker/cc env vars whose names embed the target
+#   triple. We resolve the right NDK clang shim once and export them so
+#   downstream `cargo` invocations can rely on them being set.
+
+set -euo pipefail
+
+cmd=${1:-check}
+arch=${2:-aarch64}
+
+case "$arch" in
+  aarch64) target=aarch64-linux-android   ; clang_prefix=aarch64-linux-android   ;;
+  x86_64)  target=x86_64-linux-android    ; clang_prefix=x86_64-linux-android    ;;
+  armv7)   target=armv7-linux-androideabi ; clang_prefix=armv7a-linux-androideabi;;
+  *) echo "unknown arch: $arch (use aarch64, x86_64, or armv7)" >&2; exit 1 ;;
+esac
+
+api=${ANDROID_API_LEVEL:-26}
+
+find_ndk() {
+  for candidate in \
+    "${ANDROID_NDK_ROOT:-}" \
+    "${ANDROID_NDK_HOME:-}" \
+    "${NDK_HOME:-}"; do
+    if [[ -n "$candidate" && -d "$candidate/toolchains/llvm/prebuilt" ]]; then
+      echo "$candidate"; return 0
+    fi
+  done
+  for candidate in "$HOME/Android/Sdk/ndk"/*/; do
+    if [[ -d "$candidate/toolchains/llvm/prebuilt" ]]; then
+      echo "${candidate%/}"; return 0
+    fi
+  done
+  echo "" ; return 1
+}
+
+ndk=$(find_ndk) || { echo "Android NDK not found. Set ANDROID_NDK_ROOT or install one under ~/Android/Sdk/ndk/" >&2; exit 1; }
+host_arch=$(uname -m)
+host_os=$(uname -s | tr '[:upper:]' '[:lower:]')
+toolchain="$ndk/toolchains/llvm/prebuilt/${host_os}-${host_arch}"
+
+if [[ ! -d "$toolchain" ]]; then
+  toolchain="$ndk/toolchains/llvm/prebuilt/linux-x86_64"
+fi
+
+clang="$toolchain/bin/${clang_prefix}${api}-clang"
+clangxx="$toolchain/bin/${clang_prefix}${api}-clang++"
+ar="$toolchain/bin/llvm-ar"
+
+if [[ ! -x "$clang" ]]; then
+  echo "Linker/CC not found at $clang — does NDK $ndk match API $api?" >&2
+  exit 1
+fi
+
+# Cargo respects target-name-mangled env vars (underscores, uppercase).
+mangled=${target^^}; mangled=${mangled//-/_}
+
+export CARGO_NET_GIT_FETCH_WITH_CLI=true
+export CARGO_TARGET_${mangled}_LINKER="$clang"
+export CC_${target//-/_}="$clang"
+export CXX_${target//-/_}="$clangxx"
+export AR_${target//-/_}="$ar"
+
+case "$cmd" in
+  check)         exec cargo check    -p gpui_android         --target "$target" ;;
+  check-example) exec cargo check    -p gpui_android_example --target "$target" ;;
+  build)         exec cargo build    -p gpui_android_example --target "$target" ;;
+  build-release) exec cargo build    --release -p gpui_android_example --target "$target" ;;
+  *) echo "unknown command: $cmd (use check, check-example, build, build-release)" >&2; exit 1 ;;
+esac

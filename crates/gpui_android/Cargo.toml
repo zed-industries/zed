@@ -25,3 +25,8 @@ parking_lot.workspace = true
 uuid.workspace = true
 raw-window-handle = "0.6"
 ndk = "0.9"
+android_logger = "0.14"
+android-activity = { version = "0.6", features = ["game-activity"] }
+# Matches the version android-activity uses, so we share the JNI types
+# (JavaVM/JNIEnv/JObject) instead of pulling in two copies.
+jni = "0.22"
