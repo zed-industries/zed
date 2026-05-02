@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Build the gpui_android_example APK end-to-end.
+# Build the `hello_android` GPUI gallery APK end-to-end.
 #
 # Usage:
 #   script/build-gpui-android-apk [debug|release]
 #
 # What it does:
-#   1. Builds `libgpui_android_example.so` for every ABI listed in
-#      app/build.gradle.kts (arm64-v8a, x86_64) via `script/build-gpui-android`
+#   1. Builds `libhello_android.so` for every ABI listed in
+#      `crates/gpui/examples/android-host/app/build.gradle.kts`
+#      (arm64-v8a, x86_64) via `script/build-gpui-android`
 #   2. Copies each `.so` into the Gradle project's
 #      `app/src/main/jniLibs/<abi>/`
 #   3. Invokes Gradle to produce the APK
@@ -17,7 +18,9 @@
 #   - A working `gradle` (or `./gradlew` once it's bootstrapped) — Gradle
 #     downloads its own toolchain on first run
 #   - $ANDROID_SDK_ROOT or $ANDROID_HOME pointing at an Android SDK with
-#     `cmdline-tools` + a `platforms/android-35` installed
+#     `cmdline-tools` + a `platforms/android-34` (or higher) installed
+#   - $JAVA_HOME pointing at a full JDK 21+ (Android Studio's bundled JBR
+#     at `/snap/android-studio/current/jbr` works on Linux)
 
 set -euo pipefail
 
@@ -29,11 +32,11 @@ case "$profile" in
 esac
 
 cd "$(git rev-parse --show-toplevel)"
-example_root="crates/gpui_android_example/android"
+example_root="crates/gpui/examples/android-host"
 
 build_arch() {
   local arch="$1" abi="$2"
-  echo ">>> building libgpui_android_example.so for $abi"
+  echo ">>> building libhello_android.so for $abi"
   script/build-gpui-android "$cargo_subcmd" "$arch"
   local target_triple
   case "$arch" in
@@ -41,9 +44,10 @@ build_arch() {
     x86_64)  target_triple=x86_64-linux-android    ;;
     armv7)   target_triple=armv7-linux-androideabi ;;
   esac
+  # Per-example cdylibs land under `target/<triple>/<profile>/examples/`.
   local jni_dir="$example_root/app/src/main/jniLibs/$abi"
   mkdir -p "$jni_dir"
-  cp "target/$target_triple/$rust_dir/libgpui_android_example.so" "$jni_dir/"
+  cp "target/$target_triple/$rust_dir/examples/libhello_android.so" "$jni_dir/"
   echo ">>> copied .so to $jni_dir/"
 }
 

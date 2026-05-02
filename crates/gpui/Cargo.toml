@@ -165,6 +165,14 @@ reqwest_client = { workspace = true, features = ["test-support"] }
 wasm-bindgen = { workspace = true }
 gpui_web.workspace = true
 
+[target.'cfg(target_os = "android")'.dev-dependencies]
+gpui_android.workspace = true
+# `features = ["android"]` opts-in to the Android backend; without it
+# `gpui_platform::current_platform()` panics on `target_os = "android"`.
+gpui_platform = { workspace = true, default-features = false, features = ["android"] }
+android_logger = "0.14"
+log.workspace = true
+
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }
 
@@ -226,6 +234,15 @@ path = "examples/text.rs"
 [[example]]
 name = "text_wrapper"
 path = "examples/text_wrapper.rs"
+
+# Android cdylib host. Built by the `script/build-gpui-android-apk` wrapper;
+# the resulting `libhello_android.so` is packaged into the Gradle harness
+# under `examples/android-host/`. `crate-type = ["cdylib"]` is required so
+# `System.loadLibrary("hello_android")` can find `android_main`.
+[[example]]
+name = "hello_android"
+path = "examples/hello_android.rs"
+crate-type = ["cdylib"]
 
 [[example]]
 name = "tree"

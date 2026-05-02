@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
-# Build gpui_android (or the gpui_android_example .so) for an Android target.
+# Build gpui_android (or the `hello_android` cdylib example) for an Android
+# target.
 #
 # Usage:
-#   script/build-gpui-android [check|build|build-release] [aarch64|x86_64|armv7]
+#   script/build-gpui-android [check|check-example|build|build-release] [aarch64|x86_64|armv7]
 #
 # Defaults: subcommand=check, arch=aarch64.
+#
+# What gets built per subcommand:
+#   check          -> `cargo check -p gpui_android`             (the platform crate)
+#   check-example  -> `cargo check  --example hello_android`    (the gallery cdylib)
+#   build          -> `cargo build  --example hello_android`    (debug .so)
+#   build-release  -> `cargo build  --release --example hello_android` (release .so)
+#
+# Output paths for the example:
+#   target/<triple>/debug/examples/libhello_android.so
+#   target/<triple>/release/examples/libhello_android.so
 #
 # Requirements:
 #   - Android NDK 26+ installed (default search: $ANDROID_NDK_ROOT,
@@ -75,9 +86,20 @@ export CXX_${target//-/_}="$clangxx"
 export AR_${target//-/_}="$ar"
 
 case "$cmd" in
-  check)         exec cargo check    -p gpui_android         --target "$target" ;;
-  check-example) exec cargo check    -p gpui_android_example --target "$target" ;;
-  build)         exec cargo build    -p gpui_android_example --target "$target" ;;
-  build-release) exec cargo build    --release -p gpui_android_example --target "$target" ;;
-  *) echo "unknown command: $cmd (use check, check-example, build, build-release)" >&2; exit 1 ;;
+  check)
+    exec cargo check -p gpui_android --target "$target"
+    ;;
+  check-example)
+    exec cargo check -p gpui --example hello_android --target "$target"
+    ;;
+  build)
+    exec cargo build -p gpui --example hello_android --target "$target"
+    ;;
+  build-release)
+    exec cargo build --release -p gpui --example hello_android --target "$target"
+    ;;
+  *)
+    echo "unknown command: $cmd (use check, check-example, build, build-release)" >&2
+    exit 1
+    ;;
 esac

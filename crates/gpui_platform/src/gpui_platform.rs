@@ -52,9 +52,19 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         gpui_linux::current_platform(headless)
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(all(target_os = "android", feature = "android"))]
     {
         gpui_android::current_platform(headless)
+    }
+
+    #[cfg(all(target_os = "android", not(feature = "android")))]
+    {
+        let _ = headless;
+        panic!(
+            "gpui_platform was built for Android without its `android` \
+             feature; enable `features = [\"android\"]` on gpui_platform \
+             to pull in gpui_android (see crates/gpui_android/SETUP.md)"
+        )
     }
 
     #[cfg(target_family = "wasm")]

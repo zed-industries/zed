@@ -7678,6 +7678,7 @@ dependencies = [
 name = "gpui"
 version = "0.2.2"
 dependencies = [
+ "android_logger",
  "anyhow",
  "async-channel 2.5.0",
  "async-task",
@@ -7704,6 +7705,7 @@ dependencies = [
  "futures 0.3.32",
  "futures-concurrency",
  "getrandom 0.3.4",
+ "gpui_android",
  "gpui_macros",
  "gpui_platform",
  "gpui_shared_string",
@@ -7780,17 +7782,6 @@ dependencies = [
  "parking_lot",
  "raw-window-handle",
  "uuid",
-]
-
-[[package]]
-name = "gpui_android_example"
-version = "0.1.0"
-dependencies = [
- "android_logger",
- "gpui",
- "gpui_android",
- "gpui_platform",
- "log",
 ]
 
 [[package]]

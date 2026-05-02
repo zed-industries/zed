@@ -6,7 +6,7 @@
 }
 
 # Keep our entry-point activity so the manifest's `android:name` resolves.
--keep class dev.zed.gpui.example.** { *; }
+-keep class dev.zed.gpui.gallery.** { *; }
 
 # GameActivity's native_app_glue calls back into the activity at well-known
 # signatures; preserve the whole class.

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "gpui_android_example"
+rootProject.name = "hello_android"
 include(":app")

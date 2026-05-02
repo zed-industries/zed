@@ -91,7 +91,6 @@ members = [
     "crates/gpui",
     "crates/gpui_shared_string",
     "crates/gpui_android",
-    "crates/gpui_android_example",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",

@@ -13,14 +13,17 @@ plugins {
 }
 
 android {
-    namespace = "dev.zed.gpui.example"
-    compileSdk = 35
+    namespace = "dev.zed.gpui.gallery"
+    // We compile against the highest SDK installed locally (34) — Play
+    // ultimately requires targetSdk = 35, which can be set independently of
+    // the platform JAR we link against.
+    compileSdk = 34
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
-        applicationId = "dev.zed.gpui.example"
+        applicationId = "dev.zed.gpui.gallery"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
         ndk {
@@ -50,7 +53,7 @@ android {
         // debug info).
         jniLibs {
             useLegacyPackaging = false
-            keepDebugSymbols += listOf("**/libgpui_android_example.so")
+            keepDebugSymbols += listOf("**/libhello_android.so")
         }
     }
 }
@@ -59,6 +62,23 @@ dependencies {
     // GameActivity ships in the games-activity AAR. android-activity expects
     // this to be on the classpath when the `game-activity` feature is on.
     implementation("androidx.games:games-activity:3.0.5")
+    // GameActivity transitively extends AppCompatActivity, so we need
+    // appcompat on the classpath even though we don't use any of its
+    // widgets directly.
+    implementation("androidx.appcompat:appcompat:1.7.0")
     // androidx.core for splash-screen / window-insets compatibility shims.
     implementation("androidx.core:core:1.13.1")
+
+    // Force the unified Kotlin stdlib so `kotlin-stdlib-jdk7` and `jdk8`
+    // (pulled in transitively by games-activity 3.0.5 at 1.6.21) don't
+    // collide with the newer `kotlin-stdlib` 1.8.22 that brings their
+    // classes in directly. Recommended fix from the official Kotlin docs.
+    constraints {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22") {
+            because("kotlin-stdlib bundles its jdk7+ classes from 1.8.0+")
+        }
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22") {
+            because("kotlin-stdlib bundles its jdk7+ classes from 1.8.0+")
+        }
+    }
 }

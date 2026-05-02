@@ -7,11 +7,34 @@ use std::{
 use android_activity::input::{ImeOptions, InputType, TextInputAction, TextInputState};
 use anyhow::{Context as _, Result};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, px,
+    AnyWindowHandle, AtlasKey, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowParams, px,
 };
+
+/// Stand-in atlas returned by [`AndroidWindow::sprite_atlas`] when no surface
+/// is alive — i.e. before `attach_surface`. GPUI calls `sprite_atlas` very
+/// early in window setup (synchronously, on the foreground thread, before
+/// the activity loop has had a chance to deliver `MainEvent::InitWindow`),
+/// so we MUST hand back something. Real glyph uploads will only succeed once
+/// the wgpu surface is up and the renderer's atlas takes over.
+struct NoopAtlas;
+
+impl PlatformAtlas for NoopAtlas {
+    fn get_or_insert_with<'a>(
+        &self,
+        _key: &AtlasKey,
+        _build: &mut dyn FnMut() -> anyhow::Result<
+            Option<(Size<DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
+        >,
+    ) -> anyhow::Result<Option<AtlasTile>> {
+        Ok(None)
+    }
+
+    fn remove(&self, _key: &AtlasKey) {}
+}
 use gpui_wgpu::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 use ndk::native_window::NativeWindow;
 use parking_lot::Mutex;
@@ -163,7 +186,11 @@ impl AndroidWindow {
                 capslock: Capslock::default(),
                 appearance: WindowAppearance::Light,
                 renderer: None,
-                sprite_atlas: None,
+                // Hand callers a NoopAtlas until `attach_surface` swaps in
+                // the real wgpu-backed atlas. This avoids the panic that
+                // happens when GPUI's window setup queries the atlas before
+                // the activity loop has delivered `MainEvent::InitWindow`.
+                sprite_atlas: Some(Arc::new(NoopAtlas) as Arc<dyn PlatformAtlas>),
                 gpu_specs: None,
                 last_ime_state: None,
             }),
@@ -233,7 +260,11 @@ impl AndroidWindow {
         // Drop renderer first; this releases the wgpu surface, which the
         // adapter requires before we drop the underlying NativeWindow.
         state.renderer = None;
-        state.sprite_atlas = None;
+        // Fall back to a NoopAtlas so any subsequent `sprite_atlas()` call
+        // (e.g. during a redraw that arrives between TerminateWindow and
+        // process shutdown) hands callers a real `Arc<dyn PlatformAtlas>`
+        // instead of `None`/panicking.
+        state.sprite_atlas = Some(Arc::new(NoopAtlas) as Arc<dyn PlatformAtlas>);
         drop(state);
         *self.surface.lock() = None;
     }
@@ -255,38 +286,47 @@ impl AndroidWindow {
             width: px(((rect.right - rect.left).max(0)) as f32 / scale_factor),
             height: px(((rect.bottom - rect.top).max(0)) as f32 / scale_factor),
         };
-        let mut state = self.state.borrow_mut();
-        state.bounds = Bounds {
-            origin: logical_origin,
-            size: logical_size,
-        };
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(resize) = callbacks.resize.as_mut() {
-            resize(logical_size, scale_factor);
+        {
+            let mut state = self.state.borrow_mut();
+            state.bounds = Bounds {
+                origin: logical_origin,
+                size: logical_size,
+            };
         }
+        // GPUI's resize handler can re-enter the window (e.g. via
+        // `scale_factor()`), so the state borrow above must drop before
+        // invoking it. Same pattern in every other dispatch_* method.
+        invoke_callback(self, |callbacks| {
+            if let Some(resize) = callbacks.resize.as_mut() {
+                resize(logical_size, scale_factor);
+            }
+        });
     }
 
     /// Update the window's logical bounds + physical pixel size from a
     /// configuration change (rotation, fold, font-scale).
     pub(crate) fn update_size(&self, new_size: Size<DevicePixels>, scale_factor: f32) {
-        let mut state = self.state.borrow_mut();
-        state.physical_size = new_size;
-        state.scale_factor = scale_factor;
         let logical = Size {
             width: px(new_size.width.0 as f32 / scale_factor),
             height: px(new_size.height.0 as f32 / scale_factor),
         };
-        state.bounds = Bounds {
-            origin: Point::default(),
-            size: logical,
-        };
-        if let Some(renderer) = state.renderer.as_mut() {
-            renderer.update_drawable_size(new_size);
+        {
+            let mut state = self.state.borrow_mut();
+            state.physical_size = new_size;
+            state.scale_factor = scale_factor;
+            state.bounds = Bounds {
+                origin: Point::default(),
+                size: logical,
+            };
+            if let Some(renderer) = state.renderer.as_mut() {
+                renderer.update_drawable_size(new_size);
+            }
         }
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(resize) = callbacks.resize.as_mut() {
-            resize(logical, scale_factor);
-        }
+        invoke_callback(self, |callbacks| {
+            if let Some(resize) = callbacks.resize.as_mut() {
+                resize(logical, scale_factor);
+            }
+        });
     }
 
     /// Forward an input event to the registered handler.
@@ -316,47 +356,70 @@ impl AndroidWindow {
     /// match it bit-for-bit, mirroring the makepad pattern.
     pub(crate) fn dispatch_text_event(&self, state: TextInputState) {
         let snapshot = TextInputStateSnapshot::from(&state);
-        let mut state_borrow = self.state.borrow_mut();
-        if state_borrow.last_ime_state.as_ref() == Some(&snapshot) {
-            return;
-        }
-        state_borrow.last_ime_state = Some(snapshot);
-        let Some(handler) = state_borrow.input_handler.as_mut() else {
+        // Stash the snapshot, then take the input handler out of the cell so
+        // the user-supplied PlatformInputHandler can re-enter `state.borrow*`
+        // safely (the input handler internally schedules onto the foreground
+        // executor, which can call back into our methods).
+        let mut handler = {
+            let mut state_borrow = self.state.borrow_mut();
+            if state_borrow.last_ime_state.as_ref() == Some(&snapshot) {
+                return;
+            }
+            state_borrow.last_ime_state = Some(snapshot);
+            state_borrow.input_handler.take()
+        };
+        let Some(handler_ref) = handler.as_mut() else {
             return;
         };
         if let Some(compose) = state.compose_region {
-            handler.replace_and_mark_text_in_range(
+            handler_ref.replace_and_mark_text_in_range(
                 None,
                 &state.text,
                 Some(compose.start..compose.end),
             );
         } else {
-            handler.replace_text_in_range(None, &state.text);
+            handler_ref.replace_text_in_range(None, &state.text);
         }
+        // Restore the handler.
+        self.state.borrow_mut().input_handler = handler;
     }
 
     pub(crate) fn dispatch_request_frame(&self, options: RequestFrameOptions) {
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(handler) = callbacks.request_frame.as_mut() {
-            handler(options);
-        }
+        invoke_callback(self, |callbacks| {
+            if let Some(handler) = callbacks.request_frame.as_mut() {
+                handler(options);
+            }
+        });
     }
 
     pub(crate) fn dispatch_active_status(&self, active: bool) {
         self.state.borrow_mut().is_active = active;
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(handler) = callbacks.active_status_change.as_mut() {
-            handler(active);
-        }
+        invoke_callback(self, |callbacks| {
+            if let Some(handler) = callbacks.active_status_change.as_mut() {
+                handler(active);
+            }
+        });
     }
 
     pub(crate) fn set_appearance(&self, appearance: WindowAppearance) {
         self.state.borrow_mut().appearance = appearance;
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(handler) = callbacks.appearance_changed.as_mut() {
-            handler();
-        }
+        invoke_callback(self, |callbacks| {
+            if let Some(handler) = callbacks.appearance_changed.as_mut() {
+                handler();
+            }
+        });
     }
+}
+
+/// Invoke a callback on the window's `WindowCallbacks` while making sure no
+/// `state` borrow is live. The user-supplied callback may re-enter the
+/// window's `PlatformWindow` methods, which all read `self.state`; without
+/// this scoping pattern those re-entries would panic with
+/// "RefCell already mutably borrowed".
+fn invoke_callback(window: &AndroidWindow, f: impl FnOnce(&mut WindowCallbacks)) {
+    debug_assert!(window.state.try_borrow().is_ok());
+    let mut callbacks = window.callbacks.borrow_mut();
+    f(&mut callbacks);
 }
 
 impl HasWindowHandle for AndroidWindow {
@@ -540,11 +603,15 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        // `sprite_atlas` is initialised in the `WindowState` constructor with
+        // a `NoopAtlas`, so this `unwrap_or_else` arm should never fire.
+        // Keep it as a safety net — a panic here would tear down the JVM
+        // process during early window bring-up.
         self.state
             .borrow()
             .sprite_atlas
             .clone()
-            .expect("sprite_atlas() called before attach_surface()")
+            .unwrap_or_else(|| Arc::new(NoopAtlas) as Arc<dyn PlatformAtlas>)
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

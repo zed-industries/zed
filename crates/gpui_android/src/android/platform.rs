@@ -36,10 +36,33 @@ struct PlatformCallbacks {
 
 /// GPUI [`Platform`] implementation for Android.
 ///
-/// Boots from `android_main(app: AndroidApp)`. Drives the activity's poll
-/// loop (input + lifecycle events), maintains the wgpu surface in lockstep
-/// with `MainEvent::InitWindow`/`MainEvent::TerminateWindow`, and pumps the
-/// foreground executor's mailbox each iteration.
+/// `AndroidPlatform` is the type-erased return value of
+/// [`current_platform`](super::current_platform). It owns:
+///
+/// - A two-thread executor pair ([`BackgroundExecutor`] backed by an
+///   [`AndroidDispatcher`] thread pool, [`ForegroundExecutor`] backed by a
+///   [`MainThreadMailbox`] drained from the activity's poll loop).
+/// - A `cosmic-text`-backed [`PlatformTextSystem`] pre-loaded with every
+///   font from `/system/fonts`, `/data/fonts` and `/product/fonts`.
+/// - The GPU context shared by every window's [`gpui_wgpu::WgpuRenderer`].
+/// - A live handle to the (currently single) GPUI window.
+///
+/// # Lifecycle
+///
+/// [`Platform::run`] takes ownership of the calling thread:
+///
+/// 1. Waits for `MainEvent::InitWindow` (so the user's `cx.open_window` call
+///    sees a real `NativeWindow`).
+/// 2. Invokes the user's launch closure.
+/// 3. Enters the activity poll loop, dispatching input events / lifecycle
+///    events / mailbox runnables until `MainEvent::Destroy` arrives or
+///    [`Platform::quit`] is called.
+///
+/// # Singleton-by-convention
+///
+/// `AndroidPlatform` doesn't enforce uniqueness, but `android-activity` only
+/// spawns one `android_main` thread per process and the Android system only
+/// gives you one Activity at a time. Treat it as a singleton.
 pub struct AndroidPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
@@ -58,15 +81,34 @@ pub struct AndroidPlatform {
 }
 
 impl AndroidPlatform {
+    /// Allocate executors, a text system populated from `/system/fonts`, a
+    /// GPU context and the placeholder display. Cheap — no Vulkan device is
+    /// created until a window is opened.
+    ///
+    /// Pass `headless = true` if you want a usable [`Platform`] without
+    /// actually rendering (executors + text system still work). The Android
+    /// port has no separate headless backend; `headless` just gates
+    /// [`Platform::open_window`] from creating a wgpu surface.
+    ///
+    /// You almost never construct this directly — call
+    /// [`gpui_platform::application`] (or [`current_platform`](super::current_platform))
+    /// instead.
+    ///
+    /// [`gpui_platform::application`]: https://docs.rs/gpui_platform/latest/gpui_platform/fn.application.html
     pub fn new(headless: bool) -> Self {
         let (dispatcher, main_mailbox) = AndroidDispatcher::new();
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
 
-        // Roboto is bundled with every Android system image. cosmic-text's
-        // default `FontSystem` walks `/system/fonts` automatically.
-        let text_system: Arc<dyn PlatformTextSystem> =
-            Arc::new(gpui_wgpu::CosmicTextSystem::new("Roboto"));
+        // Roboto is bundled with every Android system image. We use
+        // `new_without_system_fonts` because `fontdb` 0.23's
+        // `load_system_fonts()` has no Android branch — its cfg gates skip
+        // `target_os = "android"` entirely, leaving the database empty.
+        // Below we load `/system/fonts/` manually.
+        let text_system_concrete =
+            gpui_wgpu::CosmicTextSystem::new_without_system_fonts("Roboto");
+        load_android_system_fonts(&text_system_concrete);
+        let text_system: Arc<dyn PlatformTextSystem> = Arc::new(text_system_concrete);
 
         let active_display = Rc::new(AndroidDisplay::new());
 
@@ -239,16 +281,25 @@ impl Platform for AndroidPlatform {
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
-        on_finish_launching();
-
         let Some(app) = android_app() else {
             log::warn!(
                 "AndroidPlatform::run called without a registered AndroidApp; \
-                 falling back to a mailbox-only loop"
+                 calling on_finish_launching directly and falling back to a \
+                 mailbox-only loop"
             );
+            on_finish_launching();
             while self.main_mailbox.drain_blocking() {}
             return;
         };
+
+        // Hold on to `on_finish_launching` until a `NativeWindow` is alive.
+        // GPUI's `Application::run -> on_finish_launching -> cx.open_window`
+        // chain assumes the window's `sprite_atlas` and renderer are usable
+        // immediately, which on Android is only true once
+        // `MainEvent::InitWindow` has been delivered.
+        let mut on_finish_launching: Option<Box<dyn 'static + FnOnce()>> =
+            Some(on_finish_launching);
+        let mut launched = false;
 
         loop {
             // Drain anything queued via dispatch_on_main_thread before yielding
@@ -271,6 +322,28 @@ impl Platform for AndroidPlatform {
                 }
                 _ => {}
             });
+
+            // Surface is alive — safe to run the user's launch closure now.
+            if !launched && app.native_window().is_some() {
+                if let Some(callback) = on_finish_launching.take() {
+                    callback();
+                }
+                launched = true;
+            }
+
+            // Drive `request_frame` continuously so GPUI's internal dirty
+            // tracker can re-render after `cx.notify()`. GPUI is smart
+            // enough to skip the actual draw when nothing has changed, so
+            // calling this every ~16ms is the same shape every other GPUI
+            // backend uses (`requestAnimationFrame` on web, surface frame
+            // callbacks on wayland) — without it, click handlers fire but
+            // the screen never updates, which looks for all the world like
+            // touch is broken.
+            if launched {
+                if let Some(window) = self.window.borrow().as_ref() {
+                    window.dispatch_request_frame(RequestFrameOptions::default());
+                }
+            }
 
             if should_quit || self.main_mailbox.is_stopped() {
                 break;
@@ -690,6 +763,55 @@ impl PlatformWindow for AndroidWindowHandle {
     }
     fn play_system_bell(&self) {
         self.0.play_system_bell()
+    }
+}
+
+/// Walk Android's well-known font directories and feed every TrueType /
+/// OpenType file we find into cosmic-text. Required because `fontdb` 0.23's
+/// `load_system_fonts()` has no Android cfg branch — without this the
+/// database is empty and even `Roboto` can't be resolved.
+fn load_android_system_fonts(text_system: &gpui_wgpu::CosmicTextSystem) {
+    use std::borrow::Cow;
+    use gpui::PlatformTextSystem;
+
+    const FONT_DIRS: &[&str] = &["/system/fonts", "/system/font", "/data/fonts", "/product/fonts"];
+
+    let mut bytes = Vec::new();
+    for dir in FONT_DIRS {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            if !matches!(ext.as_deref(), Some("ttf") | Some("ttc") | Some("otf") | Some("otc")) {
+                continue;
+            }
+            match std::fs::read(&path) {
+                Ok(data) => bytes.push(Cow::Owned(data)),
+                Err(error) => log::warn!(
+                    "Failed to read system font {}: {error}",
+                    path.display()
+                ),
+            }
+        }
+    }
+
+    if bytes.is_empty() {
+        log::warn!(
+            "No fonts found in {}; text rendering will fail until fonts are added manually",
+            FONT_DIRS.join(", ")
+        );
+        return;
+    }
+    let count = bytes.len();
+    if let Err(error) = text_system.add_fonts(bytes) {
+        log::error!("Failed to register Android system fonts: {error:#}");
+    } else {
+        log::info!("Loaded {count} Android system fonts");
     }
 }
 

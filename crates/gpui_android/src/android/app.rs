@@ -23,6 +23,11 @@ pub fn set_android_app(app: AndroidApp) {
 
 /// Borrow a clone of the registered `AndroidApp`. Returns `None` if
 /// [`set_android_app`] was never called (e.g. a non-Android-bootstrap test).
-pub(crate) fn android_app() -> Option<AndroidApp> {
+///
+/// Public so that GPUI applications can inspect the running activity's
+/// [`android_activity::ConfigurationRef`], current `NativeWindow`, asset
+/// manager, etc., or issue ad-hoc JNI calls without re-implementing the
+/// global-state plumbing.
+pub fn android_app() -> Option<AndroidApp> {
     slot().read().clone()
 }

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        GameActivity extends AppCompatActivity, so its theme MUST descend
+        from Theme.AppCompat.* — the legacy framework `Theme.NoTitleBar.*`
+        styles will throw `IllegalStateException` at onCreate. We pick the
+        Material 3 dark fullscreen variant (no action bar, no title bar)
+        because GPUI draws its own chrome.
+    -->
+    <style name="Theme.GpuiGallery" parent="Theme.AppCompat.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <!-- Edge-to-edge so the GPUI compositor owns the full display. -->
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+</resources>

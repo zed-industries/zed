@@ -7,17 +7,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:label="GPUI Android Example"
+        android:label="GPUI Gallery"
         android:hasCode="true"
         android:supportsRtl="true"
         android:resizeableActivity="true"
         android:enableOnBackInvokedCallback="true"
-        android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+        android:theme="@style/Theme.GpuiGallery"
         android:icon="@android:drawable/sym_def_app_icon">
-        <meta-data android:name="android.app.lib_name" android:value="gpui_android_example" />
+        <meta-data android:name="android.app.lib_name" android:value="hello_android" />
 
         <activity
-            android:name=".ZedActivity"
+            android:name=".GalleryActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|density|fontScale|uiMode|locale|layoutDirection"

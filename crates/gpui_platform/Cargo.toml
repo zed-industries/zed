@@ -19,6 +19,18 @@ screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_wind
 runtime_shaders = ["gpui_macos/runtime_shaders"]
 wayland = ["gpui_linux/wayland"]
 x11 = ["gpui_linux/x11"]
+# Opt-in Android backend. Compiling for `target_os = "android"` without this
+# feature gives you `gpui_platform` without the platform impl — useful for
+# library crates that want their `Cargo.toml` to be Android-portable but
+# don't want to pull in `gpui_android`'s wgpu/cosmic-text/JNI deps. Apps
+# that actually run on Android must opt-in:
+#
+#   [target.'cfg(target_os = "android")'.dependencies]
+#   gpui_platform = { ..., features = ["android"] }
+#
+# `current_platform()` panics with a clear message at runtime if Android is
+# the target but the feature is off.
+android = ["dep:gpui_android"]
 
 [dependencies]
 gpui.workspace = true
@@ -34,7 +46,7 @@ gpui = { workspace = true, features = ["windows-manifest"] }
 gpui_linux.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-gpui_android.workspace = true
+gpui_android = { workspace = true, optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui_web.workspace = true
