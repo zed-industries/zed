@@ -2009,7 +2009,14 @@ impl EditorElement {
                         state.scroll_y = scroll_y;
 
                         if hide_local_cursor {
-                            state.snap_to(target_bounds, now, scroll_x, scroll_y);
+                            // Use retarget (not snap_to) so that corners are
+                            // preserved at their current position. When the
+                            // editor regains focus the trail will animate from
+                            // these old corners to the new target — this is
+                            // what makes the smooth cursor trail visible after
+                            // modal-initiated jumps (e.g. jump::Toggle).
+                            state.retarget(target_bounds);
+                            state.last_frame = now;
                         } else {
                             state.retarget(target_bounds);
                             let smooth_frame =

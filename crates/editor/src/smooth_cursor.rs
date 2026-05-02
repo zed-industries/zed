@@ -15,7 +15,7 @@ const SMOOTH_CURSOR_SETTLE_DISTANCE_PX: f32 = 0.35;
 pub(crate) struct SmoothCursorAnimationState {
     target_bounds: Bounds<Pixels>,
     pub(crate) corners: [gpui::Point<Pixels>; 4],
-    last_frame: Instant,
+    pub(crate) last_frame: Instant,
     /// The scroll x-position (in pixels) when the corners were last set.
     /// Used to adjust corners when the scroll position changes between frames.
     pub(crate) scroll_x: gpui::Pixels,
@@ -46,6 +46,7 @@ impl SmoothCursorAnimationState {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn snap_to(&mut self, bounds: Bounds<Pixels>, now: Instant, scroll_x: gpui::Pixels, scroll_y: f64) {
         self.target_bounds = bounds;
         self.corners = bounds_corners(bounds);

@@ -3,6 +3,7 @@ use editor::{
     DisplayPoint, Editor, EditorEvent, JumpLabel, MultiBufferOffset, ToOffset,
     display_map::ToDisplayPoint,
 };
+use language::SelectionGoal;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, Focusable, IntoElement, Render,
     Styled, Window, div,
@@ -397,10 +398,13 @@ impl JumpBar {
             }
         });
 
-        // Move cursor in the target editor
+        // Move cursor in the target editor, using move_cursors_with to preserve
+        // selection IDs so smooth cursor animation state stays connected.
         target_editor.update(cx, |editor, cx| {
             editor.change_selections(editor::SelectionEffects::default(), window, cx, |s| {
-                s.select_display_ranges(vec![position..position]);
+                s.move_cursors_with(|_map, _current, _goal| {
+                    (position, SelectionGoal::None)
+                });
             });
         });
 
