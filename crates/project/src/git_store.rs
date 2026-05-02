@@ -6532,10 +6532,15 @@ impl Repository {
             .unwrap_or(self.common_dir_abs_path.as_ref());
         let project_name = repository_anchor
             .file_name()
+            .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
-        let directory =
-            worktrees_directory_for_repo(repository_anchor, worktree_directory_setting)?;
-        Ok(directory.join(branch_name).join(project_name))
+        let directory = worktrees_directory_for_repo(
+            repository_anchor,
+            worktree_directory_setting,
+            self.path_style,
+        )?;
+        let directory = join_path_for_style(&directory, branch_name, self.path_style)?;
+        join_path_for_style(&directory, project_name, self.path_style)
     }
 
     pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
@@ -6831,7 +6836,12 @@ impl Repository {
 
                         let managed_worktree_base = cx.update(|cx| {
                             let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-                            worktrees_directory_for_repo(&repository_anchor_path, setting).log_err()
+                            worktrees_directory_for_repo(
+                                &repository_anchor_path,
+                                setting,
+                                PathStyle::local(),
+                            )
+                            .log_err()
                         });
 
                         if let Some(managed_worktree_base) = managed_worktree_base {
@@ -7849,14 +7859,14 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
 pub fn worktrees_directory_for_repo(
     repository_anchor_path: &Path,
     worktree_directory_setting: &str,
+    path_style: PathStyle,
 ) -> Result<PathBuf> {
     // Check the original setting before trimming, since a path like "///"
     // is absolute but becomes "" after stripping trailing separators.
     // Also check for leading `/` or `\` explicitly, because on Windows
     // `Path::is_absolute()` requires a drive letter — so `/tmp/worktrees`
     // would slip through even though it's clearly not a relative path.
-    if Path::new(worktree_directory_setting).is_absolute()
-        || worktree_directory_setting.starts_with('/')
+    if path_style.is_absolute(worktree_directory_setting)
         || worktree_directory_setting.starts_with('\\')
     {
         anyhow::bail!(
@@ -7873,12 +7883,19 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = repository_anchor_path.join(trimmed);
-    let resolved = util::normalize_path(&joined);
+    let joined = join_path_for_style(repository_anchor_path, trimmed, path_style)?;
+    let resolved = if path_style.is_posix() {
+        joined
+    } else {
+        util::normalize_path(&joined)
+    };
     let resolved = if resolved.starts_with(repository_anchor_path) {
         resolved
-    } else if let Some(repo_dir_name) = repository_anchor_path.file_name() {
-        resolved.join(repo_dir_name)
+    } else if let Some(repo_dir_name) = repository_anchor_path
+        .file_name()
+        .and_then(|name| name.to_str())
+    {
+        join_path_for_style(&resolved, repo_dir_name, path_style)?
     } else {
         resolved
     };
@@ -7896,6 +7913,47 @@ pub fn worktrees_directory_for_repo(
     }
 
     Ok(resolved)
+}
+
+fn join_path_for_style(left: &Path, right: &str, path_style: PathStyle) -> Result<PathBuf> {
+    let left = left
+        .to_str()
+        .ok_or_else(|| anyhow!("Path contains invalid UTF-8"))?;
+    let joined = path_style
+        .join(left, right)
+        .ok_or_else(|| anyhow!("Path must be relative: {right:?}"))?;
+    if path_style.is_windows() {
+        return Ok(util::normalize_path(Path::new(&joined)));
+    }
+
+    let mut components = Vec::new();
+    let is_absolute = joined.starts_with('/');
+
+    for component in joined.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if components
+                    .last()
+                    .is_some_and(|component| *component != "..")
+                {
+                    components.pop();
+                } else if !is_absolute {
+                    components.push(component);
+                }
+            }
+            component => components.push(component),
+        }
+    }
+
+    let normalized = components.join("/");
+    if is_absolute && normalized.is_empty() {
+        Ok(PathBuf::from("/"))
+    } else if is_absolute {
+        Ok(PathBuf::from(format!("/{normalized}")))
+    } else {
+        Ok(PathBuf::from(normalized))
+    }
 }
 
 async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path, base_path: &Path) {
@@ -8279,13 +8337,46 @@ mod tests {
     use rand::{SeedableRng, rngs::StdRng};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_new_worktree_path_uses_posix_style_for_remote_paths() {
+        let work_dir = Path::new("/home/user/dev/lsp-tests");
+        let directory =
+            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Posix).unwrap();
+        let directory = join_path_for_style(&directory, "nimble-sky", PathStyle::Posix).unwrap();
+        let path = join_path_for_style(&directory, "lsp-tests", PathStyle::Posix).unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from("/home/user/dev/worktrees/lsp-tests/nimble-sky/lsp-tests")
+        );
+    }
+
+    #[test]
+    fn test_join_path_for_style_uses_remote_separator() {
+        let posix_path =
+            join_path_for_style(Path::new("/home/user/dev"), "worktrees", PathStyle::Posix)
+                .unwrap();
+        let windows_path = join_path_for_style(
+            Path::new("C:\\Users\\user\\dev"),
+            "worktrees",
+            PathStyle::Windows,
+        )
+        .unwrap();
+
+        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
+        assert_eq!(
+            windows_path.to_string_lossy(),
+            "C:\\Users\\user\\dev\\worktrees"
+        );
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
