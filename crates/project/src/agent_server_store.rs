@@ -135,6 +135,29 @@ pub trait ExternalAgentServer {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+struct TestExternalAgentServer;
+
+#[cfg(any(test, feature = "test-support"))]
+impl ExternalAgentServer for TestExternalAgentServer {
+    fn get_command(
+        &self,
+        _extra_args: Vec<String>,
+        _extra_env: HashMap<String, String>,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<AgentServerCommand>> {
+        Task::ready(Err(anyhow::anyhow!("test external agent")))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 struct ExtensionAgentEntry {
     agent_name: Arc<str>,
     extension_id: String,
@@ -197,6 +220,19 @@ pub struct AgentServersUpdated;
 impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 
 impl AgentServerStore {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn insert_test_external_agent(&mut self, agent_id: impl Into<AgentId>) {
+        self.external_agents.insert(
+            agent_id.into(),
+            ExternalAgentEntry::new(
+                Box::new(TestExternalAgentServer),
+                ExternalAgentSource::Custom,
+                None,
+                None,
+            ),
+        );
+    }
+
     /// Synchronizes extension-provided agent servers with the store.
     pub fn sync_extension_agents<'a, I>(
         &mut self,
