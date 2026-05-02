@@ -1116,7 +1116,7 @@ impl GitGraph {
 
         let table_interaction_state = cx.new(|cx| {
             let mut state = TableInteractionState::new(cx);
-            state.focus_handle = state.focus_handle.tab_index(2).tab_stop(true);
+            state.focus_handle = state.focus_handle.tab_index(1).tab_stop(true);
             state
         });
 
@@ -1610,6 +1610,14 @@ impl GitGraph {
         self.search(query, cx);
     }
 
+    fn refresh_search_editor_if_focused(&self, window: &Window, cx: &mut Context<Self>) {
+        self.search_state.editor.update(cx, |editor, cx| {
+            if editor.is_focused(window) {
+                cx.notify();
+            }
+        });
+    }
+
     fn focus_next_tab_stop(
         &mut self,
         _: &FocusNextTabStop,
@@ -1617,6 +1625,7 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         window.focus_next(cx);
+        self.refresh_search_editor_if_focused(window, cx);
         cx.stop_propagation();
         cx.notify();
     }
@@ -1628,6 +1637,7 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         window.focus_prev(cx);
+        self.refresh_search_editor_if_focused(window, cx);
         cx.stop_propagation();
         cx.notify();
     }
@@ -1830,6 +1840,9 @@ impl GitGraph {
 
         h_flex()
             .key_context("GitGraphSearchBar")
+            .tab_index(1)
+            .tab_group()
+            .tab_stop(false)
             .w_full()
             .p_1p5()
             .gap_1p5()
@@ -2956,6 +2969,9 @@ impl Render for GitGraph {
                                             })
                                             .child(
                                                 div()
+                                                    .tab_index(2)
+                                                    .tab_group()
+                                                    .tab_stop(false)
                                                     .w(DefiniteLength::Fraction(table_fraction))
                                                     .h_full()
                                                     .min_w_0()
