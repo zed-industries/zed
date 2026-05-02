@@ -11655,6 +11655,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let universal_argument = self.take_universal_argument(cx);
         let Some(yank_state) = self.kill_ring_yank_state.take() else {
             return;
         };
@@ -11666,7 +11667,8 @@ impl Editor {
             return;
         }
 
-        let next_index = (yank_state.index + 1) % entry_count;
+        let next_index =
+            universal_argument_yank_pop_index(yank_state.index, universal_argument, entry_count);
 
         let Some((text, _metadata)) = cx
             .try_global::<KillRingState>()
@@ -25074,6 +25076,19 @@ fn universal_argument_yank_index(value: i32, entry_count: usize) -> usize {
     } else {
         (magnitude - 1) % entry_count
     }
+}
+
+fn universal_argument_yank_pop_index(
+    current_index: usize,
+    argument: Option<ResolvedUniversalArgument>,
+    entry_count: usize,
+) -> usize {
+    let offset = match argument {
+        None => 1,
+        Some(ResolvedUniversalArgument::Plain(_)) => -1,
+        Some(ResolvedUniversalArgument::Numeric(value)) => i64::from(value),
+    };
+    (current_index as i64 + offset).rem_euclid(entry_count as i64) as usize
 }
 
 fn universal_argument_line_motion_target_row(current_row: u32, count: i32, max_row: u32) -> u32 {

@@ -8806,6 +8806,12 @@ fn push_text_to_kill_ring(cx: &mut EditorTestContext, text: &str) {
     cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
 }
 
+fn push_first_second_third_to_kill_ring(cx: &mut EditorTestContext) {
+    push_text_to_kill_ring(cx, "first");
+    push_text_to_kill_ring(cx, "second");
+    push_text_to_kill_ring(cx, "third");
+}
+
 fn selection_mark_mode(cx: &mut EditorTestContext) -> bool {
     cx.editor(|editor, _, _| editor.selection_mark_mode)
 }
@@ -9904,6 +9910,184 @@ async fn test_emacs_universal_argument_plain_yank_seeds_yank_pop_state(cx: &mut 
 
     simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
     cx.assert_editor_state("before secondˇ after");
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_pop_without_yank_noop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("before ˇ after");
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+
+    cx.assert_editor_state("before ˇ after");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_pop_no_prefix_cycles_forward(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "alt-y"]);
+
+    cx.assert_editor_state("secondˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_pop_forward_n(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "ctrl-u", "2", "alt-y"]);
+
+    cx.assert_editor_state("firstˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_pop_backward_plain(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "alt-y", "alt-y"]);
+    cx.assert_editor_state("firstˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "alt-y"]);
+
+    cx.assert_editor_state("secondˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_pop_backward_n(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "alt-y", "alt-y"]);
+    cx.assert_editor_state("firstˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "-", "2", "alt-y"]);
+
+    cx.assert_editor_state("thirdˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_pop_wraps(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "ctrl-u", "4", "alt-y"]);
+
+    cx.assert_editor_state("secondˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_pop_plain_prefix_rotates_backward(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "alt-y", "alt-y"]);
+    cx.assert_editor_state("firstˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "alt-y"]);
+
+    cx.assert_editor_state("secondˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_emacs_universal_argument_yank_numeric_then_yank_pop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "2", "ctrl-y"]);
+    cx.assert_editor_state("secondˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+
+    cx.assert_editor_state("firstˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_universal_arg_yank_then_yank_pop_continues_from_index(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_first_second_third_to_kill_ring(&mut cx);
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-u", "2", "ctrl-y", "alt-y"]);
+
+    cx.assert_editor_state("firstˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_universal_arg_yank_pop_rotates_by_count(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    push_text_to_kill_ring(&mut cx, "first");
+    push_text_to_kill_ring(&mut cx, "second");
+    push_text_to_kill_ring(&mut cx, "third");
+    push_text_to_kill_ring(&mut cx, "fourth");
+    push_text_to_kill_ring(&mut cx, "fifth");
+
+    cx.set_state("ˇ");
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "ctrl-u", "3", "alt-y"]);
+
+    cx.assert_editor_state("secondˇ");
+    assert_eq!(resolved_universal_argument(&mut cx), None);
 }
 
 #[gpui::test]
