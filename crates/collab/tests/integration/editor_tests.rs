@@ -2551,6 +2551,9 @@ async fn test_inlay_hint_refresh_is_forwarded(
                         show_other_hints: Some(false),
                         show_background: Some(false),
                         toggle_on_modifiers_press: None,
+                        font_family: None,
+                        font_weight: None,
+                        font_features: None,
                     })
             });
         });
@@ -2569,6 +2572,9 @@ async fn test_inlay_hint_refresh_is_forwarded(
                         show_other_hints: Some(true),
                         show_background: Some(false),
                         toggle_on_modifiers_press: None,
+                        font_family: None,
+                        font_weight: None,
+                        font_features: None,
                     })
             });
         });
