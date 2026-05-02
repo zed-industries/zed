@@ -69,7 +69,7 @@ The animation code is pretty much the same as kitty's implementation. It still l
 
 - fixed that mouse clicks would not animate
 - fixed that actions like `jump::Toggle`, `editor::GoToPreviousGlobalChange` or `pane::GoBack` would not animate (same for forward)
-- added `large_jump_multiplier` (ignored if set below 1.0) which is potentially useful for large jumps to top/bottom of editor since I also have smooth scroll and the 2 animation systems 
+- added `large_jump_multiplier` (set to 1.0 to keep default behavior) which is potentially useful for large jumps to top/bottom of editor since I also have smooth scroll and the 2 animation systems 
 
 Example `settings.json` configuration:
 
