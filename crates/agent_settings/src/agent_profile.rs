@@ -117,11 +117,19 @@ impl AgentProfileSettings {
     }
 
     pub fn is_context_server_tool_enabled(&self, server_id: &str, tool_name: &str) -> bool {
-        self.enable_all_context_servers
-            || self
-                .context_servers
+        if self.enable_all_context_servers {
+            // All enabled by default; only disabled if explicitly set to false
+            self.context_servers
+                .get(server_id)
+                .and_then(|preset| preset.tools.get(tool_name))
+                .copied()
+                .unwrap_or(true)
+        } else {
+            // None enabled by default; only enabled if explicitly set to true
+            self.context_servers
                 .get(server_id)
                 .is_some_and(|preset| preset.tools.get(tool_name) == Some(&true))
+        }
     }
 
     pub fn save_to_settings(

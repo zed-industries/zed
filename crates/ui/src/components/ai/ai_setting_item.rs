@@ -74,6 +74,7 @@ pub struct AiSettingItem {
     icon: Option<AnyElement>,
     label: SharedString,
     detail_label: Option<SharedString>,
+    detail_element: Option<AnyElement>,
     actions: Vec<AnyElement>,
     details: Option<AnyElement>,
 }
@@ -92,6 +93,7 @@ impl AiSettingItem {
             icon: None,
             label: label.into(),
             detail_label: None,
+            detail_element: None,
             actions: Vec::new(),
             details: None,
         }
@@ -104,6 +106,11 @@ impl AiSettingItem {
 
     pub fn detail_label(mut self, detail: impl Into<SharedString>) -> Self {
         self.detail_label = Some(detail.into());
+        self
+    }
+
+    pub fn detail_element(mut self, element: impl IntoElement) -> Self {
+        self.detail_element = Some(element.into_any_element());
         self
     }
 
@@ -127,6 +134,7 @@ impl RenderOnce for AiSettingItem {
             icon,
             label,
             detail_label,
+            detail_element,
             actions,
             details,
         } = self;
@@ -221,12 +229,18 @@ impl RenderOnce for AiSettingItem {
                                             .color(Color::Muted),
                                     ),
                             )
-                            .when_some(detail_label, |this, detail| {
-                                this.child(
-                                    Label::new(detail)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                )
+                            .map(|this| {
+                                if let Some(element) = detail_element {
+                                    this.child(element)
+                                } else if let Some(detail) = detail_label {
+                                    this.child(
+                                        Label::new(detail)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    )
+                                } else {
+                                    this
+                                }
                             }),
                     )
                     .when(!actions.is_empty(), |this| {

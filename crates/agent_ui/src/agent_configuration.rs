@@ -7,6 +7,7 @@ mod tool_picker;
 use std::{ops::Range, rc::Rc, sync::Arc};
 
 use agent::ContextServerRegistry;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use cloud_api_types::Plan;
 use collections::HashMap;
@@ -673,6 +674,28 @@ impl AgentConfiguration {
             .tools_for_server(&context_server_id)
             .count();
 
+        let enabled_tool_count = if is_running {
+            let settings = AgentSettings::get_global(cx);
+            settings
+                .profiles
+                .get(&settings.default_profile)
+                .map(|profile| {
+                    self.context_server_registry
+                        .read(cx)
+                        .tools_for_server(&context_server_id)
+                        .filter(|tool| {
+                            profile.is_context_server_tool_enabled(
+                                &context_server_id.0,
+                                &tool.name(),
+                            )
+                        })
+                        .count()
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         let source = if provided_by_extension {
             AiSettingItemSource::Extension
         } else {
@@ -741,16 +764,19 @@ impl AgentConfiguration {
                                     .detach();
                                 }
                             }
-                        }).when(tool_count > 0, |this| this.entry("View Tools", None, {
+                        }).when(tool_count > 0, |this| this.entry("Configure Tools", None, {
                             let context_server_id = context_server_id.clone();
                             let context_server_registry = context_server_registry.clone();
                             let workspace = workspace.clone();
+                            let fs = fs.clone();
                             move |window, cx| {
                                 let context_server_id = context_server_id.clone();
+                                let fs = fs.clone();
                                 workspace.update(cx, |workspace, cx| {
                                     ConfigureContextServerToolsModal::toggle(
                                         context_server_id,
                                         context_server_registry.clone(),
+                                        fs,
                                         workspace,
                                         window,
                                         cx,
@@ -920,15 +946,16 @@ impl AgentConfiguration {
             None
         };
 
-        let tool_label = if is_running {
-            Some(if tool_count == 1 {
-                SharedString::from("1 tool")
-            } else {
-                SharedString::from(format!("{} tools", tool_count))
-            })
+        let tool_label = if is_running && tool_count > 0 {
+            Some(SharedString::from(format!(
+                "{}/{} tools",
+                enabled_tool_count, tool_count
+            )))
         } else {
             None
         };
+
+        let context_server_id_for_tools = context_server_id.clone();
 
         AiSettingItem::new(item_id, display_name, status, source)
             .action(context_server_configuration_menu)
@@ -975,7 +1002,37 @@ impl AgentConfiguration {
                     }
                 }),
             )
-            .when_some(tool_label, |this, label| this.detail_label(label))
+            .when_some(tool_label, |this, label| {
+                this.detail_element(
+                    Button::new("tool-count-btn", label)
+                        .style(ButtonStyle::Subtle)
+                        .label_size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .on_click({
+                            let context_server_id = context_server_id_for_tools.clone();
+                            let context_server_registry = self.context_server_registry.clone();
+                            let workspace = self.workspace.clone();
+                            let fs = self.fs.clone();
+                            move |_event, window, cx| {
+                                let context_server_id = context_server_id.clone();
+                                let context_server_registry = context_server_registry.clone();
+                                let fs = fs.clone();
+                                workspace
+                                    .update(cx, |workspace, cx| {
+                                        ConfigureContextServerToolsModal::toggle(
+                                            context_server_id,
+                                            context_server_registry,
+                                            fs,
+                                            workspace,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        }),
+                )
+            })
             .when_some(details, |this, details| this.details(details))
     }
 
