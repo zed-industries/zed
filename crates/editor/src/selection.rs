@@ -182,6 +182,7 @@ impl Editor {
     }
 
     pub fn set_mark(&mut self, _: &actions::SetMark, window: &mut Window, cx: &mut Context<Self>) {
+        let _universal_argument = self.take_universal_argument(cx);
         if self.selection_mark_mode {
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(&mut |_, sel| {

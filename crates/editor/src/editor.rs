@@ -11585,6 +11585,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let _universal_argument = self.take_universal_argument(cx);
         if !self.has_active_kill_ring_selection(cx) {
             return;
         }
@@ -11597,6 +11598,7 @@ impl Editor {
     }
 
     pub fn kill_ring_save(&mut self, _: &KillRingSave, _: &mut Window, cx: &mut Context<Self>) {
+        let _universal_argument = self.take_universal_argument(cx);
         let Some(item) = self.exact_selection_clipboard_item(cx) else {
             return;
         };
@@ -11731,7 +11733,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.kill_ring_kill_word_count(1, window, cx);
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        match count.cmp(&0) {
+            Ordering::Greater => self.kill_ring_kill_word_count(count as usize, window, cx),
+            Ordering::Equal => {}
+            Ordering::Less => {
+                self.kill_ring_backward_kill_word_count(count.unsigned_abs() as usize, window, cx)
+            }
+        }
     }
 
     fn kill_ring_kill_word_count(
@@ -11740,6 +11749,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if count == 0 {
+            return;
+        }
         let push_mode =
             KillRingPushMode::append_after_previous_kill(self.should_append_to_kill_ring(cx));
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -11747,7 +11759,11 @@ impl Editor {
                 if selection.is_empty() {
                     let mut cursor = selection.head();
                     for _ in 0..count {
-                        cursor = movement::next_word_end_or_newline(map, cursor);
+                        let next_cursor = movement::next_word_end_or_newline(map, cursor);
+                        if next_cursor == cursor {
+                            break;
+                        }
+                        cursor = next_cursor;
                     }
                     selection.set_head(cursor, SelectionGoal::None);
                 }
@@ -11763,7 +11779,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.kill_ring_backward_kill_word_count(1, window, cx);
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        match count.cmp(&0) {
+            Ordering::Greater => {
+                self.kill_ring_backward_kill_word_count(count as usize, window, cx)
+            }
+            Ordering::Equal => {}
+            Ordering::Less => {
+                self.kill_ring_kill_word_count(count.unsigned_abs() as usize, window, cx)
+            }
+        }
     }
 
     fn kill_ring_backward_kill_word_count(
@@ -11772,6 +11797,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if count == 0 {
+            return;
+        }
         let push_mode =
             KillRingPushMode::prepend_before_previous_kill(self.should_append_to_kill_ring(cx));
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -11779,7 +11807,11 @@ impl Editor {
                 if selection.is_empty() {
                     let mut cursor = selection.head();
                     for _ in 0..count {
-                        cursor = movement::previous_word_start_or_newline(map, cursor);
+                        let previous_cursor = movement::previous_word_start_or_newline(map, cursor);
+                        if previous_cursor == cursor {
+                            break;
+                        }
+                        cursor = previous_cursor;
                     }
                     selection.set_head(cursor, SelectionGoal::None);
                 }
@@ -11865,11 +11897,12 @@ impl Editor {
 
     fn should_append_to_kill_ring(&self, cx: &mut Context<Self>) -> bool {
         let current_selections = self.selections.disjoint_anchors_arc();
+        let buffer = self.buffer.read(cx).read(cx);
         self.selections.pending_anchor().is_none()
             && !current_selections.is_empty()
-            && cx
-                .try_global::<KillRingState>()
-                .is_some_and(|kill_ring| kill_ring.should_append_to_latest(&current_selections))
+            && cx.try_global::<KillRingState>().is_some_and(|kill_ring| {
+                kill_ring.should_append_to_latest(&current_selections, &buffer)
+            })
     }
 
     fn push_to_kill_ring(
@@ -25170,6 +25203,19 @@ pub struct KillRingState {
     pending_append: Option<KillRingAppendState>,
 }
 
+fn kill_ring_append_selections_match(
+    previous: &[Selection<Anchor>],
+    current: &[Selection<Anchor>],
+    buffer: &MultiBufferSnapshot,
+) -> bool {
+    previous.len() == current.len()
+        && previous.iter().zip(current).all(|(previous, current)| {
+            previous.start.to_point(buffer) == current.start.to_point(buffer)
+                && previous.end.to_point(buffer) == current.end.to_point(buffer)
+                && previous.reversed == current.reversed
+        })
+}
+
 impl KillRingState {
     pub fn entries(&self) -> impl DoubleEndedIterator<Item = &KillRingEntry> + ExactSizeIterator {
         self.entries.iter()
@@ -25191,11 +25237,19 @@ impl KillRingState {
         self.entries.get(index)
     }
 
-    fn should_append_to_latest(&self, selections: &Arc<[Selection<Anchor>]>) -> bool {
-        self.pending_append
-            .as_ref()
-            .is_some_and(|append_state| append_state.selections.as_ref() == selections.as_ref())
-            && self.latest().is_some()
+    fn should_append_to_latest(
+        &self,
+        selections: &Arc<[Selection<Anchor>]>,
+        buffer: &MultiBufferSnapshot,
+    ) -> bool {
+        self.pending_append.as_ref().is_some_and(|append_state| {
+            append_state.selections.as_ref() == selections.as_ref()
+                || kill_ring_append_selections_match(
+                    append_state.selections.as_ref(),
+                    selections.as_ref(),
+                    buffer,
+                )
+        }) && self.latest().is_some()
     }
 
     fn clear_pending_append(&mut self) {
@@ -25300,20 +25354,12 @@ impl KillRingEntry {
             return false;
         }
 
-        if self
-            .selections
-            .iter()
-            .zip(other.selections.iter())
-            .any(|(this, other)| this.metadata.is_entire_line != other.metadata.is_entire_line)
-        {
-            return false;
-        }
-
         for (this, other) in self.selections.iter_mut().zip(other.selections) {
             match order {
                 KillRingAppendOrder::Append => this.text.push_str(&other.text),
                 KillRingAppendOrder::Prepend => this.text.insert_str(0, &other.text),
             }
+            this.metadata.is_entire_line &= other.metadata.is_entire_line;
             this.metadata.len = this.text.len();
         }
 
