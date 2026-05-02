@@ -170,7 +170,7 @@ Zed doesn’t import extensions or keybindings, but this import gets core editor
 
 ## Set Up Editor Preferences
 
-You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `{#action zed::OpenSettingsFile}` from the Command Palette to edit your settings file directly.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
 
 Here’s how common VS Code settings translate:
 | VS Code | Zed | Notes |
@@ -244,7 +244,7 @@ Here’s a quick reference for where keybindings match and where they differ.
 To edit your keybindings:
 
 - Open the command palette (`Cmd+Shift+P`)
-- Run `{#action zed::OpenKeymap}`
+- Run {#action zed::OpenKeymap}
 
 This opens a list of all available bindings. You can override individual shortcuts, remove conflicts, or build a layout that works better for your setup.
 
@@ -352,7 +352,7 @@ Here are a few useful tweaks:
 "load_direnv": "shell_hook"
 ```
 
-**Custom Tasks**: Define build or run commands in your `tasks.json` (accessed via command palette: `{#action zed::OpenTasks}`):
+**Custom Tasks**: Define build or run commands in your `tasks.json` (accessed via command palette: {#action zed::OpenTasks}):
 
 ```json
 [
@@ -364,4 +364,4 @@ Here are a few useful tweaks:
 ```
 
 **Bring over custom snippets**
-Copy your VS Code snippet JSON directly into Zed's snippets folder (`{#action snippets::ConfigureSnippets}`).
+Copy your VS Code snippet JSON directly into Zed's snippets folder ({#action snippets::ConfigureSnippets}).
