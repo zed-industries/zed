@@ -37,6 +37,8 @@ pub struct WorkspaceSettings {
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
+    pub new_tab_on_gotos: bool,
+    pub prefer_left_pane_to_new_panes: bool,
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -136,6 +138,8 @@ impl Settings for WorkspaceSettings {
                         .unwrap_or(250),
                 ),
             },
+            new_tab_on_gotos: workspace.new_tab_on_gotos.unwrap_or(false),
+            prefer_left_pane_to_new_panes: workspace.prefer_left_pane_to_new_panes.unwrap_or(false),
         }
     }
 }

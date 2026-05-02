@@ -5666,10 +5666,15 @@ impl Workspace {
     }
 
     pub fn adjacent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
-        self.find_pane_in_direction(SplitDirection::Right, cx)
-            .unwrap_or_else(|| {
-                self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
-            })
+        if WorkspaceSettings::get_global(cx).prefer_left_pane_to_new_panes {
+            self.find_pane_in_direction(SplitDirection::Left, cx)
+        } else {
+            None
+        }
+        .or_else(|| self.find_pane_in_direction(SplitDirection::Right, cx))
+        .unwrap_or_else(|| {
+            self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
+        })
     }
 
     pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<Entity<Pane>> {
