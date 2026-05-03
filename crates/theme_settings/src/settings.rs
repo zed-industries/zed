@@ -833,3 +833,117 @@ impl settings::Settings for ThemeSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::UpdateGlobal;
+    use settings::{EditPredictionSettingsContent, InlayHintSettingsContent, SettingsStore};
+
+    fn init_cx(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    }
+
+    #[gpui::test]
+    fn test_inlay_hints_font_falls_back_to_buffer_font(cx: &mut gpui::App) {
+        init_cx(cx);
+
+        let settings = ThemeSettings::get_global(cx);
+        assert_eq!(
+            settings.inlay_hints_font.family, settings.buffer_font.family,
+            "inlay hints font should fall back to buffer font when unset"
+        );
+    }
+
+    #[gpui::test]
+    fn test_inlay_hints_font_overrides_buffer_font(cx: &mut gpui::App) {
+        init_cx(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        font_family: Some(FontFamilyName("Lilex".into())),
+                        ..Default::default()
+                    });
+            });
+        });
+
+        let settings = ThemeSettings::get_global(cx);
+        assert_eq!(
+            settings.inlay_hints_font.family,
+            SharedString::from("Lilex")
+        );
+        assert_ne!(
+            settings.inlay_hints_font.family, settings.buffer_font.family,
+            "inlay hints font should differ from buffer font when explicitly set"
+        );
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_font_falls_back_through_inlay_to_buffer(cx: &mut gpui::App) {
+        init_cx(cx);
+
+        let settings = ThemeSettings::get_global(cx);
+        assert_eq!(
+            settings.edit_predictions_font.family, settings.buffer_font.family,
+            "edit predictions font should fall back to buffer font when neither inlay nor edit prediction font is set"
+        );
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_font_falls_back_to_inlay_hints_font(cx: &mut gpui::App) {
+        init_cx(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        font_family: Some(FontFamilyName("Lilex".into())),
+                        ..Default::default()
+                    });
+            });
+        });
+
+        let settings = ThemeSettings::get_global(cx);
+        assert_eq!(
+            settings.edit_predictions_font.family, settings.inlay_hints_font.family,
+            "edit predictions font should inherit from inlay hints font when not explicitly set"
+        );
+    }
+
+    #[gpui::test]
+    fn test_edit_predictions_font_overrides_inlay_hints_font(cx: &mut gpui::App) {
+        init_cx(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        font_family: Some(FontFamilyName("Lilex".into())),
+                        ..Default::default()
+                    });
+                settings.project.all_languages.edit_predictions =
+                    Some(EditPredictionSettingsContent {
+                        font_family: Some(FontFamilyName("Courier".into())),
+                        ..Default::default()
+                    });
+            });
+        });
+
+        let settings = ThemeSettings::get_global(cx);
+        assert_eq!(
+            settings.inlay_hints_font.family,
+            SharedString::from("Lilex")
+        );
+        assert_eq!(
+            settings.edit_predictions_font.family,
+            SharedString::from("Courier")
+        );
+        assert_ne!(
+            settings.edit_predictions_font.family, settings.inlay_hints_font.family,
+            "edit predictions font should differ from inlay hints font when both are explicitly set"
+        );
+    }
+}
