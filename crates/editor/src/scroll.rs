@@ -219,6 +219,10 @@ pub struct ScrollManager {
         ScrollOffset,
         AutoscrollStrategy,
     )>,
+    /// Tracks the previous display-map max row to detect when the buffer has
+    /// shrunk (e.g. after a destructive edit) so autoscroll can re-center the
+    /// cursor instead of leaving the viewport pinned past the new EOF.
+    last_display_max_row: Option<DisplayRow>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
     active_scrollbar: Option<ActiveScrollbarState>,
@@ -268,6 +272,7 @@ impl ScrollManager {
             hide_scrollbar_task: None,
             active_scrollbar: None,
             last_autoscroll: None,
+            last_display_max_row: None,
             visible_line_count: None,
             visible_column_count: None,
             forbid_vertical_scroll: false,

@@ -115,6 +115,8 @@ impl Editor {
         let viewport_height = bounds.size.height;
         let visible_lines = ScrollOffset::from(viewport_height / line_height);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let current_max_row = display_map.max_point().row();
+        let previous_max_row = self.scroll_manager.last_display_max_row;
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map, cx);
         let original_y = scroll_position.y;
         if let Some(last_bounds) = self.expect_bounds_change.take()
@@ -130,24 +132,11 @@ impl Editor {
             scroll_position.y = max_scroll_top;
         }
 
+        let mut did_big_scroll = false;
         let editor_was_scrolled = if original_y != scroll_position.y {
             let distance = (original_y - scroll_position.y).abs();
             if distance > visible_lines {
-                // When the scroll position is far out of bounds (e.g., after
-                // deleting a huge chunk of the file), animating the full distance
-                // would take too long and make the view feel stuck. Instead, snap
-                // instantly to one screen-height away from the target, then
-                // animate the remaining short distance.
-                let mut snap_position = scroll_position;
-                if original_y > scroll_position.y {
-                    snap_position.y += visible_lines;
-                } else {
-                    snap_position.y = (scroll_position.y - visible_lines).max(0.0);
-                }
-                let prev_try_use_anim = self.scroll_manager.ongoing.try_use_anim;
-                self.scroll_manager.ongoing.try_use_anim = false;
-                self.set_scroll_position(snap_position, window, cx);
-                self.scroll_manager.ongoing.try_use_anim = prev_try_use_anim;
+                did_big_scroll = true;
             }
             self.set_scroll_position(scroll_position, window, cx)
         } else {
@@ -155,6 +144,7 @@ impl Editor {
         };
 
         let Some((autoscroll, local)) = autoscroll_request else {
+            self.scroll_manager.last_display_max_row = Some(current_max_row);
             return (NeedsHorizontalAutoscroll(false), editor_was_scrolled);
         };
 
@@ -212,7 +202,7 @@ impl Editor {
             ((visible_lines - (target_bottom - target_top)) / 2.0).floor()
         };
 
-        let strategy = match autoscroll {
+        let mut strategy = match autoscroll {
             Autoscroll::Strategy(strategy, _) => strategy,
             Autoscroll::Next => self
                 .scroll_manager
@@ -229,6 +219,21 @@ impl Editor {
         if let Autoscroll::Strategy(_, Some(anchor)) = autoscroll {
             target_top = anchor.to_display_point(&display_map).row().as_f64();
             target_bottom = target_top + 1.;
+        }
+
+        let buffer_shrank = previous_max_row.is_some_and(|prev| current_max_row < prev);
+        let viewport_overshoot =
+            (original_y + visible_lines) - (current_max_row.as_f64() + 1.0);
+        let force_center = did_big_scroll
+            || (local
+                && buffer_shrank
+                && (viewport_overshoot > visible_lines / 2.0)
+                && matches!(
+                    strategy,
+                    AutoscrollStrategy::Fit | AutoscrollStrategy::Newest
+                ));
+        if force_center {
+            strategy = AutoscrollStrategy::Center;
         }
 
         let was_autoscrolled = match strategy {
@@ -287,6 +292,7 @@ impl Editor {
             target_bottom,
             strategy,
         ));
+        self.scroll_manager.last_display_max_row = Some(current_max_row);
 
         let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
         (NeedsHorizontalAutoscroll(true), was_scrolled)
