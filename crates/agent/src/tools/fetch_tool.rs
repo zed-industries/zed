@@ -54,7 +54,7 @@ impl FetchTool {
             .await
             .context("error reading response body")?;
 
-        if response.status().is_client_error() {
+        if response.status().is_client_error() || response.status().is_server_error() {
             let text = String::from_utf8_lossy(body.as_slice());
             bail!(
                 "status error {}, response: {text:?}",
@@ -62,12 +62,12 @@ impl FetchTool {
             );
         }
 
-        let Some(content_type) = response.headers().get("content-type") else {
-            bail!("missing Content-Type header");
-        };
-        let content_type = content_type
-            .to_str()
-            .context("invalid Content-Type header")?;
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("text/html");
+        let content_type = if content_type.starts_with("text/plain") {
 
         let content_type = if content_type.starts_with("text/plain") {
             ContentType::Plaintext
