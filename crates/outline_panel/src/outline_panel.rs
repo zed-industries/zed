@@ -45,12 +45,12 @@ use outline_panel_settings::{DockSide, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{OutlinePanelEntrySpacing, Settings, SettingsStore};
 use theme::SyntaxTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, FluentBuilder, HighlightedLabel, IconButton, IconButtonShape, IndentGuideColors,
-    IndentGuideLayout, KeyBinding, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar,
+    IndentGuideLayout, KeyBinding, ListItem, ListItemSpacing, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar,
     prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
@@ -2645,6 +2645,10 @@ impl OutlinePanel {
                 ListItem::new(item_id)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
+                    .spacing(match settings.entry_spacing {
+                        OutlinePanelEntrySpacing::Comfortable => ListItemSpacing::Dense,
+                        OutlinePanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
+                    })
                     .toggle_state(is_active)
                     .child(
                         h_flex()

@@ -874,6 +874,8 @@
     "default_width": 300,
     // Where to dock the outline panel. Can be 'left' or 'right'.
     "dock": "right",
+    // Spacing between outline entries in the outline panel. Can be 'comfortable' or 'standard'.
+    "entry_spacing": "comfortable",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the outline panel.
