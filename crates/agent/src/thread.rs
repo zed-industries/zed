@@ -977,6 +977,9 @@ pub struct Thread {
     imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
+    /// Whether this subagent's model-specific settings should track runtime
+    /// changes made in the parent thread.
+    inherits_parent_model_settings: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
     ui_scroll_position: Option<gpui::ListOffset>,
@@ -993,11 +996,18 @@ impl Thread {
     }
 
     pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
+        let subagent_model_selection = AgentSettings::get_global(cx).subagent_model.clone();
+        let configured_subagent_model = subagent_model_selection
+            .as_ref()
+            .and_then(|selection| Self::resolve_model_from_selection(selection, cx));
+        let inherits_parent_model_settings = configured_subagent_model.is_none();
         let project = parent_thread.read(cx).project.clone();
         let project_context = parent_thread.read(cx).project_context.clone();
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
         let templates = parent_thread.read(cx).templates.clone();
-        let model = parent_thread.read(cx).model().cloned();
+        let model = configured_subagent_model
+            .clone()
+            .or_else(|| parent_thread.read(cx).model().cloned());
         let parent_action_log = parent_thread.read(cx).action_log().clone();
         let action_log =
             cx.new(|_cx| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
@@ -1014,7 +1024,13 @@ impl Thread {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
         });
+        thread.inherits_parent_model_settings = inherits_parent_model_settings;
         thread.inherit_parent_settings(parent_thread, cx);
+        if configured_subagent_model.is_some()
+            && let Some(selection) = subagent_model_selection
+        {
+            thread.apply_model_selection_settings(&selection);
+        }
         thread
     }
 
@@ -1100,6 +1116,7 @@ impl Thread {
             action_log,
             imported: false,
             subagent_context: None,
+            inherits_parent_model_settings: false,
             draft_prompt: None,
             ui_scroll_position: None,
             running_subagents: Vec::new(),
@@ -1117,6 +1134,12 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+    }
+
+    fn apply_model_selection_settings(&mut self, selection: &LanguageModelSelection) {
+        self.thinking_enabled = selection.enable_thinking;
+        self.thinking_effort = selection.effort.clone();
+        self.speed = selection.speed;
     }
 
     pub fn id(&self) -> &acp::SessionId {
@@ -1330,6 +1353,7 @@ impl Thread {
             prompt_capabilities_rx,
             imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
+            inherits_parent_model_settings: false,
             draft_prompt: db_thread.draft_prompt,
             ui_scroll_position: db_thread.ui_scroll_position.map(|sp| gpui::ListOffset {
                 item_ix: sp.item_ix,
@@ -1439,7 +1463,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_model(model.clone(), cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_model(model.clone(), cx);
+                    }
+                })
                 .ok();
         }
 
@@ -1476,7 +1504,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_thinking_enabled(enabled, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_enabled(enabled, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1492,7 +1524,9 @@ impl Thread {
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
-                    thread.set_thinking_effort(effort.clone(), cx)
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_effort(effort.clone(), cx);
+                    }
                 })
                 .ok();
         }
@@ -1508,7 +1542,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_speed(speed, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_speed(speed, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1612,7 +1650,14 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_profile(profile_id.clone(), cx);
+                    } else {
+                        thread.profile_id = profile_id.clone();
+                        cx.notify();
+                    }
+                })
                 .ok();
         }
     }
@@ -4276,7 +4321,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use language_model::LanguageModelToolUseId;
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -4472,6 +4517,91 @@ mod tests {
             assert!(sub.thinking_enabled());
             assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
             assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_subagent_model_setting_overrides_parent_model(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            language_model::init(cx);
+
+            let subagent_model: Arc<dyn LanguageModel> =
+                Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "subagent-provider",
+                    "subagent-model",
+                    "Subagent Model",
+                    true,
+                ));
+            let subagent_provider = Arc::new(
+                FakeLanguageModelProvider::new(
+                    LanguageModelProviderId::from("subagent-provider".to_string()),
+                    language_model::LanguageModelProviderName::from(
+                        "Subagent Provider".to_string(),
+                    ),
+                )
+                .with_models(vec![subagent_model]),
+            );
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(subagent_provider, cx);
+            });
+
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.subagent_model = Some(LanguageModelSelection {
+                provider: "subagent-provider".to_string().into(),
+                model: "subagent-model".to_string(),
+                enable_thinking: true,
+                effort: Some("high".to_string()),
+                speed: None,
+            });
+            AgentSettings::override_global(settings, cx);
+
+            let parent_model: Arc<dyn LanguageModel> =
+                Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "parent-provider",
+                    "parent-model",
+                    "Parent Model",
+                    false,
+                ));
+            parent.update(cx, |thread, cx| {
+                thread.set_model(parent_model, cx);
+                thread.set_thinking_enabled(false, cx);
+                thread.set_thinking_effort(None, cx);
+                thread.set_speed(Speed::Fast, cx);
+            });
+        });
+
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+
+        cx.update(|cx| {
+            let sub = subagents[0].read(cx);
+            assert_eq!(sub.model().unwrap().id().0.as_ref(), "subagent-model");
+            assert!(sub.thinking_enabled());
+            assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
+            assert_eq!(sub.speed(), None);
+        });
+
+        cx.update(|cx| {
+            let other_parent_model: Arc<dyn LanguageModel> =
+                Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "parent-provider",
+                    "other-parent-model",
+                    "Other Parent Model",
+                    false,
+                ));
+            parent.update(cx, |thread, cx| {
+                thread.set_model(other_parent_model, cx);
+                thread.set_thinking_enabled(false, cx);
+                thread.set_thinking_effort(None, cx);
+                thread.set_speed(Speed::Fast, cx);
+            });
+
+            let sub = subagents[0].read(cx);
+            assert_eq!(sub.model().unwrap().id().0.as_ref(), "subagent-model");
+            assert!(sub.thinking_enabled());
+            assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
+            assert_eq!(sub.speed(), None);
         });
     }
 

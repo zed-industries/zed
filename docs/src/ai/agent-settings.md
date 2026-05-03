@@ -24,6 +24,27 @@ If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-s
 }
 ```
 
+### Subagent Model {#subagent-model}
+
+Use `subagent_model` to run agents spawned by the native `spawn_agent` tool on a different model from the parent thread:
+
+```json [settings]
+{
+  "agent": {
+    "default_model": {
+      "provider": "zed.dev",
+      "model": "claude-sonnet-4-5"
+    },
+    "subagent_model": {
+      "provider": "openai",
+      "model": "gpt-4o-mini"
+    }
+  }
+}
+```
+
+> If `subagent_model` is not set, spawned agents inherit the current parent thread model.
+
 ### Feature-specific Models {#feature-specific-models}
 
 You can assign distinct and specific models for the following AI-powered features:
