@@ -687,16 +687,12 @@ impl Database {
     /// Returns the details for the specified channel member.
     pub async fn get_channel_participant_details(
         &self,
-        channel_id: ChannelId,
+        channel: &Channel,
         filter: &str,
         limit: u64,
-        user_id: UserId,
     ) -> Result<(Vec<channel_member::Model>, Vec<user::Model>)> {
         let members = self
             .transaction(move |tx| async move {
-                let channel = self.get_channel_internal(channel_id, &tx).await?;
-                self.check_user_is_channel_participant(&channel, user_id, &tx)
-                    .await?;
                 let mut query = channel_member::Entity::find()
                     .find_also_related(user::Entity)
                     .filter(channel_member::Column::ChannelId.eq(channel.root_id()));

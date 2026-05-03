@@ -36,8 +36,9 @@ async fn test_channels(db: &Arc<Database>) {
         .await
         .unwrap();
 
+    let replace_channel = db.get_channel(replace_id, a_id).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(replace_id, "", 10, a_id)
+        .get_channel_participant_details(&replace_channel, "", 10)
         .await
         .unwrap();
     let ids = members.into_iter().map(|m| m.user_id).collect::<Vec<_>>();
@@ -155,17 +156,17 @@ async fn test_channel_invites(db: &Arc<Database>) {
     let user_2 = new_test_user(db, "user2@example.com").await;
     let user_3 = new_test_user(db, "user3@example.com").await;
 
-    let channel_1_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
+    let channel_1_1_id = db.create_root_channel("channel_1", user_1).await.unwrap();
 
     let channel_1_2 = db.create_root_channel("channel_2", user_1).await.unwrap();
 
-    db.invite_channel_member(channel_1_1, user_2, user_1, ChannelRole::Member)
+    db.invite_channel_member(channel_1_1_id, user_2, user_1, ChannelRole::Member)
         .await
         .unwrap();
     db.invite_channel_member(channel_1_2, user_2, user_1, ChannelRole::Member)
         .await
         .unwrap();
-    db.invite_channel_member(channel_1_1, user_3, user_1, ChannelRole::Admin)
+    db.invite_channel_member(channel_1_1_id, user_3, user_1, ChannelRole::Admin)
         .await
         .unwrap();
 
@@ -177,7 +178,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .into_iter()
         .map(|channel| channel.id)
         .collect::<Vec<_>>();
-    assert_eq!(user_2_invites, &[channel_1_1, channel_1_2]);
+    assert_eq!(user_2_invites, &[channel_1_1_id, channel_1_2]);
 
     let user_3_invites = db
         .get_channels_for_user(user_3)
@@ -187,10 +188,11 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .into_iter()
         .map(|channel| channel.id)
         .collect::<Vec<_>>();
-    assert_eq!(user_3_invites, &[channel_1_1]);
+    assert_eq!(user_3_invites, &[channel_1_1_id]);
 
+    let channel_1_1 = db.get_channel(channel_1_1_id, user_1).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(channel_1_1, "", 100, user_1)
+        .get_channel_participant_details(&channel_1_1, "", 100)
         .await
         .unwrap();
     let mut members = members
@@ -219,17 +221,18 @@ async fn test_channel_invites(db: &Arc<Database>) {
         ]
     );
 
-    db.respond_to_channel_invite(channel_1_1, user_2, true)
+    db.respond_to_channel_invite(channel_1_1_id, user_2, true)
         .await
         .unwrap();
 
-    let channel_1_3 = db
-        .create_sub_channel("channel_3", channel_1_1, user_1)
+    let channel_1_3_id = db
+        .create_sub_channel("channel_3", channel_1_1_id, user_1)
         .await
         .unwrap();
 
+    let channel_1_3 = db.get_channel(channel_1_3_id, user_1).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(channel_1_3, "", 100, user_1)
+        .get_channel_participant_details(&channel_1_3, "", 100)
         .await
         .unwrap();
     let members = members
@@ -731,8 +734,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
     let mut members = members
@@ -809,8 +813,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .is_err()
     );
 
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
     let mut members = members
@@ -848,8 +853,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .unwrap();
 
     // currently people invited to parent channels are not shown here
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
     let mut members = members
@@ -920,8 +926,9 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
     let mut members = members
