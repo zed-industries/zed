@@ -429,6 +429,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "opencode",
                         "openrouter",
                         "vercel_ai_gateway",
                         "x_ai",
