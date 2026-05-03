@@ -3536,6 +3536,10 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn show_cursor(&mut self, cx: &mut Context<Self>) {
+        self.blink_manager.update(cx, BlinkManager::show_cursor);
+    }
+
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
     }
