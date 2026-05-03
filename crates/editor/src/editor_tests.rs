@@ -37329,6 +37329,69 @@ async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContex
     });
 }
 
+#[gpui::test]
+async fn test_set_mark_not_reset_on_movement(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("aaaa\nbˇb\ncccc");
+    cx.dispatch_action(SetMark);
+    cx.update_editor(|e, window, cx| {
+        assert!(
+            e.key_context(window, cx).contains("selection_mode"),
+            "mark mode should be active after SetMark"
+        );
+    });
+    cx.dispatch_action(MoveRight);
+    cx.update_editor(|e, window, cx| {
+        assert!(
+            e.key_context(window, cx).contains("selection_mode"),
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_set_mark_reset_on_non_movement(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("aaaa\nbˇb\ncccc");
+    cx.dispatch_action(SetMark);
+    cx.update_editor(|e, window, cx| {
+        assert!(
+            e.key_context(window, cx).contains("selection_mode"),
+            "mark mode should be active after SetMark"
+        );
+    });
+    cx.dispatch_action(Cancel);
+    cx.update_editor(|e, window, cx| {
+        assert!(
+            !e.key_context(window, cx).contains("selection_mode"),
+            "mark mode should be reset after non-movement action"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_set_mark_reset_on_buffer_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("helloˇ");
+    cx.dispatch_action(SetMark);
+    cx.update_editor(|e, window, cx| {
+        assert!(
+            e.key_context(window, cx).contains("selection_mode"),
+            "mark mode should be active after SetMark"
+        );
+    });
+    cx.simulate_input("x");
+    cx.update_editor(|e, window, cx| {
+        assert!(
+            !e.key_context(window, cx).contains("selection_mode"),
+            "mark mode should be reset after buffer edit"
+        );
+    });
+    cx.assert_editor_state("helloxˇ");
+}
+
 fn setup_syntax_highlighting(
     language: Arc<Language>,
     cx: &mut EditorTestContext,
