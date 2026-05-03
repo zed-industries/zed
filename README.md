@@ -65,7 +65,7 @@ https://github.com/zed-industries/zed/compare/main...Dima-369:zed:dima
 ## Smooth animated cursor with trail (not in terminal)
 
 Based on the `smooth-cursor` branch from <https://github.com/NVSRahul/zedmod> with several tweaks.
-The animation code is pretty much the same as kitty's implementation. It still looks slightly different, but satisfying!
+The animation code is pretty much the same as kitty's implementation, but it is still different because in Zed the cursor is instantly moved and just the trail animated.
 
 - fixed that mouse clicks would not animate
 - fixed that actions like `jump::Toggle`, `editor::GoToPreviousGlobalChange` or `pane::GoBack` would not animate (same for forward)
