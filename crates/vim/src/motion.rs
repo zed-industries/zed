@@ -2620,8 +2620,12 @@ fn matching(
 
     // Ensure the range is contained by the current line.
     let mut line_end = map.next_line_boundary(point).0;
-    if line_end == point {
-        line_end = map.max_point().to_point(map);
+    let max_point = map.max_point().to_point(map);
+
+    // Only widen to EOF when the cursor is actually at EOF.
+    // This avoids expanding a blank current line into start..EOF.
+    if line_end == point && point == max_point {
+        line_end = max_point;
     }
 
     let line_range = map.prev_line_boundary(point).0..line_end;
@@ -2750,32 +2754,6 @@ fn matching(
 
             continue;
         }
-
-        // if let Some((open_range, close_range)) = comment_delimiter_pair(map, offset) {
-        //     if open_range.contains(&offset) {
-        //         return close_range.start.to_display_point(map);
-        //     }
-
-        //     if close_range.contains(&offset) {
-        //         return open_range.start.to_display_point(map);
-        //     }
-
-        //     let open_candidate = (open_range.start >= offset
-        //         && line_range.contains(&open_range.start))
-        //     .then_some((open_range.start.saturating_sub(offset), close_range.start));
-
-        //     let close_candidate = (close_range.start >= offset
-        //         && line_range.contains(&close_range.start))
-        //     .then_some((close_range.start.saturating_sub(offset), open_range.start));
-
-        //     if let Some((_, destination)) = [open_candidate, close_candidate]
-        //         .into_iter()
-        //         .flatten()
-        //         .min_by_key(|(distance, _)| *distance)
-        //     {
-        //         return destination.to_display_point(map);
-        //     }
-        // }
 
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
