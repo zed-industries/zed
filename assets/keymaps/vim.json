@@ -1052,6 +1052,8 @@
     "bindings": {
       "j": "vim::MenuSelectNext",
       "k": "vim::MenuSelectPrevious",
+      "ctrl-d": "git_graph::ScrollDown",
+      "ctrl-u": "git_graph::ScrollUp",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst"
     }
