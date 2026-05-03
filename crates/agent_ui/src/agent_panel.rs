@@ -29,7 +29,6 @@ use zed_actions::{
     assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
-use crate::DEFAULT_THREAD_TITLE;
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
@@ -2691,7 +2690,7 @@ impl AgentPanel {
                     .map(|r| r.read(cx).title_editor.clone())
                 {
                     if is_generating_title {
-                        Label::new(DEFAULT_THREAD_TITLE)
+                        Label::new(server_view_ref.title(cx))
                             .color(Color::Muted)
                             .truncate()
                             .with_animation(
