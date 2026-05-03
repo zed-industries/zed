@@ -1409,11 +1409,14 @@ mod tests {
             // Read-only / low-risk tools that don't call decide_permission_from_settings
             "diagnostics",
             "find_path",
+            "find_references",
+            "go_to_definition",
             "grep",
             "list_directory",
             "now",
             "open",
             "read_file",
+            "rename_symbol",
             "thinking",
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.

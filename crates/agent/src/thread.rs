@@ -1,14 +1,15 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, StreamingEditFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, WebSearchTool, decide_permission_from_settings,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool,
+    GoToDefinitionTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool,
+    ProjectSnapshot, ReadFileTool, RenameTool, RestoreFileFromDiskTool, SaveFileTool,
+    SpawnAgentTool, StreamingEditFileTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, UpdatePlanToolFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag, UpdatePlanToolFeatureFlag};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
@@ -1543,6 +1544,11 @@ impl Thread {
             self.action_log.clone(),
         ));
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
+        if cx.has_flag::<LspToolFeatureFlag>() {
+            self.add_tool(FindReferencesTool::new(self.project.clone()));
+            self.add_tool(GoToDefinitionTool::new(self.project.clone()));
+            self.add_tool(RenameTool::new(self.project.clone()));
+        }
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
