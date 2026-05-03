@@ -112,25 +112,14 @@ pub fn into_open_ai(
                                 } else {
                                     *reasoning_content = Some(reasoning);
                                 }
+                            } else if reasoning_content.is_none() {
+                                *reasoning_content = Some(" ".to_string());
                             }
                         }
                     } else {
-                        let reasoning_content = current_reasoning.take();
-                        log::trace!(
-                            "into_open_ai: new assistant tool-call msg for tool='{}', has_reasoning={}",
-                            tool_use.name,
-                            reasoning_content.is_some()
-                        );
+                        let mut reasoning_content = current_reasoning.take();
                         if interleaved_reasoning && reasoning_content.is_none() {
-                            log::warn!(
-                                "Creating assistant tool-call message for tool '{}' \
-                                 with interleaved_reasoning=true but no reasoning_content \
-                                 accumulated. If this model requires reasoning_content in \
-                                 history (e.g. Kimi), this may cause an API error. \
-                                 Check that the upstream API/proxy forwards \
-                                 `reasoning_content` in streaming responses.",
-                                tool_use.name
-                            );
+                            reasoning_content = Some(" ".to_string());
                         }
                         messages.push(crate::RequestMessage::Assistant {
                             content: None,
