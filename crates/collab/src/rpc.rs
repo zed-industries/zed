@@ -3163,6 +3163,12 @@ async fn get_channel_members(
     let (members, users) = db
         .get_channel_participant_details(channel_id, &request.query, limit, session.user_id())
         .await?;
+    let members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect();
+    let users = users.into_iter().map(proto::User::from).collect();
+
     response.send(proto::GetChannelMembersResponse { members, users })?;
     Ok(())
 }

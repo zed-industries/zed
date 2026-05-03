@@ -1,6 +1,6 @@
 use super::{assert_channel_tree_matches, channel_tree, new_test_user};
 use crate::test_both_dbs;
-use collab::db::{Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId};
+use collab::db::{Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId};
 use rpc::{
     ConnectionId,
     proto::{self, reorder_channel},
@@ -40,10 +40,7 @@ async fn test_channels(db: &Arc<Database>) {
         .get_channel_participant_details(replace_id, "", 10, a_id)
         .await
         .unwrap();
-    let ids = members
-        .into_iter()
-        .map(|m| UserId::from_proto(m.user_id))
-        .collect::<Vec<_>>();
+    let ids = members.into_iter().map(|m| m.user_id).collect::<Vec<_>>();
     assert_eq!(ids, &[a_id, b_id]);
 
     let rust_id = db.create_root_channel("rust", a_id).await.unwrap();
@@ -192,11 +189,14 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .collect::<Vec<_>>();
     assert_eq!(user_3_invites, &[channel_1_1]);
 
-    let (mut members, _) = db
+    let (members, _) = db
         .get_channel_participant_details(channel_1_1, "", 100, user_1)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
     assert_eq!(
         members,
@@ -232,6 +232,10 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .get_channel_participant_details(channel_1_3, "", 100, user_1)
         .await
         .unwrap();
+    let members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     assert_eq!(
         members,
         &[
@@ -727,13 +731,15 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let (mut members, _) = db
+    let (members, _) = db
         .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
@@ -803,13 +809,15 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .is_err()
     );
 
-    let (mut members, _) = db
+    let (members, _) = db
         .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
@@ -840,13 +848,15 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .unwrap();
 
     // currently people invited to parent channels are not shown here
-    let (mut members, _) = db
+    let (members, _) = db
         .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
@@ -910,13 +920,15 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let (mut members, _) = db
+    let (members, _) = db
         .get_channel_participant_details(public_channel_id, "", 100, admin)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
