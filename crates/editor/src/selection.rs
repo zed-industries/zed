@@ -601,6 +601,10 @@ impl Editor {
         self.last_selection_from_search = effects.from_search;
         window.invalidate_character_coordinates();
 
+        if local && !self.in_kill_ring_yank {
+            self.kill_ring_yank_state = None;
+        }
+
         // Copy selections to primary selection buffer
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if local {

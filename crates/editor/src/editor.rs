@@ -11958,6 +11958,41 @@ impl Editor {
             .collect()
     }
 
+    pub fn preview_kill_ring_yank(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<KillRingYankPreview> {
+        if self.read_only(cx) {
+            return None;
+        }
+
+        cx.default_global::<KillRingState>().clear_pending_append();
+        let start_anchors = self.yank_start_anchors(cx);
+        self.do_paste(&text.to_string(), Some(Vec::new()), false, window, cx);
+        let end_anchors = self.yank_end_anchors(cx);
+        Some(KillRingYankPreview {
+            start_anchors,
+            end_anchors,
+        })
+    }
+
+    pub fn commit_kill_ring_yank_preview(
+        &mut self,
+        index: usize,
+        preview: KillRingYankPreview,
+        cx: &mut Context<Self>,
+    ) {
+        cx.default_global::<KillRingState>().clear_pending_append();
+        self.kill_ring_yank_state = Some(KillRingYankState {
+            index,
+            start_anchors: preview.start_anchors,
+            end_anchors: preview.end_anchors,
+        });
+        cx.notify();
+    }
+
     fn restore_selections_to_anchors(
         &mut self,
         anchors: &[Anchor],
@@ -25330,6 +25365,11 @@ struct KillRingAppendState {
 
 struct KillRingYankState {
     index: usize,
+    start_anchors: Vec<Anchor>,
+    end_anchors: Vec<Anchor>,
+}
+
+pub struct KillRingYankPreview {
     start_anchors: Vec<Anchor>,
     end_anchors: Vec<Anchor>,
 }

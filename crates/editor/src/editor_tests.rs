@@ -8873,6 +8873,88 @@ async fn test_kill_ring_can_yank_pop_key_context(cx: &mut TestAppContext) {
     assert!(!has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
 }
 
+#[gpui::test]
+async fn test_yank_pop_after_fresh_yank_rotates_inline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    push_first_second_third_to_kill_ring(&mut cx);
+    cx.set_state("ˇ");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("thirdˇ");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+
+    cx.assert_editor_state("secondˇ");
+}
+
+#[gpui::test]
+async fn test_yank_pop_after_cursor_move_opens_picker(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    push_text_to_kill_ring(&mut cx, "alpha");
+    cx.set_state("ˇsuffix");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    assert!(has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
+
+    cx.update_editor(|editor, window, cx| editor.move_right(&MoveRight, window, cx));
+
+    assert!(!has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
+}
+
+#[gpui::test]
+async fn test_picker_confirm_then_yank_pop_cycles_from_picked_index(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    push_first_second_third_to_kill_ring(&mut cx);
+    cx.set_state("ˇ");
+
+    cx.update_editor(|editor, window, cx| {
+        let preview = editor
+            .preview_kill_ring_yank("second", window, cx)
+            .expect("preview should insert into writable editor");
+        editor.commit_kill_ring_yank_preview(1, preview, cx);
+    });
+    cx.assert_editor_state("secondˇ");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+
+    cx.assert_editor_state("firstˇ");
+}
+
+#[gpui::test]
+async fn test_picker_escape_dismisses_without_insert(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("before ˇ after");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.preview_kill_ring_yank("alpha", window, cx);
+        editor.undo(&Undo, window, cx);
+    });
+
+    cx.assert_editor_state("before ˇ after");
+}
+
+#[gpui::test]
+async fn test_picker_preview_applies_at_all_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇone\nˇtwo\nˇthree");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.preview_kill_ring_yank("x", window, cx);
+    });
+
+    cx.assert_editor_state("xˇone\nxˇtwo\nxˇthree");
+}
+
 fn bind_emacs_keymap(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let key_bindings = KeymapFile::load_asset_allow_partial_failure(
