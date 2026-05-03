@@ -19,6 +19,17 @@ pub struct Model {
     pub created_at: NaiveDateTime,
 }
 
+impl From<Model> for crate::entities::User {
+    fn from(user: Model) -> Self {
+        crate::entities::User {
+            id: user.id,
+            github_login: user.github_login,
+            admin: user.admin,
+            connected_once: user.connected_once,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(has_one = "super::room_participant::Entity")]

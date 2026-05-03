@@ -1,15 +1,19 @@
 use gh_workflow::*;
 
 use crate::tasks::workflows::{
+    deploy_docs::deploy_docs_workflow_call,
     release::{self, notify_on_failure},
     runners,
     steps::{CommonJobConditions, NamedJob, checkout_repo, dependant_job, named},
     vars::{self, StepOutput, WorkflowInput},
 };
 
-const TAG_NAME: &str = "${{ github.event.release.tag_name || inputs.tag_name }}";
-const IS_PRERELEASE: &str = "${{ github.event.release.prerelease || inputs.prerelease }}";
+const TAG_NAME_ENV: &str = "${{ github.event.release.tag_name || inputs.tag_name }}";
+const IS_PRERELEASE_ENV: &str = "${{ github.event.release.prerelease || inputs.prerelease }}";
+const TAG_NAME: &str = "${{ env.TAG_NAME }}";
 const RELEASE_BODY: &str = "${{ github.event.release.body || inputs.body }}";
+const DOCS_CHANNEL: &str =
+    "${{ (github.event.release.prerelease || inputs.prerelease) && 'preview' || 'stable' }}";
 
 pub fn after_release() -> Workflow {
     let tag_name = WorkflowInput::string("tag_name", None);
@@ -17,17 +21,26 @@ pub fn after_release() -> Workflow {
     let body = WorkflowInput::string("body", Some(String::new()));
 
     let refresh_zed_dev = rebuild_releases_page();
+    let deploy_docs = deploy_docs_workflow_call(DOCS_CHANNEL, TAG_NAME_ENV);
     let post_to_discord = post_to_discord(&[&refresh_zed_dev]);
     let publish_winget = publish_winget();
     let create_sentry_release = create_sentry_release();
-    let notify_on_failure = notify_on_failure(&[
-        &refresh_zed_dev,
-        &post_to_discord,
-        &publish_winget,
-        &create_sentry_release,
-    ]);
+    let notify_on_failure = {
+        let notify_on_failure = notify_on_failure(&[
+            &refresh_zed_dev,
+            &post_to_discord,
+            &publish_winget,
+            &create_sentry_release,
+        ]);
+        NamedJob {
+            name: notify_on_failure.name,
+            job: notify_on_failure.job.add_need(deploy_docs.name.clone()),
+        }
+    };
 
     named::workflow()
+        .add_env(("TAG_NAME", TAG_NAME_ENV))
+        .add_env(("IS_PRERELEASE", IS_PRERELEASE_ENV))
         .on(Event::default()
             .release(Release::default().types(vec![ReleaseType::Published]))
             .workflow_dispatch(
@@ -37,6 +50,7 @@ pub fn after_release() -> Workflow {
                     .add_input(body.name, body.input()),
             ))
         .add_job(refresh_zed_dev.name, refresh_zed_dev.job)
+        .add_job(deploy_docs.name, deploy_docs.job)
         .add_job(post_to_discord.name, post_to_discord.job)
         .add_job(publish_winget.name, publish_winget.job)
         .add_job(create_sentry_release.name, create_sentry_release.job)
@@ -45,9 +59,7 @@ pub fn after_release() -> Workflow {
 
 fn rebuild_releases_page() -> NamedJob {
     fn refresh_cloud_releases() -> Step<Run> {
-        named::bash(format!(
-            "curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag={TAG_NAME}"
-        ))
+        named::bash("curl -fX POST \"https://cloud.zed.dev/releases/refresh?expect_tag=$TAG_NAME\"")
     }
 
     fn redeploy_zed_dev() -> Step<Run> {
@@ -66,16 +78,16 @@ fn rebuild_releases_page() -> NamedJob {
 
 fn post_to_discord(deps: &[&NamedJob]) -> NamedJob {
     fn get_release_url() -> Step<Run> {
-        named::bash(format!(
-            r#"if [ "{IS_PRERELEASE}" == "true" ]; then
+        named::bash(
+            r#"if [ "$IS_PRERELEASE" == "true" ]; then
     URL="https://zed.dev/releases/preview"
 else
     URL="https://zed.dev/releases/stable"
 fi
 
 echo "URL=$URL" >> "$GITHUB_OUTPUT"
-"#
-        ))
+"#,
+        )
         .id("get-release-url")
     }
 
@@ -136,17 +148,15 @@ fn publish_winget() -> NamedJob {
     }
 
     fn set_package_name() -> (Step<Run>, StepOutput) {
-        let script = format!(
-            r#"if ("{IS_PRERELEASE}" -eq "true") {{
+        let script = r#"if ($env:IS_PRERELEASE -eq "true") {
     $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
-}} else {{
+} else {
     $PACKAGE_NAME = "ZedIndustries.Zed"
-}}
+}
 
 echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
-"#
-        );
-        let step = named::pwsh(&script).id("set-package-name");
+"#;
+        let step = named::pwsh(script).id("set-package-name");
 
         let output = StepOutput::new(&step, "PACKAGE_NAME");
         (step, output)

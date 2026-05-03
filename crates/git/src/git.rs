@@ -47,7 +47,7 @@ actions!(
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
-        /// Shows the git history for the current file.
+        /// Shows the git history for the selected file, folder, or project.
         FileHistory,
         /// Stages the current file.
         StageFile,
