@@ -381,11 +381,14 @@ impl OllamaLanguageModel {
                     }
                 }
                 Role::Assistant => {
-                    let content = msg.string_contents();
+                    let mut text_content = String::new();
                     let mut thinking = None;
                     let mut tool_calls = Vec::new();
                     for content in msg.content.into_iter() {
                         match content {
+                            MessageContent::Text(text) => {
+                                text_content.push_str(&text);
+                            }
                             MessageContent::Thinking { text, .. } if !text.is_empty() => {
                                 thinking = Some(text)
                             }
@@ -402,7 +405,7 @@ impl OllamaLanguageModel {
                         }
                     }
                     messages.push(ChatMessage::Assistant {
-                        content,
+                        content: text_content,
                         tool_calls: Some(tool_calls),
                         images: if images.is_empty() {
                             None
