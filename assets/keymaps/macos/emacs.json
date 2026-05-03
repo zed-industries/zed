@@ -61,7 +61,7 @@
       "ctrl-w": "editor::KillRingCutRegion", // kill-region
       "alt-w": "editor::KillRingSave", // kill-ring-save
       "ctrl-y": "editor::KillRingYank", // yank
-      "alt-y": "editor::KillRingYankPop", // yank-pop
+      "alt-y": "editor::KillRingPickAndYank", // yank-from-kill-ring
       "ctrl-_": "editor::Undo", // undo
       "ctrl-/": "editor::Undo", // undo
       "ctrl-x u": "editor::Undo", // undo
@@ -82,6 +82,12 @@
       "ctrl-r": "buffer_search::Deploy", // isearch-backward
       "alt-^": "editor::JoinLines", // join-line
       "alt-q": "editor::Rewrap", // fill-paragraph
+    },
+  },
+  {
+    "context": "Editor && kill_ring_can_yank_pop",
+    "bindings": {
+      "alt-y": "editor::KillRingYankPop", // yank-pop
     },
   },
   {

@@ -76,6 +76,23 @@ use workspace::{
     register_project_item,
 };
 
+gpui::actions!(
+    tab_switcher,
+    [
+        #[action(name = "Toggle")]
+        TestTabSwitcherToggle
+    ]
+);
+gpui::actions!(
+    search,
+    [
+        #[action(name = "SelectNextMatch")]
+        TestSearchSelectNextMatch,
+        #[action(name = "SelectPreviousMatch")]
+        TestSearchSelectPreviousMatch
+    ]
+);
+
 fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<DisplayPoint>> {
     editor
         .selections
@@ -8816,6 +8833,19 @@ fn selection_mark_mode(cx: &mut EditorTestContext) -> bool {
     cx.editor(|editor, _, _| editor.selection_mark_mode)
 }
 
+fn count_kill_ring_pick_and_yank_actions(cx: &mut TestAppContext) -> Rc<RefCell<usize>> {
+    let count = Rc::new(RefCell::new(0));
+    cx.update({
+        let count = count.clone();
+        move |cx| {
+            cx.on_action(move |_: &KillRingPickAndYank, _| {
+                *count.borrow_mut() += 1;
+            });
+        }
+    });
+    count
+}
+
 #[gpui::test]
 async fn test_kill_ring_pick_and_yank_action_registered(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -8871,6 +8901,56 @@ async fn test_kill_ring_can_yank_pop_key_context(cx: &mut TestAppContext) {
 
     cx.update_editor(|editor, window, cx| editor.handle_input("x", window, cx));
     assert!(!has_editor_key_context(&mut cx, "kill_ring_can_yank_pop"));
+}
+
+#[gpui::test]
+async fn test_alt_y_runs_yank_pop_after_yank(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+    let pick_count = count_kill_ring_pick_and_yank_actions(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    push_first_second_third_to_kill_ring(&mut cx);
+    cx.set_state("ˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "alt-y"]);
+
+    cx.assert_editor_state("secondˇ");
+    assert_eq!(*pick_count.borrow(), 0);
+}
+
+#[gpui::test]
+async fn test_alt_y_opens_picker_when_no_yank_state(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+    let pick_count = count_kill_ring_pick_and_yank_actions(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    push_text_to_kill_ring(&mut cx, "alpha");
+    cx.set_state("before ˇ after");
+
+    simulate_emacs_keystrokes(&mut cx, &["alt-y"]);
+
+    cx.assert_editor_state("before ˇ after");
+    assert_eq!(*pick_count.borrow(), 1);
+    assert_eq!(resolved_universal_argument(&mut cx), None);
+}
+
+#[gpui::test]
+async fn test_universal_argument_prefix_skips_picker(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    bind_emacs_keymap(cx);
+    let pick_count = count_kill_ring_pick_and_yank_actions(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    push_first_second_third_to_kill_ring(&mut cx);
+    cx.set_state("ˇ");
+
+    simulate_emacs_keystrokes(&mut cx, &["ctrl-y", "ctrl-u", "2", "alt-y"]);
+
+    cx.assert_editor_state("firstˇ");
+    assert_eq!(*pick_count.borrow(), 0);
+    assert_eq!(resolved_universal_argument(&mut cx), None);
 }
 
 #[gpui::test]
@@ -8963,6 +9043,37 @@ fn bind_emacs_keymap(cx: &mut TestAppContext) {
         )
         .unwrap();
         cx.bind_keys(key_bindings);
+    });
+}
+
+#[gpui::test]
+fn test_emacs_keymap_loads_cleanly(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        for asset_path in ["keymaps/macos/emacs.json", "keymaps/linux/emacs.json"] {
+            let key_bindings = KeymapFile::load_asset(asset_path, None, cx)
+                .unwrap_or_else(|error| panic!("failed to load {asset_path}: {error}"));
+
+            assert!(
+                key_bindings
+                    .iter()
+                    .any(|binding| binding.action().as_any().is::<KillRingPickAndYank>()),
+                "{asset_path} should bind KillRingPickAndYank"
+            );
+            assert!(
+                key_bindings
+                    .iter()
+                    .any(|binding| binding.action().as_any().is::<KillRingYankPop>()),
+                "{asset_path} should bind KillRingYankPop"
+            );
+        }
+
+        let platform_asset_path = BaseKeymap::Emacs
+            .asset_path()
+            .expect("emacs base keymap should have a platform asset");
+        KeymapFile::load_asset(platform_asset_path, None, cx)
+            .unwrap_or_else(|error| panic!("failed to load {platform_asset_path}: {error}"));
     });
 }
 
