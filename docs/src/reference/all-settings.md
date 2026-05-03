@@ -3198,7 +3198,6 @@ Examples:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -5404,8 +5403,9 @@ You can define these in user or project settings; project settings are merged on
 {
   "outline_panel": {
     "button": true,
-    "default_width": 300,
     "dock": "left",
+    "default_width": 300,
+    "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
     "git_status": true,
@@ -5418,6 +5418,72 @@ You can define these in user or project settings; project settings are merged on
     "scrollbar": {
       "show": null
     }
+  }
+}
+```
+
+### Dock
+
+- Description: Control the position of the dock
+- Setting: `dock`
+- Default: `left`
+
+**Options**
+
+1. Default dock position to left
+
+```json [settings]
+{
+  "outline_panel": {
+    "dock": "left"
+  }
+}
+```
+
+2. Default dock position to right
+
+```json [settings]
+{
+  "outline_panel": {
+    "dock": "right"
+  }
+}
+```
+
+### Default Width
+
+- Description: Customize default width taken by outline panel
+- Setting: `default_width`
+- Default: `300`
+
+**Options**
+
+`float` values
+
+### Entry Spacing
+
+- Description: Spacing between outline entries
+- Setting: `entry_spacing`
+- Default: `comfortable`
+
+**Options**
+
+1. Comfortable entry spacing
+
+```json [settings]
+{
+  "outline_panel": {
+    "entry_spacing": "comfortable"
+  }
+}
+```
+
+2. Standard entry spacing
+
+```json [settings]
+{
+  "outline_panel": {
+    "entry_spacing": "standard"
   }
 }
 ```
