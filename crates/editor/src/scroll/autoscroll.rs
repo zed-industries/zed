@@ -131,6 +131,24 @@ impl Editor {
         }
 
         let editor_was_scrolled = if original_y != scroll_position.y {
+            let distance = (original_y - scroll_position.y).abs();
+            if distance > visible_lines {
+                // When the scroll position is far out of bounds (e.g., after
+                // deleting a huge chunk of the file), animating the full distance
+                // would take too long and make the view feel stuck. Instead, snap
+                // instantly to one screen-height away from the target, then
+                // animate the remaining short distance.
+                let mut snap_position = scroll_position;
+                if original_y > scroll_position.y {
+                    snap_position.y += visible_lines;
+                } else {
+                    snap_position.y = (scroll_position.y - visible_lines).max(0.0);
+                }
+                let prev_try_use_anim = self.scroll_manager.ongoing.try_use_anim;
+                self.scroll_manager.ongoing.try_use_anim = false;
+                self.set_scroll_position(snap_position, window, cx);
+                self.scroll_manager.ongoing.try_use_anim = prev_try_use_anim;
+            }
             self.set_scroll_position(scroll_position, window, cx)
         } else {
             WasScrolled(false)
