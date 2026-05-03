@@ -115,6 +115,14 @@ mod fake_user_service {
 
             user_id
         }
+
+        pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
+            let state = self.state.lock().await;
+
+            let user = state.users.get(&id).cloned();
+
+            Ok(user)
+        }
     }
 
     #[async_trait]

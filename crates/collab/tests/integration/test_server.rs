@@ -244,7 +244,7 @@ impl TestServer {
         let client_name = name.to_string();
         let client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
-        let db = self.app_state.db.clone();
+        let user_service = self.app_state.user_service.clone();
         let connection_killers = self.connection_killers.clone();
         let forbid_connections = self.forbid_connections.clone();
 
@@ -268,7 +268,7 @@ impl TestServer {
                 );
 
                 let server = server.clone();
-                let db = db.clone();
+                let user_service = user_service.clone();
                 let connection_killers = connection_killers.clone();
                 let forbid_connections = forbid_connections.clone();
                 let client_name = client_name.clone();
@@ -281,7 +281,8 @@ impl TestServer {
                         let (client_conn, server_conn, killed) =
                             Connection::in_memory(cx.background_executor().clone());
                         let (connection_id_tx, connection_id_rx) = oneshot::channel();
-                        let user = db
+                        let user = user_service
+                            .as_fake()
                             .get_user_by_id(user_id)
                             .await
                             .map_err(|e| {
