@@ -75,10 +75,18 @@ mod fake_user_service {
         state: Arc<Mutex<FakeUserServiceState>>,
     }
 
-    #[derive(Default)]
     struct FakeUserServiceState {
         next_user_id: UserId,
         users: HashMap<UserId, User>,
+    }
+
+    impl Default for FakeUserServiceState {
+        fn default() -> Self {
+            Self {
+                next_user_id: UserId(1),
+                users: HashMap::default(),
+            }
+        }
     }
 
     impl FakeUserService {
