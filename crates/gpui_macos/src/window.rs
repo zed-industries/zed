@@ -1,8 +1,8 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, events::platform_input_from_native,
-    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
-    ns_string, renderer,
+    BoolExt, DisplayLink, MacDisplay, MacWindowCycleShortcut, NSRange, NSStringExt,
+    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty,
+    events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
+    kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -493,6 +493,7 @@ struct MacWindowState {
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
+    window_cycle_shortcut: MacWindowCycleShortcut,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
@@ -680,6 +681,7 @@ impl MacWindow {
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
+        window_cycle_shortcut: MacWindowCycleShortcut,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -823,6 +825,7 @@ impl MacWindow {
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
+                window_cycle_shortcut,
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
@@ -1957,6 +1960,13 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let Some(event) = event else {
         return NO;
     };
+
+    // AppKit reserves this shortcut for window cycling, and the active binding can change at runtime.
+    if matches!(&event, PlatformInput::KeyDown(_))
+        && lock.window_cycle_shortcut.matches(native_event)
+    {
+        return NO;
+    }
 
     let run_callback = |event: PlatformInput| -> BOOL {
         let mut callback = window_state.as_ref().lock().event_callback.take();
