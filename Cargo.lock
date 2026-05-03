@@ -1268,7 +1268,7 @@ dependencies = [
  "simplelog",
  "tempfile",
  "windows 0.61.3",
- "winresource",
+ "windows_resources",
 ]
 
 [[package]]
@@ -2946,6 +2946,7 @@ dependencies = [
  "util",
  "walkdir",
  "windows 0.61.3",
+ "windows_resources",
 ]
 
 [[package]]
@@ -3279,6 +3280,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "feature_flags",
  "futures 0.3.32",
  "fuzzy",
  "gpui",
@@ -21417,6 +21419,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
 
 [[package]]
+name = "windows_resources"
+version = "0.1.0"
+dependencies = [
+ "embed-resource",
+]
+
+[[package]]
 name = "windows_x86_64_gnu"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22511,7 +22520,7 @@ dependencies = [
  "web_search_providers",
  "which_key",
  "windows 0.61.3",
- "winresource",
+ "windows_resources",
  "workspace",
  "zed-reqwest",
  "zed_actions",

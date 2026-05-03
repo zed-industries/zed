@@ -1036,6 +1036,20 @@
   {
     "context": "GitGraph",
     "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraph && !GitGraphSearchBar",
+    "bindings": {
       "j": "vim::MenuSelectNext",
       "k": "vim::MenuSelectPrevious",
       "shift-g": "menu::SelectLast",

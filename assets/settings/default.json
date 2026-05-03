@@ -2255,7 +2255,16 @@
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "!kanayago", "..."],
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "!kanayago",
+        "!fuzzy-ruby-server",
+        "...",
+      ],
     },
     "Rust": {
       "debuggers": ["CodeLLDB"],
