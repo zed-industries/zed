@@ -3015,6 +3015,7 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
+        crate::devtools::prepaint_window_overlay(self);
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
