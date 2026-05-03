@@ -180,7 +180,11 @@ impl TestServer {
 
         let clock = Arc::new(FakeSystemClock::new());
 
-        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
+        let user_id = if let Ok(Some(user)) = self
+            .app_state
+            .user_service
+            .get_user_by_github_login(name)
+            .await
         {
             user.id
         } else {
