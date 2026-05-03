@@ -225,6 +225,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/windows_resources",
     "crates/zed_credentials_provider",
     "crates/zed_env_vars",
     "crates/zeta_prompt",

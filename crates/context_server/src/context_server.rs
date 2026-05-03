@@ -139,6 +139,7 @@ impl ContextServer {
         let client_info = types::Implementation {
             name: "Brother IDE AI".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            description: None,
         };
         let initialized_protocol = protocol.initialize(client_info).await?;
 
