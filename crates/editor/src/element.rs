@@ -6995,7 +6995,7 @@ impl EditorElement {
                         }
                     }
 
-                    if let Some(thumb_bounds) = scrollbar_layout.thumb_bounds {
+                    if let Some(mut thumb_bounds) = scrollbar_layout.thumb_bounds {
                         let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
                             ScrollbarThumbState::Dragging => {
                                 cx.theme().colors().scrollbar_thumb_active_background
@@ -7007,13 +7007,27 @@ impl EditorElement {
                                 cx.theme().colors().scrollbar_thumb_background
                             }
                         };
+                        let thumb_thickness = ScrollbarLayout::THUMB_THICKNESS;
+                        match axis {
+                            ScrollbarAxis::Vertical => {
+                                let inset = (thumb_bounds.size.width - thumb_thickness) / 2.;
+                                thumb_bounds.origin.x += inset;
+                                thumb_bounds.size.width = thumb_thickness;
+                            }
+                            ScrollbarAxis::Horizontal => {
+                                let inset = (thumb_bounds.size.height - thumb_thickness) / 2.;
+                                thumb_bounds.origin.y += inset;
+                                thumb_bounds.size.height = thumb_thickness;
+                            }
+                        }
                         window.paint_quad(quad(
                             thumb_bounds,
-                            Corners::default(),
+                            Corners::all(Pixels::MAX)
+                                .clamp_radii_for_quad_size(thumb_bounds.size),
                             scrollbar_thumb_color,
-                            scrollbar_edges,
-                            cx.theme().colors().scrollbar_thumb_border,
-                            BorderStyle::Solid,
+                            Edges::default(),
+                            Hsla::transparent_black(),
+                            BorderStyle::default(),
                         ));
 
                         if any_scrollbar_dragged {
@@ -11844,6 +11858,7 @@ impl ScrollbarLayout {
     const LINE_MARKER_HEIGHT: Pixels = px(2.0);
     const MIN_MARKER_HEIGHT: Pixels = px(5.0);
     const MIN_THUMB_SIZE: Pixels = px(25.0);
+    const THUMB_THICKNESS: Pixels = px(6.0);
 
     fn new(
         scrollbar_track_hitbox: Hitbox,
