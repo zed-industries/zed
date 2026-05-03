@@ -2349,23 +2349,30 @@ impl App {
             .map(|(_, invalidator)| invalidator.clone())
             .collect();
 
-        if *GPUI_NOTIFY_STATS_ENABLED {
+        let collect_notify_diagnostics = *GPUI_NOTIFY_STATS_ENABLED || crate::devtools::enabled();
+        if collect_notify_diagnostics {
             let caller = std::panic::Location::caller();
-            let entity_type = self
-                .entities
-                .type_name(entity_id)
-                .map(gpui_diagnostics_short_type_name)
-                .unwrap_or("<unknown>");
-            log::info!(
-                target: "gpui::notify_stats",
-                "gpui notify entity={} type={} tracked_windows={} live_windows={} caller={}:{}",
-                entity_id.as_u64(),
+            let entity_type = self.entities.type_name(entity_id).unwrap_or("<unknown>");
+            crate::devtools::record_notify(crate::devtools::NotifyEvent::new(
+                entity_id,
                 entity_type,
+                caller,
                 window_invalidators.len(),
                 live_invalidators.len(),
-                caller.file(),
-                caller.line(),
-            );
+            ));
+
+            if *GPUI_NOTIFY_STATS_ENABLED {
+                log::info!(
+                    target: "gpui::notify_stats",
+                    "gpui notify entity={} type={} tracked_windows={} live_windows={} caller={}:{}",
+                    entity_id.as_u64(),
+                    gpui_diagnostics_short_type_name(entity_type),
+                    window_invalidators.len(),
+                    live_invalidators.len(),
+                    caller.file(),
+                    caller.line(),
+                );
+            }
         }
 
         if live_invalidators.is_empty() {

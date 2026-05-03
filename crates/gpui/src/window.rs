@@ -2186,16 +2186,30 @@ impl Window {
     #[track_caller]
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
-        if *GPUI_INVALIDATION_STATS_ENABLED {
+        let devtools_enabled = crate::devtools::enabled();
+        let collect_animation_diagnostics = *GPUI_INVALIDATION_STATS_ENABLED || devtools_enabled;
+        if collect_animation_diagnostics {
             let caller = std::panic::Location::caller();
-            log::info!(
-                target: "gpui::notify_stats",
-                "gpui request_animation_frame entity={} type={} caller={}:{}",
-                entity.as_u64(),
-                self.frame_stats_view_type_name(entity),
-                caller.file(),
-                caller.line()
-            );
+            let entity_type = self.devtools_view_type_name(entity);
+            if devtools_enabled {
+                crate::devtools::record_animation(crate::devtools::animation_frame_request_event(
+                    self.handle.window_id(),
+                    entity,
+                    entity_type,
+                    caller,
+                ));
+            }
+
+            if *GPUI_INVALIDATION_STATS_ENABLED {
+                log::info!(
+                    target: "gpui::notify_stats",
+                    "gpui request_animation_frame entity={} type={} caller={}:{}",
+                    entity.as_u64(),
+                    frame_stats_short_type_name(entity_type),
+                    caller.file(),
+                    caller.line()
+                );
+            }
         }
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
@@ -2207,16 +2221,34 @@ impl Window {
         duration: Duration,
         repeats: bool,
     ) {
-        if !*GPUI_INVALIDATION_STATS_ENABLED {
+        let devtools_enabled = crate::devtools::enabled();
+        if !*GPUI_INVALIDATION_STATS_ENABLED && !devtools_enabled {
             return;
         }
 
         let entity = self.current_view();
+        let entity_type = self.devtools_view_type_name(entity);
+        if devtools_enabled {
+            crate::devtools::record_animation(crate::devtools::animation_element_tick_event(
+                self.handle.window_id(),
+                entity,
+                entity_type,
+                element_id,
+                animation_ix,
+                duration,
+                repeats,
+            ));
+        }
+
+        if !*GPUI_INVALIDATION_STATS_ENABLED {
+            return;
+        }
+
         log::info!(
             target: "gpui::notify_stats",
             "gpui animation_frame_request entity={} type={} element_id={:?} animation_ix={} duration_ms={:.3} repeats={}",
             entity.as_u64(),
-            self.frame_stats_view_type_name(entity),
+            frame_stats_short_type_name(entity_type),
             element_id,
             animation_ix,
             duration_ms(duration),
@@ -2224,13 +2256,12 @@ impl Window {
         );
     }
 
-    fn frame_stats_view_type_name(&self, entity: EntityId) -> &'static str {
+    fn devtools_view_type_name(&self, entity: EntityId) -> &'static str {
         self.next_frame
             .view_type_names
             .get(&entity)
             .or_else(|| self.rendered_frame.view_type_names.get(&entity))
             .copied()
-            .map(frame_stats_short_type_name)
             .unwrap_or("<unknown>")
     }
 
@@ -2757,10 +2788,36 @@ impl Window {
 
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
+        let devtools_enabled = crate::devtools::enabled();
         for entity in views.drain() {
+            if devtools_enabled {
+                self.record_devtools_dirty_path(entity);
+            }
             self.mark_view_dirty(entity);
         }
         self.invalidator.replace_views(views);
+    }
+
+    fn record_devtools_dirty_path(&self, entity: EntityId) {
+        let path_entity_ids = self
+            .rendered_frame
+            .dispatch_tree
+            .view_path_reversed(entity)
+            .collect::<Vec<_>>();
+        let path = path_entity_ids
+            .into_iter()
+            .map(|entity_id| crate::devtools::DirtyPathSegment {
+                entity_id,
+                entity_type: self.devtools_view_type_name(entity_id),
+            })
+            .collect();
+
+        crate::devtools::record_dirty_path(crate::devtools::DirtyPathEvent::new(
+            self.handle.window_id(),
+            entity,
+            self.devtools_view_type_name(entity),
+            path,
+        ));
     }
 
     #[profiling::function]
@@ -2773,11 +2830,32 @@ impl Window {
     }
 
     fn log_frame_diagnostics(&self, diagnostics: FrameDiagnostics) {
-        if !*GPUI_FRAME_STATS_ENABLED {
+        let devtools_enabled = crate::devtools::enabled();
+        if !*GPUI_FRAME_STATS_ENABLED && !devtools_enabled {
             return;
         }
 
         let stats = self.rendered_frame.scene.stats();
+        if devtools_enabled {
+            crate::devtools::record_frame(crate::devtools::FrameEvent {
+                window_id: self.handle.window_id(),
+                reason: diagnostics.reason.as_str(),
+                dirty_before_frame: diagnostics.dirty_before_frame,
+                dirty_view_count: diagnostics.dirty_view_count,
+                invalidator_update_count: diagnostics.invalidator_update_count,
+                rebuilt_scene: diagnostics.draw_duration.is_some(),
+                draw_duration: diagnostics.draw_duration,
+                present_duration: diagnostics.present_duration,
+                scene_stats: stats,
+                devtools_induced: false,
+                timestamp: Instant::now(),
+            });
+        }
+
+        if !*GPUI_FRAME_STATS_ENABLED {
+            return;
+        }
+
         let draw_ms = diagnostics.draw_duration.map(duration_ms).unwrap_or(0.);
         let present_ms = duration_ms(diagnostics.present_duration);
         let scaled_viewport_area =
@@ -2958,6 +3036,8 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        crate::devtools::paint_window_overlay(self, cx);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
