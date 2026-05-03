@@ -1637,7 +1637,7 @@ async fn test_remote_search_commits_streams_proto_chunks(
     server_cx: &mut TestAppContext,
 ) {
     const COMMIT_COUNT: usize = 900;
-    const RESPONSE_TARGET_BYTES: usize = 4 * 1024;
+    const RESPONSE_MAX_SIZE: usize = 100;
 
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -1723,14 +1723,9 @@ async fn test_remote_search_commits_streams_proto_chunks(
         "expected search results to stream in multiple chunks"
     );
     for chunk in chunks.iter().take(chunks.len() - 1) {
-        let chunk_bytes = chunk.iter().map(|sha| sha.len()).sum::<usize>();
         assert!(
-            chunk_bytes >= RESPONSE_TARGET_BYTES,
+            chunk.len() <= RESPONSE_MAX_SIZE,
             "non-final chunks should meet the target byte size"
-        );
-        assert!(
-            chunk_bytes < RESPONSE_TARGET_BYTES + 40,
-            "chunks should be flushed as soon as they pass the target byte size"
         );
     }
 

@@ -701,7 +701,7 @@ message GitLogSource {
     GitLogSourceAll all = 1;
     string branch = 2;
     string sha = 3;
-    string file = 4;
+    string path = 4;
   }
 }
 
