@@ -7,10 +7,10 @@ use client::{
     proto::PeerId,
 };
 use clock::FakeSystemClock;
-use collab::services::FakeUserService;
+use collab::services::{FakeUserService, NewUserParams};
 use collab::{
     AppState, Config,
-    db::{NewUserParams, UserId},
+    db::UserId,
     executor::Executor,
     rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
 };
@@ -187,7 +187,8 @@ impl TestServer {
             let github_user_id = self.next_github_user_id;
             self.next_github_user_id += 1;
             self.app_state
-                .db
+                .user_service
+                .as_fake()
                 .create_user(
                     &format!("{name}@example.com"),
                     None,
@@ -198,8 +199,6 @@ impl TestServer {
                     },
                 )
                 .await
-                .expect("creating user failed")
-                .user_id
         };
 
         let http = FakeHttpClient::create({
@@ -577,7 +576,7 @@ impl TestServer {
             blob_store_client: None,
             executor,
             kinesis_client: None,
-            user_service: Arc::new(FakeUserService::new()),
+            user_service: FakeUserService::new(),
             config: Config {
                 http_port: 0,
                 database_url: "".into(),

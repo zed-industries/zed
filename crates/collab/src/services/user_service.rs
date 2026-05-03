@@ -16,6 +16,11 @@ pub trait UserService: Send + Sync + 'static {
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
 
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
+
+    #[cfg(feature = "test-support")]
+    fn as_fake(&self) -> Arc<FakeUserService> {
+        panic!("called as_fake on a real `UserService`");
+    }
 }
 
 /// A [`UserService`] implementation backed by the database.
@@ -52,32 +57,102 @@ impl UserService for DatabaseUserService {
 
 #[cfg(feature = "test-support")]
 mod fake_user_service {
+    use std::sync::Weak;
+
+    use collections::HashMap;
+    use tokio::sync::Mutex;
+
     use super::*;
 
-    pub struct FakeUserService {}
+    #[derive(Debug)]
+    pub struct NewUserParams {
+        pub github_login: String,
+        pub github_user_id: i32,
+    }
+
+    pub struct FakeUserService {
+        this: Weak<Self>,
+        state: Arc<Mutex<FakeUserServiceState>>,
+    }
+
+    #[derive(Default)]
+    struct FakeUserServiceState {
+        next_user_id: UserId,
+        users: HashMap<UserId, User>,
+    }
 
     impl FakeUserService {
-        pub fn new() -> Self {
-            Self {}
+        pub fn new() -> Arc<Self> {
+            Arc::new_cyclic(|this| Self {
+                this: this.clone(),
+                state: Arc::new(Mutex::default()),
+            })
+        }
+
+        pub async fn create_user(
+            &self,
+            email_address: &str,
+            name: Option<&str>,
+            admin: bool,
+            params: NewUserParams,
+        ) -> UserId {
+            let mut state = self.state.lock().await;
+
+            let user_id = state.next_user_id;
+            let _ = email_address;
+            state.users.insert(
+                user_id,
+                User {
+                    id: user_id,
+                    github_login: params.github_login,
+                    name: name.map(|name| name.to_string()),
+                    admin,
+                    connected_once: false,
+                },
+            );
+
+            state.next_user_id = UserId(state.next_user_id.0 + 1);
+
+            user_id
         }
     }
 
     #[async_trait]
     impl UserService for FakeUserService {
         async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-            let _ = ids;
-            unimplemented!()
+            let state = self.state.lock().await;
+
+            let users = state
+                .users
+                .values()
+                .filter(|user| ids.contains(&user.id))
+                .cloned()
+                .collect();
+
+            Ok(users)
         }
 
         async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-            let _ = github_login;
-            unimplemented!()
+            let state = self.state.lock().await;
+
+            let user = state
+                .users
+                .values()
+                .find(|user| user.github_login == github_login)
+                .cloned();
+
+            Ok(user)
         }
 
         async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
             let _ = query;
             let _ = limit;
             unimplemented!()
+        }
+
+        #[cfg(feature = "test-support")]
+        fn as_fake(&self) -> Arc<FakeUserService> {
+            self.this.upgrade().unwrap()
         }
     }
 }
