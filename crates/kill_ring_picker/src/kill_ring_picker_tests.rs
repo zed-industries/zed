@@ -1,7 +1,7 @@
 use super::*;
 use editor::{
     Editor, KillRingState,
-    actions::{KillRingPickAndYank, KillRingSave, KillRingYankPop, Undo},
+    actions::{KillRingKillWord, KillRingPickAndYank, KillRingSave, KillRingYankPop, Undo},
     test::{assert_text_with_selections, select_ranges},
 };
 use gpui::{Entity, TestAppContext, VisualTestContext};
@@ -298,6 +298,40 @@ async fn test_kill_ring_picker_escape_reverts_preview(cx: &mut TestAppContext) {
 
     assert!(active_modal(&mut context).is_none());
     assert_editor_state(&mut context, "before ˇ after");
+}
+
+#[gpui::test]
+async fn test_kill_ring_picker_escape_preserves_pending_append(cx: &mut TestAppContext) {
+    let mut context = workspace_editor(cx).await;
+    set_editor_state(&mut context, "ˇone two three");
+    context
+        .editor
+        .update_in(&mut context.cx, |editor, window, cx| {
+            editor.kill_ring_kill_word(&KillRingKillWord, window, cx);
+        });
+    context.cx.run_until_parked();
+
+    assert_editor_state(&mut context, "ˇ two three");
+    assert_eq!(kill_ring_texts(&mut context), vec!["one"]);
+
+    dispatch_pick_and_yank(&mut context);
+    assert_editor_state(&mut context, "oneˇ two three");
+
+    cancel_picker(&mut context);
+
+    assert!(active_modal(&mut context).is_none());
+    assert_editor_state(&mut context, "ˇ two three");
+    assert_eq!(kill_ring_texts(&mut context), vec!["one"]);
+
+    context
+        .editor
+        .update_in(&mut context.cx, |editor, window, cx| {
+            editor.kill_ring_kill_word(&KillRingKillWord, window, cx);
+        });
+    context.cx.run_until_parked();
+
+    assert_editor_state(&mut context, "ˇ three");
+    assert_eq!(kill_ring_texts(&mut context), vec!["one two"]);
 }
 
 #[gpui::test]

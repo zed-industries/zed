@@ -11968,7 +11968,6 @@ impl Editor {
             return None;
         }
 
-        cx.default_global::<KillRingState>().clear_pending_append();
         let start_anchors = self.yank_start_anchors(cx);
         self.do_paste(&text.to_string(), Some(Vec::new()), false, window, cx);
         let end_anchors = self.yank_end_anchors(cx);
