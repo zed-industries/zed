@@ -7318,6 +7318,15 @@ impl ThreadView {
                 .size(IconSize::Small)
                 .color(Color::Muted)
                 .into_any_element()
+        } else if tool_call
+            .tool_name
+            .as_ref()
+            .is_some_and(|tool_name| tool_name == "create_directory")
+        {
+            Icon::new(IconName::FolderOpenAdd)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
         } else {
             Icon::new(match tool_call.kind {
                 acp::ToolKind::Read => IconName::ToolSearch,

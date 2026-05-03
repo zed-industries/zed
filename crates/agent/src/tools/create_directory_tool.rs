@@ -54,7 +54,7 @@ impl AgentTool for CreateDirectoryTool {
     const NAME: &'static str = "create_directory";
 
     fn kind() -> acp::ToolKind {
-        acp::ToolKind::Read
+        acp::ToolKind::Edit
     }
 
     fn initial_title(
@@ -189,6 +189,11 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[test]
+    fn test_create_directory_tool_kind_is_edit() {
+        assert_eq!(CreateDirectoryTool::kind(), acp::ToolKind::Edit);
     }
 
     #[gpui::test]
