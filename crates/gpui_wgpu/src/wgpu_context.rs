@@ -160,15 +160,72 @@ impl WgpuContext {
         ))
     }
 
+    /// Build the `wgpu::Instance` used for adapter selection and surface
+    /// creation.
+    ///
+    /// On Linux, `wgpu`'s GL backend eagerly initializes EGL inside
+    /// `wgpu::Instance::new`. With NVIDIA's proprietary driver, that
+    /// initialization can panic inside
+    /// `khronos_egl::Instance::get_platform_display`: the driver returns
+    /// `EGL_NO_DISPLAY` without setting an EGL error, and the binding then
+    /// unwraps the resulting `Option<Error>` and aborts the process (and on
+    /// some systems takes the X session with it). This has been seen with
+    /// `EGL_EXT_platform_xcb` advertised but not actually usable on the
+    /// proprietary NVIDIA driver. See
+    /// https://github.com/zed-industries/zed/issues/52944.
+    ///
+    /// We catch the unwind, drop the GL backend, and retry with the remaining
+    /// backends. Vulkan does not consult the display handle during init, so
+    /// the retry succeeds whenever a usable Vulkan ICD is present (which is
+    /// the path Zed used before the move to wgpu v29 anyway).
     #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
-        wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
-            flags: wgpu::InstanceFlags::default(),
-            backend_options: wgpu::BackendOptions::default(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: Some(display),
-        })
+        let backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
+
+        // `Box<dyn ...>` is not `UnwindSafe`; we never observe the descriptor
+        // again on the unwinding path, so asserting unwind safety here is
+        // sound.
+        let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends,
+                flags: wgpu::InstanceFlags::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                display: Some(display),
+            })
+        }));
+
+        match attempt {
+            Ok(instance) => instance,
+            Err(payload) => {
+                let msg = panic_payload_str(&payload);
+                let fallback = backends - wgpu::Backends::GL;
+                if fallback.is_empty() {
+                    log::error!(
+                        "wgpu::Instance::new panicked during backend init and no \
+                         non-GL backend is available to fall back to: {msg}"
+                    );
+                    std::panic::resume_unwind(payload);
+                }
+                log::warn!(
+                    "wgpu::Instance::new panicked during backend init ({msg}); \
+                     retrying without the GL backend. This is typically caused by a \
+                     buggy EGL implementation, most commonly NVIDIA's proprietary \
+                     driver on X11/XCB (issue #52944)."
+                );
+                // The original boxed display handle was moved into the
+                // panicking call and is gone. The non-GL backends do not need
+                // it for instance creation; Vulkan obtains a display via
+                // `create_surface` later.
+                wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: fallback,
+                    flags: wgpu::InstanceFlags::default(),
+                    backend_options: wgpu::BackendOptions::default(),
+                    memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                    display: None,
+                })
+            }
+        }
     }
 
     pub fn check_compatible_with_surface(&self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
@@ -413,6 +470,18 @@ impl WgpuContext {
     }
 }
 
+/// Best-effort string extraction from a panic payload, for logging.
+#[cfg(not(target_family = "wasm"))]
+fn panic_payload_str(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "<non-string panic payload>"
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
     let mut id = id.trim();
@@ -432,7 +501,28 @@ fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_pci_id;
+    use super::{panic_payload_str, parse_pci_id};
+
+    #[test]
+    fn test_panic_payload_str_static_str() {
+        let payload = std::panic::catch_unwind(|| panic!("static str payload"))
+            .expect_err("panic should propagate");
+        assert_eq!(panic_payload_str(&payload), "static str payload");
+    }
+
+    #[test]
+    fn test_panic_payload_str_owned_string() {
+        let payload = std::panic::catch_unwind(|| panic!("owned: {}", 42))
+            .expect_err("panic should propagate");
+        assert_eq!(panic_payload_str(&payload), "owned: 42");
+    }
+
+    #[test]
+    fn test_panic_payload_str_unknown_type() {
+        let payload = std::panic::catch_unwind(|| std::panic::panic_any(123u32))
+            .expect_err("panic should propagate");
+        assert_eq!(panic_payload_str(&payload), "<non-string panic payload>");
+    }
 
     #[test]
     fn test_parse_device_id() {
