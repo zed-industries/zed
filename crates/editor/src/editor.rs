@@ -3548,6 +3548,31 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
+    fn selection_head_for_point_action(
+        &self,
+        selection: &Selection<Anchor>,
+        cx: &mut App,
+    ) -> Anchor {
+        let head = selection.head();
+        if self.cursor_offset_on_selection
+            && !selection.reversed
+            && selection.start != selection.end
+        {
+            let display_map = self.display_snapshot(cx);
+            let display_head = head.to_display_point(&display_map);
+            let should_offset = display_head.column() > 0
+                || (display_head.row().0 > 0 && display_head != display_map.max_point());
+            if should_offset {
+                display_map
+                    .display_point_to_anchor(movement::left(&display_map, display_head), Bias::Left)
+            } else {
+                head
+            }
+        } else {
+            head
+        }
+    }
+
     pub fn set_current_line_highlight(
         &mut self,
         current_line_highlight: Option<CurrentLineHighlight>,
@@ -19856,10 +19881,9 @@ impl Editor {
         }
         let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
-        let (cursor_buffer, cursor_buffer_position) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.head(), cx)?;
+        let cursor = self.selection_head_for_point_action(&selection, cx);
+        let (cursor_buffer, cursor_buffer_position) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
@@ -19887,7 +19911,7 @@ impl Editor {
 
                     this.take_rename(false, window, cx);
                     let buffer = this.buffer.read(cx).read(cx);
-                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let cursor_offset = cursor.to_offset(&buffer);
                     let rename_start =
                         cursor_offset.saturating_sub_usize(cursor_offset_in_rename_range);
                     let rename_end = rename_start + rename_buffer_range.len();
