@@ -4791,7 +4791,6 @@ impl Editor {
             return;
         }
 
-
         self.unfold_buffers_with_selections(cx);
 
         let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
@@ -5531,7 +5530,6 @@ impl Editor {
             return;
         }
 
-
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
 
@@ -5600,7 +5598,6 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-
 
         let mut buffer_edits: HashMap<EntityId, (Entity<Buffer>, Vec<Point>)> = HashMap::default();
         let mut rows = Vec::new();
@@ -14751,7 +14748,6 @@ impl Editor {
             return;
         }
 
-
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) =
                 self.selection_history.transaction(transaction_id).cloned()
@@ -14779,7 +14775,6 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) =
@@ -14863,7 +14858,6 @@ impl Editor {
             return;
         }
 
-
         let text_layout_details = &self.text_layout_details(window, cx);
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
@@ -14905,7 +14899,6 @@ impl Editor {
             return;
         }
 
-
         let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Default::default(), window, cx, |s| {
@@ -14940,7 +14933,6 @@ impl Editor {
             cx.propagate();
             return;
         }
-
 
         let text_layout_details = &self.text_layout_details(window, cx);
 
@@ -15000,7 +14992,6 @@ impl Editor {
             return;
         };
 
-
         let text_layout_details = &self.text_layout_details(window, cx);
 
         self.change_selections(Default::default(), window, cx, |s| {
@@ -15038,7 +15029,6 @@ impl Editor {
         let Some(row_count) = self.visible_row_count() else {
             return;
         };
-
 
         let effects = if action.center_cursor {
             SelectionEffects::scroll(Autoscroll::center())
@@ -15083,7 +15073,6 @@ impl Editor {
             return;
         }
 
-
         let text_layout_details = &self.text_layout_details(window, cx);
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
@@ -15119,7 +15108,6 @@ impl Editor {
         let Some(row_count) = self.visible_row_count() else {
             return;
         };
-
 
         let text_layout_details = &self.text_layout_details(window, cx);
 
@@ -15158,7 +15146,6 @@ impl Editor {
         let Some(row_count) = self.visible_row_count() else {
             return;
         };
-
 
         let effects = if action.center_cursor {
             SelectionEffects::scroll(Autoscroll::center())
@@ -16165,7 +16152,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let all_selections = self.selections.all::<Point>(&display_map);
         let text_layout_details = self.text_layout_details(window, cx);
@@ -16587,7 +16573,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
@@ -17367,7 +17352,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-
         let buffer = self.buffer.read(cx).snapshot(cx);
         let old_selections = self
             .selections
@@ -17434,7 +17418,6 @@ impl Editor {
         if old_selections.is_empty() {
             return;
         }
-
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -17551,7 +17534,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-
         if let Some((mut selections, scroll_behavior, is_selection_reversed)) =
             self.select_syntax_node_history.pop()
         {
@@ -17675,7 +17657,6 @@ impl Editor {
             return;
         }
 
-
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut selected_sibling = false;
 
@@ -17733,7 +17714,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let old_selections: Arc<[_]> = self.selections.all_anchors(&self.display_snapshot(cx));
-
 
         let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let mut selected_sibling = false;
@@ -17873,7 +17853,6 @@ impl Editor {
             return false;
         }
 
-
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
 
@@ -17937,7 +17916,6 @@ impl Editor {
         cx: &mut Context<Self>,
         move_to_end: bool,
     ) {
-
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
         let old_selections = self.selections.all::<MultiBufferOffset>(&display_map);
