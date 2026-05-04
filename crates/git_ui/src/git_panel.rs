@@ -644,6 +644,7 @@ pub struct GitPanel {
     changes_count: usize,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
+    pending_push: Option<Task<()>>,
     amend_pending: bool,
     original_commit_message: Option<String>,
     signoff_enabled: bool,
@@ -832,6 +833,7 @@ impl GitPanel {
                 new_staged_count: 0,
                 changes_count: 0,
                 pending_commit: None,
+                pending_push: None,
                 amend_pending: false,
                 original_commit_message: None,
                 signoff_enabled: false,
@@ -3047,7 +3049,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.can_push_and_pull(cx) {
+        if !self.can_push_and_pull(cx) || self.pending_push.is_some() {
             return;
         }
         let Some(repo) = self.active_repository.clone() else {
@@ -3073,7 +3075,7 @@ impl GitPanel {
         };
         let remote = self.get_remote(select_remote, true, window, cx);
 
-        cx.spawn_in(window, async move |this, cx| {
+        let push_work = cx.spawn_in(window, async move |this, cx| -> anyhow::Result<()> {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
@@ -3126,11 +3128,26 @@ impl GitPanel {
                     log::error!("Error while pushing {:?}", e);
                     this.show_error_toast(action.name(), e, cx)
                 }
-            })?;
+            })
+            .ok();
 
             anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
+
+        let task = cx.spawn(async move |this, cx| {
+            let result = push_work.await;
+            this.update(cx, |this, cx| {
+                this.pending_push.take();
+                if let Err(e) = result {
+                    this.show_error_toast("push", e, cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+
+        self.pending_push = Some(task);
+        cx.notify();
     }
 
     /// Updates git's configuration, adding the directory of the current
@@ -4396,6 +4413,7 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
+                        self.pending_push.is_some(),
                     ))
                 })
                 .into_any_element(),
@@ -8427,6 +8445,75 @@ mod tests {
             assert_eq!(style.text.font_size.to_pixels(window.rem_size()), px(20.0));
 
             Editor::single_line(window, cx)
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_is_noop_when_pending(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": "fn main() {}",
+            }),
+        )
+        .await;
+        fs.set_branch_name(path!("/project/.git").as_ref(), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_repository.is_some(),
+                "test setup: no active repository"
+            );
+            assert!(
+                panel
+                    .active_repository
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .branch
+                    .is_some(),
+                "test setup: no branch on repository"
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.pending_push = Some(cx.spawn(async |_, _| {}));
+            panel.push(false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel.pending_push.is_some(),
+                "push() should be a no-op when a push is already in progress"
+            );
         });
     }
 }
