@@ -1557,7 +1557,7 @@ impl LinuxClient for X11Client {
             X11Display::new(
                 &state.xcb_connection,
                 state.scale_factor,
-                u32::from(id) as usize,
+                u64::from(id) as usize,
             )
             .ok()?,
         ))

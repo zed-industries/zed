@@ -343,7 +343,7 @@ impl rwh::HasDisplayHandle for X11Window {
         };
         let screen_id = {
             let state = self.0.state.borrow();
-            u32::from(state.display.id()) as i32
+            u64::from(state.display.id()) as i32
         };
         let handle = rwh::XcbDisplayHandle::new(Some(non_zero), screen_id);
         Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
@@ -429,7 +429,7 @@ impl X11WindowState {
     ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
-            .map_or(x_main_screen_index, |did| u32::from(did) as usize);
+            .map_or(x_main_screen_index, |did| u64::from(did) as usize);
 
         let visual_set = find_visuals(xcb, x_screen_index);
 

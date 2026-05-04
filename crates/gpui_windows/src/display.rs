@@ -35,9 +35,7 @@ unsafe impl Sync for WindowsDisplay {}
 
 impl WindowsDisplay {
     pub(crate) fn new(display_id: DisplayId) -> Option<Self> {
-        let screen = available_monitors()
-            .into_iter()
-            .nth(u32::from(display_id) as _)?;
+        let screen = HMONITOR(u64::from(display_id) as _);
         let info = get_monitor_info(screen).log_err()?;
         let monitor_size = info.monitorInfo.rcMonitor;
         let work_area = info.monitorInfo.rcWork;
@@ -81,10 +79,6 @@ impl WindowsDisplay {
         let monitor_size = info.monitorInfo.rcMonitor;
         let work_area = info.monitorInfo.rcWork;
         let uuid = generate_uuid(&info.szDevice);
-        let display_id = available_monitors()
-            .iter()
-            .position(|handle| handle.0 == monitor.0)
-            .unwrap();
         let scale_factor = get_scale_factor_for_monitor(monitor)?;
         let physical_size = size(
             (monitor_size.right - monitor_size.left).into(),
@@ -93,7 +87,7 @@ impl WindowsDisplay {
 
         Ok(WindowsDisplay {
             handle: monitor,
-            display_id: DisplayId::new(display_id as _),
+            display_id: DisplayId::new(monitor.0 as _),
             scale_factor,
             bounds: Bounds {
                 origin: logical_point(
