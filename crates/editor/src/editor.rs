@@ -1354,6 +1354,10 @@ pub struct Editor {
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
     serialize_folds: Task<()>,
+    /// Bound to the window the editor currently lives in. Replaced (rather
+    /// than detached) on `added_to_workspace` so the editor follows window
+    /// changes — see [`crate::items::Item::added_to_workspace`].
+    _window_activation_subscription: Option<Subscription>,
     mouse_cursor_hidden: bool,
     minimap: Option<Entity<Self>>,
     hide_mouse_mode: HideMouseMode,
@@ -2615,22 +2619,13 @@ impl Editor {
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
-                        cx.observe_window_activation(window, |editor, window, cx| {
-                            let active = window.is_window_active();
-                            editor.blink_manager.update(cx, |blink_manager, cx| {
-                                if active {
-                                    blink_manager.enable(cx);
-                                } else {
-                                    blink_manager.disable(cx);
-                                }
-                            });
-                            if active {
-                                editor.show_mouse_cursor(cx);
-                            }
-                        }),
                     ]
                 })
                 .unwrap_or_default(),
+            // Set lazily by `added_to_workspace`; binding it here would lock
+            // the editor to its construction-time window and leak when the
+            // editor is later moved to another window.
+            _window_activation_subscription: None,
             runnables: RunnableData::new(),
             pull_diagnostics_task: Task::ready(()),
             colors: None,

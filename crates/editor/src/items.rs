@@ -1027,6 +1027,34 @@ impl Item for Editor {
             .detach();
         }
 
+        // The window-activation observer is bound to a specific window, so it
+        // has to follow the editor when it moves between windows (e.g. via
+        // `MoveActiveItemToNewWindow`). Replacing the field drops any prior
+        // subscription, keeping exactly one live observer per editor.
+        self.show_mouse_cursor(cx);
+        let blink_manager = self.blink_manager.clone();
+        blink_manager.update(cx, |blink_manager, cx| {
+            if window.is_window_active() {
+                blink_manager.enable(cx);
+            } else {
+                blink_manager.disable(cx);
+            }
+        });
+        self._window_activation_subscription =
+            Some(cx.observe_window_activation(window, |editor, window, cx| {
+                let active = window.is_window_active();
+                editor.blink_manager.update(cx, |blink_manager, cx| {
+                    if active {
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+                    }
+                });
+                if active {
+                    editor.show_mouse_cursor(cx);
+                }
+            }));
+
         // Load persisted folds if this editor doesn't already have folds.
         // This handles manually-opened files (not workspace restoration).
         let display_snapshot = self
