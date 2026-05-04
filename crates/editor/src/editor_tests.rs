@@ -41,7 +41,7 @@ use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffse
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project,
+    FakeFs, Project, ProjectPath,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
@@ -27992,6 +27992,109 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     assert_eq!(0, breakpoints.len());
     assert_breakpoint(&breakpoints, &abs_path, vec![]);
+}
+
+#[gpui::test]
+async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let first_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (first_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(first_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    first_editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let replacement_buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("Alpha\nBeta\nGamma", None, true, cx)
+    });
+    project
+        .update(cx, |project, cx| {
+            project.save_buffer_as(
+                replacement_buffer.clone(),
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("main.rs").into(),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    let (replacement_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(replacement_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    replacement_editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let project_path = first_editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(Arc::from)
+            .unwrap()
+    });
+
+    let breakpoints = first_editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .source_breakpoints_from_path(&abs_path, cx)
+    });
+
+    assert_eq!(
+        vec![0, 1],
+        breakpoints
+            .into_iter()
+            .map(|breakpoint| breakpoint.row)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[gpui::test]
