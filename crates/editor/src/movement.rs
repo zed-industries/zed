@@ -446,7 +446,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
         // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
         if is_first_iteration
             && classifier.is_punctuation(left)
-            && !classifier.is_punctuation(right)
+            && !right.is_whitespace()
             && right != '\n'
         {
             is_first_iteration = false;
@@ -1163,6 +1163,7 @@ mod tests {
         assert("helloˇ.---..ˇtest", cx);
         assert("testˇ.--ˇ test", cx);
         assert("oneˇ,;:!?ˇtwo", cx);
+        assert("foo ˇ.ˇ bar", cx);
     }
 
     #[gpui::test]
