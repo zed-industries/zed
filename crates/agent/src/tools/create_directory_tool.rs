@@ -77,10 +77,7 @@ impl AgentTool for CreateDirectoryTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let decision = cx.update(|cx| {
                 decide_permission_for_path(Self::NAME, &input.path, AgentSettings::get_global(cx))
             });

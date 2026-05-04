@@ -3932,8 +3932,7 @@ Positive integer values
 1. `none` to avoid wrapping generally, unless the line is too long
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
-4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
-5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
+4. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
 ## Show Wrap Guides
 
