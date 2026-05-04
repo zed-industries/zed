@@ -1,6 +1,7 @@
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool,
+    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
+    CreateDirectoryTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool,
+    EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool,
     ProjectSnapshot, ReadFileTool, RenameTool, RestoreFileFromDiskTool, SaveFileTool,
     SpawnAgentTool, StreamingEditFileTool, SystemPromptTemplate, Template, Templates,
@@ -1543,12 +1544,6 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
-        if cx.has_flag::<LspToolFeatureFlag>() {
-            self.add_tool(FindReferencesTool::new(self.project.clone()));
-            self.add_tool(GoToDefinitionTool::new(self.project.clone()));
-            self.add_tool(RenameTool::new(self.project.clone()));
-        }
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
@@ -1580,6 +1575,22 @@ impl Thread {
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
+        
+        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+        if cx.has_flag::<LspToolFeatureFlag>() {
+            let code_action_store: CodeActionStore = cx.new(|_cx| None);
+            self.add_tool(FindReferencesTool::new(self.project.clone()));
+            self.add_tool(GetCodeActionsTool::new(
+                self.project.clone(),
+                code_action_store.clone(),
+            ));
+            self.add_tool(ApplyCodeActionTool::new(
+                self.project.clone(),
+                code_action_store,
+            ));
+            self.add_tool(GoToDefinitionTool::new(self.project.clone()));
+            self.add_tool(RenameTool::new(self.project.clone()));
+        }
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));

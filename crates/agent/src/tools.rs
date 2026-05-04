@@ -1,3 +1,4 @@
+mod apply_code_action_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -9,6 +10,7 @@ mod evals;
 mod fetch_tool;
 mod find_path_tool;
 mod find_references_tool;
+mod get_code_actions_tool;
 mod go_to_definition_tool;
 mod grep_tool;
 mod list_directory_tool;
@@ -31,6 +33,7 @@ mod web_search_tool;
 use crate::AgentTool;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
 
+pub use apply_code_action_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
@@ -40,6 +43,7 @@ pub use edit_file_tool::*;
 pub use fetch_tool::*;
 pub use find_path_tool::*;
 pub use find_references_tool::*;
+pub use get_code_actions_tool::*;
 pub use go_to_definition_tool::*;
 pub use grep_tool::*;
 pub use list_directory_tool::*;
@@ -127,6 +131,7 @@ macro_rules! tools {
 }
 
 tools! {
+    ApplyCodeActionTool,
     CopyPathTool,
     CreateDirectoryTool,
     DeletePathTool,
@@ -135,6 +140,7 @@ tools! {
     FetchTool,
     FindPathTool,
     FindReferencesTool,
+    GetCodeActionsTool,
     GoToDefinitionTool,
     GrepTool,
     ListDirectoryTool,

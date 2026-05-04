@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::sync::Arc;
 
 use agent_client_protocol::schema as acp;
@@ -43,7 +44,7 @@ impl AgentTool for RenameTool {
     const NAME: &'static str = "rename_symbol";
 
     fn kind() -> acp::ToolKind {
-        acp::ToolKind::Edit
+        acp::ToolKind::Other
     }
 
     fn initial_title(
@@ -64,11 +65,57 @@ impl AgentTool for RenameTool {
 
     fn run(
         self: Arc<Self>,
-        _input: ToolInput<Self::Input>,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<Result<String, String>> {
-        // TODO: Implement LSP rename
-        Task::ready(Err("Rename tool is not yet implemented".into()))
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            let resolved = input.symbol.resolve(&project, cx).await?;
+
+            let rename_task = project.update(cx, |project, cx| {
+                project.perform_rename(
+                    resolved.buffer.clone(),
+                    resolved.position,
+                    input.new_name.clone(),
+                    cx,
+                )
+            });
+
+            let transaction = rename_task
+                .await
+                .map_err(|e| format!("Rename failed: {e}"))?;
+
+            if transaction.0.is_empty() {
+                return Ok(format!(
+                    "No changes were made. The language server could not rename '{}'.",
+                    input.symbol.symbol_name
+                ));
+            }
+
+            let mut output = format!(
+                "Renamed `{}` to `{}` in {} file(s):\n",
+                input.symbol.symbol_name,
+                input.new_name,
+                transaction.0.len()
+            );
+
+            for (buffer, _) in &transaction.0 {
+                buffer.read_with(cx, |buffer, cx| {
+                    let path = buffer
+                        .file()
+                        .map(|f| f.full_path(cx).display().to_string())
+                        .unwrap_or_else(|| "<untitled>".to_string());
+                    writeln!(output, "- {path}").ok();
+                });
+            }
+
+            Ok(output)
+        })
     }
 }

@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::sync::Arc;
 
 use agent_client_protocol::schema as acp;
@@ -5,8 +6,7 @@ use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-use super::symbol_locator::SymbolLocator;
+use super::symbol_locator::{LocationDisplay, SymbolLocator};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Jumps to the definition of a symbol using the language server.
@@ -56,11 +56,57 @@ impl AgentTool for GoToDefinitionTool {
 
     fn run(
         self: Arc<Self>,
-        _input: ToolInput<Self::Input>,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<Result<String, String>> {
-        // TODO: Implement LSP go-to-definition
-        Task::ready(Err("Go to definition tool is not yet implemented".into()))
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            let resolved = input.symbol.resolve(&project, cx).await?;
+
+            let definitions_task = project.update(cx, |project, cx| {
+                project.definitions(&resolved.buffer, resolved.position, cx)
+            });
+
+            let definitions = definitions_task
+                .await
+                .map_err(|e| format!("Go to definition failed: {e}"))?
+                .unwrap_or_default();
+
+            if definitions.is_empty() {
+                return Ok(format!(
+                    "No definition found for '{}'.",
+                    input.symbol.symbol_name
+                ));
+            }
+
+            let mut output = String::new();
+
+            if definitions.len() == 1 {
+                write!(output, "Definition of `{}`:\n", input.symbol.symbol_name).ok();
+            } else {
+                write!(
+                    output,
+                    "Found {} definitions of `{}`:\n",
+                    definitions.len(),
+                    input.symbol.symbol_name
+                )
+                .ok();
+            }
+
+            for link in &definitions {
+                let display = link.target.buffer.read_with(cx, |_, cx| {
+                    LocationDisplay::from_location(&link.target, cx)
+                });
+                write!(output, "\n## {display}\n").ok();
+            }
+
+            Ok(output)
+        })
     }
 }
