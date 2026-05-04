@@ -231,7 +231,7 @@
   // Default: "bar"
   "cursor_shape": "bar",
   // Determines when the mouse cursor should be hidden in response to keyboard
-  // input. Restoration on mouse motion is handled by the platform.
+  // input.
   //
   // 1. Never hide the mouse cursor:
   //    "never"

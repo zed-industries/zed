@@ -83,7 +83,7 @@ pub enum ParseStatus {
 }
 
 /// Determines when the mouse cursor should be hidden in response to keyboard
-/// input. Restoration on mouse motion is handled by the platform.
+/// input.
 ///
 /// Default: on_typing_and_action
 #[derive(

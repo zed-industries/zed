@@ -801,8 +801,7 @@ List of `string` values
 
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in response to keyboard input. Restoration on mouse motion is handled by the platform.
-- Setting: `hide_mouse`
+- Description: Determines when the mouse cursor should be hidden in response to keyboard input.
 - Default: `on_typing_and_action`
 
 **Options**
