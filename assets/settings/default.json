@@ -230,15 +230,16 @@
   //
   // Default: "bar"
   "cursor_shape": "bar",
-  // Determines when the mouse cursor should be hidden in an editor or input box.
+  // Determines when the mouse cursor should be hidden in response to keyboard
+  // input.
   //
   // 1. Never hide the mouse cursor:
   //    "never"
   // 2. Hide only when typing:
   //    "on_typing"
-  // 3. Hide on both typing and cursor movement:
-  //    "on_typing_and_movement"
-  "hide_mouse": "on_typing_and_movement",
+  // 3. Hide on typing and on key bindings that resolve to an action:
+  //    "on_typing_and_action"
+  "hide_mouse": "on_typing_and_action",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,
