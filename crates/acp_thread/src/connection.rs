@@ -318,7 +318,7 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+    fn watch(&self, _cx: &mut App) -> Option<async_channel::Receiver<SessionListUpdate>> {
         None
     }
 

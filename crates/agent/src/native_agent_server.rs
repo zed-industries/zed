@@ -11,6 +11,7 @@ use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegi
 use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
+use util::ResultExt as _;
 
 use crate::{NativeAgent, NativeAgentConnection, ThreadStore, templates::Templates};
 
@@ -48,11 +49,11 @@ impl AgentServer for NativeAgentServer {
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
             let templates = Templates::new();
-            let prompt_store = prompt_store.await?;
+            let prompt_store = prompt_store.await.log_err();
 
             log::debug!("Creating native agent entity");
-            let agent = cx
-                .update(|cx| NativeAgent::new(thread_store, templates, Some(prompt_store), fs, cx));
+            let agent =
+                cx.update(|cx| NativeAgent::new(thread_store, templates, prompt_store, fs, cx));
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

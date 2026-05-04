@@ -17,7 +17,6 @@ mod persistence;
 pub mod searchable;
 mod security_modal;
 pub mod shared_screen;
-use db::smol::future::yield_now;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
 mod status_bar;
@@ -1364,6 +1363,7 @@ pub struct Workspace {
     project: Entity<Project>,
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
+    auto_watch: AutoWatch,
     window_edited: bool,
     last_window_title: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
@@ -1414,6 +1414,19 @@ pub struct FollowerState {
     dock_pane: Option<Entity<Pane>>,
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, FollowerView>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoWatch {
+    Off,
+    Active { watched_peer: Option<PeerId> },
+    Paused,
+}
+
+impl AutoWatch {
+    pub fn enabled(&self) -> bool {
+        matches!(self, AutoWatch::Active { .. } | AutoWatch::Paused)
+    }
 }
 
 struct FollowerView {
@@ -1794,6 +1807,7 @@ impl Workspace {
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
+            auto_watch: AutoWatch::Off,
             dispatching_keystrokes: Default::default(),
             window_edited: false,
             last_window_title: None,
@@ -3389,7 +3403,7 @@ impl Workspace {
                                 .unwrap_or(false);
 
                             if focus_changed {
-                                yield_now().await;
+                                futures_lite::future::yield_now().await;
                             }
                         }
 
@@ -4784,6 +4798,93 @@ impl Workspace {
         }
     }
 
+    pub fn auto_watch_state(&self) -> &AutoWatch {
+        &self.auto_watch
+    }
+
+    fn next_watched_peer(&self, cx: &App) -> Option<PeerId> {
+        self.active_call()
+            .and_then(|call| call.peer_ids_with_video_tracks(cx).first().copied())
+    }
+
+    pub fn toggle_auto_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.auto_watch.enabled() {
+            self.auto_watch = AutoWatch::Off;
+            cx.notify();
+            return;
+        }
+
+        let active_pane = self.active_pane.clone();
+        self.unfollow_in_pane(&active_pane, window, cx);
+
+        let local_is_sharing = self
+            .active_call()
+            .map_or(false, |call| call.is_sharing_screen(cx));
+
+        if local_is_sharing {
+            self.auto_watch = AutoWatch::Paused;
+        } else {
+            let watched_peer = self.next_watched_peer(cx);
+            self.auto_watch = AutoWatch::Active { watched_peer };
+
+            if let Some(peer_id) = watched_peer {
+                self.open_shared_screen(peer_id, window, cx);
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn handle_auto_watch_video_tracks_changed(
+        &mut self,
+        peer_id: PeerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let AutoWatch::Active { watched_peer } = self.auto_watch else {
+            return;
+        };
+
+        let peer_is_sharing = self.active_call().map_or(false, |call| {
+            call.peer_ids_with_video_tracks(cx).contains(&peer_id)
+        });
+        let should_watch_peer = peer_is_sharing && watched_peer.is_none();
+        let watched_peer_stopped_sharing = watched_peer == Some(peer_id) && !peer_is_sharing;
+
+        if should_watch_peer || watched_peer_stopped_sharing {
+            let next_watched_peer = if should_watch_peer {
+                Some(peer_id)
+            } else {
+                self.next_watched_peer(cx)
+            };
+
+            self.auto_watch = AutoWatch::Active {
+                watched_peer: next_watched_peer,
+            };
+
+            if let Some(next_watched_peer) = next_watched_peer {
+                self.open_shared_screen(next_watched_peer, window, cx);
+            }
+        }
+    }
+
+    fn handle_auto_watch_local_share_stopped(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let AutoWatch::Paused = self.auto_watch else {
+            return;
+        };
+
+        let watched_peer = self.next_watched_peer(cx);
+        self.auto_watch = AutoWatch::Active { watched_peer };
+
+        if let Some(peer_id) = watched_peer {
+            self.open_shared_screen(peer_id, window, cx);
+        }
+    }
+
     pub fn activate_item(
         &mut self,
         item: &dyn ItemHandle,
@@ -5840,7 +5941,9 @@ impl Workspace {
             title = "empty project".to_string();
         }
 
-        if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
+        let active_project_path = self.active_item(cx).and_then(|item| item.project_path(cx));
+
+        if let Some(path) = active_project_path.as_ref() {
             let filename = path.path.file_name().or_else(|| {
                 Some(
                     project
@@ -5861,6 +5964,11 @@ impl Workspace {
         } else if project.is_shared() {
             title.push_str(" ↗");
         }
+
+        let document_path = active_project_path
+            .as_ref()
+            .and_then(|path| project.absolute_path(path, cx));
+        window.set_document_path(document_path.as_deref());
 
         if let Some(last_title) = self.last_window_title.as_ref()
             && &title == last_title
@@ -6506,9 +6614,21 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            ActiveCallEvent::ParticipantLocationChanged { participant_id }
-            | ActiveCallEvent::RemoteVideoTracksChanged { participant_id } => {
+            ActiveCallEvent::ParticipantLocationChanged { participant_id } => {
                 self.leader_updated(participant_id, window, cx);
+            }
+            ActiveCallEvent::RemoteVideoTracksChanged { participant_id } => {
+                self.leader_updated(participant_id, window, cx);
+                self.handle_auto_watch_video_tracks_changed(*participant_id, window, cx);
+            }
+            ActiveCallEvent::LocalScreenShareStarted => {
+                if let AutoWatch::Active { .. } = self.auto_watch {
+                    self.auto_watch = AutoWatch::Paused;
+                    cx.notify();
+                }
+            }
+            ActiveCallEvent::LocalScreenShareStopped => {
+                self.handle_auto_watch_local_share_stopped(window, cx);
             }
         }
     }
@@ -7873,6 +7993,7 @@ pub trait AnyActiveCall {
     fn unshare_project(&self, _: Entity<Project>, _: &mut App) -> Result<()>;
     fn remote_participant_for_peer_id(&self, _: PeerId, _: &App) -> Option<RemoteCollaborator>;
     fn is_sharing_project(&self, _: &App) -> bool;
+    fn is_sharing_screen(&self, _: &App) -> bool;
     fn has_remote_participants(&self, _: &App) -> bool;
     fn local_participant_is_guest(&self, _: &App) -> bool;
     fn client(&self, _: &App) -> Arc<Client>;
@@ -7902,6 +8023,7 @@ pub trait AnyActiveCall {
         _: &mut Window,
         _: &mut App,
     ) -> Option<Entity<SharedScreen>>;
+    fn peer_ids_with_video_tracks(&self, _: &App) -> Vec<PeerId>;
 }
 
 #[derive(Clone)]
@@ -7955,6 +8077,8 @@ pub struct RemoteCollaborator {
 pub enum ActiveCallEvent {
     ParticipantLocationChanged { participant_id: PeerId },
     RemoteVideoTracksChanged { participant_id: PeerId },
+    LocalScreenShareStarted,
+    LocalScreenShareStopped,
 }
 
 fn leader_border_for_pane(
@@ -10880,7 +11004,7 @@ mod tests {
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
-    use project::{Project, ProjectEntryId};
+    use project::{Project, ProjectEntryId, WorktreeId};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -11027,6 +11151,86 @@ mod tests {
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_document_path_updates_with_active_item(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "one.txt": "",
+                "two.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let item1 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[new_test_project_item(
+                1,
+                "one.txt",
+                worktree_id,
+                cx,
+            )])
+        });
+        let item2 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[new_test_project_item(
+                2,
+                "two.txt",
+                worktree_id,
+                cx,
+            )])
+        });
+
+        // Initially no document path
+        assert_eq!(cx.document_path(), None);
+
+        // Add an item - document path should be set
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item1), None, true, window, cx)
+        });
+        assert_eq!(
+            cx.document_path(),
+            Some(std::path::PathBuf::from("root/one.txt"))
+        );
+
+        // Add a second item - document path should update
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item2), None, true, window, cx)
+        });
+        assert_eq!(
+            cx.document_path(),
+            Some(std::path::PathBuf::from("root/two.txt"))
+        );
+
+        // Close the active item - document path should revert to first item
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&Default::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            cx.document_path(),
+            Some(std::path::PathBuf::from("root/one.txt"))
+        );
+
+        // Close all items - document path should be cleared
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&Default::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.document_path(), None);
     }
 
     #[gpui::test]
@@ -11435,7 +11639,7 @@ mod tests {
 
         // The requested items are closed.
         pane.update(cx, |pane, cx| {
-            assert_eq!(item4.read(cx).save_count, 0);
+            assert_eq!(item4.read(cx).save_count, 1);
             assert_eq!(item4.read(cx).save_as_count, 1);
             assert_eq!(item4.read(cx).reload_count, 0);
             assert_eq!(pane.items_len(), 1);
@@ -15317,6 +15521,21 @@ mod tests {
         let item = TestProjectItem::new(id, path, cx);
         item.update(cx, |item, _| {
             item.is_dirty = true;
+        });
+        item
+    }
+
+    fn new_test_project_item(
+        id: u64,
+        path: &str,
+        worktree_id: WorktreeId,
+        cx: &mut App,
+    ) -> Entity<TestProjectItem> {
+        let item = TestProjectItem::new(id, path, cx);
+        item.update(cx, |item, _| {
+            if let Some(ref mut project_path) = item.project_path {
+                project_path.worktree_id = worktree_id;
+            }
         });
         item
     }

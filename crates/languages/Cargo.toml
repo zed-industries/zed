@@ -68,6 +68,7 @@ util.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 tempfile = { workspace = true}
+settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true

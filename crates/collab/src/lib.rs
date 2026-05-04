@@ -1,6 +1,7 @@
 pub mod api;
 pub mod auth;
 pub mod db;
+pub mod entities;
 pub mod env;
 pub mod executor;
 pub mod rpc;

@@ -2486,13 +2486,29 @@ impl Pane {
                             pane.remove_item(item.item_id(), false, false, window, cx);
                         }
 
-                        item.save_as(project, new_path, window, cx)
+                        item.save_as(project.clone(), new_path, window, cx)
                     })?
                 } else {
                     return Ok(false);
                 };
 
                 save_task.await?;
+                if should_format {
+                    pane.update_in(cx, |pane, window, cx| {
+                        pane.unpreview_item_if_preview(item.item_id());
+                        item.save(
+                            SaveOptions {
+                                format: true,
+                                autosave: false,
+                                force_format,
+                            },
+                            project,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                }
                 return Ok(true);
             }
         }
@@ -8026,6 +8042,74 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_format_runs_on_first_save_of_new_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "untitled", true, cx);
+        item.update(cx, |item, cx| {
+            item.project_items.push(TestProjectItem::new_untitled(cx));
+        });
+        assert_item_labels(&pane, ["untitled*^"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item.item_id(), SaveIntent::Save, window, cx)
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_task.await.unwrap();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_as_count, 1);
+            assert_eq!(
+                item.save_count, 1,
+                "formatter should run after the file is given a path on first save"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_format_does_not_run_on_first_save_when_save_without_format(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "untitled", true, cx);
+        item.update(cx, |item, cx| {
+            item.project_items.push(TestProjectItem::new_untitled(cx));
+        });
+        assert_item_labels(&pane, ["untitled*^"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item.item_id(), SaveIntent::SaveWithoutFormat, window, cx)
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_task.await.unwrap();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_as_count, 1);
+            assert_eq!(
+                item.save_count, 0,
+                "formatter should not run when SaveWithoutFormat is used"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_discard_does_not_reload_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -8299,9 +8383,10 @@ mod tests {
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
+        assert!(scroll_offset.x < px(0.));
+        assert!(scroll_offset.x >= -tab_bar_scroll_handle.max_offset().x);
+        assert!(tab_bounds.left() >= scroll_bounds.left());
         assert!(tab_bounds.right() <= scroll_bounds.right());
-        // -39.5 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

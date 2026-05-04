@@ -902,6 +902,16 @@ pub trait Addon: 'static {
         None
     }
 
+    fn extend_buffer_header_context_menu(
+        &self,
+        menu: ui::ContextMenu,
+        _: &language::BufferSnapshot,
+        _: &mut Window,
+        _: &mut App,
+    ) -> ui::ContextMenu {
+        menu
+    }
+
     fn override_status_for_buffer_id(&self, _: BufferId, _: &App) -> Option<FileStatus> {
         None
     }
@@ -3526,6 +3536,10 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn show_cursor(&mut self, cx: &mut Context<Self>) {
+        self.blink_manager.update(cx, BlinkManager::show_cursor);
+    }
+
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
     }
@@ -3860,9 +3874,6 @@ impl Editor {
         cx.emit(EditorEvent::SelectionsChanged { local });
 
         let selections = &self.selections.disjoint_anchors_arc();
-        if selections.len() == 1 {
-            cx.emit(SearchEvent::ActiveMatchChanged)
-        }
         if local && let Some(buffer_snapshot) = buffer.as_singleton() {
             let inmemory_selections = selections
                 .iter()
@@ -6685,6 +6696,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.do_completion(action.item_ix, CompletionIntent::Complete, window, cx)
     }
@@ -6695,6 +6709,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.do_completion(None, CompletionIntent::CompleteWithInsert, window, cx)
     }
@@ -6705,6 +6722,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.do_completion(None, CompletionIntent::CompleteWithReplace, window, cx)
     }
@@ -7206,6 +7226,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let actions_menu =
@@ -8385,6 +8408,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         if self.show_edit_predictions_in_menu() {
             self.hide_context_menu(window, cx);
         }
@@ -11735,6 +11761,9 @@ impl Editor {
     }
 
     pub fn delete_line(&mut self, _: &DeleteLine, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(&display_map);
@@ -12028,6 +12057,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -12128,6 +12160,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let mut buffer_ids = HashSet::default();
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -12147,6 +12182,9 @@ impl Editor {
     }
 
     pub fn git_restore(&mut self, _: &Restore, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let selections = self
             .selections
@@ -12166,6 +12204,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         let selections = self
             .selections
             .all(&self.display_snapshot(cx))
@@ -12573,6 +12614,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let display_snapshot = self.display_snapshot(cx);
@@ -12811,6 +12855,9 @@ impl Editor {
     }
 
     fn rotate_selections(&mut self, window: &mut Window, cx: &mut Context<Self>, reverse: bool) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let display_snapshot = self.display_snapshot(cx);
         let selections = self.selections.all::<MultiBufferOffset>(&display_snapshot);
@@ -12962,6 +13009,9 @@ impl Editor {
     ) where
         M: FnMut(&str) -> LineManipulationResult,
     {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -13381,6 +13431,10 @@ impl Editor {
     where
         Fn: FnMut(&str) -> String,
     {
+        if self.read_only(cx) {
+            return;
+        }
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let buffer = self.buffer.read(cx).snapshot(cx);
 
         let mut new_selections = Vec::new();
@@ -13477,6 +13531,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -13622,6 +13679,9 @@ impl Editor {
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if self.mode.is_single_line() {
             cx.propagate();
@@ -13733,6 +13793,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if self.mode.is_single_line() {
             cx.propagate();
@@ -13827,6 +13890,9 @@ impl Editor {
     }
 
     pub fn transpose(&mut self, _: &Transpose, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let text_layout_details = &self.text_layout_details(window, cx);
         self.transact(window, cx, |this, window, cx| {
@@ -13889,6 +13955,9 @@ impl Editor {
     }
 
     pub fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if self.mode.is_single_line() {
             cx.propagate();
@@ -13899,6 +13968,9 @@ impl Editor {
     }
 
     pub fn rewrap_impl(&mut self, options: RewrapOptions, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
 
@@ -13952,7 +14024,8 @@ impl Editor {
                                     Some(CommentFormat::BlockCommentWithEnd(config.clone()))
                                 }
                                 (Some(config), _) | (_, Some(config))
-                                    if buffer.contains_str_at(indent_end, &config.prefix) =>
+                                    if !config.prefix.is_empty()
+                                        && buffer.contains_str_at(indent_end, &config.prefix) =>
                                 {
                                     Some(CommentFormat::BlockLine(config.prefix.to_string()))
                                 }
@@ -14345,12 +14418,18 @@ impl Editor {
     }
 
     pub fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let item = self.cut_common(true, window, cx);
         cx.write_to_clipboard(item);
     }
 
     pub fn kill_ring_cut(&mut self, _: &KillRingCut, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |snapshot, sel| {
@@ -14717,6 +14796,9 @@ impl Editor {
     }
 
     pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if let Some(item) = cx.read_from_clipboard() {
             let clipboard_string = item.entries().iter().find_map(|entry| match entry {
@@ -15352,6 +15434,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
@@ -15383,6 +15468,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
@@ -15470,6 +15558,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
@@ -15500,6 +15591,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
@@ -15576,6 +15670,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
@@ -15636,6 +15733,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             this.select_to_end_of_line(
@@ -15655,6 +15755,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             this.select_to_end_of_line(
@@ -15997,6 +16100,15 @@ impl Editor {
         self.nav_history.as_ref()
     }
 
+    pub fn save_location(
+        &mut self,
+        _: &SaveLocation,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_nav_history_entry(cx);
+    }
+
     pub fn create_nav_history_entry(&mut self, cx: &mut Context<Self>) {
         self.push_to_nav_history(
             self.selections.newest_anchor().head(),
@@ -16023,7 +16135,7 @@ impl Editor {
         }
     }
 
-    fn navigation_entry(
+    pub(crate) fn navigation_entry(
         &self,
         cursor_anchor: Anchor,
         cx: &mut Context<Self>,
@@ -17615,6 +17727,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -18246,7 +18361,11 @@ impl Editor {
         };
         let anchor_range = range.to_anchors(&multibuffer.snapshot(cx));
         self.change_selections(
-            SelectionEffects::default().nav_history(true),
+            SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                self.cursor_top_offset(cx),
+                cx,
+            ))
+            .nav_history(true),
             window,
             cx,
             |s| s.select_anchor_ranges([anchor_range]),
@@ -19052,7 +19171,11 @@ impl Editor {
                         }
 
                         editor.change_selections(
-                            SelectionEffects::default().nav_history(true),
+                            SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                                editor.cursor_top_offset(cx),
+                                cx,
+                            ))
+                            .nav_history(true),
                             window,
                             cx,
                             |s| s.select_anchor_ranges(target_ranges),
@@ -19068,6 +19191,8 @@ impl Editor {
                             return Navigated::No;
                         };
                         let pane = workspace.read(cx).active_pane().clone();
+                        let offset = editor.cursor_top_offset(cx);
+
                         window.defer(cx, move |window, cx| {
                             let (target_editor, target_pane): (Entity<Self>, Entity<Pane>) =
                                 workspace.update(cx, |workspace, cx| {
@@ -19131,7 +19256,10 @@ impl Editor {
                                 }
 
                                 target_editor.change_selections(
-                                    SelectionEffects::default().nav_history(true),
+                                    SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                                        offset, cx,
+                                    ))
+                                    .nav_history(true),
                                     window,
                                     cx,
                                     |s| s.select_anchor_ranges(target_ranges),
@@ -19411,7 +19539,10 @@ impl Editor {
             let Range { start, end } = locations[destination_location_index];
 
             editor.update_in(cx, |editor, window, cx| {
-                let effects = SelectionEffects::default();
+                let effects = SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                    editor.cursor_top_offset(cx),
+                    cx,
+                ));
 
                 editor.unfold_ranges(&[start..end], false, false, cx);
                 editor.change_selections(effects, window, cx, |s| {
@@ -19727,6 +19858,9 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
+        if self.read_only(cx) {
+            return None;
+        }
         let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
         let (cursor_buffer, cursor_buffer_position) = self
@@ -19915,6 +20049,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         let rename = self.take_rename(false, window, cx)?;
         let workspace = self.workspace()?.downgrade();
         let (buffer, start) = self
@@ -20035,6 +20172,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let project = match &self.project {
@@ -20057,6 +20197,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let project = match &self.project {
@@ -20176,6 +20319,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let project = match &self.project {
             Some(project) => project.clone(),
@@ -21757,6 +21903,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let buffers = self.buffer.read(cx).all_buffers();
@@ -21787,6 +21936,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let snapshot = self.snapshot(window, cx);
         let hunks = snapshot.hunks_for_ranges(
@@ -24124,6 +24276,9 @@ impl Editor {
     }
 
     fn insert_uuid(&mut self, version: UuidVersion, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         self.transact(window, cx, |this, window, cx| {
             let edits = this
@@ -24331,8 +24486,8 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
-            .iter()
-            .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
+            .values()
+            .flat_map(|highlighted_rows| highlighted_rows.iter())
             .fold(
                 BTreeMap::<DisplayRow, LineHighlight>::new(),
                 |mut unique_rows, highlight| {
@@ -25552,7 +25707,7 @@ impl Editor {
                             }
                             let autoscroll = match scroll_offset {
                                 Some(scroll_offset) => {
-                                    Autoscroll::top_relative(scroll_offset as usize)
+                                    Autoscroll::top_relative(scroll_offset as ScrollOffset)
                                 }
                                 None => Autoscroll::newest(),
                             };
@@ -26625,6 +26780,27 @@ impl Editor {
             self.needs_initial_data_update = false;
             self.update_lsp_data(None, window, cx);
             self.refresh_runnables(None, window, cx);
+        }
+    }
+
+    /// Returns the current cursor's vertical offset, in display rows, from the
+    /// top of the visible viewport.
+    /// Returns `None` if the cursor is not currently on screen.
+    pub fn cursor_top_offset(&self, cx: &mut Context<Self>) -> Option<ScrollOffset> {
+        let visible = self.visible_line_count()?;
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_top = self.scroll_manager.scroll_position(&display_map, cx).y;
+        let cursor_display_row = self
+            .selections
+            .newest::<Point>(&display_map)
+            .head()
+            .to_display_point(&display_map)
+            .row()
+            .as_f64();
+
+        match cursor_display_row - scroll_top {
+            offset if offset < 0.0 || offset >= visible => None,
+            offset => Some(offset),
         }
     }
 }

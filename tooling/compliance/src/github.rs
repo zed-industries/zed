@@ -177,6 +177,11 @@ impl CommitSignature {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommitFileChange {
+    pub filename: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CommitMetadata {
     #[serde(rename = "author")]
@@ -301,6 +306,11 @@ pub trait GithubApiClient {
         repo: &Repository<'_>,
         commit_shas: &[&CommitSha],
     ) -> Result<CommitMetadataBySha>;
+    async fn get_commit_files(
+        &self,
+        repo: &Repository<'_>,
+        sha: &CommitSha,
+    ) -> Result<Vec<CommitFileChange>>;
     async fn check_repo_write_permission(
         &self,
         repo: &Repository<'_>,
@@ -430,8 +440,8 @@ mod octo_client {
     };
 
     use super::{
-        AuthorAssociation, CommitMetadataBySha, GithubApiClient, GithubLogin, GithubUser,
-        PullRequestComment, PullRequestData, PullRequestReview, ReviewState,
+        AuthorAssociation, CommitFileChange, CommitMetadataBySha, GithubApiClient, GithubLogin,
+        GithubUser, PullRequestComment, PullRequestData, PullRequestReview, ReviewState,
     };
 
     fn convert_author_association(association: OctocrabAuthorAssociation) -> AuthorAssociation {
@@ -610,6 +620,27 @@ mod octo_client {
             self.graphql::<graph_ql::CommitMetadataResponse>(&query)
                 .await
                 .map(|response| response.repository)
+        }
+
+        async fn get_commit_files(
+            &self,
+            repo: &Repository<'_>,
+            sha: &CommitSha,
+        ) -> Result<Vec<CommitFileChange>> {
+            let response = self
+                .client
+                .commits(repo.owner.as_ref(), repo.name.as_ref())
+                .get(sha.as_str())
+                .await?;
+
+            Ok(response
+                .files
+                .into_iter()
+                .flatten()
+                .map(|file| CommitFileChange {
+                    filename: file.filename,
+                })
+                .collect())
         }
 
         async fn check_repo_write_permission(
