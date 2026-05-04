@@ -53,7 +53,6 @@ use std::{
 };
 use util::path;
 
-mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
@@ -6054,13 +6053,14 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
             cx,
         )
     });
+    let action_log = cx.update(|cx| thread.read(cx).action_log.clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project.clone(),
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -6070,6 +6070,8 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
                 display_description: "Edit sensitive file".to_string(),
                 path: "root/sensitive_config.txt".into(),
                 mode: crate::EditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,
@@ -6486,13 +6488,14 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
             cx,
         )
     });
+    let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -6502,6 +6505,8 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
                 display_description: "Edit README".to_string(),
                 path: "root/README.md".into(),
                 mode: crate::EditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,
@@ -6554,13 +6559,14 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
             cx,
         )
     });
+    let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
 
     // Editing a file inside .zed/ should still prompt even with global default: allow,
@@ -6572,6 +6578,8 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
                 display_description: "Edit local settings".to_string(),
                 path: "root/.zed/settings.json".into(),
                 mode: crate::EditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,
