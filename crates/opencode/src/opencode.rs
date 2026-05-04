@@ -386,8 +386,6 @@ impl Model {
 
             Self::Gemini3_1Pro | Self::Gemini3Flash => ApiProtocol::Google,
 
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => ApiProtocol::OpenAiChat,
-
             Self::MiniMaxM2_5Free
             | Self::Glm5
             | Self::Glm5_1
@@ -399,6 +397,8 @@ impl Model {
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus
+            | Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
             | Self::BigPickle
             | Self::Nemotron3SuperFree
             | Self::Ling2_6FlashFree
@@ -410,8 +410,8 @@ impl Model {
 
     pub fn interleaved_reasoning(&self) -> bool {
         match self {
-            Self::DeepSeekV4Flash
-            | Self::DeepSeekV4Pro
+            Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::MimoV2Omni
@@ -509,9 +509,6 @@ impl Model {
             // Google models
             Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
-            // DeepSeek models
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
-
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
@@ -519,6 +516,7 @@ impl Model {
             Self::BigPickle => Some(128_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::Nemotron3SuperFree => Some(128_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 | Self::MimoV2Pro | Self::MimoV2Omni => {
                 Some(128_000)
@@ -587,13 +585,12 @@ impl Model {
             | Self::MiniMaxM2_7
             | Self::MimoV2Pro
             | Self::MimoV2_5Pro
+            | Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
             | Self::BigPickle
             | Self::Nemotron3SuperFree
             | Self::Ling2_6FlashFree
             | Self::Hy3PreviewFree => false,
-
-            // DeepSeek models don't support images
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => false,
 
             Self::Custom { protocol, .. } => matches!(
                 protocol,
