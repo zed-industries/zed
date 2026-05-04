@@ -76,6 +76,8 @@ impl Display for MarkdownString {
 /// * `$` for inline math
 /// * `~` for strikethrough
 ///
+/// Also escapes `|` (pipe), which is a column separator in Markdown tables.
+///
 /// Escape of some characters is unnecessary, because while they are involved in markdown syntax,
 /// the other characters involved are escaped:
 ///
@@ -84,8 +86,8 @@ impl Display for MarkdownString {
 ///
 /// * `;` is used in HTML entity syntax, but `&` is escaped, so they are parsed as plaintext.
 ///
-/// TODO: There is one escape this doesn't do currently. Period after numbers at the start of the
-/// line (`[0-9]*\.`) should also be escaped to avoid it being interpreted as a list item.
+/// Periods that follow one or more digits at the start of a line (`[0-9]+\.`) are escaped to
+/// prevent them from being interpreted as ordered-list item markers.
 pub struct MarkdownEscaped<'a>(pub &'a str);
 
 /// Implements `Display` to format markdown inline code (wrapped in backticks), handling code that
@@ -105,10 +107,17 @@ pub struct MarkdownCodeBlock<'a> {
 impl Display for MarkdownEscaped<'_> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         let mut start_of_unescaped = None;
+        // Tracks whether the current position is preceded only by digits since
+        // the last newline, so that a following '.' can be escaped to prevent
+        // the sequence from being interpreted as an ordered-list marker.
+        let mut digits_since_newline: usize = 0;
+        let mut at_line_start = true;
         for (ix, c) in self.0.char_indices() {
             match c {
                 // Always escaped.
                 '\\' | '`' | '*' | '_' | '[' | '^' | '$' | '~' | '&' |
+                // Escaped in table contexts: `|` separates columns.
+                '|' |
                 // TODO: these only need to be escaped when they are the first non-whitespace
                 // character of the line of a block. There should probably be both an `escape_block`
                 // which does this and an `escape_inline` method which does not escape these.
@@ -123,6 +132,22 @@ impl Display for MarkdownEscaped<'_> {
                     // Can include this char in the "unescaped" text since a
                     // backslash was just emitted.
                     start_of_unescaped = Some(ix);
+                    at_line_start = false;
+                    digits_since_newline = 0;
+                }
+                // Escape '.' when it follows one or more digits at the start of a line to
+                // prevent the sequence from being parsed as an ordered-list item marker.
+                '.' if at_line_start && digits_since_newline > 0 => {
+                    match start_of_unescaped {
+                        None => {}
+                        Some(start_of_unescaped) => {
+                            write!(formatter, "{}", &self.0[start_of_unescaped..ix])?;
+                        }
+                    }
+                    write!(formatter, "\\.")?;
+                    start_of_unescaped = None;
+                    at_line_start = false;
+                    digits_since_newline = 0;
                 }
                 // Escaped since `<` is used in opening HTML tags. `&lt;` is used since Markdown
                 // supports HTML entities, and this allows the text to be used directly in HTML.
@@ -135,6 +160,8 @@ impl Display for MarkdownEscaped<'_> {
                     }
                     write!(formatter, "&lt;")?;
                     start_of_unescaped = None;
+                    at_line_start = false;
+                    digits_since_newline = 0;
                 }
                 // Escaped since `>` is used for blockquotes. `&gt;` is used since Markdown supports
                 // HTML entities, and this allows the text to be used directly in HTML.
@@ -147,8 +174,23 @@ impl Display for MarkdownEscaped<'_> {
                     }
                     write!(formatter, "&gt;")?;
                     start_of_unescaped = None;
+                    at_line_start = false;
+                    digits_since_newline = 0;
+                }
+                '\n' => {
+                    at_line_start = true;
+                    digits_since_newline = 0;
+                    if start_of_unescaped.is_none() {
+                        start_of_unescaped = Some(ix);
+                    }
                 }
                 _ => {
+                    if c.is_ascii_digit() && at_line_start {
+                        digits_since_newline += 1;
+                    } else if !c.is_ascii_whitespace() {
+                        at_line_start = false;
+                        digits_since_newline = 0;
+                    }
                     if start_of_unescaped.is_none() {
                         start_of_unescaped = Some(ix);
                     }
@@ -292,6 +334,32 @@ mod tests {
         "#;
 
         assert_eq!(MarkdownEscaped(input).to_string(), expected);
+    }
+
+    #[test]
+    fn test_markdown_escaped_pipe() {
+        // Pipe must be escaped so that it does not break table column delimiters.
+        assert_eq!(MarkdownEscaped("a|b").to_string(), r"a\|b");
+        assert_eq!(MarkdownEscaped("no pipe").to_string(), "no pipe");
+        assert_eq!(MarkdownEscaped("|leading").to_string(), r"\|leading");
+        assert_eq!(MarkdownEscaped("trailing|").to_string(), r"trailing\|");
+    }
+
+    #[test]
+    fn test_markdown_escaped_ordered_list_period() {
+        // A period immediately after digits at the start of a line must be escaped
+        // to avoid being parsed as an ordered-list item marker.
+        assert_eq!(MarkdownEscaped("1. item").to_string(), r"1\. item");
+        assert_eq!(MarkdownEscaped("42. answer").to_string(), r"42\. answer");
+        // Period not at line-start: no escape needed.
+        assert_eq!(MarkdownEscaped("v1.2.3").to_string(), "v1.2.3");
+        // Digit-period sequence preceded by non-digit on same line: not an OL marker.
+        assert_eq!(MarkdownEscaped("x 1. y").to_string(), r"x 1. y");
+        // Multi-line: only the line-start occurrence is escaped.
+        assert_eq!(
+            MarkdownEscaped("intro\n1. item\nv2.0").to_string(),
+            "intro\n1\\. item\nv2.0"
+        );
     }
 
     #[test]
