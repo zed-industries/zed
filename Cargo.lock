@@ -1716,7 +1716,7 @@ dependencies = [
  "pin-project-lite",
  "rustls 0.21.12",
  "rustls 0.23.40",
- "rustls-native-certs 0.8.2",
+ "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -5811,7 +5811,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7269,7 +7269,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8547,7 +8547,7 @@ dependencies = [
  "hyper-util",
  "log",
  "rustls 0.23.40",
- "rustls-native-certs 0.8.2",
+ "rustls-native-certs 0.8.3",
  "tokio",
  "tokio-rustls 0.26.4",
  "tower-service",
@@ -11000,17 +11000,17 @@ dependencies = [
 
 [[package]]
 name = "native-tls"
-version = "0.2.14"
+version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87de3442987e9dbec73158d5c715e7ad9072fda936bb03d19d7fa10e00520f0e"
+checksum = "465500e14ea162429d264d44189adc38b199b62b1c21eea9f69e4b73cb03bbf2"
 dependencies = [
  "libc",
  "log",
  "openssl",
- "openssl-probe",
+ "openssl-probe 0.2.1",
  "openssl-sys",
  "schannel",
- "security-framework 2.11.1",
+ "security-framework 3.5.1",
  "security-framework-sys",
  "tempfile",
 ]
@@ -11936,6 +11936,12 @@ name = "openssl-probe"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
+
+[[package]]
+name = "openssl-probe"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "openssl-sys"
@@ -14029,7 +14035,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.3",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -14795,7 +14801,7 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls 0.23.40",
- "rustls-native-certs 0.8.2",
+ "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -15245,7 +15251,7 @@ dependencies = [
  "errno 0.3.14",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -15303,7 +15309,7 @@ version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9aace74cb666635c918e9c12bc0d348266037aa8eb599b5cba565709a8dff00"
 dependencies = [
- "openssl-probe",
+ "openssl-probe 0.1.6",
  "rustls-pemfile 1.0.4",
  "schannel",
  "security-framework 2.11.1",
@@ -15311,11 +15317,11 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9980d917ebb0c0536119ba501e90834767bffc3d60641457fd84a1f3fd337923"
+checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
 dependencies = [
- "openssl-probe",
+ "openssl-probe 0.2.1",
  "rustls-pki-types",
  "schannel",
  "security-framework 3.5.1",
@@ -15361,7 +15367,7 @@ dependencies = [
  "log",
  "once_cell",
  "rustls 0.23.40",
- "rustls-native-certs 0.8.2",
+ "rustls-native-certs 0.8.3",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.103.13",
  "security-framework 3.5.1",
@@ -17733,7 +17739,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -18312,7 +18318,7 @@ dependencies = [
  "futures-util",
  "log",
  "rustls 0.23.40",
- "rustls-native-certs 0.8.2",
+ "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -18647,7 +18653,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -22593,7 +22599,7 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls 0.23.40",
- "rustls-native-certs 0.8.2",
+ "rustls-native-certs 0.8.3",
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
  "serde",
