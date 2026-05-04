@@ -8,17 +8,19 @@ use file_icons::FileIcons;
 use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
 use gpui::{HighlightStyle, StyledText, Task};
+use menu;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
 use settings::Settings;
 use std::{
+    collections::HashSet,
     path::{self, Path, PathBuf},
     sync::{
         Arc,
         atomic::{self, AtomicBool},
     },
 };
-use ui::{Context, LabelLike, ListItem, Window};
+use ui::{Context, KeyBinding, LabelLike, ListItem, Window};
 use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{
     maybe,
@@ -42,6 +44,7 @@ pub struct OpenPathDelegate {
     render_footer:
         Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
     hidden_entries: bool,
+    selected_paths: HashSet<PathBuf>,
 }
 
 impl OpenPathDelegate {
@@ -70,6 +73,7 @@ impl OpenPathDelegate {
             replace_prompt: Task::ready(()),
             render_footer: Arc::new(|_, _| None),
             hidden_entries: false,
+            selected_paths: HashSet::new(),
         }
     }
 
@@ -147,6 +151,28 @@ impl OpenPathDelegate {
                 }))
                 .collect(),
             DirectoryState::None { .. } => Vec::new(),
+        }
+    }
+
+    fn resolve_entry_path(&self, candidate: &CandidateInfo, cx: &App) -> Option<PathBuf> {
+        match &self.directory_state {
+            DirectoryState::List { parent_path, .. } => {
+                let path =
+                    if parent_path == &self.prompt_root && candidate.path.string.is_empty() {
+                        PathBuf::from(&self.prompt_root)
+                    } else {
+                        Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
+                            .join(&candidate.path.string)
+                    };
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    fn toggle_selected_path(&mut self, path: PathBuf) {
+        if !self.selected_paths.remove(&path) {
+            self.selected_paths.insert(path);
         }
     }
 
@@ -608,23 +634,32 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(candidate) = self.get_entry(self.selected_index) else {
             return;
         };
 
         match &self.directory_state {
             DirectoryState::None { .. } => return,
-            DirectoryState::List { parent_path, .. } => {
-                let confirmed_path =
-                    if parent_path == &self.prompt_root && candidate.path.string.is_empty() {
-                        PathBuf::from(&self.prompt_root)
-                    } else {
-                        Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
-                            .join(&candidate.path.string)
-                    };
+            DirectoryState::List { .. } => {
+                let Some(resolved) = self.resolve_entry_path(&candidate, cx) else {
+                    return;
+                };
+
+                if secondary {
+                    self.toggle_selected_path(resolved);
+                    cx.notify();
+                    return;
+                }
+
+                let mut paths: Vec<PathBuf> =
+                    self.selected_paths.drain().collect();
+                if paths.is_empty() {
+                    paths.push(resolved);
+                }
+
                 if let Some(tx) = self.tx.take() {
-                    tx.send(Some(vec![confirmed_path])).ok();
+                    tx.send(Some(paths)).ok();
                 }
             }
             DirectoryState::Create {
@@ -743,6 +778,9 @@ impl PickerDelegate for OpenPathDelegate {
 
         match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
+                let is_multi_selected = self
+                    .resolve_entry_path(&candidate, cx)
+                    .map_or(false, |path| self.selected_paths.contains(&path));
                 let (label, indices) = if is_current_dir_candidate {
                     ("open this directory".to_string(), vec![])
                 } else if *parent_path == self.prompt_root {
@@ -761,7 +799,11 @@ impl PickerDelegate for OpenPathDelegate {
                         .spacing(ListItemSpacing::Sparse)
                         .start_slot::<Icon>(file_icon)
                         .inset(true)
-                        .toggle_state(selected)
+                        .toggle_state(selected || is_multi_selected)
+                        .end_slot::<Icon>(
+                            is_multi_selected
+                                .then(|| Icon::new(IconName::Check).color(Color::Accent)),
+                        )
                         .child(HighlightedLabel::new(label, indices)),
                 )
             }
@@ -837,7 +879,37 @@ impl PickerDelegate for OpenPathDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        (self.render_footer)(window, cx)
+        if let Some(element) = (self.render_footer)(window, cx) {
+            return Some(element);
+        }
+
+        if matches!(self.directory_state, DirectoryState::List { .. }) {
+            let selected_count = self.selected_paths.len();
+            let label = if selected_count > 0 {
+                format!("{selected_count} selected")
+            } else {
+                "Select multiple".to_string()
+            };
+            return Some(
+                h_flex()
+                    .w_full()
+                    .p_1p5()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        Button::new("multi-select-hint", label)
+                            .key_binding(KeyBinding::for_action(
+                                &menu::SecondaryConfirm,
+                                cx,
+                            ))
+                            .style(ButtonStyle::Subtle)
+                            .disabled(true),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        None
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {

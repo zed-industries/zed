@@ -482,3 +482,81 @@ fn collect_match_candidates(
 ) -> Vec<String> {
     picker.update(cx, |f, _| f.delegate.collect_match_candidates())
 }
+
+#[gpui::test]
+async fn test_open_path_prompt_multi_select(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "dir1": {},
+                "dir2": {},
+                "dir3": {},
+                "file1": "F1",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let lister = project::DirectoryLister::Project(project.clone());
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let picker = workspace.update_in(cx, |_, window, cx| {
+        let delegate = OpenPathDelegate::new(tx, lister.clone(), false, cx).show_hidden();
+        cx.new(|cx| {
+            let picker = Picker::uniform_list(delegate, window, cx)
+                .width(rems(34.))
+                .modal(false);
+            let query = lister.default_query(cx);
+            picker.set_query(&query, window, cx);
+            picker
+        })
+    });
+
+    insert_query(path!("/root/"), &picker, cx).await;
+
+    // Secondary confirm (ctrl/cmd+enter) on dir1 toggles it into the selection set.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.set_selected_index(1, window, cx);
+        picker.delegate.confirm(true, window, cx);
+    });
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.selected_paths.len(), 1);
+        assert!(picker.delegate.selected_paths.iter().any(|p| p.ends_with("dir1")));
+    });
+
+    // Secondary confirm on dir3 adds it to the selection set.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.set_selected_index(3, window, cx);
+        picker.delegate.confirm(true, window, cx);
+    });
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.selected_paths.len(), 2);
+    });
+
+    // Secondary confirm on dir1 again removes it from the selection set.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.set_selected_index(1, window, cx);
+        picker.delegate.confirm(true, window, cx);
+    });
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.selected_paths.len(), 1);
+        assert!(picker.delegate.selected_paths.iter().any(|p| p.ends_with("dir3")));
+    });
+
+    // Regular confirm sends all selected paths.
+    picker.update_in(cx, |picker, window, cx| {
+        picker.delegate.confirm(false, window, cx);
+    });
+
+    let paths = rx.await.unwrap().unwrap();
+    assert_eq!(paths.len(), 1);
+    assert!(paths[0].ends_with("dir3"));
+}
