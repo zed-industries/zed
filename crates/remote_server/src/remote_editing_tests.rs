@@ -2166,8 +2166,11 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
         }),
     )
     .await;
-    fs.insert_symlink(path!("/linked-project"), PathBuf::from(path!("/code/project1")))
-        .await;
+    fs.insert_symlink(
+        path!("/linked-project"),
+        PathBuf::from(path!("/code/project1")),
+    )
+    .await;
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
 
