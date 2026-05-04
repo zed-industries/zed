@@ -2926,17 +2926,13 @@ async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut Te
 
     // .env.local should be ignored via info/exclude from the repo's exclude
     worktree.update(cx, |worktree, _cx| {
-        let expected_excluded_paths = [];
-        let expected_ignored_paths = [".env.local"];
-        let expected_tracked_paths = ["not-ignored.txt"];
-        let expected_included_paths = [];
-
         check_worktree_entries(
             worktree,
-            &expected_excluded_paths,
-            &expected_ignored_paths,
-            &expected_tracked_paths,
-            &expected_included_paths,
+            WorktreeExpectations {
+                ignored_paths: &[".env.local"],
+                tracked_paths: &["not-ignored.txt"],
+                ..Default::default()
+            },
         );
     });
 }
