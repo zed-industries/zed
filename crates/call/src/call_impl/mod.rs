@@ -112,6 +112,13 @@ impl AnyActiveCall for ActiveCallEntity {
             .map_or(false, |room| room.read(cx).is_sharing_project())
     }
 
+    fn is_sharing_screen(&self, cx: &App) -> bool {
+        self.0
+            .read(cx)
+            .room()
+            .map_or(false, |room| room.read(cx).is_sharing_screen())
+    }
+
     fn has_remote_participants(&self, cx: &App) -> bool {
         self.0.read(cx).room().map_or(false, |room| {
             !room.read(cx).remote_participants().is_empty()
@@ -209,6 +216,12 @@ impl AnyActiveCall for ActiveCallEntity {
                             participant_id: *participant_id,
                         })
                     }
+                    room::Event::LocalScreenShareStarted => {
+                        Some(ActiveCallEvent::LocalScreenShareStarted)
+                    }
+                    room::Event::LocalScreenShareStopped => {
+                        Some(ActiveCallEvent::LocalScreenShareStopped)
+                    }
                     _ => None,
                 };
                 if let Some(event) = mapped {
@@ -296,6 +309,18 @@ impl AnyActiveCall for ActiveCallEntity {
                 cx,
             )
         }))
+    }
+
+    fn peer_ids_with_video_tracks(&self, cx: &App) -> Vec<proto::PeerId> {
+        let Some(room) = self.0.read(cx).room() else {
+            return Vec::new();
+        };
+        room.read(cx)
+            .remote_participants()
+            .values()
+            .filter(|p| p.has_video_tracks())
+            .map(|p| p.peer_id)
+            .collect()
     }
 }
 
