@@ -94,8 +94,8 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
-    WeakEntity,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LetterSpacing, LineLayout, Pixels,
+    UnderlineStyle, WeakEntity,
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
@@ -366,6 +366,7 @@ impl DisplayMap {
         buffer: Entity<MultiBuffer>,
         font: Font,
         font_size: Pixels,
+        letter_spacing: LetterSpacing,
         wrap_width: Option<Pixels>,
         buffer_header_height: u32,
         excerpt_header_height: u32,
@@ -384,7 +385,8 @@ impl DisplayMap {
         let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
-        let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
+        let (wrap_map, snapshot) =
+            WrapMap::new(snapshot, font, font_size, letter_spacing, wrap_width, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
@@ -1228,9 +1230,16 @@ impl DisplayMap {
         cleared
     }
 
-    pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut Context<Self>) -> bool {
-        self.wrap_map
-            .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
+    pub fn set_font(
+        &self,
+        font: Font,
+        font_size: Pixels,
+        letter_spacing: LetterSpacing,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.wrap_map.update(cx, |map, cx| {
+            map.set_font_with_size(font, font_size, letter_spacing, cx)
+        })
     }
 
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
@@ -2650,6 +2659,7 @@ pub mod tests {
                 buffer.clone(),
                 font,
                 font_size,
+                LetterSpacing::default(),
                 wrap_width,
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
@@ -2903,6 +2913,7 @@ pub mod tests {
                     buffer.clone(),
                     font("Helvetica"),
                     font_size,
+                    LetterSpacing::default(),
                     wrap_width,
                     1,
                     1,
@@ -2989,7 +3000,12 @@ pub mod tests {
 
             // Re-wrap on font size changes
             map.update(cx, |map, cx| {
-                map.set_font(font("Helvetica"), font_size + Pixels::from(3.), cx)
+                map.set_font(
+                    font("Helvetica"),
+                    font_size + px(3.),
+                    LetterSpacing::default(),
+                    cx,
+                )
             });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
@@ -3013,6 +3029,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Helvetica"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3075,6 +3092,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Helvetica"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3176,6 +3194,7 @@ pub mod tests {
                 buffer,
                 font("Helvetica"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3277,6 +3296,7 @@ pub mod tests {
                 buffer,
                 font("Courier"),
                 px(16.0),
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3381,6 +3401,7 @@ pub mod tests {
                 buffer,
                 font("Courier"),
                 px(16.0),
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3479,6 +3500,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Courier"),
                 px(16.0),
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3620,6 +3642,7 @@ pub mod tests {
                 buffer,
                 font("Courier"),
                 font_size,
+                LetterSpacing::default(),
                 Some(px(40.0)),
                 1,
                 1,
@@ -3708,6 +3731,7 @@ pub mod tests {
                 buffer,
                 font("Courier"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3834,6 +3858,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Helvetica"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3872,6 +3897,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Helvetica"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -3948,6 +3974,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Helvetica"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -4031,6 +4058,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Helvetica"),
                 font_size,
+                LetterSpacing::default(),
                 None,
                 1,
                 1,
@@ -4165,6 +4193,7 @@ pub mod tests {
                 multibuffer.clone(),
                 font("Helvetica"),
                 px(14.0),
+                LetterSpacing::default(),
                 None,
                 1,
                 1,

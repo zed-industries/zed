@@ -138,11 +138,11 @@ use gpui::{
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
     FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla,
-    KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
-    Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
-    Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
-    pulsating_between, px, relative, size,
+    KeyContext, LetterSpacing, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad,
+    ParentElement, Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size,
+    Stateful, Styled, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point,
+    prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -2104,20 +2104,19 @@ impl Editor {
             merge_adjacent: true,
             ..FoldPlaceholder::default()
         };
-        let display_map = display_map.unwrap_or_else(|| {
-            cx.new(|cx| {
-                DisplayMap::new(
-                    multi_buffer.clone(),
-                    style.font(),
-                    font_size,
-                    None,
-                    FILE_HEADER_HEIGHT,
-                    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-                    fold_placeholder,
-                    diagnostics_max_severity,
-                    cx,
-                )
-            })
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                multi_buffer.clone(),
+                style.font(),
+                font_size,
+                LetterSpacing::default(),
+                None,
+                FILE_HEADER_HEIGHT,
+                MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+                fold_placeholder,
+                diagnostics_max_severity,
+                cx,
+            )
         });
 
         let selections = SelectionsCollection::new();
@@ -3391,6 +3390,7 @@ impl Editor {
                 multibuffer,
                 style.font(),
                 style.font_size.to_pixels(window.rem_size()),
+                LetterSpacing::default(),
                 None,
                 FILE_HEADER_HEIGHT,
                 MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
@@ -17265,7 +17265,13 @@ impl Editor {
                         .unwrap_or((true, HashMap::default(), None, None));
                     (comments, expanded, editors, avatar_uri, line_ranges)
                 })
-                .unwrap_or((Vec::new(), true, HashMap::default(), None, None));
+                .unwrap_or((
+                    Vec::new(),
+                    true,
+                    HashMap::default(),
+                    None::<SharedUri>,
+                    None::<Vec<(u32, u32)>>,
+                ));
 
         let comment_count = comments.len();
         let avatar_size = px(20.);
@@ -20961,7 +20967,57 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        EditorElement::new(&cx.entity(), self.create_style(cx))
+        let settings = ThemeSettings::get_global(cx);
+
+        let mut text_style = match self.mode {
+            EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => TextStyle {
+                color: cx.theme().colors().editor_foreground,
+                font_family: settings.ui_font.family.clone(),
+                font_features: settings.ui_font.features.clone(),
+                font_fallbacks: settings.ui_font.fallbacks.clone(),
+                font_size: rems(0.875).into(),
+                font_weight: settings.ui_font.weight,
+                line_height: relative(settings.buffer_line_height.value()),
+                ..Default::default()
+            },
+            EditorMode::Full { .. } | EditorMode::Minimap { .. } => TextStyle {
+                color: cx.theme().colors().editor_foreground,
+                font_family: settings.buffer_font.family.clone(),
+                font_features: settings.buffer_font.features.clone(),
+                font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                font_size: settings.buffer_font_size(cx).into(),
+                font_weight: settings.buffer_font.weight,
+                letter_spacing: settings.buffer_letter_spacing,
+                line_height: relative(settings.buffer_line_height.value()),
+                ..Default::default()
+            },
+        };
+        if let Some(text_style_refinement) = &self.text_style_refinement {
+            text_style.refine(text_style_refinement)
+        }
+
+        let background = match self.mode {
+            EditorMode::SingleLine { .. } => cx.theme().system().transparent,
+            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
+            EditorMode::Full { .. } => cx.theme().colors().editor_background,
+            EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
+        };
+
+        EditorElement::new(
+            &cx.entity(),
+            EditorStyle {
+                background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
+                syntax: cx.theme().syntax().clone(),
+                status: cx.theme().status().clone(),
+                inlay_hints_style: make_inlay_hints_style(cx),
+                edit_prediction_styles: make_suggestion_styles(cx),
+                unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
+                ..Default::default()
+            },
+        )
     }
 }
 

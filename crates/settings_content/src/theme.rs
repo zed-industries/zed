@@ -142,6 +142,9 @@ pub struct ThemeSettingsContent {
     pub buffer_font_weight: Option<FontWeightContent>,
     /// The buffer's line height.
     pub buffer_line_height: Option<BufferLineHeight>,
+    /// The buffer's letter spacing, in ems.
+    #[schemars(default = "default_buffer_letter_spacing")]
+    pub buffer_letter_spacing: Option<f32>,
     /// The OpenType features to enable for rendering in text buffers.
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeaturesContent>,
@@ -248,6 +251,10 @@ fn default_font_fallbacks() -> Option<Vec<FontFamilyName>> {
 
 fn default_buffer_font_weight() -> Option<FontWeightContent> {
     Some(FontWeightContent::NORMAL)
+}
+
+fn default_buffer_letter_spacing() -> Option<f32> {
+    Some(0.0)
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.

@@ -1705,6 +1705,7 @@ impl CodeActionsMenu {
         let mut line_wrapper = text_system.line_wrapper(
             window.text_style().font(),
             window.text_style().font_size.to_pixels(window.rem_size()),
+            window.text_style().letter_spacing,
         );
         let is_truncated = line_wrapper.should_truncate_line(
             &label,

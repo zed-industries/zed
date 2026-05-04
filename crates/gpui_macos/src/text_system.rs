@@ -6,7 +6,7 @@ use core_foundation::{
     attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
-    string::CFString,
+    string::{CFString, CFStringRef},
 };
 use core_graphics::{
     base::{CGGlyph, kCGImageAlphaPremultipliedLast},
@@ -52,6 +52,10 @@ use crate::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
+
+unsafe extern "C" {
+    pub static kCTTrackingAttributeName: CFStringRef;
+}
 
 /// macOS text system using CoreText for font shaping.
 pub struct MacTextSystem(RwLock<MacTextSystemState>);
@@ -523,6 +527,7 @@ impl MacTextSystemState {
                 let length = utf16_end - utf16_start;
                 let cf_range = CFRange::init(utf16_start, length);
                 let font = &self.fonts[run.font_id.0];
+                let letter_spacing = CFNumber::from(f32::from(run.letter_spacing.to_px(font_size)));
 
                 let font_metrics = font.metrics();
                 let font_scale = f32::from(font_size) / font_metrics.units_per_em as f32;
@@ -540,6 +545,7 @@ impl MacTextSystemState {
                         kCTFontAttributeName,
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
+                    string.set_attribute(cf_range, kCTTrackingAttributeName, &letter_spacing);
                 }
                 break_ligature = !break_ligature;
             }
@@ -740,7 +746,7 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::MacTextSystem;
-    use gpui::{FontRun, GlyphId, PlatformTextSystem, font, px};
+    use gpui::{FontRun, GlyphId, LetterSpacing, PlatformTextSystem, font, px};
 
     #[test]
     fn test_layout_line_bom_char() {
@@ -750,6 +756,7 @@ mod tests {
         let mut style = FontRun {
             font_id,
             len: line.len(),
+            letter_spacing: LetterSpacing::default(),
         };
 
         let layout = fonts.layout_line(line, px(16.), &[style]);
@@ -771,10 +778,12 @@ mod tests {
             FontRun {
                 len: "\u{feff}".len(),
                 font_id,
+                letter_spacing: LetterSpacing::default(),
             },
             FontRun {
                 len: "ab".len(),
                 font_id,
+                letter_spacing: LetterSpacing::default(),
             },
         ];
         let layout = fonts.layout_line(line, px(16.), font_runs);
@@ -793,8 +802,16 @@ mod tests {
 
         let text = "hello world";
         let font_runs = &[
-            FontRun { font_id, len: 5 }, // "hello"
-            FontRun { font_id, len: 6 }, // " world"
+            FontRun {
+                font_id,
+                len: 5,
+                letter_spacing: LetterSpacing::default(),
+            }, // "hello"
+            FontRun {
+                font_id,
+                len: 6,
+                letter_spacing: LetterSpacing::default(),
+            }, // " world"
         ];
 
         let layout = fonts.layout_line(text, px(16.), font_runs);
@@ -814,11 +831,16 @@ mod tests {
         // Test with different font runs - should not insert ZWNJ
         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
         let font_runs_different = &[
-            FontRun { font_id, len: 5 }, // "hello"
+            FontRun {
+                font_id,
+                len: 5,
+                letter_spacing: LetterSpacing::default(),
+            }, // "hello"
             // " world"
             FontRun {
                 font_id: font_id2,
                 len: 6,
+                letter_spacing: LetterSpacing::default(),
             },
         ];
 
@@ -843,15 +865,31 @@ mod tests {
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello";
-        let font_runs = &[FontRun { font_id, len: 5 }];
+        let font_runs = &[FontRun {
+            font_id,
+            len: 5,
+            letter_spacing: LetterSpacing::default(),
+        }];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());
 
         let text = "abc";
         let font_runs = &[
-            FontRun { font_id, len: 1 }, // "a"
-            FontRun { font_id, len: 1 }, // "b"
-            FontRun { font_id, len: 1 }, // "c"
+            FontRun {
+                font_id,
+                len: 1,
+                letter_spacing: LetterSpacing::default(),
+            }, // "a"
+            FontRun {
+                font_id,
+                len: 1,
+                letter_spacing: LetterSpacing::default(),
+            }, // "b"
+            FontRun {
+                font_id,
+                len: 1,
+                letter_spacing: LetterSpacing::default(),
+            }, // "c"
         ];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());

@@ -13,8 +13,8 @@ use crate::{
 };
 use collections::HashMap;
 use gpui::{
-    AppContext as _, Context, Entity, EntityId, Font, FontFeatures, FontStyle, FontWeight, Pixels,
-    VisualTestContext, Window, font, size,
+    AppContext as _, Context, Entity, EntityId, Font, FontFeatures, FontStyle, FontWeight,
+    LetterSpacing, Pixels, VisualTestContext, Window, font, size,
 };
 use multi_buffer::{MultiBufferOffset, ToPoint};
 use pretty_assertions::assert_eq;
@@ -67,6 +67,7 @@ pub fn marked_display_snapshot(
             buffer,
             font,
             font_size,
+            LetterSpacing::default(),
             None,
             1,
             1,

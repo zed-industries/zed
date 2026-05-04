@@ -4,8 +4,8 @@ use crate::schema::{status_colors_refinement, syntax_overrides, theme_colors_ref
 use crate::{merge_accent_colors, merge_player_colors};
 use collections::HashMap;
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, SharedString, Subscription,
-    Window, px,
+    App, Context, Font, FontFallbacks, FontStyle, Global, LetterSpacing, Pixels, SharedString,
+    Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
@@ -68,6 +68,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
+    /// The letter spacing for buffers, in ems.
+    pub buffer_letter_spacing: LetterSpacing,
     /// The current theme selection.
     pub theme: ThemeSelection,
     /// Manual overrides for the active theme.
@@ -645,6 +647,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
+            buffer_letter_spacing: LetterSpacing(content.buffer_letter_spacing.unwrap_or(0.0)),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             markdown_preview_font_family: content

@@ -37,13 +37,14 @@ impl Editor {
         if !self.mode.is_minimap() {
             let font = style.text.font();
             let font_size = style.text.font_size.to_pixels(window.rem_size());
+            let letter_spacing = style.text.letter_spacing;
             let display_map = self
                 .placeholder_display_map
                 .as_ref()
                 .filter(|_| self.is_empty(cx))
                 .unwrap_or(&self.display_map);
 
-            display_map.update(cx, |map, cx| map.set_font(font, font_size, cx));
+            display_map.update(cx, |map, cx| map.set_font(font, font_size, letter_spacing, cx));
         }
         self.style = Some(style);
     }

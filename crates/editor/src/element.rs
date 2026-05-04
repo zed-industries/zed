@@ -1884,6 +1884,7 @@ impl EditorElement {
                                 &[TextRun {
                                     len,
                                     font,
+                                    letter_spacing: self.style.text.letter_spacing,
                                     color,
                                     ..Default::default()
                                 }],
@@ -3866,6 +3867,7 @@ impl EditorElement {
                     let run = TextRun {
                         len: line.len(),
                         font: style.text.font(),
+                        letter_spacing: style.text.letter_spacing,
                         color: placeholder_color,
                         ..Default::default()
                     };
@@ -7977,6 +7979,7 @@ impl EditorElement {
         let run = TextRun {
             len: text.len(),
             font: self.style.text.font(),
+            letter_spacing: self.style.text.letter_spacing,
             color,
             ..Default::default()
         };
@@ -9071,6 +9074,7 @@ impl LineWithInvisibles {
                         let run = TextRun {
                             len: x.len(),
                             font: text_style.font(),
+                            letter_spacing: text_style.letter_spacing,
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
@@ -9143,6 +9147,7 @@ impl LineWithInvisibles {
                         styles.push(TextRun {
                             len: line_chunk.len(),
                             font: text_style.font(),
+                            letter_spacing: text_style.letter_spacing,
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
@@ -9226,6 +9231,7 @@ impl LineWithInvisibles {
                     output_runs.push(TextRun {
                         len: span_len,
                         font: text_run.font.clone(),
+                        letter_spacing: text_run.letter_spacing,
                         color: text_run.color,
                         background_color: text_run.background_color,
                         underline: text_run.underline,
@@ -9240,6 +9246,7 @@ impl LineWithInvisibles {
                     output_runs.push(TextRun {
                         len: segment_slice_end_col - cursor_col,
                         font: text_run.font.clone(),
+                        letter_spacing: text_run.letter_spacing,
                         color: new_text_color,
                         background_color: text_run.background_color,
                         underline: text_run.underline,
@@ -9256,6 +9263,7 @@ impl LineWithInvisibles {
                 output_runs.push(TextRun {
                     len: run_end_col - cursor_col,
                     font: text_run.font.clone(),
+                    letter_spacing: text_run.letter_spacing,
                     color: text_run.color,
                     background_color: text_run.background_color,
                     underline: text_run.underline,
@@ -11339,6 +11347,7 @@ impl Element for EditorElement {
 
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
+            letter_spacing: Some(self.style.text.letter_spacing),
             line_height: Some(self.style.text.line_height),
             ..Default::default()
         };
