@@ -42,6 +42,7 @@ prompt_store.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+streaming_diff.workspace = true
 task.workspace = true
 telemetry.workspace = true
 terminal.workspace = true

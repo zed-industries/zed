@@ -35,6 +35,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "streaming_diff",
  "task",
  "telemetry",
  "terminal",

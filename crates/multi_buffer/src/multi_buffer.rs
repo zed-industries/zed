@@ -2007,17 +2007,11 @@ impl MultiBuffer {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
-        let Some(buffer) = self.buffer(diff.read(cx).buffer_id) else {
-            return;
-        };
-        let snapshot = self.sync_mut(cx);
+        let buffer_id = diff.read(cx).buffer_id;
+        self.sync_mut(cx);
 
         let diff = diff.read(cx);
-        let buffer_id = diff.buffer_id;
 
-        let Some(path) = snapshot.path_for_buffer(buffer_id).cloned() else {
-            return;
-        };
         let new_diff = DiffStateSnapshot {
             buffer_id,
             diff: diff.snapshot(cx),
@@ -2027,6 +2021,14 @@ impl MultiBuffer {
         let base_text_changed = find_diff_state(&snapshot.diffs, buffer_id)
             .is_none_or(|old_diff| !new_diff.base_texts_definitely_eq(old_diff));
         snapshot.diffs.insert_or_replace(new_diff, ());
+
+        let Some(buffer) = self.buffer(buffer_id) else {
+            return;
+        };
+        let Some(path) = self.snapshot.borrow().path_for_buffer(buffer_id).cloned() else {
+            return;
+        };
+        let snapshot = self.snapshot.get_mut();
 
         let buffer = buffer.read(cx);
         let diff_change_range = range.to_offset(buffer);
