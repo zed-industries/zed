@@ -37,6 +37,8 @@ actions!(
     [
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
+        /// Toggles the workspace sidebar between expanded and collapsed (icon rail) modes.
+        ToggleWorkspaceSidebarCollapsed,
         /// Closes the workspace sidebar.
         CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
@@ -120,6 +122,17 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     fn has_notifications(&self, cx: &App) -> bool;
     fn side(&self, _cx: &App) -> SidebarSide;
 
+    fn is_collapsed(&self, _cx: &App) -> bool {
+        false
+    }
+    fn set_collapsed(
+        &mut self,
+        _collapsed: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
@@ -167,6 +180,9 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App);
     fn cycle_project(&self, forward: bool, window: &mut Window, cx: &mut App);
     fn cycle_thread(&self, forward: bool, window: &mut Window, cx: &mut App);
+
+    fn is_collapsed(&self, cx: &App) -> bool;
+    fn set_collapsed(&self, collapsed: bool, window: &mut Window, cx: &mut App);
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 
@@ -243,6 +259,14 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
                 this.cycle_thread(forward, window, cx);
             });
         });
+    }
+
+    fn is_collapsed(&self, cx: &App) -> bool {
+        self.read(cx).is_collapsed(cx)
+    }
+
+    fn set_collapsed(&self, collapsed: bool, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_collapsed(collapsed, window, cx));
     }
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
@@ -413,6 +437,29 @@ impl MultiWorkspace {
                 sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
+        }
+    }
+
+    pub fn toggle_sidebar_collapsed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+
+        let was_open = self.sidebar_open();
+        if !was_open {
+            self.previous_focus_handle = window.focused(cx);
+            self.open_sidebar(cx);
+        }
+
+        if let Some(sidebar) = &self.sidebar {
+            let next = if was_open {
+                !sidebar.is_collapsed(cx)
+            } else {
+                true
+            };
+            sidebar.set_collapsed(next, window, cx);
+            self.serialize(cx);
+            cx.notify();
         }
     }
 
@@ -2012,46 +2059,49 @@ impl Render for MultiWorkspace {
                 let weak = cx.weak_entity();
 
                 let sidebar_width = sidebar_handle.width(cx);
-                let resize_handle = deferred(
-                    div()
-                        .id("sidebar-resize-handle")
-                        .absolute()
-                        .when(!sidebar_on_right, |el| {
-                            el.right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
-                        })
-                        .when(sidebar_on_right, |el| {
-                            el.left(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
-                        })
-                        .top(px(0.))
-                        .h_full()
-                        .w(SIDEBAR_RESIZE_HANDLE_SIZE)
-                        .cursor_col_resize()
-                        .on_drag(DraggedSidebar, |dragged, _, _, cx| {
-                            cx.stop_propagation();
-                            cx.new(|_| dragged.clone())
-                        })
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_mouse_up(MouseButton::Left, move |event, _, cx| {
-                            if event.click_count == 2 {
-                                weak.update(cx, |this, cx| {
-                                    if let Some(sidebar) = this.sidebar.as_mut() {
-                                        sidebar.set_width(None, cx);
-                                    }
-                                    this.serialize(cx);
-                                })
-                                .ok();
+                let is_collapsed = sidebar_handle.is_collapsed(cx);
+                let resize_handle = (!is_collapsed).then(|| {
+                    deferred(
+                        div()
+                            .id("sidebar-resize-handle")
+                            .absolute()
+                            .when(!sidebar_on_right, |el| {
+                                el.right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                            })
+                            .when(sidebar_on_right, |el| {
+                                el.left(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                            })
+                            .top(px(0.))
+                            .h_full()
+                            .w(SIDEBAR_RESIZE_HANDLE_SIZE)
+                            .cursor_col_resize()
+                            .on_drag(DraggedSidebar, |dragged, _, _, cx| {
                                 cx.stop_propagation();
-                            } else {
-                                weak.update(cx, |this, cx| {
-                                    this.serialize(cx);
-                                })
-                                .ok();
-                            }
-                        })
-                        .occlude(),
-                );
+                                cx.new(|_| dragged.clone())
+                            })
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_mouse_up(MouseButton::Left, move |event, _, cx| {
+                                if event.click_count == 2 {
+                                    weak.update(cx, |this, cx| {
+                                        if let Some(sidebar) = this.sidebar.as_mut() {
+                                            sidebar.set_width(None, cx);
+                                        }
+                                        this.serialize(cx);
+                                    })
+                                    .ok();
+                                    cx.stop_propagation();
+                                } else {
+                                    weak.update(cx, |this, cx| {
+                                        this.serialize(cx);
+                                    })
+                                    .ok();
+                                }
+                            })
+                            .occlude(),
+                    )
+                });
 
                 div()
                     .id("sidebar-container")
@@ -2060,7 +2110,7 @@ impl Render for MultiWorkspace {
                     .w(sidebar_width)
                     .flex_shrink_0()
                     .child(sidebar_handle.to_any())
-                    .child(resize_handle)
+                    .children(resize_handle)
                     .into_any_element()
             })
         } else {
@@ -2091,6 +2141,11 @@ impl Render for MultiWorkspace {
                     this.on_action(cx.listener(
                         |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
                             this.toggle_sidebar(window, cx);
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut Self, _: &ToggleWorkspaceSidebarCollapsed, window, cx| {
+                            this.toggle_sidebar_collapsed(window, cx);
                         },
                     ))
                     .on_action(cx.listener(

@@ -46,15 +46,17 @@ use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
     KeyBinding, PopoverMenu, PopoverMenuHandle, ScrollAxes, Scrollbars, Tab, ThreadItem,
-    ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*, render_modifiers,
+    ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*, rems_from_px,
+    render_modifiers,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, NextProject,
     NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
-    Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
-    notifications::NotificationId, sidebar_side_context_menu,
+    Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar,
+    ToggleWorkspaceSidebarCollapsed, Workspace, notifications::NotificationId,
+    sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -88,6 +90,7 @@ gpui::actions!(
 const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
+const RAIL_WIDTH: Pixels = px(66.0);
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
@@ -103,6 +106,8 @@ struct SerializedSidebar {
     width: Option<f32>,
     #[serde(default)]
     active_view: SerializedSidebarView,
+    #[serde(default)]
+    collapsed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -461,6 +466,7 @@ fn connect_remote(
 pub struct Sidebar {
     multi_workspace: WeakEntity<MultiWorkspace>,
     width: Pixels,
+    collapsed: bool,
     focus_handle: FocusHandle,
     filter_editor: Entity<Editor>,
     list_state: ListState,
@@ -563,6 +569,7 @@ impl Sidebar {
         Self {
             multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
+            collapsed: false,
             focus_handle,
             filter_editor,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
@@ -4025,6 +4032,187 @@ impl Sidebar {
             .into_any_element()
     }
 
+    fn render_collapsed_body(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entries = self.contents.entries.clone();
+        let active_entry = self.active_entry.clone();
+        let border_color = cx.theme().colors().border;
+        let on_right = self.side(cx) == SidebarSide::Right;
+        let titlebar_height = platform_title_bar_height(window);
+
+        let mut list = v_flex()
+            .id("workspace-sidebar-rail-list")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll();
+
+        let mut first_group = true;
+        for (ix, entry) in entries.into_iter().enumerate() {
+            let is_active = active_entry
+                .as_ref()
+                .is_some_and(|active| active.matches_entry(&entry));
+            match entry {
+                ListEntry::ProjectHeader { key, label, .. } => {
+                    let is_collapsed = self.is_group_collapsed(&key, cx);
+                    let chevron = if is_collapsed {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    };
+                    let header_id = SharedString::from(format!("rail-group-{}", ix));
+                    let key_for_click = key.clone();
+                    let label_for_tooltip = label.clone();
+
+                    let header_bg = cx.theme().colors().element_background;
+                    let uppercase_label: SharedString =
+                        label.to_uppercase().into();
+                    let header = h_flex()
+                        .id(header_id)
+                        .w_full()
+                        .px_2()
+                        .py_1p5()
+                        .gap_1()
+                        .cursor_pointer()
+                        .bg(header_bg)
+                        .border_t_1()
+                        .when(first_group, |this| this.border_color(gpui::transparent_black()))
+                        .when(!first_group, |this| this.border_color(border_color))
+                        .child(Icon::new(chevron).size(IconSize::XSmall).color(Color::Muted))
+                        .child(
+                            Label::new(uppercase_label)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate(),
+                        )
+                        .tooltip(Tooltip::text(label_for_tooltip))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let was_collapsed = this.is_group_collapsed(&key_for_click, cx);
+                            this.set_group_expanded(&key_for_click, was_collapsed, cx);
+                            this.update_entries(cx);
+                        }));
+                    list = list.child(header);
+                    first_group = false;
+                }
+                ListEntry::Thread(thread) => {
+                    list = list.child(self.render_collapsed_thread(ix, &thread, is_active, cx));
+                }
+            }
+        }
+
+        let expand_icon = if on_right {
+            IconName::ChevronLeft
+        } else {
+            IconName::ChevronRight
+        };
+        let footer = h_flex()
+            .w_full()
+            .p_1()
+            .justify_center()
+            .border_t_1()
+            .border_color(border_color)
+            .child(
+                IconButton::new("rail-expand", expand_icon)
+                    .icon_size(IconSize::Small)
+                    .tooltip(move |_window, cx| {
+                        Tooltip::for_action("Expand Sidebar", &ToggleWorkspaceSidebarCollapsed, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.set_collapsed(false, window, cx);
+                        if let Some(mw) = this.multi_workspace.upgrade() {
+                            mw.update(cx, |mw, cx| mw.serialize(cx));
+                        }
+                    })),
+            );
+
+        v_flex()
+            .id("workspace-sidebar-rail")
+            .size_full()
+            .child(div().h(titlebar_height).w_full().flex_shrink_0())
+            .child(list)
+            .child(footer)
+            .into_any_element()
+    }
+
+    fn render_collapsed_thread(
+        &self,
+        ix: usize,
+        thread: &ThreadEntry,
+        is_active: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let title: SharedString = thread.metadata.display_title();
+        let metadata = thread.metadata.clone();
+        let thread_workspace = thread.workspace.clone();
+        let id = SharedString::from(format!("rail-thread-{}", ix));
+        let colors = cx.theme().colors();
+        let active_bg = colors.element_active;
+
+        let has_notification = self.contents.is_thread_notified(&thread.metadata.thread_id);
+        let icon_size = IconSize::Custom(rems_from_px(24.));
+        let icon = match thread.status {
+            AgentThreadStatus::Running => Icon::new(IconName::LoadCircle)
+                .size(icon_size)
+                .color(Color::Muted)
+                .with_rotate_animation(2)
+                .into_any_element(),
+            AgentThreadStatus::Error => Icon::new(IconName::Close)
+                .size(icon_size)
+                .color(Color::Error)
+                .into_any_element(),
+            AgentThreadStatus::WaitingForConfirmation => Icon::new(IconName::Warning)
+                .size(icon_size)
+                .color(Color::Warning)
+                .into_any_element(),
+            AgentThreadStatus::Completed if has_notification => Icon::new(IconName::Circle)
+                .size(icon_size)
+                .color(Color::Accent)
+                .into_any_element(),
+            AgentThreadStatus::Completed => {
+                let mut icon = Icon::new(thread.icon).size(icon_size);
+                if thread.is_background {
+                    icon = icon.color(Color::Muted);
+                }
+                icon.into_any_element()
+            }
+        };
+
+        h_flex()
+            .id(id)
+            .w_full()
+            .py_2()
+            .px_2()
+            .justify_center()
+            .cursor_pointer()
+            .when(is_active, |this| this.bg(active_bg))
+            .hover(|this| this.bg(colors.element_hover))
+            .child(icon)
+            .tooltip(Tooltip::text(title))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selection = None;
+                match &thread_workspace {
+                    ThreadEntryWorkspace::Open(workspace) => {
+                        this.activate_thread(metadata.clone(), workspace, false, window, cx);
+                    }
+                    ThreadEntryWorkspace::Closed {
+                        folder_paths,
+                        project_group_key,
+                    } => {
+                        this.open_workspace_and_activate_thread(
+                            metadata.clone(),
+                            folder_paths.clone(),
+                            project_group_key,
+                            window,
+                            cx,
+                        );
+                    }
+                }
+            }))
+            .into_any_element()
+    }
+
     fn render_filter_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .min_w_0()
@@ -4859,11 +5047,35 @@ fn render_import_onboarding_banner(
 
 impl WorkspaceSidebar for Sidebar {
     fn width(&self, _cx: &App) -> Pixels {
-        self.width
+        if self.collapsed {
+            RAIL_WIDTH
+        } else {
+            self.width
+        }
     }
 
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
+        if self.collapsed {
+            return;
+        }
         self.width = width.unwrap_or(DEFAULT_WIDTH).clamp(MIN_WIDTH, MAX_WIDTH);
+        cx.notify();
+    }
+
+    fn is_collapsed(&self, _cx: &App) -> bool {
+        self.collapsed
+    }
+
+    fn set_collapsed(
+        &mut self,
+        collapsed: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.collapsed == collapsed {
+            return;
+        }
+        self.collapsed = collapsed;
         cx.notify();
     }
 
@@ -4908,6 +5120,7 @@ impl WorkspaceSidebar for Sidebar {
                 SidebarView::ThreadList => SerializedSidebarView::ThreadList,
                 SidebarView::Archive(_) => SerializedSidebarView::History,
             },
+            collapsed: self.collapsed,
         };
         serde_json::to_string(&serialized).ok()
     }
@@ -4922,6 +5135,7 @@ impl WorkspaceSidebar for Sidebar {
             if let Some(width) = serialized.width {
                 self.width = px(width).clamp(MIN_WIDTH, MAX_WIDTH);
             }
+            self.collapsed = serialized.collapsed;
             if serialized.active_view == SerializedSidebarView::History {
                 cx.defer_in(window, |this, window, cx| {
                     this.show_archive(window, cx);
@@ -4985,12 +5199,16 @@ impl Render for Sidebar {
             }))
             .font(ui_font)
             .h_full()
-            .w(self.width)
+            .w(if self.collapsed { RAIL_WIDTH } else { self.width })
             .bg(bg)
             .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
             .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())
             .border_color(color.border)
-            .map(|this| match &self.view {
+            .map(|this| {
+                if self.collapsed {
+                    return this.child(self.render_collapsed_body(window, cx));
+                }
+                match &self.view {
                 SidebarView::ThreadList => this
                     .child(self.render_sidebar_header(no_open_projects, window, cx))
                     .map(|this| {
@@ -5024,8 +5242,12 @@ impl Render for Sidebar {
                         }
                     }),
                 SidebarView::Archive(archive_view) => this.child(archive_view.clone()),
+                }
             })
             .map(|this| {
+                if self.collapsed {
+                    return this;
+                }
                 let show_acp = self.should_render_acp_import_onboarding(cx);
                 let show_cross_channel = self.should_render_cross_channel_import_onboarding(cx);
 
@@ -5040,7 +5262,13 @@ impl Render for Sidebar {
                     this.child(self.render_cross_channel_import_onboarding(verbose, cx))
                 })
             })
-            .child(self.render_sidebar_bottom_bar(cx))
+            .map(|this| {
+                if self.collapsed {
+                    this
+                } else {
+                    this.child(self.render_sidebar_bottom_bar(cx))
+                }
+            })
     }
 }
 
