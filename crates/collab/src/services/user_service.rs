@@ -199,7 +199,7 @@ mod fake_user_service {
         async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
             let _ = query;
             let _ = limit;
-            unimplemented!()
+            unimplemented!("not currently exercised by any tests")
         }
 
         async fn search_channel_members(
