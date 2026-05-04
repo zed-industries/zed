@@ -5949,7 +5949,10 @@ fn panels_page() -> SettingsPage {
                         settings_content.git_panel.as_ref()?.starts_open.as_ref()
                     },
                     write: |settings_content, value, _| {
-                        settings_content.git_panel.get_or_insert_default().starts_open = value;
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .starts_open = value;
                     },
                 }),
                 metadata: None,
