@@ -424,14 +424,14 @@ impl BreakpointStore {
             let breakpoints = breakpoint_set
                 .breakpoints
                 .drain(..)
-                .filter_map(|mut breakpoint| {
+                .map(|mut breakpoint| {
                     let old_position =
                         old_snapshot.summary_for_anchor::<PointUtf16>(breakpoint.position());
                     let new_position = PointUtf16::new(old_position.row, 0);
                     let new_position =
                         new_snapshot.clip_point_utf16(Unclipped(new_position), Bias::Left);
                     breakpoint.bp.position = new_snapshot.anchor_after(new_position);
-                    Some(breakpoint)
+                    breakpoint
                 })
                 .collect();
             *breakpoint_set = BreakpointsInFile::new(buffer, cx);
