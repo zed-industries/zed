@@ -560,7 +560,7 @@ mod tests {
     use super::*;
     use crate::pattern_extraction::extract_terminal_pattern;
     use crate::tools::{DeletePathTool, FetchTool, TerminalTool};
-    use crate::{AgentTool, StreamingEditFileTool};
+    use crate::{AgentTool, EditFileTool};
     use agent_settings::{AgentProfileId, CompiledRegex, InvalidRegexPattern, ToolRules};
     use gpui::px;
     use settings::{DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone};
@@ -1009,7 +1009,7 @@ mod tests {
             },
         );
         tools.insert(
-            Arc::from(StreamingEditFileTool::NAME),
+            Arc::from(EditFileTool::NAME),
             ToolRules {
                 default: Some(ToolPermissionMode::Allow),
                 always_allow: vec![],
@@ -1033,7 +1033,7 @@ mod tests {
         ));
         assert_eq!(
             ToolPermissionDecision::from_input(
-                StreamingEditFileTool::NAME,
+                EditFileTool::NAME,
                 &["x".to_string()],
                 &p,
                 ShellKind::Posix
@@ -1605,12 +1605,12 @@ mod tests {
     #[test]
     fn always_confirm_works_for_file_tools() {
         t("sensitive.env")
-            .tool(StreamingEditFileTool::NAME)
+            .tool(EditFileTool::NAME)
             .confirm(&["sensitive"])
             .is_confirm();
 
         t("normal.txt")
-            .tool(StreamingEditFileTool::NAME)
+            .tool(EditFileTool::NAME)
             .confirm(&["sensitive"])
             .mode(ToolPermissionMode::Allow)
             .is_allow();
@@ -1639,21 +1639,21 @@ mod tests {
 
         // confirm on non-terminal tools still beats allow
         t("sensitive.env")
-            .tool(StreamingEditFileTool::NAME)
+            .tool(EditFileTool::NAME)
             .allow(&["sensitive"])
             .confirm(&["\\.env$"])
             .is_confirm();
 
         // confirm on non-terminal tools is still beaten by deny
         t("sensitive.env")
-            .tool(StreamingEditFileTool::NAME)
+            .tool(EditFileTool::NAME)
             .confirm(&["sensitive"])
             .deny(&["\\.env$"])
             .is_deny();
 
         // global default allow does not bypass confirm on non-terminal tools
         t("/etc/passwd")
-            .tool(StreamingEditFileTool::NAME)
+            .tool(EditFileTool::NAME)
             .confirm(&["/etc/"])
             .global_default(ToolPermissionMode::Allow)
             .is_confirm();
@@ -2223,8 +2223,7 @@ mod tests {
             default: ToolPermissionMode::Confirm,
             tools: Default::default(),
         });
-        let decision =
-            decide_permission_for_path(StreamingEditFileTool::NAME, "src/main.rs", &settings);
+        let decision = decide_permission_for_path(EditFileTool::NAME, "src/main.rs", &settings);
         assert_eq!(decision, ToolPermissionDecision::Confirm);
     }
 
@@ -2233,7 +2232,7 @@ mod tests {
         let deny_regex = CompiledRegex::new("/etc/passwd", false).unwrap();
         let mut tools = collections::HashMap::default();
         tools.insert(
-            Arc::from(StreamingEditFileTool::NAME),
+            Arc::from(EditFileTool::NAME),
             ToolRules {
                 default: Some(ToolPermissionMode::Allow),
                 always_allow: vec![],
@@ -2247,11 +2246,8 @@ mod tests {
             tools,
         });
 
-        let decision = decide_permission_for_path(
-            StreamingEditFileTool::NAME,
-            "/tmp/../etc/passwd",
-            &settings,
-        );
+        let decision =
+            decide_permission_for_path(EditFileTool::NAME, "/tmp/../etc/passwd", &settings);
         assert!(
             matches!(decision, ToolPermissionDecision::Deny(_)),
             "expected Deny for traversal to /etc/passwd, got {:?}",
@@ -2406,13 +2402,7 @@ mod tests {
 
     #[test]
     fn decide_permission_for_path_denies_edit_file_traversal_to_dotenv() {
-        let decision = path_perm(
-            StreamingEditFileTool::NAME,
-            "src/../.env",
-            &["^\\.env"],
-            &[],
-            &[],
-        );
+        let decision = path_perm(EditFileTool::NAME, "src/../.env", &["^\\.env"], &[], &[]);
         assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
     }
 }

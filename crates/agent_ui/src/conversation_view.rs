@@ -2949,7 +2949,7 @@ fn plan_label_markdown_style(
 pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
-    use agent::{AgentTool, FetchTool, StreamingEditFileTool, TerminalTool, ToolPermissionContext};
+    use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
@@ -6088,11 +6088,9 @@ pub(crate) mod tests {
         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
             .kind(acp::ToolKind::Edit);
 
-        let permission_options = ToolPermissionContext::new(
-            StreamingEditFileTool::NAME,
-            vec!["src/main.rs".to_string()],
-        )
-        .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(EditFileTool::NAME, vec!["src/main.rs".to_string()])
+                .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(

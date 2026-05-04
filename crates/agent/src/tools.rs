@@ -3,6 +3,7 @@ mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
+mod edit_file_tool;
 #[cfg(all(test, feature = "unit-eval"))]
 mod evals;
 mod fetch_tool;
@@ -16,7 +17,6 @@ mod read_file_tool;
 mod restore_file_from_disk_tool;
 mod save_file_tool;
 mod spawn_agent_tool;
-mod streaming_edit_file_tool;
 mod terminal_tool;
 mod tool_edit_parser;
 mod tool_permissions;
@@ -31,6 +31,7 @@ pub use copy_path_tool::*;
 pub use create_directory_tool::*;
 pub use delete_path_tool::*;
 pub use diagnostics_tool::*;
+pub use edit_file_tool::*;
 pub use fetch_tool::*;
 pub use find_path_tool::*;
 pub use grep_tool::*;
@@ -42,7 +43,6 @@ pub use read_file_tool::*;
 pub use restore_file_from_disk_tool::*;
 pub use save_file_tool::*;
 pub use spawn_agent_tool::*;
-pub use streaming_edit_file_tool::*;
 pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use update_plan_tool::*;
@@ -121,7 +121,7 @@ tools! {
     CreateDirectoryTool,
     DeletePathTool,
     DiagnosticsTool,
-    StreamingEditFileTool,
+    EditFileTool,
     FetchTool,
     FindPathTool,
     GrepTool,

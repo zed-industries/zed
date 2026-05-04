@@ -1,9 +1,9 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, FetchTool, FindPathTool, GrepTool, ListDirectoryTool,
-    MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RestoreFileFromDiskTool,
-    SaveFileTool, SpawnAgentTool, StreamingEditFileTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
+    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -820,7 +820,7 @@ impl ToolPermissionContext {
                 )
             } else if tool_name == CopyPathTool::NAME
                 || tool_name == MovePathTool::NAME
-                || tool_name == StreamingEditFileTool::NAME
+                || tool_name == EditFileTool::NAME
                 || tool_name == DeletePathTool::NAME
                 || tool_name == CreateDirectoryTool::NAME
                 || tool_name == SaveFileTool::NAME
@@ -1543,7 +1543,7 @@ impl Thread {
             self.action_log.clone(),
         ));
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
-        self.add_tool(StreamingEditFileTool::new(
+        self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             self.action_log.clone(),
