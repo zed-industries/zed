@@ -75,6 +75,8 @@ pub struct WindowsWindowState {
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
     hwnd: HWND,
+
+    pub mouse_position: Cell<Point<Pixels>>,
 }
 
 pub(crate) struct WindowsWindowInner {
@@ -165,6 +167,7 @@ impl WindowsWindowState {
             hwnd,
             invalidate_devices,
             direct_manipulation,
+            mouse_position: Cell::new(Point::default()),
         })
     }
 
