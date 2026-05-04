@@ -1140,8 +1140,8 @@ fn translate_vscode_window_title_format(template: &str) -> String {
         let content_end = content_start + content_end_offset;
         let variable = &template[content_start..content_end];
         match variable {
-            "projectName" | "fileName" | "filePath" | "relativePath" | "fileStem" | "remoteName"
-            | "remoteHost" | "separator" => {
+            "projectName" | "fileName" | "filePath" | "relativePath" | "fileStem"
+            | "remoteName" | "remoteHost" | "separator" => {
                 translated.push_str(&template[variable_start..=content_end]);
             }
             // Keep VS Code alias support in the importer so native Zed settings
