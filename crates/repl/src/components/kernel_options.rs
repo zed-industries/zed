@@ -431,10 +431,11 @@ impl PickerDelegate for KernelPickerDelegate {
                 .gap_4()
                 .child(
                     Button::new("kernel-docs", "Kernel Docs")
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::End)
+                        .end_icon(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .on_click(move |_, _, cx| cx.open_url(KERNEL_DOCS_URL)),
                 )
                 .into_any(),
@@ -483,7 +484,7 @@ where
         PopoverMenu::new("kernel-switcher")
             .menu(move |_window, _cx| Some(picker_view.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
+            .attach(gpui::Anchor::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

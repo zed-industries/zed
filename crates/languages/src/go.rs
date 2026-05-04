@@ -2,10 +2,13 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
+use language::{
+    LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
+    language_settings::LanguageSettings,
+};
 use lsp::{LanguageServerBinary, LanguageServerName};
 
 use project::lsp_store::language_server_settings;
@@ -28,10 +31,8 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
-use crate::LanguageDir;
-
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
-    let content = LanguageDir::get("go/semantic_token_rules.json")
+    let content = grammars::get_file("go/semantic_token_rules.json")
         .expect("missing go/semantic_token_rules.json");
     let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
     settings::parse_json_with_comments::<SemanticTokenRules>(json)
@@ -207,6 +208,12 @@ impl LspAdapter for GoLspAdapter {
         delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
+        let semantic_tokens_enabled = cx.update(|cx| {
+            LanguageSettings::resolve(None, Some(&LanguageName::new("Go")), cx)
+                .semantic_tokens
+                .enabled()
+        });
+
         let mut default_config = json!({
             "usePlaceholders": false,
             "hints": {
@@ -217,7 +224,11 @@ impl LspAdapter for GoLspAdapter {
                 "functionTypeParameters": true,
                 "parameterNames": true,
                 "rangeVariableTypes": true
-            }
+            },
+            "codelenses": {
+                "test": true
+            },
+            "semanticTokens": semantic_tokens_enabled
         });
 
         let project_initialization_options = cx.update(|cx| {
@@ -430,11 +441,92 @@ impl LspAdapter for GoLspAdapter {
         ))
     }
 
+    fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        if let "gopls.run_tests" = command_name {
+            let template = go_test_task_template(arguments.first()?)?;
+            Some(ClientCommand::ScheduleTask(template))
+        } else {
+            None
+        }
+    }
+
     fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)\n\s*").expect("Failed to create REGEX"));
         Some(REGEX.replace_all(message, "\n\n").to_string())
     }
+}
+
+fn json_string_array(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> {
+    let tests = json_string_array(arg, "Tests");
+    let benchmarks = json_string_array(arg, "Benchmarks");
+    if tests.is_empty() && benchmarks.is_empty() {
+        return None;
+    }
+
+    let mut go_args = vec!["test".to_string(), "-test.fullpath=true".to_string()];
+
+    if tests.is_empty() {
+        go_args.push("-benchmem".to_string());
+        go_args.push("-run=^$".to_string());
+    } else {
+        go_args.push("-timeout".to_string());
+        go_args.push("30s".to_string());
+        go_args.push("-run".to_string());
+        if tests.len() == 1 {
+            go_args.push(format!("^{}$", tests[0]));
+        } else {
+            go_args.push(format!("^({})$", tests.join("|")));
+        }
+    }
+
+    if !benchmarks.is_empty() {
+        go_args.push("-bench".to_string());
+        if benchmarks.len() == 1 {
+            go_args.push(format!("^{}$", benchmarks[0]));
+        } else {
+            go_args.push(format!("^({})$", benchmarks.join("|")));
+        }
+    }
+
+    go_args.push(".".to_string());
+
+    let label = if !tests.is_empty() {
+        format!("go test {}", tests.join(", "))
+    } else {
+        format!("go bench {}", benchmarks.join(", "))
+    };
+
+    let cwd = arg
+        .get("URI")
+        .and_then(|v| v.as_str())
+        .and_then(|uri| uri.strip_prefix("file://"))
+        .and_then(|path| std::path::Path::new(path).parent())
+        .map(|p| p.to_string_lossy().into_owned());
+
+    Some(task::TaskTemplate {
+        label,
+        command: "go".to_string(),
+        args: go_args,
+        cwd,
+        ..task::TaskTemplate::default()
+    })
 }
 
 fn parse_version_output(output: &Output) -> Result<&str> {
@@ -583,7 +675,7 @@ impl ContextProvider for GoContextProvider {
         )))
     }
 
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {

@@ -48,7 +48,7 @@ use serde_json::Value;
 use smol::net::{TcpListener, TcpStream};
 use std::any::TypeId;
 use std::collections::{BTreeMap, VecDeque};
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -2187,21 +2187,27 @@ impl Session {
             self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated();
 
         self.restart_task = Some(cx.spawn(async move |this, cx| {
-            let _ = this.update(cx, |session, cx| {
+            this.update(cx, |session, cx| {
                 if supports_dap_restart {
-                    session
-                        .request(
-                            RestartCommand {
-                                raw: args.unwrap_or(Value::Null),
-                            },
-                            Self::fallback_to_manual_restart,
-                            cx,
-                        )
-                        .detach();
+                    session.request(
+                        RestartCommand {
+                            raw: args.unwrap_or(Value::Null),
+                        },
+                        Self::fallback_to_manual_restart,
+                        cx,
+                    )
                 } else {
                     cx.emit(SessionStateEvent::Restart);
+                    Task::ready(None)
                 }
-            });
+            })
+            .unwrap_or_else(|_| Task::ready(None))
+            .await;
+
+            this.update(cx, |session, _cx| {
+                session.restart_task = None;
+            })
+            .ok();
         }));
     }
 
@@ -2895,7 +2901,7 @@ impl Session {
                 );
                 None
             } else {
-                let port = TcpTransport::unused_port(Ipv4Addr::LOCALHOST)
+                let port = TcpTransport::unused_port(IpAddr::V4(Ipv4Addr::LOCALHOST))
                     .await
                     .context("getting port for DAP")?;
                 request
