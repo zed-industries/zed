@@ -2631,7 +2631,7 @@ async fn test_git_diff_base_change(
         })
         .await
         .unwrap();
-    let local_unstaged_diff_a = project_local
+    let (local_unstaged_diff_a, _) = project_local
         .update(cx_a, |p, cx| {
             p.open_unstaged_diff(buffer_local_a.clone(), cx)
         })
@@ -2643,13 +2643,13 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_a.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
             diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2661,7 +2661,7 @@ async fn test_git_diff_base_change(
         })
         .await
         .unwrap();
-    let remote_unstaged_diff_a = project_remote
+    let (remote_unstaged_diff_a, _) = project_remote
         .update(cx_b, |p, cx| {
             p.open_unstaged_diff(remote_buffer_a.clone(), cx)
         })
@@ -2673,19 +2673,19 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
             diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
     // Open uncommitted changes on the guest, without opening them on the host first
-    let remote_uncommitted_diff_a = project_remote
+    let (remote_uncommitted_diff_a, _) = project_remote
         .update(cx_b, |p, cx| {
             p.open_uncommitted_diff(remote_buffer_a.clone(), cx)
         })
@@ -2695,13 +2695,13 @@ async fn test_git_diff_base_change(
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(committed_text.as_str())
         );
         assert_hunks(
             diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "TWO\n",
@@ -2727,13 +2727,13 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_a.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(
             diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2742,13 +2742,13 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(
             diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2756,13 +2756,13 @@ async fn test_git_diff_base_change(
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_a.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(new_committed_text.as_str())
         );
         assert_hunks(
             diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "TWO_HUNDRED\n",
@@ -2797,7 +2797,7 @@ async fn test_git_diff_base_change(
         })
         .await
         .unwrap();
-    let local_unstaged_diff_b = project_local
+    let (local_unstaged_diff_b, _) = project_local
         .update(cx_a, |p, cx| {
             p.open_unstaged_diff(buffer_local_b.clone(), cx)
         })
@@ -2809,13 +2809,13 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_b.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
             diff.snapshot(cx).hunks_in_row_range(0..4, buffer),
             buffer,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
@@ -2827,7 +2827,7 @@ async fn test_git_diff_base_change(
         })
         .await
         .unwrap();
-    let remote_unstaged_diff_b = project_remote
+    let (remote_unstaged_diff_b, _) = project_remote
         .update(cx_b, |p, cx| {
             p.open_unstaged_diff(remote_buffer_b.clone(), cx)
         })
@@ -2838,7 +2838,7 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_b.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
         assert_hunks(
@@ -2860,7 +2860,7 @@ async fn test_git_diff_base_change(
     local_unstaged_diff_b.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(
@@ -2874,7 +2874,7 @@ async fn test_git_diff_base_change(
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
         let buffer = remote_buffer_b.read(cx);
         assert_eq!(
-            diff.base_text_string(cx).as_deref(),
+            diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
         assert_hunks(

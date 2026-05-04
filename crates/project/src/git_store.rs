@@ -117,11 +117,11 @@ struct SharedDiffs {
 }
 
 struct BufferGitState {
-    index_buffer: Option<Entity<Buffer>>,
-    head_buffer: Option<Entity<Buffer>>,
+    index_buffer: Entity<Buffer>,
+    head_buffer: Entity<Buffer>,
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
-    oid_diffs: HashMap<Option<git::Oid>, WeakEntity<BufferDiff>>,
+    oid_diffs: HashMap<Option<git::Oid>, (WeakEntity<BufferDiff>, Entity<Buffer>)>,
     conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
     reparse_conflict_markers_task: Option<Task<Result<()>>>,
@@ -143,7 +143,7 @@ struct BufferGitState {
 
     head_text: Option<Arc<str>>,
     index_text: Option<Arc<str>>,
-    oid_buffers: HashMap<git::Oid, (Arc<str>, Entity<language::Buffer>)>,
+    oid_texts: HashMap<git::Oid, Arc<str>>,
     head_changed: bool,
     index_changed: bool,
     // todo!() unused now?
@@ -838,24 +838,30 @@ impl GitStore {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferDiff>>> {
+    ) -> Task<Result<(Entity<BufferDiff>, Entity<Buffer>)>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff_state) = self.diffs.get(&buffer_id)
-            && let Some(unstaged_diff) = diff_state
-                .read(cx)
-                .unstaged_diff
-                .as_ref()
-                .and_then(|weak| weak.upgrade())
+
+        let diff_state = self
+            .diffs
+            .entry(buffer_id)
+            .or_insert_with(|| cx.new(|cx| BufferGitState::new(cx)));
+        let index_buffer = diff_state.read(cx).index_buffer.clone();
+
+        if let Some(unstaged_diff) = diff_state
+            .read(cx)
+            .unstaged_diff
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
         {
             if let Some(task) =
                 diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
                 return cx.background_executor().spawn(async move {
                     task.await;
-                    Ok(unstaged_diff)
+                    Ok((unstaged_diff, index_buffer))
                 });
             }
-            return Task::ready(Ok(unstaged_diff));
+            return Task::ready(Ok((unstaged_diff, index_buffer)));
         }
 
         let Some((repo, repo_path)) =
@@ -886,7 +892,10 @@ impl GitStore {
             })
             .clone();
 
-        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move {
+            let diff = task.await.map_err(|e| anyhow!("{e}"))?;
+            Ok((diff, index_buffer))
+        })
     }
 
     pub fn open_diff_since(
@@ -933,26 +942,30 @@ impl GitStore {
                         ),
                     };
                     let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
-                    let oid_buffer = content.as_ref().map(|content| {
-                        cx.new(|cx| {
-                            let mut buffer = Buffer::local(&**content, cx);
-                            buffer.set_capability(Capability::ReadOnly, cx);
-                            buffer.set_language(buffer_snapshot.language().cloned(), cx);
-                            buffer
-                        })
+                    let oid_buffer = cx.new(|cx| {
+                        let mut buffer = Buffer::local(content.as_deref().unwrap_or_default(), cx);
+                        buffer.set_capability(Capability::ReadOnly, cx);
+                        if let Some(language_registry) = language_registry {
+                            buffer.set_language_registry(language_registry);
+                        }
+                        buffer.set_language(buffer_snapshot.language().cloned(), cx);
+                        buffer
                     });
-                    buffer_diff
-                        .update(cx, |buffer_diff, cx| {
-                            buffer_diff.set_base_text(
-                                content.clone().zip(oid_buffer.clone().map(|buffer| {
-                                    buffer.read_with(cx, |buffer, _| buffer.snapshot())
-                                })),
-                                buffer_snapshot,
-                                cx,
-                            )
-                        })
-                        .await?;
-                    let unstaged_diff = this
+                    if let Some(content) = content.clone() {
+                        buffer_diff
+                            .update(cx, |buffer_diff, cx| {
+                                buffer_diff.set_base_text(
+                                    Some((
+                                        content.clone(),
+                                        oid_buffer.read_with(cx, |buffer, _| buffer.snapshot()),
+                                    )),
+                                    buffer_snapshot,
+                                    cx,
+                                )
+                            })
+                            .await?;
+                    }
+                    let (unstaged_diff, _) = this
                         .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
                         .await?;
                     buffer_diff.update(cx, |buffer_diff, _| {
@@ -969,15 +982,17 @@ impl GitStore {
                         let diff_state = this
                             .diffs
                             .entry(buffer_id)
-                            .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+                            .or_insert_with(|| cx.new(|cx| BufferGitState::new(cx)));
 
                         diff_state.update(cx, |state, _| {
                             if let Some(oid) = oid {
-                                if let Some(content) = content.zip(oid_buffer) {
-                                    state.oid_buffers.insert(oid, content);
+                                if let Some(content) = content {
+                                    state.oid_texts.insert(oid, content);
                                 }
                             }
-                            state.oid_diffs.insert(oid, buffer_diff.downgrade());
+                            state
+                                .oid_diffs
+                                .insert(oid, (buffer_diff.downgrade(), oid_buffer));
                         });
                     })?;
 
@@ -998,25 +1013,30 @@ impl GitStore {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferDiff>>> {
+    ) -> Task<Result<(Entity<BufferDiff>, Entity<Buffer>)>> {
         let buffer_id = buffer.read(cx).remote_id();
 
-        if let Some(diff_state) = self.diffs.get(&buffer_id)
-            && let Some(uncommitted_diff) = diff_state
-                .read(cx)
-                .uncommitted_diff
-                .as_ref()
-                .and_then(|weak| weak.upgrade())
+        let diff_state = self
+            .diffs
+            .entry(buffer_id)
+            .or_insert_with(|| cx.new(|cx| BufferGitState::new(cx)));
+        let head_buffer = diff_state.read(cx).head_buffer.clone();
+
+        if let Some(uncommitted_diff) = diff_state
+            .read(cx)
+            .uncommitted_diff
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
         {
             if let Some(task) =
                 diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
                 return cx.background_executor().spawn(async move {
                     task.await;
-                    Ok(uncommitted_diff)
+                    Ok((uncommitted_diff, head_buffer))
                 });
             }
-            return Task::ready(Ok(uncommitted_diff));
+            return Task::ready(Ok((uncommitted_diff, head_buffer)));
         }
 
         let Some((repo, repo_path)) =
@@ -1043,7 +1063,10 @@ impl GitStore {
             })
             .clone();
 
-        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move {
+            let diff = task.await.map_err(|e| anyhow!("{e}"))?;
+            Ok((diff, head_buffer))
+        })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1074,11 +1097,10 @@ impl GitStore {
             let buffer_snapshot = buffer.snapshot();
             this.loading_diffs.remove(&(buffer_id, kind));
 
-            let git_store = cx.weak_entity();
             let diff_state = this
                 .diffs
                 .entry(buffer_id)
-                .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+                .or_insert_with(|| cx.new(|cx| BufferGitState::new(cx)));
 
             let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
 
@@ -1175,11 +1197,10 @@ impl GitStore {
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
             .is_some_and(|(repo, path)| repo.read(cx).snapshot.has_conflict(&path));
-        let git_store = cx.weak_entity();
         let buffer_git_state = self
             .diffs
             .entry(buffer_id)
-            .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+            .or_insert_with(|| cx.new(|cx| BufferGitState::new(cx)));
         let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
 
         self._subscriptions
@@ -3258,7 +3279,7 @@ impl GitStore {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenUnstagedDiffResponse> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
-        let diff = this
+        let (diff, _) = this
             .update(&mut cx, |this, cx| {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_unstaged_diff(buffer, cx))
@@ -3272,7 +3293,7 @@ impl GitStore {
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().unstaged = Some(diff.clone());
         });
-        let staged_text = diff.read_with(&cx, |diff, cx| diff.base_text_string(cx));
+        let staged_text = diff.read_with(&cx, |diff, _cx| diff.base_text_string());
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -3282,7 +3303,7 @@ impl GitStore {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenUncommittedDiffResponse> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
-        let diff = this
+        let (diff, _) = this
             .update(&mut cx, |this, cx| {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_uncommitted_diff(buffer, cx))
@@ -3504,7 +3525,18 @@ impl GitStore {
 }
 
 impl BufferGitState {
-    fn new(_git_store: WeakEntity<GitStore>) -> Self {
+    fn new(cx: &mut App) -> Self {
+        let index_buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx);
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        });
+        let head_buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx);
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        });
+
         Self {
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
@@ -3517,15 +3549,15 @@ impl BufferGitState {
             hunk_staging_operation_count_as_of_write: 0,
             head_text: Default::default(),
             index_text: Default::default(),
-            oid_buffers: Default::default(),
+            oid_texts: Default::default(),
             head_changed: Default::default(),
             index_changed: Default::default(),
             language_changed: Default::default(),
             conflict_updated_futures: Default::default(),
             conflict_set: Default::default(),
             reparse_conflict_markers_task: Default::default(),
-            index_buffer: None,
-            head_buffer: None,
+            index_buffer,
+            head_buffer,
         }
     }
 
@@ -3597,7 +3629,9 @@ impl BufferGitState {
     }
 
     fn oid_diff(&self, oid: Option<git::Oid>) -> Option<Entity<BufferDiff>> {
-        self.oid_diffs.get(&oid).and_then(|weak| weak.upgrade())
+        self.oid_diffs
+            .get(&oid)
+            .and_then(|(weak, _)| weak.upgrade())
     }
 
     fn handle_base_texts_updated(
@@ -3699,12 +3733,6 @@ impl BufferGitState {
         let unstaged_diff = self.unstaged_diff();
         let uncommitted_diff = self.uncommitted_diff();
 
-        // index buffer still has the old text
-        // diff the old and new text to get edits (async)
-        // grab a snapshot_with_edits (async)
-        // pass that snapshot into update diff
-        // install it on the foreground as part of
-
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_write;
@@ -3722,36 +3750,26 @@ impl BufferGitState {
         )> = self
             .oid_diffs
             .iter()
-            .filter_map(|(oid, weak)| {
+            .filter_map(|(oid, (weak, base_text))| {
                 let base_text = oid
-                    .and_then(|oid| self.oid_buffers.get(&oid).cloned())
-                    .map(|(text, buffer)| (text, buffer.read(cx).snapshot()));
+                    .and_then(|oid| self.oid_texts.get(&oid).cloned())
+                    .map(|text| (text, base_text.read(cx).snapshot()));
                 weak.upgrade().map(|diff| (*oid, diff, base_text))
             })
             .collect();
 
-        self.oid_diffs.retain(|oid, weak| {
+        self.oid_diffs.retain(|oid, (weak, _)| {
             let alive = weak.upgrade().is_some();
             if !alive {
                 if let Some(oid) = oid {
-                    self.oid_buffers.remove(oid);
+                    self.oid_texts.remove(oid);
                 }
             }
             alive
         });
 
-        // todo!() dry up
         let new_index = if let Some(index_text) = self.index_text.clone() {
-            let index_buffer = self
-                .index_buffer
-                .get_or_insert_with(|| {
-                    cx.new(|cx| {
-                        let mut buffer = Buffer::local("", cx);
-                        buffer.set_capability(Capability::ReadOnly, cx);
-                        buffer
-                    })
-                })
-                .clone();
+            let index_buffer = self.index_buffer.clone();
             let old_index = index_buffer.read(cx).snapshot();
             let language = language.clone();
             let language_registry = language_registry.clone();
@@ -3775,20 +3793,10 @@ impl BufferGitState {
                 Some((index_text.clone(), edited_snapshot))
             })
         } else {
-            self.index_buffer = None;
             cx.spawn(async move |_, _| None)
         };
         let new_head = if let Some(head_text) = self.head_text.clone() {
-            let head_buffer = self
-                .head_buffer
-                .get_or_insert_with(|| {
-                    cx.new(|cx| {
-                        let mut buffer = Buffer::local("", cx);
-                        buffer.set_capability(Capability::ReadOnly, cx);
-                        buffer
-                    })
-                })
-                .clone();
+            let head_buffer = self.head_buffer.clone();
             let old_head = head_buffer.read(cx).snapshot();
             cx.spawn(async move |_, cx| {
                 let edits = if head_changed {
@@ -3810,7 +3818,6 @@ impl BufferGitState {
                 Some((head_text.clone(), edited_snapshot))
             })
         } else {
-            self.head_buffer = None;
             cx.spawn(async move |_, _| None)
         };
 
@@ -3903,12 +3910,9 @@ impl BufferGitState {
             }
 
             if let Some((_, edited)) = new_index {
-                index_buffer
-                    .as_ref()
-                    .unwrap()
-                    .update(cx, |index_buffer, cx| {
-                        index_buffer.fast_forward(edited, cx);
-                    });
+                index_buffer.update(cx, |index_buffer, cx| {
+                    index_buffer.fast_forward(edited, cx);
+                });
             }
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
@@ -3921,7 +3925,7 @@ impl BufferGitState {
             yield_now().await;
 
             if let Some((_, edited)) = new_head {
-                head_buffer.as_ref().unwrap().update(cx, |head_buffer, cx| {
+                head_buffer.update(cx, |head_buffer, cx| {
                     head_buffer.fast_forward(edited, cx);
                 });
             }

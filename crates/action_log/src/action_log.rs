@@ -156,14 +156,10 @@ impl ActionLog {
                     project.register_buffer_with_language_servers(&buffer, cx)
                 });
 
-                let text_snapshot = buffer.read(cx).text_snapshot();
+                let snapshot = buffer.read(cx).snapshot();
                 let language = buffer.read(cx).language().cloned();
                 let language_registry = buffer.read(cx).language_registry();
-                let diff = cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&text_snapshot, cx);
-                    diff.language_changed(language, language_registry, cx);
-                    diff
-                });
+                let diff = cx.new(|cx| BufferDiff::new(&snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
@@ -171,7 +167,7 @@ impl ActionLog {
                     diff_base = Rope::default();
                     unreviewed_edits = Patch::new(vec![Edit {
                         old: 0..1,
-                        new: 0..text_snapshot.max_point().row + 1,
+                        new: 0..snapshot.max_point().row + 1,
                     }])
                 } else {
                     diff_base = buffer.read(cx).as_rope().clone();
@@ -181,7 +177,7 @@ impl ActionLog {
                     buffer: buffer.clone(),
                     diff_base,
                     unreviewed_edits,
-                    snapshot: text_snapshot,
+                    snapshot,
                     status,
                     version: buffer.read(cx).version(),
                     diff,
@@ -271,7 +267,7 @@ impl ActionLog {
     async fn maintain_diff(
         this: WeakEntity<Self>,
         buffer: Entity<Buffer>,
-        mut buffer_updates: mpsc::UnboundedReceiver<(ChangeAuthor, text::BufferSnapshot)>,
+        mut buffer_updates: mpsc::UnboundedReceiver<(ChangeAuthor, language::BufferSnapshot)>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let git_diff = this
@@ -281,7 +277,8 @@ impl ActionLog {
                 })
             })?
             .await
-            .ok();
+            .ok()
+            .map(|(diff, _)| diff);
         let (mut git_diff_updates_tx, mut git_diff_updates_rx) = watch::channel(());
         let _diff_subscription = if let Some(git_diff) = git_diff.as_ref() {
             cx.update(|cx| {
@@ -319,7 +316,7 @@ impl ActionLog {
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
         author: ChangeAuthor,
-        buffer_snapshot: text::BufferSnapshot,
+        buffer_snapshot: language::BufferSnapshot,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let rebase = this.update(cx, |this, cx| {
@@ -384,7 +381,7 @@ impl ActionLog {
                     .context("buffer not tracked")?;
                 let old_unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let agent_diff_base = tracked_buffer.diff_base.clone();
-                let git_diff_base = git_diff.read(cx).base_text(cx).as_rope().clone();
+                let git_diff_base = git_diff.read(cx).base_text().as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
@@ -455,7 +452,7 @@ impl ActionLog {
     async fn update_diff(
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
-        buffer_snapshot: text::BufferSnapshot,
+        buffer_snapshot: language::BufferSnapshot,
         new_base_text: Arc<str>,
         new_diff_base: Rope,
         cx: &mut AsyncApp,
@@ -472,19 +469,10 @@ impl ActionLog {
         })??;
         let update = diff
             .update(cx, |diff, cx| {
-                diff.update_diff(
-                    buffer_snapshot.clone(),
-                    Some(new_base_text),
-                    Some(true),
-                    language,
-                    cx,
-                )
+                diff.update_diff(buffer_snapshot.clone(), Some(new_base_text), cx)
             })
             .await;
-        diff.update(cx, |diff, cx| {
-            diff.set_snapshot(update.clone(), &buffer_snapshot, cx)
-        })
-        .await;
+        diff.update(cx, |diff, cx| diff.set_snapshot(update.clone(), cx));
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
 
         let unreviewed_edits = cx
@@ -1064,10 +1052,12 @@ impl DiffStats {
             let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
             stats.lines_added += added_rows;
 
-            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
-            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
-            let removed_rows = base_end.saturating_sub(base_start);
-            stats.lines_removed += removed_rows;
+            if let Some(base_text) = base_text {
+                let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
+                let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
+                let removed_rows = base_end.saturating_sub(base_start);
+                stats.lines_removed += removed_rows;
+            }
         }
 
         stats
@@ -1277,8 +1267,8 @@ pub struct TrackedBuffer {
     status: TrackedBufferStatus,
     version: clock::Global,
     diff: Entity<BufferDiff>,
-    snapshot: text::BufferSnapshot,
-    diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
+    snapshot: language::BufferSnapshot,
+    diff_update: mpsc::UnboundedSender<(ChangeAuthor, language::BufferSnapshot)>,
     _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -1306,7 +1296,7 @@ impl TrackedBuffer {
 
     fn schedule_diff_update(&self, author: ChangeAuthor, cx: &App) {
         self.diff_update
-            .unbounded_send((author, self.buffer.read(cx).text_snapshot()))
+            .unbounded_send((author, self.buffer.read(cx).snapshot()))
             .ok();
     }
 }
@@ -3421,7 +3411,7 @@ mod tests {
                                 range: hunk.range,
                                 old_text: diff
                                     .read(cx)
-                                    .base_text(cx)
+                                    .base_text()
                                     .text_for_range(hunk.diff_base_byte_range)
                                     .collect(),
                             })

@@ -1675,7 +1675,7 @@ impl SplittableEditor {
                 .expect("missing diff");
             assert_eq!(
                 lhs_excerpt.context.start.buffer_id,
-                diff.read(cx).base_text(cx).remote_id(),
+                diff.read(cx).base_text().unwrap().remote_id(),
                 "corresponding lhs excerpt should show diff base text"
             );
 
@@ -2155,8 +2155,8 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> (Entity<Buffer>, Entity<BufferDiff>) {
         let buffer = cx.new(|cx| Buffer::local(current_text.to_string(), cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+        let (diff, _) = cx.update(|_window, cx| {
+            BufferDiff::new_with_base_text(base_text, &buffer.read(cx).snapshot(), cx)
         });
         (buffer, diff)
     }
@@ -2230,9 +2230,10 @@ mod tests {
                 let len = rng.random_range(200..1000);
                 let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
                 let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
-                let diff =
-                    cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
+                let buffer_snapshot = buffer.read_with(cx, |b, _| b.snapshot());
+                let (diff, _) = cx.update(|_window, cx| {
+                    BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx)
+                });
                 let edit_count = rng.random_range(3..8);
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_edit(rng, edit_count, cx);
@@ -2266,8 +2267,9 @@ mod tests {
                     let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
                     let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
-                    let diff = cx
-                        .new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
+                    let (diff, _) = cx.update(|_window, cx| {
+                        BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx)
+                    });
                     let edit_count = rng.random_range(3..8);
                     buffer.update(cx, |buffer, cx| {
                         buffer.randomly_edit(rng, edit_count, cx);

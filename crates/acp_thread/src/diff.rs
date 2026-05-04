@@ -411,7 +411,7 @@ async fn build_buffer_diff(
 
     secondary_diff
         .update(cx, |secondary_diff, cx| {
-            secondary_diff.set_snapshot(update.clone(), &buffer, cx)
+            secondary_diff.set_snapshot(update.clone(), cx)
         })
         .await;
 
@@ -419,7 +419,7 @@ async fn build_buffer_diff(
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, language_registry, cx);
         diff.set_secondary_diff(secondary_diff);
-        diff.set_snapshot(update.clone(), &buffer, cx)
+        diff.set_snapshot(update.clone(), cx)
     })
     .await;
     Ok(diff)

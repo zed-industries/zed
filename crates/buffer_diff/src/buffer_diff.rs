@@ -240,7 +240,8 @@ impl BufferDiffSnapshot {
         diff_base: String,
         cx: &mut gpui::TestAppContext,
     ) -> BufferDiffSnapshot {
-        let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, buffer, cx));
+        let (buffer_diff, _) =
+            cx.update(|cx| BufferDiff::new_with_base_text(&diff_base, buffer, cx));
         buffer_diff.update(cx, |buffer_diff, cx| buffer_diff.snapshot(cx))
     }
 
@@ -1543,22 +1544,28 @@ impl BufferDiff {
     pub fn new_with_base_text(
         base_text: &str,
         buffer: &language::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        use language::Buffer;
-
-        let mut this = BufferDiff::new(buffer, cx);
-        let mut base_text = base_text.to_owned();
-        text::LineEnding::normalize(&mut base_text);
-        let base_text_snapshot =
-            Buffer::build_snapshot_sync(Rope::from(&base_text), None, None, cx);
-        let inner = cx.foreground_executor().block_on(this.update_diff(
-            buffer.clone(),
-            Some((Arc::from(base_text), base_text_snapshot)),
-            cx,
-        ));
-        this.set_snapshot(inner, cx);
-        this
+        cx: &mut App,
+    ) -> (Entity<Self>, Entity<language::Buffer>) {
+        let mut normalized_base_text = base_text.to_owned();
+        text::LineEnding::normalize(&mut normalized_base_text);
+        let base_text_buffer = cx.new(|cx| {
+            let mut buf = language::Buffer::local(&normalized_base_text, cx);
+            buf.set_capability(language::Capability::ReadOnly, cx);
+            buf
+        });
+        let base_text_snapshot = base_text_buffer.read(cx).snapshot();
+        let base_text_arc = Arc::from(normalized_base_text);
+        let diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(buffer, cx);
+            let inner = cx.foreground_executor().block_on(diff.update_diff(
+                buffer.clone(),
+                Some((base_text_arc, base_text_snapshot)),
+                cx,
+            ));
+            diff.set_snapshot(inner, cx);
+            diff
+        });
+        (diff, base_text_buffer)
     }
 
     pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>) {
@@ -1876,7 +1883,7 @@ impl BufferDiff {
         rx
     }
 
-    pub fn base_text_string(&self, cx: &App) -> Option<String> {
+    pub fn base_text_string(&self) -> Option<String> {
         self.inner
             .base_text
             .as_ref()
@@ -2492,14 +2499,12 @@ mod tests {
             let hunk_range =
                 snapshot.anchor_before(ranges[0].start)..snapshot.anchor_before(ranges[0].end);
 
-            let unstaged_diff =
-                cx.new(|cx| BufferDiff::new_with_base_text(&example.index_text, &snapshot, cx));
+            let (unstaged_diff, _) =
+                cx.update(|cx| BufferDiff::new_with_base_text(&example.index_text, &snapshot, cx));
 
-            let uncommitted_diff = cx.new(|cx| {
-                let mut diff = BufferDiff::new_with_base_text(&example.head_text, &snapshot, cx);
-                diff.set_secondary_diff(unstaged_diff);
-                diff
-            });
+            let (uncommitted_diff, _) =
+                cx.update(|cx| BufferDiff::new_with_base_text(&example.head_text, &snapshot, cx));
+            uncommitted_diff.update(cx, |diff, _cx| diff.set_secondary_diff(unstaged_diff));
 
             uncommitted_diff.update(cx, |diff, cx| {
                 let hunks = diff
@@ -2594,12 +2599,11 @@ mod tests {
         let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
         let snapshot = buffer.read_with(cx, |b, _| b.snapshot());
 
-        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &snapshot, cx));
-        let uncommitted_diff = cx.new(|cx| {
-            let mut diff = BufferDiff::new_with_base_text(&head_text, &snapshot, cx);
-            diff.set_secondary_diff(unstaged_diff);
-            diff
-        });
+        let (unstaged_diff, _) =
+            cx.update(|cx| BufferDiff::new_with_base_text(&index_text, &snapshot, cx));
+        let (uncommitted_diff, _) =
+            cx.update(|cx| BufferDiff::new_with_base_text(&head_text, &snapshot, cx));
+        uncommitted_diff.update(cx, |diff, _cx| diff.set_secondary_diff(unstaged_diff));
 
         uncommitted_diff.update(cx, |diff, cx| {
             diff.stage_or_unstage_all_hunks(true, &snapshot, true, cx);
@@ -2631,12 +2635,11 @@ mod tests {
         let buffer = cx.new(|cx| language::Buffer::local(buffer_text.to_string(), cx));
         let snapshot = buffer.read_with(cx, |b, _| b.snapshot());
 
-        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(index_text, &snapshot, cx));
-        let uncommitted_diff = cx.new(|cx| {
-            let mut diff = BufferDiff::new_with_base_text(head_text, &snapshot, cx);
-            diff.set_secondary_diff(unstaged_diff);
-            diff
-        });
+        let (unstaged_diff, _) =
+            cx.update(|cx| BufferDiff::new_with_base_text(index_text, &snapshot, cx));
+        let (uncommitted_diff, _) =
+            cx.update(|cx| BufferDiff::new_with_base_text(head_text, &snapshot, cx));
+        uncommitted_diff.update(cx, |diff, _cx| diff.set_secondary_diff(unstaged_diff));
 
         // Edit the buffer in the region between the unstaged hunk end (offset 8)
         // and the primary hunk end (offset 12). This shifts the primary hunk end
@@ -2668,11 +2671,12 @@ mod tests {
 
         let buffer = cx.new(|cx| language::Buffer::local(buffer_text.clone(), cx));
         let snapshot = buffer.read_with(cx, |b, _| b.snapshot());
-        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(&index_text, &snapshot, cx));
-        let uncommitted_diff = cx.new(|cx| {
-            let mut diff = BufferDiff::new_with_base_text(&head_text, &snapshot, cx);
-            diff.set_secondary_diff(unstaged_diff.clone());
-            diff
+        let (unstaged_diff, _) =
+            cx.update(|cx| BufferDiff::new_with_base_text(&index_text, &snapshot, cx));
+        let (uncommitted_diff, _) =
+            cx.update(|cx| BufferDiff::new_with_base_text(&head_text, &snapshot, cx));
+        uncommitted_diff.update(cx, |diff, _cx| {
+            diff.set_secondary_diff(unstaged_diff.clone())
         });
 
         uncommitted_diff.update(cx, |diff, cx| {
@@ -3138,14 +3142,13 @@ mod tests {
             head_text: String,
             cx: &mut TestAppContext,
         ) -> Entity<BufferDiff> {
-            let secondary = cx.new(|cx| {
+            let (secondary, _) = cx.update(|cx| {
                 BufferDiff::new_with_base_text(&index_text.to_string(), working_copy, cx)
             });
-            cx.new(|cx| {
-                let mut diff = BufferDiff::new_with_base_text(&head_text, working_copy, cx);
-                diff.secondary_diff = Some(secondary);
-                diff
-            })
+            let (diff, _) =
+                cx.update(|cx| BufferDiff::new_with_base_text(&head_text, working_copy, cx));
+            diff.update(cx, |diff, _cx| diff.secondary_diff = Some(secondary));
+            diff
         }
 
         let operations = std::env::var("OPERATIONS")
@@ -3253,8 +3256,9 @@ mod tests {
         "
         .unindent();
         let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
-        let diff = cx
-            .new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).snapshot(), cx));
+        let (diff, _) = cx.update(|cx| {
+            BufferDiff::new_with_base_text(&base_text, &buffer.read(cx).snapshot(), cx)
+        });
         cx.run_until_parked();
         let (tx, rx) = mpsc::channel();
         let subscription =

@@ -142,7 +142,7 @@ impl ExcerptAnchor {
 
         if (self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some())
             && let Some(base_text) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                .map(|diff| diff.base_text())
+                .and_then(|diff| diff.base_text())
         {
             let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
             let other_anchor = other.diff_base_anchor.filter(|a| a.is_valid(base_text));
@@ -174,9 +174,10 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor.is_valid(&diff.base_text())
+                && let Some(base_text) = diff.base_text()
+                && diff_base_anchor.is_valid(&base_text)
             {
-                ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
+                ret.with_diff_base_anchor(diff_base_anchor.bias_left(base_text))
             } else {
                 ret.with_diff_base_anchor(diff_base_anchor)
             }
@@ -196,9 +197,10 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor.is_valid(&diff.base_text())
+                && let Some(base_text) = diff.base_text()
+                && diff_base_anchor.is_valid(&base_text)
             {
-                ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))
+                ret.with_diff_base_anchor(diff_base_anchor.bias_right(base_text))
             } else {
                 ret.with_diff_base_anchor(diff_base_anchor)
             }

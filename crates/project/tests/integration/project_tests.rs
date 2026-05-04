@@ -8986,7 +8986,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let unstaged_diff = project
+    let (unstaged_diff, _) = project
         .update(cx, |project, cx| {
             project.open_unstaged_diff(buffer.clone(), cx)
         })
@@ -8999,7 +8999,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &unstaged_diff.base_text_string(cx).unwrap(),
+            &unstaged_diff.base_text_string().unwrap(),
             &[
                 (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
@@ -9030,7 +9030,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 &snapshot,
             ),
             &snapshot,
-            &unstaged_diff.base_text_string(cx).unwrap_or_default(),
+            &unstaged_diff.base_text_string().unwrap_or_default(),
             &[(
                 2..3,
                 "",
@@ -9104,13 +9104,13 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let diff_1 = project
+    let (diff_1, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer_1.clone(), cx)
         })
         .await
         .unwrap();
-    diff_1.read_with(cx, |diff, cx| {
+    diff_1.read_with(cx, |diff, _| {
         assert_eq!(
             diff.base_text().unwrap().language().cloned(),
             Some(language)
@@ -9125,7 +9125,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 &snapshot,
             ),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..1,
@@ -9169,7 +9169,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 &snapshot,
             ),
             &snapshot,
-            &diff.base_text_string(cx).unwrap_or_default(),
+            &diff.base_text_string().unwrap_or_default(),
             &[(
                 2..3,
                 "",
@@ -9186,7 +9186,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let diff_2 = project
+    let (diff_2, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer_2.clone(), cx)
         })
@@ -9201,7 +9201,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 &snapshot,
             ),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -9225,7 +9225,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 &snapshot,
             ),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 0..0,
                 "// the-deleted-contents\n",
@@ -9283,7 +9283,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let uncommitted_diff = project
+    let (uncommitted_diff, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
         })
@@ -9296,7 +9296,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9334,7 +9334,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9384,7 +9384,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9442,7 +9442,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9489,7 +9489,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9542,7 +9542,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9572,7 +9572,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -9630,7 +9630,7 @@ async fn test_uncommitted_diff_opened_before_unstaged_diff(cx: &mut gpui::TestAp
     });
     let (uncommitted_diff, _unstaged_diff) =
         futures::future::join(uncommitted_diff_task, unstaged_diff_task).await;
-    let uncommitted_diff = uncommitted_diff.unwrap();
+    let (uncommitted_diff, _) = uncommitted_diff.unwrap();
     let _unstaged_diff = _unstaged_diff.unwrap();
 
     cx.run_until_parked();
@@ -9643,7 +9643,7 @@ async fn test_uncommitted_diff_opened_before_unstaged_diff(cx: &mut gpui::TestAp
                 &snapshot,
             ),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "two\n",
@@ -9706,7 +9706,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         .await
         .unwrap();
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let uncommitted_diff = project
+    let (uncommitted_diff, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
         })
@@ -9718,7 +9718,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9752,7 +9752,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9784,7 +9784,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..0,
@@ -9828,7 +9828,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
                 (
@@ -9900,7 +9900,7 @@ async fn test_staging_random_hunks(
         .await
         .unwrap();
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let uncommitted_diff = project
+    let (uncommitted_diff, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
         })
@@ -10015,7 +10015,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let uncommitted_diff = project
+    let (uncommitted_diff, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
         })
@@ -10028,7 +10028,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &uncommitted_diff.base_text_string(cx).unwrap(),
+            &uncommitted_diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
@@ -10083,7 +10083,7 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
 
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-    let uncommitted_diff = project
+    let (uncommitted_diff, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
         })
@@ -10166,7 +10166,7 @@ async fn test_staging_preserves_line_ending(cx: &mut gpui::TestAppContext) {
             .await
             .unwrap();
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-        let uncommitted_diff = project
+        let (uncommitted_diff, _) = project
             .update(cx, |project, cx| {
                 project.open_uncommitted_diff(buffer.clone(), cx)
             })
@@ -10197,7 +10197,7 @@ async fn test_staging_preserves_line_ending(cx: &mut gpui::TestAppContext) {
             .await
             .unwrap();
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-        let uncommitted_diff = project
+        let (uncommitted_diff, _) = project
             .update(cx, |project, cx| {
                 project.open_uncommitted_diff(buffer.clone(), cx)
             })
@@ -12340,7 +12340,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
         buffer.edit([(0..buffer.len(), buffer_contents.as_str())], None, cx);
     });
 
-    let unstaged_diff = project
+    let (unstaged_diff, _) = project
         .update(cx, |project, cx| {
             project.open_unstaged_diff(buffer.clone(), cx)
         })
@@ -12350,7 +12350,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     cx.run_until_parked();
 
     unstaged_diff.update(cx, |unstaged_diff, cx| {
-        let base_text = unstaged_diff.base_text_string(cx).unwrap();
+        let base_text = unstaged_diff.base_text_string().unwrap();
         assert_eq!(base_text, file_1_staged, "Should start with file_1 staged");
     });
 
@@ -12374,7 +12374,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     // the `BufferChangedFilePath` event being handled.
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
-        let base_text = unstaged_diff.base_text_string(cx).unwrap();
+        let base_text = unstaged_diff.base_text_string().unwrap();
         assert_eq!(
             base_text, file_2_staged,
             "Diff bases should be automatically updated to file_2 staged content"
@@ -12384,7 +12384,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
         assert!(!hunks.is_empty(), "Should have diff hunks for file_2");
     });
 
-    let uncommitted_diff = project
+    let (uncommitted_diff, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
         })
@@ -12394,7 +12394,7 @@ async fn test_buffer_changed_file_path_updates_git_diff(cx: &mut gpui::TestAppCo
     cx.run_until_parked();
 
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-        let base_text = uncommitted_diff.base_text_string(cx).unwrap();
+        let base_text = uncommitted_diff.base_text_string().unwrap();
         assert_eq!(
             base_text, file_2_committed,
             "Uncommitted diff should compare against file_2 committed content"
@@ -13111,7 +13111,7 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let uncommitted_diff = project
+    let (uncommitted_diff, _) = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
         })
@@ -13123,7 +13123,7 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "two\n",
@@ -13164,7 +13164,7 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "two\n",
@@ -13183,7 +13183,7 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "two\n",
@@ -13208,7 +13208,7 @@ async fn test_optimistic_hunks_in_staged_files(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
-            &diff.base_text_string(cx).unwrap(),
+            &diff.base_text_string().unwrap(),
             &[] as &[(Range<u32>, &str, &str, DiffHunkStatus)],
         );
     });

@@ -27415,7 +27415,7 @@ fn update_uncommitted_diff_for_buffer(
         }
 
         buffer.update(cx, |buffer, cx| {
-            for diff in diffs.into_iter().flatten() {
+            for (diff, _) in diffs.into_iter().flatten() {
                 buffer.add_diff(diff, cx);
             }
         });

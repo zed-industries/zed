@@ -4631,10 +4631,10 @@ mod tests {
         let main_text = "aaa\nddd\nddd\nddd\nXXX\nYYY\nZZZ\neee\n";
 
         let rhs_buffer = cx.new(|cx| Buffer::local(main_text, cx));
-        let diff = cx.new(|cx| {
-            BufferDiff::new_with_base_text(base_text, &rhs_buffer.read(cx).text_snapshot(), cx)
+        let (diff, lhs_buffer) = cx.update(|cx| {
+            BufferDiff::new_with_base_text(base_text, &rhs_buffer.read(cx).snapshot(), cx)
         });
-        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+        let lhs_buffer_id = lhs_buffer.read_with(cx, |buf, _| buf.remote_id());
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
@@ -4644,7 +4644,7 @@ mod tests {
                 0,
                 cx,
             );
-            mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
+            mb.add_inverted_diff(diff.clone(), lhs_buffer_id, rhs_buffer.clone(), cx);
             mb
         });
         let rhs_multibuffer = cx.new(|cx| {

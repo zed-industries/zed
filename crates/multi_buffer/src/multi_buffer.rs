@@ -57,6 +57,7 @@ use text::{
 };
 use theme::SyntaxTheme;
 use unicode_segmentation::UnicodeSegmentation;
+use util::debug_panic;
 use ztracing::instrument;
 
 pub use self::path_key::PathKey;
@@ -615,6 +616,7 @@ impl DiffState {
                     changed_range,
                     base_text_changed_range: _,
                     extended_range,
+                    base_text_changed: _,
                 }) => {
                     let use_extended = this.snapshot.borrow().use_extended_diff_range;
                     let range = if use_extended {
@@ -637,6 +639,7 @@ impl DiffState {
 
     fn new_inverted(
         diff: Entity<BufferDiff>,
+        base_text_buffer_id: BufferId,
         main_buffer: Entity<language::Buffer>,
         cx: &mut Context<MultiBuffer>,
     ) -> Self {
@@ -652,17 +655,16 @@ impl DiffState {
                             changed_range: _,
                             base_text_changed_range,
                             extended_range: _,
+                            base_text_changed: _,
                         }) => {
                             this.inverted_buffer_diff_changed(
                                 diff,
+                                base_text_buffer_id,
                                 main_buffer,
                                 base_text_changed_range.clone(),
                                 cx,
                             );
                             cx.emit(Event::BufferDiffChanged);
-                        }
-                        BufferDiffEvent::LanguageChanged => {
-                            this.inverted_buffer_diff_language_changed(diff, main_buffer, cx)
                         }
                         _ => {}
                     }
@@ -1984,23 +1986,6 @@ impl MultiBuffer {
         self.snapshot.get_mut().diffs.insert_or_replace(diff, ());
     }
 
-    fn inverted_buffer_diff_language_changed(
-        &mut self,
-        diff: Entity<BufferDiff>,
-        main_buffer: Entity<language::Buffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
-        let main_buffer_snapshot = main_buffer.read(cx).snapshot();
-        let diff = diff.read(cx);
-        let diff = DiffStateSnapshot {
-            buffer_id: base_text_buffer_id,
-            diff: diff.snapshot(cx),
-            main_buffer: Some(main_buffer_snapshot),
-        };
-        self.snapshot.get_mut().diffs.insert_or_replace(diff, ());
-    }
-
     fn buffer_diff_changed(
         &mut self,
         diff: Entity<BufferDiff>,
@@ -2051,13 +2036,13 @@ impl MultiBuffer {
     fn inverted_buffer_diff_changed(
         &mut self,
         diff: Entity<BufferDiff>,
+        base_text_buffer_id: BufferId,
         main_buffer: Entity<language::Buffer>,
         diff_change_range: Option<Range<usize>>,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.sync_mut(cx);
 
-        let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
         let Some(path) = snapshot.path_for_buffer(base_text_buffer_id).cloned() else {
             return;
         };
@@ -2248,22 +2233,25 @@ impl MultiBuffer {
     pub fn add_inverted_diff(
         &mut self,
         diff: Entity<BufferDiff>,
+        base_text_buffer_id: BufferId,
         main_buffer: Entity<language::Buffer>,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = diff.read(cx).base_text(cx);
-        let base_text_buffer_id = snapshot.remote_id();
+        let Some(snapshot) = diff.read(cx).base_text() else {
+            return;
+        };
         let diff_change_range = 0..snapshot.len();
         self.snapshot.get_mut().has_inverted_diff = true;
         self.inverted_buffer_diff_changed(
             diff.clone(),
+            base_text_buffer_id,
             main_buffer.clone(),
             Some(diff_change_range),
             cx,
         );
         self.diffs.insert(
             base_text_buffer_id,
-            DiffState::new_inverted(diff, main_buffer, cx),
+            DiffState::new_inverted(diff, base_text_buffer_id, main_buffer, cx),
         );
     }
 
@@ -2521,11 +2509,17 @@ impl MultiBuffer {
                     if existing_diff.main_buffer.is_none() {
                         return false;
                     }
-                    let base_text = diff.diff.read(cx).base_text_buffer().read(cx);
-                    base_text.remote_id() != existing_diff.base_text().remote_id()
-                        || base_text
-                            .version()
-                            .changed_since(existing_diff.base_text().version())
+                    let base_text = diff.diff.read(cx).base_text();
+                    match (existing_diff.base_text(), base_text) {
+                        (Some(existing_base_text), Some(base_text)) => {
+                            base_text.remote_id() != existing_base_text.remote_id()
+                                || base_text
+                                    .version()
+                                    .changed_since(existing_base_text.version())
+                        }
+                        (Some(_), None) | (None, Some(_)) => true,
+                        (None, None) => false,
+                    }
                 }) {
                     if diffs_to_add.capacity() == 0 {
                         diffs_to_add.reserve(diffs.len());
@@ -2945,8 +2939,8 @@ impl MultiBuffer {
                                 && hunk_buffer_range.start >= edit_buffer_start
                                 && hunk_buffer_range.start <= excerpt_buffer_end
                                 && snapshot.show_deleted_hunks
+                                && let Some(base_text) = diff.base_text()
                             {
-                                let base_text = diff.base_text();
                                 let mut text_cursor =
                                     base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
                                 let mut base_text_summary = text_cursor
@@ -4609,7 +4603,9 @@ impl MultiBufferSnapshot {
             } => {
                 let buffer_start = base_text_byte_range.start + start_overshoot;
                 let mut buffer_end = base_text_byte_range.start + end_overshoot;
-                let Some(base_text) = self.diff_state(*buffer_id).map(|diff| diff.base_text())
+                let Some(base_text) = self
+                    .diff_state(*buffer_id)
+                    .and_then(|diff| diff.base_text())
                 else {
                     panic!("{:?} is in non-existent deleted hunk", range.start)
                 };
@@ -4662,7 +4658,9 @@ impl MultiBufferSnapshot {
                 ..
             } => {
                 let buffer_end = base_text_byte_range.start + overshoot;
-                let Some(base_text) = self.diff_state(*buffer_id).map(|diff| diff.base_text())
+                let Some(base_text) = self
+                    .diff_state(*buffer_id)
+                    .and_then(|diff| diff.base_text())
                 else {
                     panic!("{:?} is in non-existent deleted hunk", range.end)
                 };
@@ -4883,8 +4881,8 @@ impl MultiBufferSnapshot {
                     ..
                 }) => {
                     if let Some(diff_base_anchor) = anchor.diff_base_anchor
-                        && let Some(base_text) =
-                            self.diff_state(*buffer_id).map(|diff| diff.base_text())
+                        && let Some(diff_state) = self.diff_state(*buffer_id)
+                        && let Some(base_text) = diff_state.base_text()
                         && diff_base_anchor.is_valid(&base_text)
                     {
                         // The anchor carries a diff-base position — resolve it
@@ -5210,12 +5208,14 @@ impl MultiBufferSnapshot {
             if offset_in_transform > base_text_byte_range.len() {
                 debug_assert!(*has_trailing_newline);
                 bias = Bias::Right;
-            } else {
+            } else if let Some(base_text) = diff.base_text() {
                 diff_base_anchor = Some(
-                    diff.base_text()
-                        .anchor_at(base_text_byte_range.start + offset_in_transform, bias),
+                    base_text.anchor_at(base_text_byte_range.start + offset_in_transform, bias),
                 );
                 bias = Bias::Left;
+            } else {
+                debug_panic!("missing base text");
+                bias = Bias::Right;
             }
         } else {
             excerpt_offset += MultiBufferOffset(offset_in_transform);
@@ -7079,7 +7079,7 @@ where
                 ..
             } => {
                 let diff = find_diff_state(&self.snapshot.diffs, *buffer_id)?;
-                let buffer = diff.base_text();
+                let buffer = diff.base_text()?;
                 let mut rope_cursor = buffer.as_rope().cursor(0);
                 let buffer_start = rope_cursor.summary::<BD>(base_text_byte_range.start);
                 let buffer_range_len = rope_cursor.summary::<BD>(base_text_byte_range.end);
@@ -7990,7 +7990,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     chunks
                 } else {
                     let base_buffer =
-                        &find_diff_state(&self.snapshot.diffs, *buffer_id)?.base_text();
+                        &find_diff_state(&self.snapshot.diffs, *buffer_id)?.base_text()?;
                     base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
                 };
 

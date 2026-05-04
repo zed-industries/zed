@@ -207,7 +207,7 @@ async fn collect_snapshots(
                         project.open_buffer(project_path.clone(), cx)
                     })
                     .await?;
-                let diff = git_store
+                let (diff, _) = git_store
                     .update(cx, |git_store, cx| {
                         git_store.open_uncommitted_diff(buffer.clone(), cx)
                     })

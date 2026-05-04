@@ -371,11 +371,12 @@ impl BranchDiff {
                     })?
                     .await?
             } else {
-                project
+                let (changes, _buffer) = project
                     .update(cx, |project, cx| {
                         project.open_uncommitted_diff(buffer.clone(), cx)
                     })?
-                    .await?
+                    .await?;
+                changes
             };
             Ok((buffer, changes))
         });

@@ -2339,6 +2339,7 @@ impl ThreadView {
                                     .size(IconSize::Small)
                             });
 
+                        // todo!() don't calculate this every frame
                         let file_stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
 
                         let buttons = self.render_edited_files_buttons(
