@@ -1435,10 +1435,43 @@ impl GitRepository for FakeGitRepository {
     fn search_commits(
         &self,
         _log_source: LogSource,
-        _search_args: SearchCommitArgs,
-        _request_tx: Sender<Oid>,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
-        async { bail!("search_commits not supported for FakeGitRepository") }.boxed()
+        async move {
+            let query = if search_args.case_sensitive {
+                search_args.query.to_string()
+            } else {
+                search_args.query.to_lowercase()
+            };
+
+            let matching_shas = self.fs.with_git_state(&self.dot_git_path, false, |state| {
+                state
+                    .commit_data
+                    .iter()
+                    .filter_map(|(sha, entry)| {
+                        let FakeCommitDataEntry::Success(commit_data) = entry else {
+                            return None;
+                        };
+                        let message = if search_args.case_sensitive {
+                            commit_data.message.to_string()
+                        } else {
+                            commit_data.message.to_lowercase()
+                        };
+                        message.contains(&query).then_some(*sha)
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+
+            for sha in matching_shas {
+                if request_tx.send(sha).await.is_err() {
+                    break;
+                }
+            }
+
+            Ok(())
+        }
+        .boxed()
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {

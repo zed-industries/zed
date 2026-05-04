@@ -693,3 +693,26 @@ message CommitData {
 message GetCommitDataResponse {
   repeated CommitData commits = 1;
 }
+
+message GitLogSourceAll {}
+
+message GitLogSource {
+  oneof source {
+    GitLogSourceAll all = 1;
+    string branch = 2;
+    string sha = 3;
+    string path = 4;
+  }
+}
+
+message SearchCommits {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  GitLogSource log_source = 3;
+  string query = 4;
+  bool case_sensitive = 5;
+}
+
+message SearchCommitsResponse {
+  repeated string shas = 1;
+}
