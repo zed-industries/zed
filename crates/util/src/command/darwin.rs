@@ -349,7 +349,21 @@ fn spawn_posix_spawn(
     stderr_cfg: Stdio,
     kill_on_drop: bool,
 ) -> io::Result<Child> {
-    let program_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
+    // posix_spawnp resolves programs against the parent's cwd/PATH, not the child's.
+    let program_cstr = CString::new(if program.as_bytes().contains(&b'/') {
+        Path::new(current_dir).join(program).into_os_string().into_vec()
+    } else {
+        envs.and_then(|e| {
+            e.iter()
+                .find(|(k, _)| k.as_os_str() == OsStr::new("PATH"))
+                .and_then(|(_, v)| which::which_in(program, Some(v.as_os_str()), current_dir).ok())
+        })
+        .map_or_else(
+            || program.as_bytes().to_vec(),
+            |path| path.into_os_string().into_vec(),
+        )
+    })
+    .map_err(|_| invalid_input_error())?;
 
     let current_dir_cstr =
         CString::new(current_dir.as_os_str().as_bytes()).map_err(|_| invalid_input_error())?;
@@ -828,6 +842,77 @@ mod tests {
             let output = child.output().await.expect("failed to get output");
             assert!(output.status.success());
             assert_eq!(output.stdout, b"piped input");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_resolved_via_custom_path() {
+        let temp_dir = std::temp::tempdir().expect("failed to create temp dir");
+
+        let link_path = temp_dir.path().join("zed-test-echo");
+        std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
+
+        let custom_path = temp_dir.path().to_string_lossy().into_owned();
+
+        smol::block_on(async {
+            let output = Command::new("zed-test-echo")
+                .args(["-n", "from-custom-path"])
+                .env("PATH", &custom_path)
+                .output()
+                .await
+                .expect("failed to spawn with custom PATH");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-custom-path");
+        });
+    }
+
+    #[test]
+    fn test_bare_program_with_custom_path_falls_back_when_not_found() {
+        smol::block_on(async {
+            let result = Command::new("zed-nonexistent-binary-xyz")
+                .env("PATH", "/nonexistent/path")
+                .spawn();
+
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_bare_program_with_custom_env_no_path_key() {
+        smol::block_on(async {
+            let output = Command::new("echo")
+                .args(["-n", "from-inherited-path"])
+                .env("ZED_TEST_VAR", "test")
+                .output()
+                .await
+                .expect("failed to spawn with custom env but no PATH override");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-inherited-path");
+        });
+    }
+
+    #[test]
+    fn test_relative_path_skips_resolution() {
+        let temp_dir = std::temp::tempdir().expect("failed to create temp dir");
+
+        let link_path = temp_dir.path().join("zed-test-echo");
+        std::os::unix::fs::symlink("/bin/echo", &link_path).expect("failed to create symlink");
+
+        let relative_path = "./zed-test-echo";
+
+        smol::block_on(async {
+            let output = Command::new(relative_path)
+                .args(["-n", "from-relative-path"])
+                .current_dir(temp_dir.path())
+                .env("PATH", "/nonexistent/path")
+                .output()
+                .await
+                .expect("failed to spawn with relative path");
+
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"from-relative-path");
         });
     }
 }
