@@ -566,7 +566,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 mod tests {
     use super::*;
     use futures::{future::BoxFuture, stream::BoxStream};
-    use gpui::{AsyncApp, TestAppContext, http_client};
+    use gpui::{AsyncApp, TestAppContext};
     use language_model::{
         LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
         LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
@@ -628,14 +628,6 @@ mod tests {
 
         fn max_token_count(&self) -> u64 {
             1000
-        }
-
-        fn count_tokens(
-            &self,
-            _: LanguageModelRequest,
-            _: &App,
-        ) -> BoxFuture<'static, http_client::Result<u64>> {
-            unimplemented!()
         }
 
         fn stream_completion(

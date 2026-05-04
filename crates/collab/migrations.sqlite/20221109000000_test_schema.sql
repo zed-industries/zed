@@ -112,6 +112,8 @@ CREATE TABLE "project_repositories" (
     "remote_upstream_url" VARCHAR,
     "remote_origin_url" VARCHAR,
     "linked_worktrees" VARCHAR,
+    "repository_dir_abs_path" VARCHAR,
+    "common_dir_abs_path" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 

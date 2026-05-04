@@ -132,19 +132,17 @@ impl Element for Anchored {
             return;
         }
 
-        let mut child_min = point(Pixels::MAX, Pixels::MAX);
-        let mut child_max = Point::default();
-        for child_layout_id in &request_layout.child_layout_ids {
-            let child_bounds = window.layout_bounds(*child_layout_id);
-            child_min = child_min.min(&child_bounds.origin);
-            child_max = child_max.max(&child_bounds.bottom_right());
-        }
-        let size: Size<Pixels> = (child_max - child_min).into();
+        let children_bounds = request_layout
+            .child_layout_ids
+            .iter()
+            .map(|id| window.layout_bounds(*id))
+            .reduce(|acc, bounds| acc.union(&bounds))
+            .unwrap();
 
         let (origin, mut desired) = self.position_mode.get_position_and_bounds(
             self.anchor_position,
             self.anchor,
-            size,
+            children_bounds.size,
             bounds,
             self.offset,
         );
@@ -161,7 +159,7 @@ impl Element for Anchored {
                 let switched = Bounds::from_anchor_and_size(
                     anchor.other_side_along(Axis::Horizontal),
                     origin,
-                    size,
+                    children_bounds.size,
                 );
                 if !(switched.left() < limits.left() || switched.right() > limits.right()) {
                     anchor = anchor.other_side_along(Axis::Horizontal);
@@ -173,7 +171,7 @@ impl Element for Anchored {
                 let switched = Bounds::from_anchor_and_size(
                     anchor.other_side_along(Axis::Vertical),
                     origin,
-                    size,
+                    children_bounds.size,
                 );
                 if !(switched.top() < limits.top() || switched.bottom() > limits.bottom()) {
                     desired = switched;
@@ -287,5 +285,114 @@ impl AnchoredPositionMode {
                 (anchor_position, bounds)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Context, Pixels, PlatformInput, Point, TestAppContext, Window, deferred, div, point,
+        prelude::*, px, size,
+    };
+
+    struct AnchoredTestView {
+        position: Point<Pixels>,
+    }
+
+    impl Render for AnchoredTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .id("scroll-container")
+                    .overflow_y_scroll()
+                    .size_full()
+                    .child(div().h(px(2000.)).w_full())
+                    .child(
+                        deferred(
+                            super::anchored()
+                                .snap_to_window()
+                                .position(self.position)
+                                .child(
+                                    div()
+                                        .id("menu")
+                                        .debug_selector(|| "MENU".into())
+                                        .w(px(200.))
+                                        .h(px(300.)),
+                                ),
+                        )
+                        .with_priority(1),
+                    ),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_anchored_position_without_scroll(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
+            position: point(px(100.), px(100.)),
+        });
+
+        cx.run_until_parked();
+
+        let menu_bounds = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.debug_bounds.get("MENU").copied()
+            })
+            .unwrap()
+            .expect("MENU debug bounds not found");
+
+        assert_eq!(menu_bounds.origin, point(px(100.), px(100.)));
+        assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
+    }
+
+    #[gpui::test]
+    fn test_anchored_position_when_scrolled(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
+            position: point(px(100.), px(100.)),
+        });
+
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, cx| {
+                let event = gpui::ScrollWheelEvent {
+                    position: point(px(400.), px(300.)),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                    ..Default::default()
+                };
+                window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let menu_bounds = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.debug_bounds.get("MENU").copied()
+            })
+            .unwrap()
+            .expect("MENU debug bounds not found");
+
+        assert_eq!(menu_bounds.origin, point(px(100.), px(100.)));
+        assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
+    }
+
+    #[gpui::test]
+    fn test_anchored_snaps_to_window(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
+            position: point(px(100.), px(500.)),
+        });
+
+        cx.run_until_parked();
+
+        let menu_bounds = window
+            .update(cx, |_, window, _| {
+                window.rendered_frame.debug_bounds.get("MENU").copied()
+            })
+            .unwrap()
+            .expect("MENU debug bounds not found");
+
+        assert_eq!(menu_bounds.origin, point(px(100.), px(300.)));
+        assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
     }
 }

@@ -16,6 +16,7 @@ use buffer_diff::{
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, IndexSet};
+use futures_lite::future::yield_now;
 use gpui::{App, Context, Entity, EventEmitter};
 use itertools::Itertools;
 use language::{
@@ -33,7 +34,6 @@ use gpui::AppContext as _;
 use rope::DimensionPair;
 use settings::Settings;
 use smallvec::SmallVec;
-use smol::future::yield_now;
 use std::{
     any::type_name,
     borrow::Cow,
@@ -3575,10 +3575,7 @@ impl MultiBufferSnapshot {
                     continue 'anchors;
                 };
                 cursor.seek_forward(path, Bias::Left);
-                'excerpts: loop {
-                    let Some(excerpt) = cursor.item() else {
-                        break;
-                    };
+                'excerpts: while let Some(excerpt) = cursor.item() {
                     if excerpt.path_key != *path {
                         break;
                     }
@@ -3636,6 +3633,7 @@ impl MultiBufferSnapshot {
         result
     }
 
+    /// Callers should not provide a range where `end < start`
     pub fn range_to_buffer_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -3647,6 +3645,7 @@ impl MultiBufferSnapshot {
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
+        let range_non_empty = end > start;
         cursor.seek(&start);
 
         let mut result: Vec<(
@@ -3655,7 +3654,7 @@ impl MultiBufferSnapshot {
             ExcerptRange<text::Anchor>,
         )> = Vec::new();
         while let Some(region) = cursor.region() {
-            if region.range.start >= end {
+            if region.range.start > end || (region.range.start == end && range_non_empty) {
                 break;
             }
             if region.is_main_buffer {

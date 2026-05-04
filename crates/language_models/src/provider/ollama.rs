@@ -363,7 +363,7 @@ impl OllamaLanguageModel {
                             MessageContent::ToolResult(tool_result) => {
                                 messages.push(ChatMessage::Tool {
                                     tool_name: tool_result.tool_name.to_string(),
-                                    content: tool_result.content.to_str().unwrap_or("").to_string(),
+                                    content: tool_result.text_contents(),
                                 })
                             }
                             _ => unreachable!("Only tool result should be extracted"),
@@ -491,23 +491,6 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // There is no endpoint for this _yet_ in Ollama
-        // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().chars().count())
-            .sum::<usize>()
-            / 4;
-
-        async move { Ok(token_count as u64) }.boxed()
     }
 
     fn stream_completion(

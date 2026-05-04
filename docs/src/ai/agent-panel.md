@@ -34,7 +34,26 @@ The sections below cover what you can do from here.
 
 By default, the Agent Panel uses Zed's first-party agent.
 
-To choose another agent, go to the plus button in the top-right of the Agent Panel and pick one of the [external agents](./external-agents.md) installed out of the box.
+Start a new thread with {#kb agent::NewThread}, or open the "New Thread…" menu via the `+` icon in the top-right of the panel toolbar (in the empty state, this menu is exposed as the agent selector button on the left). You can also open that menu with {#kb agent::ToggleNewThreadMenu}.
+
+From the "New Thread…" menu you can:
+
+- Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
+- Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
+
+{#action agent::NewExternalAgentThread} creates another thread with the currently selected agent.
+
+You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
+
+### Managing Multiple Threads {#multiple-threads}
+
+You can run multiple agent threads at once, each working independently with its own agent, context window, and conversation history. Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} to see all your threads grouped by project. Click any thread to switch to it, or use the thread switcher ({#kb agents_sidebar::ToggleThreadSwitcher}) to cycle between recent threads without opening the sidebar.
+
+Threads you're no longer working on can be archived by hovering over them in the sidebar and clicking the archive icon, or selecting them and pressing {#kb agent::ArchiveSelectedThread}. The Thread History holds all your threads across all projects, sorted chronologically, and you can restore them at any time.
+
+If two threads might edit the same files, you can isolate one in a new Git worktree. Use the worktree picker in the title bar to pick which worktree the agent runs in, or create a new one. See [Worktree Isolation](./parallel-agents.md#worktree-isolation) for details.
+
+For more details on the Threads Sidebar and managing multiple projects, see [Parallel Agents](./parallel-agents.md).
 
 ### Editing Messages {#editing-messages}
 
@@ -71,12 +90,7 @@ In long conversations, use the scroll arrow buttons at the bottom of the panel t
 
 When focus is in the message editor, you can also use {#kb agent::ScrollOutputPageUp}, {#kb agent::ScrollOutputPageDown}, {#kb agent::ScrollOutputToTop}, {#kb agent::ScrollOutputToBottom}, {#kb agent::ScrollOutputLineUp}, and {#kb agent::ScrollOutputLineDown} to navigate the thread, or {#kb agent::ScrollOutputToPreviousMessage} and {#kb agent::ScrollOutputToNextMessage} to jump between your prompts.
 
-### Navigating History {#navigating-history}
-
-To quickly navigate through recently updated threads, use the {#kb agent::ToggleNavigationMenu} binding when focused on the panel's editor, or click the menu icon button at the top right of the panel.
-Doing that will open a dropdown that shows you your six most recently updated threads.
-
-To view all historical conversations, reach for the `View All` option from within the same menu or via the {#kb agent::OpenHistory} binding.
+### Thread titles {#thread-titles}
 
 Thread titles are auto-generated based on the content of the conversation.
 But you can also edit them manually by clicking the title and typing, or regenerate them by clicking the "Regenerate Thread Title" button in the ellipsis menu in the top right of the panel.
