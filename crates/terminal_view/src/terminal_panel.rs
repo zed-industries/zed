@@ -1946,6 +1946,42 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_terminal_panel_starts_open_follows_setting(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    assert!(
+                        !terminal_panel.starts_open(window, cx),
+                        "terminal panel should not start open by default"
+                    );
+                });
+            })
+            .expect("Failed to read terminal panel starts_open default");
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().starts_open = Some(true);
+            });
+        });
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    assert!(
+                        terminal_panel.starts_open(window, cx),
+                        "terminal panel should start open when configured"
+                    );
+                });
+            })
+            .expect("Failed to read configured terminal panel starts_open");
+    }
+
+    #[gpui::test]
     async fn test_new_terminal_opens_in_panel_by_default(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
