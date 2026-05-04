@@ -869,7 +869,11 @@ impl Vim {
             let newest = editor
                 .selections
                 .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
-            editor.change_selections(Default::default(), window, cx, |s| {
+            let suppress_selected_text_highlight =
+                editor.selections.count() > 1 && !newest.is_empty();
+            let effects = SelectionEffects::default()
+                .suppress_selected_text_highlight(suppress_selected_text_highlight);
+            editor.change_selections(effects, window, cx, |s| {
                 s.select(vec![newest]);
             });
         });
@@ -884,23 +888,27 @@ impl Vim {
         Vim::take_count(cx);
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(Default::default(), window, cx, |s| {
-                let snapshot = s.display_snapshot();
-                let primary_selection_id = s.newest_anchor().id;
-                let mut selections = s.all::<MultiBufferOffset>(&snapshot);
-                if selections.len() <= 1 {
-                    return;
-                }
+            let snapshot = editor.display_snapshot(cx);
+            let primary_selection_id = editor.selections.newest_anchor().id;
+            let mut selections = editor.selections.all::<MultiBufferOffset>(&snapshot);
+            if selections.len() <= 1 {
+                return;
+            }
 
-                let Some(primary_index) = selections
-                    .iter()
-                    .position(|selection| selection.id == primary_selection_id)
-                else {
-                    return;
-                };
+            let Some(primary_index) = selections
+                .iter()
+                .position(|selection| selection.id == primary_selection_id)
+            else {
+                return;
+            };
 
-                selections.remove(primary_index);
-                let new_primary_index = primary_index.min(selections.len().saturating_sub(1));
+            selections.remove(primary_index);
+            let suppress_selected_text_highlight =
+                selections.len() == 1 && !selections[0].is_empty();
+            let new_primary_index = primary_index.min(selections.len().saturating_sub(1));
+            let effects = SelectionEffects::default()
+                .suppress_selected_text_highlight(suppress_selected_text_highlight);
+            editor.change_selections(effects, window, cx, |s| {
                 let new_primary_id = s.new_selection_id();
                 if let Some(selection) = selections.get_mut(new_primary_index) {
                     selection.id = new_primary_id;
@@ -1823,7 +1831,9 @@ struct HelixJumpUiData {
 mod test {
     use std::{fmt::Write, time::Duration};
 
-    use editor::{HighlightKey, MultiBufferOffset};
+    use editor::{
+        HighlightKey, MultiBufferOffset, SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SelectionEffects,
+    };
     use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::Point;
@@ -3146,6 +3156,45 @@ mod test {
         cx.assert_state("one «twoˇ» «threeˇ»", Mode::HelixNormal);
         cx.simulate_keystrokes(",");
         cx.assert_state("one «twoˇ» three", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_selection_reduction_suppresses_selected_text_highlight_once(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("«oneˇ» «oneˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes(",");
+        cx.assert_state("one «oneˇ»", Mode::HelixNormal);
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _, _| {
+            assert!(!editor.has_background_highlights(HighlightKey::SelectedTextHighlight));
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([Point::new(0, 0)..Point::new(0, 3)]);
+            });
+        });
+        cx.executor()
+            .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(1));
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _, _| {
+            assert!(editor.has_background_highlights(HighlightKey::SelectedTextHighlight));
+        });
+
+        cx.set_state("«oneˇ» «oneˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("alt-,");
+        cx.assert_state("«oneˇ» one", Mode::HelixNormal);
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _, _| {
+            assert!(!editor.has_background_highlights(HighlightKey::SelectedTextHighlight));
+        });
     }
 
     #[gpui::test]

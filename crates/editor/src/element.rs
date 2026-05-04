@@ -110,6 +110,9 @@ struct LineHighlightSpec {
     _active_stack_frame: bool,
 }
 
+const SECONDARY_LOCAL_CURSOR_OPACITY: f32 = 0.30;
+const SECONDARY_LOCAL_SELECTION_OPACITY: f32 = 0.45;
+
 #[derive(Debug)]
 struct SelectionLayout {
     head: DisplayPoint,
@@ -1932,8 +1935,7 @@ impl EditorElement {
                         }
                     }
 
-                    const SECONDARY_LOCAL_CURSOR_OPACITY: f32 = 0.45;
-                    let cursor_color = if editor.dim_secondary_local_cursors
+                    let cursor_color = if editor.dim_secondary_local_selections
                         && selection.is_local
                         && !selection.is_newest
                     {
@@ -3696,6 +3698,7 @@ impl EditorElement {
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
         base_background: Hsla,
+        dim_secondary_local_selections: bool,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -3706,9 +3709,13 @@ impl EditorElement {
         }
         let highlight_iter = highlight_ranges.iter().cloned();
         let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
-            let color = player_color.selection;
             layouts.iter().filter_map(move |selection_layout| {
                 if selection_layout.range.start != selection_layout.range.end {
+                    let color = Self::selection_background_color(
+                        player_color,
+                        selection_layout,
+                        dim_secondary_local_selections,
+                    );
                     Some((selection_layout.range.clone(), color))
                 } else {
                     None
@@ -3749,6 +3756,23 @@ impl EditorElement {
             *row_segments = merged;
         }
         per_row_map
+    }
+
+    fn selection_background_color(
+        player_color: &PlayerColor,
+        selection_layout: &SelectionLayout,
+        dim_secondary_local_selections: bool,
+    ) -> Hsla {
+        if dim_secondary_local_selections
+            && selection_layout.is_local
+            && !selection_layout.is_newest
+        {
+            player_color
+                .selection
+                .opacity(SECONDARY_LOCAL_SELECTION_OPACITY)
+        } else {
+            player_color.selection
+        }
     }
 
     /// Merge overlapping ranges by splitting at all range boundaries and blending colors where
@@ -6700,13 +6724,20 @@ impl EditorElement {
             } else {
                 Pixels::ZERO
             };
+            let dim_secondary_local_selections =
+                self.editor.read(cx).dim_secondary_local_selections;
 
             for (player_color, selections) in &layout.selections {
                 for selection in selections.iter() {
+                    let selection_background_color = Self::selection_background_color(
+                        player_color,
+                        selection,
+                        dim_secondary_local_selections,
+                    );
                     self.paint_highlighted_range(
                         selection.range.clone(),
                         true,
-                        player_color.selection,
+                        selection_background_color,
                         corner_radius,
                         corner_radius * 2.,
                         layout,
@@ -10436,6 +10467,7 @@ impl Element for EditorElement {
                         &selections,
                         &merged_highlighted_ranges,
                         self.style.background,
+                        self.editor.read(cx).dim_secondary_local_selections,
                     );
 
                     let mut line_layouts = Self::layout_lines(
@@ -13821,6 +13853,7 @@ mod tests {
                 &selections,
                 &[],
                 base_bg,
+                false,
             );
 
             assert_eq!(result.len(), 5);
@@ -13870,6 +13903,7 @@ mod tests {
                 &selections,
                 &[],
                 base_bg,
+                false,
             );
 
             assert_eq!(result.len(), 4);
