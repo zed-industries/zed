@@ -554,23 +554,24 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         let count = self.delegate.match_count();
-
-        if count > 0 {
-            let current_index = self.delegate.selected_index();
-            let page_start = self.visible_range.start;
-
-            if current_index > page_start {
-                // First press: jump to the first visible item on the current page
-                self.set_selected_index(page_start, Some(Direction::Down), true, window, cx);
-            } else {
-                // Already at or before the page boundary: scroll up a full page
-                let page_size = self.visible_range.len().max(1);
-                let scroll_target = page_start.saturating_sub(page_size);
-                self.scroll_item_index_to_top(scroll_target);
-                self.set_selected_index(scroll_target, Some(Direction::Down), false, window, cx);
-            }
-            cx.notify();
+        if count == 0 {
+            return;
         }
+
+        let current_index = self.delegate.selected_index();
+        let page_start = self.visible_range.start;
+
+        if current_index > (page_start + 1) {
+            // First press: jump to the first visible item on the current page.
+            self.set_selected_index(page_start, Some(Direction::Up), true, window, cx);
+        } else {
+            // Already at the top of the page: scroll up a full page.
+            let page_size = self.visible_range.len().max(1);
+            let target = current_index.saturating_sub(page_size);
+            self.scroll_item_index_to_top(target);
+            self.set_selected_index(target, Some(Direction::Up), true, window, cx);
+        }
+        cx.notify();
     }
 
     fn select_next_page(
@@ -580,29 +581,24 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         let count = self.delegate.match_count();
-
-        if count > 0 {
-            let current_index = self.delegate.selected_index();
-            let page_end = self.visible_range.end.saturating_sub(1).min(count - 1);
-
-            if current_index < page_end {
-                // First press: jump to the last visible item on the current page
-                self.set_selected_index(page_end, Some(Direction::Up), true, window, cx);
-            } else {
-                // Already at or past the page boundary: scroll down a full page
-                let page_size = self.visible_range.len().max(1);
-                let scroll_target = self.visible_range.end.min(count - 1);
-                self.scroll_item_index_to_top(scroll_target);
-                self.set_selected_index(
-                    (current_index + page_size).min(count - 1),
-                    Some(Direction::Down),
-                    false,
-                    window,
-                    cx,
-                );
-            }
-            cx.notify();
+        if count == 0 {
+            return;
         }
+
+        let current_index = self.delegate.selected_index();
+        let page_end = self.visible_range.end.saturating_sub(1).min(count - 1);
+
+        if current_index < page_end {
+            // First press: jump to the last visible item on the current page.
+            self.set_selected_index(page_end, Some(Direction::Down), true, window, cx);
+        } else {
+            // Already at the bottom of the page: scroll down a full page.
+            let page_size = self.visible_range.len().max(1);
+            let target = (current_index + page_size).min(count - 1);
+            self.scroll_item_index_to_top(target);
+            self.set_selected_index(target, Some(Direction::Down), true, window, cx);
+        }
+        cx.notify();
     }
 
     pub fn cycle_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
