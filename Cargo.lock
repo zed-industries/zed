@@ -31,7 +31,7 @@ dependencies = [
  "portable-pty",
  "project",
  "prompt_store",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "settings",
@@ -85,7 +85,7 @@ dependencies = [
  "log",
  "pretty_assertions",
  "project",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde_json",
  "settings",
  "telemetry",
@@ -190,7 +190,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "reqwest_client",
  "rust-embed",
@@ -405,7 +405,7 @@ dependencies = [
  "project",
  "prompt_store",
  "proto",
- "rand 0.9.3",
+ "rand 0.9.4",
  "release_channel",
  "remote",
  "remote_connection",
@@ -2259,7 +2259,7 @@ dependencies = [
  "language",
  "log",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rope",
  "settings",
  "sum_tree",
@@ -2510,7 +2510,7 @@ dependencies = [
  "memmap2",
  "num-traits",
  "num_cpus",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_distr",
  "rayon",
  "safetensors",
@@ -2594,7 +2594,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0acb89ccf798a28683f00089d0630dfaceec087234eae0d308c05ddeaa941b40"
 dependencies = [
  "ambient-authority",
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -2995,7 +2995,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "postage",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "release_channel",
  "rpc",
@@ -3246,7 +3246,7 @@ dependencies = [
  "prometheus",
  "prompt_store",
  "prost 0.9.0",
- "rand 0.9.3",
+ "rand 0.9.4",
  "recent_projects",
  "release_channel",
  "remote",
@@ -3585,7 +3585,7 @@ dependencies = [
  "parking_lot",
  "pollster 0.4.0",
  "postage",
- "rand 0.9.3",
+ "rand 0.9.4",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -4952,7 +4952,7 @@ dependencies = [
  "markdown",
  "pretty_assertions",
  "project",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "settings",
@@ -5278,7 +5278,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "pulldown-cmark 0.13.0",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "release_channel",
  "semver",
@@ -5343,7 +5343,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "rand 0.9.3",
+ "rand 0.9.4",
  "release_channel",
  "reqwest_client",
  "rust-embed",
@@ -5504,7 +5504,7 @@ dependencies = [
  "project",
  "proptest",
  "proptest-derive",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "release_channel",
  "rope",
@@ -6407,7 +6407,7 @@ checksum = "4203231de188ebbdfb85c11f3c20ca2b063945710de04e7b59268731e728b462"
 dependencies = [
  "half",
  "num-traits",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_distr",
 ]
 
@@ -6878,7 +6878,7 @@ dependencies = [
  "fnv",
  "itertools 0.10.5",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rand_pcg",
  "random_choice",
  "rayon",
@@ -7290,7 +7290,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "rope",
  "schemars 1.0.4",
@@ -7341,7 +7341,7 @@ dependencies = [
  "menu",
  "project",
  "project_panel",
- "rand 0.9.3",
+ "rand 0.9.4",
  "remote_connection",
  "search",
  "serde_json",
@@ -7415,7 +7415,7 @@ dependencies = [
  "project",
  "prompt_store",
  "proto",
- "rand 0.9.3",
+ "rand 0.9.4",
  "remote",
  "remote_connection",
  "schemars 1.0.4",
@@ -7701,7 +7701,7 @@ dependencies = [
  "postage",
  "profiling",
  "proptest",
- "rand 0.9.3",
+ "rand 0.9.4",
  "raw-window-handle",
  "refineable",
  "regex",
@@ -7937,7 +7937,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "raw-window-handle",
  "smallvec",
  "util",
@@ -8043,7 +8043,7 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "num-traits",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_distr",
  "zerocopy",
 ]
@@ -9055,7 +9055,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "mio 1.2.0",
- "rand 0.8.5",
+ "rand 0.8.6",
  "serde",
  "tempfile",
  "uuid",
@@ -9498,7 +9498,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "rpc",
  "semver",
@@ -10097,7 +10097,7 @@ dependencies = [
  "parking_lot",
  "pbjson-types",
  "prost 0.12.6",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reqwest 0.12.24",
  "rustls-native-certs 0.6.3",
  "scopeguard",
@@ -10933,7 +10933,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rope",
  "serde",
  "settings",
@@ -10986,7 +10986,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
 dependencies = [
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -11323,7 +11323,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.6",
  "smallvec",
  "zeroize",
 ]
@@ -11339,7 +11339,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "once_cell",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "smallvec",
  "zeroize",
@@ -11833,7 +11833,7 @@ dependencies = [
  "language_model_core",
  "log",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.9.4",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -12880,7 +12880,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
 dependencies = [
  "phf_shared 0.11.3",
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -13468,7 +13468,7 @@ dependencies = [
  "prettier",
  "pretty_assertions",
  "project",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "release_channel",
  "remote",
@@ -13645,7 +13645,7 @@ dependencies = [
  "bitflags 2.10.0",
  "num-traits",
  "proptest-macro",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -14006,7 +14006,7 @@ dependencies = [
  "bytes 1.11.1",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.3",
+ "rand 0.9.4",
  "ring",
  "rustc-hash 2.1.1",
  "rustls 0.23.40",
@@ -14078,9 +14078,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -14089,9 +14089,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -14157,7 +14157,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
 dependencies = [
  "num-traits",
- "rand 0.9.3",
+ "rand 0.9.4",
 ]
 
 [[package]]
@@ -14235,7 +14235,7 @@ dependencies = [
  "num-traits",
  "paste",
  "profiling",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "simd_helpers",
  "thiserror 2.0.17",
@@ -14974,7 +14974,7 @@ dependencies = [
  "dasp_sample",
  "hound",
  "num-rational",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_distr",
  "rtrb",
  "symphonia",
@@ -14990,7 +14990,7 @@ dependencies = [
  "gpui",
  "heapless",
  "log",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "sum_tree",
  "tracing",
@@ -15029,7 +15029,7 @@ dependencies = [
  "gpui",
  "parking_lot",
  "proto",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rsa",
  "serde",
  "serde_json",
@@ -15175,7 +15175,7 @@ dependencies = [
  "borsh",
  "bytes 1.11.1",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rkyv",
  "serde",
  "serde_json",
@@ -15494,7 +15494,7 @@ dependencies = [
  "flume",
  "futures 0.3.32",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "web-time",
 ]
 
@@ -16828,7 +16828,7 @@ dependencies = [
  "memchr",
  "once_cell",
  "percent-encoding",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rsa",
  "rust_decimal",
  "serde",
@@ -16872,7 +16872,7 @@ dependencies = [
  "memchr",
  "num-bigint",
  "once_cell",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -16971,7 +16971,7 @@ name = "streaming_diff"
 version = "0.1.0"
 dependencies = [
  "ordered-float 2.10.1",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rope",
  "util",
 ]
@@ -17095,7 +17095,7 @@ dependencies = [
  "heapless",
  "log",
  "proptest",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "tracing",
  "zlog",
@@ -17772,7 +17772,7 @@ dependencies = [
  "log",
  "parking_lot",
  "percent-encoding",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "release_channel",
  "schemars 1.0.4",
@@ -17851,7 +17851,7 @@ dependencies = [
  "log",
  "parking_lot",
  "postage",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "rope",
  "smallvec",
@@ -18954,7 +18954,7 @@ dependencies = [
  "http 0.2.12",
  "httparse",
  "log",
- "rand 0.8.5",
+ "rand 0.8.6",
  "sha1",
  "thiserror 1.0.69",
  "url",
@@ -18973,7 +18973,7 @@ dependencies = [
  "http 1.3.1",
  "httparse",
  "log",
- "rand 0.8.5",
+ "rand 0.8.6",
  "sha1",
  "thiserror 1.0.69",
  "url",
@@ -18991,7 +18991,7 @@ dependencies = [
  "http 1.3.1",
  "httparse",
  "log",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rustls 0.23.40",
  "rustls-pki-types",
  "sha1",
@@ -19010,7 +19010,7 @@ dependencies = [
  "http 1.3.1",
  "httparse",
  "log",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rustls 0.23.40",
  "rustls-pki-types",
  "sha1",
@@ -19349,7 +19349,7 @@ dependencies = [
  "nix 0.29.0",
  "percent-encoding",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "rust-embed",
  "schemars 1.0.4",
@@ -21975,7 +21975,7 @@ dependencies = [
  "paths",
  "postage",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rpc",
  "serde",
  "serde_json",
@@ -22230,7 +22230,7 @@ dependencies = [
  "js-sys",
  "nom 8.0.0",
  "pin-project",
- "rand 0.8.5",
+ "rand 0.8.6",
  "sha1",
  "thiserror 1.0.69",
  "tokio",
@@ -22625,7 +22625,7 @@ dependencies = [
  "core-graphics-helmer-fork",
  "log",
  "objc",
- "rand 0.8.5",
+ "rand 0.8.6",
  "screencapturekit",
  "screencapturekit-sys",
  "sysinfo 0.31.4",
@@ -22824,7 +22824,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "scc",
  "thiserror 1.0.69",
