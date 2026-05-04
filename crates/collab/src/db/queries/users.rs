@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use chrono::NaiveDateTime;
 
 use super::*;
@@ -20,7 +19,6 @@ impl Database {
                 github_login: ActiveValue::set(params.github_login.clone()),
                 github_user_id: ActiveValue::set(params.github_user_id),
                 admin: ActiveValue::set(admin),
-                metrics_id: ActiveValue::set(Uuid::new_v4()),
                 ..Default::default()
             })
             .on_conflict(
@@ -35,12 +33,7 @@ impl Database {
             .exec_with_returning(&*tx)
             .await?;
 
-            Ok(NewUserResult {
-                user_id: user.id,
-                metrics_id: user.metrics_id.to_string(),
-                signup_device_id: None,
-                inviting_user_id: None,
-            })
+            Ok(NewUserResult { user_id: user.id })
         })
         .await
     }
@@ -67,7 +60,10 @@ impl Database {
     }
 
     /// Returns a user by GitHub login. There are no access checks here, so this should only be used internally.
-    pub async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+    pub async fn get_user_by_github_login(
+        &self,
+        github_login: &str,
+    ) -> Result<Option<user::Model>> {
         self.transaction(|tx| async move {
             Ok(user::Entity::find()
                 .filter(user::Column::GithubLogin.eq(github_login))
@@ -85,7 +81,7 @@ impl Database {
         github_name: Option<&str>,
         github_user_created_at: DateTimeUtc,
         initial_channel_id: Option<ChannelId>,
-    ) -> Result<User> {
+    ) -> Result<user::Model> {
         self.transaction(|tx| async move {
             self.update_or_create_user_by_github_account_tx(
                 github_login,
@@ -110,7 +106,7 @@ impl Database {
         github_user_created_at: NaiveDateTime,
         initial_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
-    ) -> Result<User> {
+    ) -> Result<user::Model> {
         if let Some(existing_user) = self
             .get_user_by_github_user_id_or_github_login(github_user_id, github_login, tx)
             .await?
@@ -136,9 +132,6 @@ impl Database {
                 github_user_id: ActiveValue::set(github_user_id),
                 github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
                 admin: ActiveValue::set(false),
-                invite_count: ActiveValue::set(0),
-                invite_code: ActiveValue::set(None),
-                metrics_id: ActiveValue::set(Uuid::new_v4()),
                 ..Default::default()
             })
             .exec_with_returning(tx)
@@ -166,7 +159,7 @@ impl Database {
         github_user_id: i32,
         github_login: &str,
         tx: &DatabaseTransaction,
-    ) -> Result<Option<User>> {
+    ) -> Result<Option<user::Model>> {
         if let Some(user_by_github_user_id) = user::Entity::find()
             .filter(user::Column::GithubUserId.eq(github_user_id))
             .one(tx)
@@ -188,7 +181,7 @@ impl Database {
 
     /// get_all_users returns the next page of users. To get more call again with
     /// the same limit and the page incremented by 1.
-    pub async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
+    pub async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<user::Model>> {
         self.transaction(|tx| async move {
             Ok(user::Entity::find()
                 .order_by_asc(user::Column::GithubLogin)
@@ -196,26 +189,6 @@ impl Database {
                 .offset(page as u64 * limit as u64)
                 .all(&*tx)
                 .await?)
-        })
-        .await
-    }
-
-    /// Returns the metrics id for the user.
-    pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-        enum QueryAs {
-            MetricsId,
-        }
-
-        self.transaction(|tx| async move {
-            let metrics_id: Uuid = user::Entity::find_by_id(id)
-                .select_only()
-                .column(user::Column::MetricsId)
-                .into_values::<_, QueryAs>()
-                .one(&*tx)
-                .await?
-                .context("could not find user")?;
-            Ok(metrics_id.to_string())
         })
         .await
     }
@@ -237,7 +210,11 @@ impl Database {
     }
 
     /// Find users where github_login ILIKE name_query.
-    pub async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
+    pub async fn fuzzy_search_users(
+        &self,
+        name_query: &str,
+        limit: u32,
+    ) -> Result<Vec<user::Model>> {
         self.transaction(|tx| async {
             let tx = tx;
             let like_string = Self::fuzzy_like_string(name_query);

@@ -1,0 +1,18 @@
+{"Put":{"state":"one {two 'thˇree' four}"}}
+{"Key":"%"}
+{"Get":{"state":"one ˇ{two 'three' four}","mode":"Normal"}}
+{"Put":{"state":"'hello wˇorld'"}}
+{"Key":"%"}
+{"Get":{"state":"'hello wˇorld'","mode":"Normal"}}
+{"Put":{"state":"func (\"teˇst\") {}"}}
+{"Key":"%"}
+{"Get":{"state":"func ˇ(\"test\") {}","mode":"Normal"}}
+{"Put":{"state":"ˇ'hello'"}}
+{"Key":"%"}
+{"Get":{"state":"ˇ'hello'","mode":"Normal"}}
+{"Put":{"state":"'helloˇ'"}}
+{"Key":"%"}
+{"Get":{"state":"'helloˇ'","mode":"Normal"}}
+{"Put":{"state":"func (a string) {\n    do('somethiˇng'))\n}"}}
+{"Key":"%"}
+{"Get":{"state":"func (a string) {\n    doˇ('something'))\n}","mode":"Normal"}}

@@ -12,6 +12,7 @@ use clap::Parser;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     ffi::OsStr,
     fs, io,
@@ -20,10 +21,10 @@ use std::{
     sync::Arc,
     thread::{self, JoinHandle},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use util::paths::PathWithPosition;
+use walkdir::WalkDir;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
 
 const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
@@ -32,7 +33,7 @@ struct Detect;
 
 trait InstalledApp {
     fn zed_version_string(&self) -> String;
-    fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
+    fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()>;
     fn run_foreground(
         &self,
         ipc_url: String,
@@ -61,17 +62,25 @@ Examples:
 )]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
+    ///
+    /// When opening a directory, waits until the created window is closed.
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[arg(short, long, overrides_with_all = ["new", "reuse"])]
+    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing", "classic"])]
     add: bool,
     /// Create a new workspace
-    #[arg(short, long, overrides_with_all = ["add", "reuse"])]
+    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing", "classic"])]
     new: bool,
     /// Reuse an existing window, replacing its workspace
-    #[arg(short, long, overrides_with_all = ["add", "new"])]
+    #[arg(short, long, overrides_with_all = ["add", "new", "existing", "classic"], hide = true)]
     reuse: bool,
+    /// Open in existing Zed window
+    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse", "classic"])]
+    existing: bool,
+    /// Use the classic open behavior: new window for directories, reuse for files
+    #[arg(long, hide = true, overrides_with_all = ["add", "new", "reuse", "existing"])]
+    classic: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location:
     #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
@@ -114,7 +123,14 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Open the project in a dev container.
+    ///
+    /// Automatically triggers "Reopen in Dev Container" if a `.devcontainer/`
+    /// configuration is found in the project directory.
+    #[arg(long)]
+    dev_container: bool,
     /// Pairs of file paths to diff. Can be specified multiple times.
+    /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
     diff: Vec<String>,
     /// Uninstall Zed from user system
@@ -175,7 +191,105 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
             }))
         }),
     }
-    .map(|path_with_pos| path_with_pos.to_string(|path| path.to_string_lossy().into_owned()))
+    .map(|path_with_pos| path_with_pos.to_string(&|path| path.to_string_lossy().into_owned()))
+}
+
+fn expand_directory_diff_pairs(
+    diff_pairs: Vec<[String; 2]>,
+) -> anyhow::Result<(Vec<[String; 2]>, Vec<TempDir>)> {
+    let mut expanded = Vec::new();
+    let mut temp_dirs = Vec::new();
+
+    for pair in diff_pairs {
+        let left = PathBuf::from(&pair[0]);
+        let right = PathBuf::from(&pair[1]);
+
+        if left.is_dir() && right.is_dir() {
+            let (mut pairs, temp_dir) = expand_directory_pair(&left, &right)?;
+            expanded.append(&mut pairs);
+            if let Some(temp_dir) = temp_dir {
+                temp_dirs.push(temp_dir);
+            }
+        } else {
+            expanded.push(pair);
+        }
+    }
+
+    Ok((expanded, temp_dirs))
+}
+
+fn expand_directory_pair(
+    left: &Path,
+    right: &Path,
+) -> anyhow::Result<(Vec<[String; 2]>, Option<TempDir>)> {
+    let left_files = collect_files(left)?;
+    let right_files = collect_files(right)?;
+
+    let mut rel_paths = BTreeSet::new();
+    rel_paths.extend(left_files.keys().cloned());
+    rel_paths.extend(right_files.keys().cloned());
+
+    let mut temp_dir = TempDir::new()?;
+    let mut temp_dir_used = false;
+    let mut pairs = Vec::new();
+
+    for rel in rel_paths {
+        match (left_files.get(&rel), right_files.get(&rel)) {
+            (Some(left_path), Some(right_path)) => {
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
+            }
+            (Some(left_path), None) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    stub.to_string_lossy().into_owned(),
+                ]);
+            }
+            (None, Some(right_path)) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push([
+                    stub.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
+            }
+            (None, None) => {}
+        }
+    }
+
+    let temp_dir = if temp_dir_used { Some(temp_dir) } else { None };
+    Ok((pairs, temp_dir))
+}
+
+fn collect_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
+    let mut files = BTreeMap::new();
+
+    for entry in WalkDir::new(root) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            let rel = entry
+                .path()
+                .strip_prefix(root)
+                .context("stripping directory prefix")?
+                .to_path_buf();
+            files.insert(rel, entry.into_path());
+        }
+    }
+
+    Ok(files)
+}
+
+fn create_empty_stub(temp_dir: &mut TempDir, rel: &Path) -> anyhow::Result<PathBuf> {
+    let stub_path = temp_dir.path().join(rel);
+    if let Some(parent) = stub_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::File::create(&stub_path)?;
+    Ok(stub_path)
 }
 
 #[cfg(test)]
@@ -342,7 +456,7 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
 
     source.path = Path::new(result.trim()).to_owned();
 
-    Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
+    Ok(source.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
 fn main() -> Result<()> {
@@ -427,12 +541,18 @@ fn main() -> Result<()> {
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
 
-    let open_new_workspace = if args.new {
-        Some(true)
+    let open_behavior = if args.new {
+        cli::OpenBehavior::AlwaysNew
     } else if args.add {
-        Some(false)
+        cli::OpenBehavior::Add
+    } else if args.existing {
+        cli::OpenBehavior::ExistingWindow
+    } else if args.classic {
+        cli::OpenBehavior::Classic
+    } else if args.reuse {
+        cli::OpenBehavior::Reuse
     } else {
-        None
+        cli::OpenBehavior::Default
     };
 
     let env = {
@@ -474,11 +594,27 @@ fn main() -> Result<()> {
     let mut stdin_tmp_file: Option<fs::File> = None;
     let mut anonymous_fd_tmp_files = vec![];
 
+    // Check if any diff paths are directories to determine diff_all mode
+    let diff_all_mode = args
+        .diff
+        .chunks(2)
+        .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
+
     for path in args.diff.chunks(2) {
         diff_paths.push([
             parse_path_with_position(&path[0])?,
             parse_path_with_position(&path[1])?,
         ]);
+    }
+
+    let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
+    diff_paths = expanded_diff_paths;
+    // Prevent automatic cleanup of temp directories containing empty stub files
+    // for directory diffs. The CLI process may exit before Zed has read these
+    // files (e.g., when RPC-ing into an already-running instance). The files
+    // live in the OS temp directory and will be cleaned up on reboot.
+    for temp_dir in temp_dirs {
+        let _ = temp_dir.keep();
     }
 
     #[cfg(target_os = "windows")]
@@ -532,17 +668,20 @@ fn main() -> Result<()> {
                 #[cfg(not(target_os = "windows"))]
                 let wsl = None;
 
-                tx.send(CliRequest::Open {
+                let open_request = CliRequest::Open {
                     paths,
                     urls,
                     diff_paths,
+                    diff_all: diff_all_mode,
                     wsl,
                     wait: args.wait,
-                    open_new_workspace,
-                    reuse: args.reuse,
+                    open_behavior,
                     env,
                     user_data_dir: user_data_dir_for_thread,
-                })?;
+                    dev_container: args.dev_container,
+                };
+
+                tx.send(open_request)?;
 
                 while let Ok(response) = rx.recv() {
                     match response {
@@ -552,6 +691,11 @@ fn main() -> Result<()> {
                         CliResponse::Exit { status } => {
                             exit_status.lock().replace(status);
                             return Ok(());
+                        }
+                        CliResponse::PromptOpenBehavior => {
+                            let behavior = prompt_open_behavior()
+                                .unwrap_or(cli::CliBehaviorSetting::ExistingWindow);
+                            tx.send(CliRequest::SetOpenBehavior { behavior })?;
                         }
                     }
                 }
@@ -588,7 +732,7 @@ fn main() -> Result<()> {
     if args.foreground {
         app.run_foreground(url, user_data_dir.as_deref())?;
     } else {
-        app.launch(url)?;
+        app.launch(url, user_data_dir.as_deref())?;
         sender.join().unwrap()?;
         if let Some(handle) = stdin_pipe_handle {
             handle.join().unwrap()?;
@@ -644,6 +788,43 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         // not implemented for bsd, windows. Could be, but isn't yet
         None
     }
+}
+
+/// Shows an interactive prompt asking the user to choose the default open
+/// behavior for `zed <path>`. Returns `None` if the prompt cannot be shown
+/// (e.g. stdin is not a terminal) or the user cancels.
+fn prompt_open_behavior() -> Option<cli::CliBehaviorSetting> {
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+
+    let blue = console::Style::new().blue();
+    let items = [
+        format!(
+            "Add to existing Zed window ({})",
+            blue.apply_to("zed --existing")
+        ),
+        format!("Open a new window ({})", blue.apply_to("zed --classic")),
+    ];
+
+    let prompt = format!(
+        "Configure default behavior for {}\n{}",
+        blue.apply_to("zed <path>"),
+        console::style("You can change this later in Zed settings"),
+    );
+
+    let selection = dialoguer::Select::new()
+        .with_prompt(&prompt)
+        .items(&items)
+        .default(0)
+        .interact()
+        .ok()?;
+
+    Some(if selection == 0 {
+        cli::CliBehaviorSetting::ExistingWindow
+    } else {
+        cli::CliBehaviorSetting::NewWindow
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -709,14 +890,18 @@ mod linux {
             )
         }
 
-        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let sock_path = paths::data_dir().join(format!(
+        fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
+            let data_dir = user_data_dir
+                .map(PathBuf::from)
+                .unwrap_or_else(|| paths::data_dir().clone());
+
+            let sock_path = data_dir.join(format!(
                 "zed-{}.sock",
                 *release_channel::RELEASE_CHANNEL_NAME
             ));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
-                self.boot_background(ipc_url)?;
+                self.boot_background(ipc_url, user_data_dir)?;
             } else {
                 sock.send(ipc_url.as_bytes())?;
             }
@@ -742,7 +927,11 @@ mod linux {
     }
 
     impl App {
-        fn boot_background(&self, ipc_url: String) -> anyhow::Result<()> {
+        fn boot_background(
+            &self,
+            ipc_url: String,
+            user_data_dir: Option<&str>,
+        ) -> anyhow::Result<()> {
             let path = &self.0;
 
             match fork::fork() {
@@ -756,8 +945,13 @@ mod linux {
                     if fork::close_fd().is_err() {
                         eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
-                    let error =
-                        exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
+                    let mut args: Vec<OsString> =
+                        vec![path.as_os_str().to_owned(), OsString::from(ipc_url)];
+                    if let Some(dir) = user_data_dir {
+                        args.push(OsString::from("--user-data-dir"));
+                        args.push(OsString::from(dir));
+                    }
+                    let error = exec::execvp(path.clone(), &args);
                     // if exec succeeded, we never get here.
                     eprintln!("failed to exec {:?}: {}", path, error);
                     process::exit(1)
@@ -907,7 +1101,7 @@ mod windows {
     use crate::{Detect, InstalledApp};
     use std::io;
     use std::path::{Path, PathBuf};
-    use std::process::ExitStatus;
+    use std::process::{ExitStatus, Stdio};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -943,11 +1137,17 @@ mod windows {
             )
         }
 
-        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+        fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
             if check_single_instance() {
-                std::process::Command::new(self.0.clone())
-                    .arg(ipc_url)
-                    .spawn()?;
+                let mut cmd = std::process::Command::new(self.0.clone());
+                cmd.arg(ipc_url);
+                if let Some(dir) = user_data_dir {
+                    cmd.arg("--user-data-dir").arg(dir);
+                }
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                cmd.spawn()?;
             } else {
                 unsafe {
                     let pipe = CreateFileW(
@@ -1020,7 +1220,9 @@ mod mac_os {
         string::kCFStringEncodingUTF8,
         url::{CFURL, CFURLCreateWithBytes},
     };
-    use core_services::{LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults};
+    use core_services::{
+        LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults, kLSLaunchDontSwitch,
+    };
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
@@ -1096,7 +1298,7 @@ mod mac_os {
             format!("Zed {} – {}", self.version(), self.path().display(),)
         }
 
-        fn launch(&self, url: String) -> anyhow::Result<()> {
+        fn launch(&self, url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
             match self {
                 Self::App { app_bundle, .. } => {
                     let app_path = app_bundle;
@@ -1119,7 +1321,7 @@ mod mac_os {
                                 appURL: app_url.as_concrete_TypeRef(),
                                 itemURLs: urls_to_open.as_concrete_TypeRef(),
                                 passThruParams: ptr::null(),
-                                launchFlags: kLSLaunchDefaults,
+                                launchFlags: kLSLaunchDefaults | kLSLaunchDontSwitch,
                                 asyncRefCon: ptr::null_mut(),
                             },
                             ptr::null_mut(),
@@ -1146,8 +1348,11 @@ mod mac_os {
                             format!("Cloning descriptor for file {subprocess_stdout_file:?}")
                         })?;
                     let mut command = std::process::Command::new(executable);
-                    let command = command
-                        .env(FORCE_CLI_MODE_ENV_VAR_NAME, "")
+                    command.env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                    if let Some(dir) = user_data_dir {
+                        command.arg("--user-data-dir").arg(dir);
+                    }
+                    command
                         .stderr(subprocess_stdout_file)
                         .stdout(subprocess_stdin_file)
                         .arg(url);

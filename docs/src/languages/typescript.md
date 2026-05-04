@@ -1,3 +1,8 @@
+---
+title: TypeScript
+description: "Configure TypeScript language support in Zed, including language servers, formatting, and debugging."
+---
+
 # TypeScript
 
 TypeScript and TSX support are available natively in Zed.
@@ -14,7 +19,7 @@ TBD: Document the difference between Language servers
 ## Language servers
 
 By default Zed uses [vtsls](https://github.com/yioneko/vtsls) for TypeScript, TSX, and JavaScript files.
-You can configure the use of [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) per language in your settings file:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > TypeScript/TSX/JavaScript, or add to your settings file:
 
 ```json [settings]
 {
@@ -32,7 +37,7 @@ You can configure the use of [typescript-language-server](https://github.com/typ
 }
 ```
 
-Prettier will also be used for TypeScript files by default. To disable this:
+Prettier will also be used for TypeScript files by default. To disable this, configure in Settings ({#kb zed::OpenSettings}) under Languages > TypeScript, or add to your settings file:
 
 ```json [settings]
 {
@@ -41,6 +46,34 @@ Prettier will also be used for TypeScript files by default. To disable this:
       "prettier": { "allowed": false }
     }
     //...
+  }
+}
+```
+
+## Using the Tailwind CSS Language Server with TypeScript
+
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in vanilla TypeScript files (`.ts`), you can customize the `classRegex` field under it in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "experimental": {
+          "classRegex": [
+            "\\.className\\s*[+]?=\\s*['\"]([^'\"]*)['\"]",
+            "\\.setAttributeNS\\(.*,\\s*['\"]class['\"],\\s*['\"]([^'\"]*)['\"]",
+            "\\.setAttribute\\(['\"]class['\"],\\s*['\"]([^'\"]*)['\"]",
+            "\\.classList\\.add\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.remove\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.toggle\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.contains\\(['\"]([^'\"]*)['\"]",
+            "\\.classList\\.replace\\(\\s*['\"]([^'\"]*)['\"]",
+            "\\.classList\\.replace\\([^,)]+,\\s*['\"]([^'\"]*)['\"]"
+          ]
+        }
+      }
+    }
   }
 }
 ```
@@ -156,6 +189,51 @@ When using `vtsls`:
 }
 ```
 
+## Code Lens
+
+Zed enables references and implementations code lenses for `vtsls` by default. These show reference counts and implementation counts above functions, classes, and interfaces. To use them, enable the `code_lens` setting:
+
+```json [settings]
+{
+  "code_lens": "on"
+}
+```
+
+You can override the default code lens settings in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "implementationsCodeLens": {
+            "enabled": true,
+            "showOnAllClassMethods": true,
+            "showOnInterfaceMethods": true
+          },
+          "referencesCodeLens": {
+            "enabled": true,
+            "showOnAllFunctions": true
+          }
+        },
+        "javascript": {
+          "implementationsCodeLens": {
+            "enabled": true,
+            "showOnAllClassMethods": true,
+            "showOnInterfaceMethods": true
+          },
+          "referencesCodeLens": {
+            "enabled": true,
+            "showOnAllFunctions": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ## Debugging
 
 Zed supports debugging TypeScript code out of the box with `vscode-js-debug`.
@@ -167,7 +245,7 @@ The following can be debugged without writing additional configuration:
 Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
 
 > **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
->
+
 > **Note:** Node test is automatically detected when `@types/node` is present in `package.json` (requires Node.js 20+).
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.

@@ -1,27 +1,56 @@
 use gh_workflow::*;
 
 use crate::tasks::workflows::{
+    deploy_docs::deploy_docs_workflow_call,
     release::{self, notify_on_failure},
     runners,
     steps::{CommonJobConditions, NamedJob, checkout_repo, dependant_job, named},
-    vars::{self, StepOutput},
+    vars::{self, StepOutput, WorkflowInput},
 };
 
+const TAG_NAME_ENV: &str = "${{ github.event.release.tag_name || inputs.tag_name }}";
+const IS_PRERELEASE_ENV: &str = "${{ github.event.release.prerelease || inputs.prerelease }}";
+const TAG_NAME: &str = "${{ env.TAG_NAME }}";
+const RELEASE_BODY: &str = "${{ github.event.release.body || inputs.body }}";
+const DOCS_CHANNEL: &str =
+    "${{ (github.event.release.prerelease || inputs.prerelease) && 'preview' || 'stable' }}";
+
 pub fn after_release() -> Workflow {
+    let tag_name = WorkflowInput::string("tag_name", None);
+    let prerelease = WorkflowInput::bool("prerelease", None);
+    let body = WorkflowInput::string("body", Some(String::new()));
+
     let refresh_zed_dev = rebuild_releases_page();
+    let deploy_docs = deploy_docs_workflow_call(DOCS_CHANNEL, TAG_NAME_ENV);
     let post_to_discord = post_to_discord(&[&refresh_zed_dev]);
     let publish_winget = publish_winget();
     let create_sentry_release = create_sentry_release();
-    let notify_on_failure = notify_on_failure(&[
-        &refresh_zed_dev,
-        &post_to_discord,
-        &publish_winget,
-        &create_sentry_release,
-    ]);
+    let notify_on_failure = {
+        let notify_on_failure = notify_on_failure(&[
+            &refresh_zed_dev,
+            &post_to_discord,
+            &publish_winget,
+            &create_sentry_release,
+        ]);
+        NamedJob {
+            name: notify_on_failure.name,
+            job: notify_on_failure.job.add_need(deploy_docs.name.clone()),
+        }
+    };
 
     named::workflow()
-        .on(Event::default().release(Release::default().types(vec![ReleaseType::Published])))
+        .add_env(("TAG_NAME", TAG_NAME_ENV))
+        .add_env(("IS_PRERELEASE", IS_PRERELEASE_ENV))
+        .on(Event::default()
+            .release(Release::default().types(vec![ReleaseType::Published]))
+            .workflow_dispatch(
+                WorkflowDispatch::default()
+                    .add_input(tag_name.name, tag_name.input())
+                    .add_input(prerelease.name, prerelease.input())
+                    .add_input(body.name, body.input()),
+            ))
         .add_job(refresh_zed_dev.name, refresh_zed_dev.job)
+        .add_job(deploy_docs.name, deploy_docs.job)
         .add_job(post_to_discord.name, post_to_discord.job)
         .add_job(publish_winget.name, publish_winget.job)
         .add_job(create_sentry_release.name, create_sentry_release.job)
@@ -30,14 +59,11 @@ pub fn after_release() -> Workflow {
 
 fn rebuild_releases_page() -> NamedJob {
     fn refresh_cloud_releases() -> Step<Run> {
-        named::bash(
-            "curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag=${{ github.event.release.tag_name }}",
-        )
+        named::bash("curl -fX POST \"https://cloud.zed.dev/releases/refresh?expect_tag=$TAG_NAME\"")
     }
 
     fn redeploy_zed_dev() -> Step<Run> {
-        named::bash("npm exec --yes -- vercel@37 --token=\"$VERCEL_TOKEN\" --scope zed-industries redeploy https://zed.dev")
-            .add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
+        named::bash("./script/redeploy-vercel").add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
     }
 
     named::job(
@@ -45,21 +71,23 @@ fn rebuild_releases_page() -> NamedJob {
             .runs_on(runners::LINUX_SMALL)
             .with_repository_owner_guard()
             .add_step(refresh_cloud_releases())
+            .add_step(checkout_repo())
             .add_step(redeploy_zed_dev()),
     )
 }
 
 fn post_to_discord(deps: &[&NamedJob]) -> NamedJob {
     fn get_release_url() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-                URL="https://zed.dev/releases/preview"
-            else
-                URL="https://zed.dev/releases/stable"
-            fi
+        named::bash(
+            r#"if [ "$IS_PRERELEASE" == "true" ]; then
+    URL="https://zed.dev/releases/preview"
+else
+    URL="https://zed.dev/releases/stable"
+fi
 
-            echo "URL=$URL" >> "$GITHUB_OUTPUT"
-        "#})
+echo "URL=$URL" >> "$GITHUB_OUTPUT"
+"#,
+        )
         .id("get-release-url")
     }
 
@@ -72,11 +100,9 @@ fn post_to_discord(deps: &[&NamedJob]) -> NamedJob {
         .id("get-content")
         .add_with((
             "stringToTruncate",
-            indoc::indoc! {r#"
-                📣 Zed [${{ github.event.release.tag_name }}](<${{ steps.get-release-url.outputs.URL }}>) was just released!
-
-                ${{ github.event.release.body }}
-            "#},
+            format!(
+                "📣 Zed [{TAG_NAME}](<${{{{ steps.get-release-url.outputs.URL }}}}>)  was just released!\n\n{RELEASE_BODY}\n"
+            ),
         ))
         .add_with(("maxLength", 2000))
         .add_with(("truncationSymbol", "..."))
@@ -101,17 +127,36 @@ fn post_to_discord(deps: &[&NamedJob]) -> NamedJob {
 }
 
 fn publish_winget() -> NamedJob {
-    fn set_package_name() -> (Step<Run>, StepOutput) {
-        let step = named::pwsh(indoc::indoc! {r#"
-            if ("${{ github.event.release.prerelease }}" -eq "true") {
-                $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
-            } else {
-                $PACKAGE_NAME = "ZedIndustries.Zed"
+    fn sync_winget_pkgs_fork() -> Step<Run> {
+        named::pwsh(indoc::indoc! {r#"
+            $headers = @{
+                "Authorization" = "Bearer $env:WINGET_TOKEN"
+                "Accept" = "application/vnd.github+json"
+                "X-GitHub-Api-Version" = "2022-11-28"
             }
-
-            echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
+            $body = @{ branch = "master" } | ConvertTo-Json
+            $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY_OWNER/winget-pkgs/merge-upstream"
+            try {
+                Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ContentType "application/json"
+                Write-Host "Successfully synced winget-pkgs fork"
+            } catch {
+                Write-Host "Fork sync response: $_"
+                Write-Host "Continuing anyway - fork may already be up to date"
+            }
         "#})
-        .id("set-package-name");
+        .add_env(("WINGET_TOKEN", vars::WINGET_TOKEN))
+    }
+
+    fn set_package_name() -> (Step<Run>, StepOutput) {
+        let script = r#"if ($env:IS_PRERELEASE -eq "true") {
+    $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
+} else {
+    $PACKAGE_NAME = "ZedIndustries.Zed"
+}
+
+echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
+"#;
+        let step = named::pwsh(script).id("set-package-name");
 
         let output = StepOutput::new(&step, "PACKAGE_NAME");
         (step, output)
@@ -124,6 +169,7 @@ fn publish_winget() -> NamedJob {
             "19e706d4c9121098010096f9c495a70a7518b30f", // v2
         )
         .add_with(("identifier", package_name.to_string()))
+        .add_with(("release-tag", TAG_NAME))
         .add_with(("max-versions-to-keep", 5))
         .add_with(("token", vars::WINGET_TOKEN))
     }
@@ -133,6 +179,7 @@ fn publish_winget() -> NamedJob {
     named::job(
         Job::default()
             .runs_on(runners::WINDOWS_DEFAULT)
+            .add_step(sync_winget_pkgs_fork())
             .add_step(set_package_name)
             .add_step(winget_releaser(&package_name)),
     )

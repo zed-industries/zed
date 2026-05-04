@@ -1,29 +1,28 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::HashMap;
-use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
+use credentials_provider::CredentialsProvider;
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason, TokenUsage, env_var,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
 };
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
-use ui::{List, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use zed_env_vars::{EnvVar, env_var};
 
-use crate::ui::ConfiguredApiCard;
-use crate::{api_key::ApiKeyState, ui::InstructionListItem};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -44,6 +43,7 @@ pub struct OpenRouterLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
@@ -55,17 +55,24 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
         let task = self.api_key_state.load_if_needed(
             api_url,
-            &API_KEY_ENV_VAR,
             |this| &mut this.api_key_state,
+            credentials_provider,
             cx,
         );
 
@@ -119,7 +126,11 @@ impl State {
 }
 
 impl OpenRouterLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>({
                 let mut last_settings = OpenRouterLanguageModelProvider::settings(cx).clone();
@@ -135,7 +146,8 @@ impl OpenRouterLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
@@ -186,8 +198,8 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOpenRouter
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOpenRouter)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -195,7 +207,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(open_router::Model::default_fast()))
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -279,12 +291,10 @@ impl OpenRouterLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenRouterLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         async move {
             let Some(api_key) = api_key else {
@@ -321,6 +331,14 @@ impl LanguageModel for OpenRouterLanguageModel {
         self.model.supports_tool_calls()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode, OpenRouterModelMode::Thinking { .. })
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         let model_id = self.model.id().trim().to_lowercase();
         if model_id.contains("gemini") || model_id.contains("grok") {
@@ -354,14 +372,6 @@ impl LanguageModel for OpenRouterLanguageModel {
         self.model.supports_images.unwrap_or(false)
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_open_router_tokens(request, self.model.clone(), cx)
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -376,8 +386,8 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_router(request, &self.model, self.max_output_tokens());
-        let request = self.stream_completion(request, cx);
+        let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
+        let request = self.stream_completion(openrouter_request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(OpenRouterEventMapper::new().map_stream(response))
@@ -391,15 +401,31 @@ pub fn into_open_router(
     model: &Model,
     max_output_tokens: Option<u64>,
 ) -> open_router::Request {
+    // Anthropic models via OpenRouter don't accept reasoning_details being echoed back
+    // in requests - it's an output-only field for them. However, Gemini models require
+    // the thought signatures to be echoed back for proper reasoning chain continuity.
+    // Note: OpenRouter's model API provides an `architecture.tokenizer` field (e.g. "Claude",
+    // "Gemini") which could replace this ID prefix check, but since this is the only place
+    // we need this distinction, we're just using this less invasive check instead.
+    // If we ever have a more formal distionction between the models in the future,
+    // we should revise this to use that instead.
+    let is_anthropic_model = model.id().starts_with("anthropic/");
+
     let mut messages = Vec::new();
     for message in request.messages {
-        let reasoning_details = message.reasoning_details.clone();
+        let reasoning_details_for_message = if is_anthropic_model {
+            None
+        } else {
+            message.reasoning_details.clone()
+        };
+
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
                     open_router::MessagePart::Text { text },
                     message.role,
                     &mut messages,
+                    reasoning_details_for_message.clone(),
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
@@ -410,6 +436,7 @@ pub fn into_open_router(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details_for_message.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -425,37 +452,35 @@ pub fn into_open_router(
                         },
                     };
 
-                    if let Some(open_router::RequestMessage::Assistant {
-                        tool_calls,
-                        reasoning_details: existing_reasoning,
-                        ..
-                    }) = messages.last_mut()
+                    if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
                     {
                         tool_calls.push(tool_call);
-                        if existing_reasoning.is_none() && reasoning_details.is_some() {
-                            *existing_reasoning = reasoning_details.clone();
-                        }
                     } else {
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
-                            reasoning_details: reasoning_details.clone(),
+                            reasoning_details: reasoning_details_for_message.clone(),
                         });
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            vec![open_router::MessagePart::Text {
-                                text: text.to_string(),
-                            }]
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            vec![open_router::MessagePart::Image {
-                                image_url: image.to_base64_url(),
-                            }]
-                        }
-                    };
+                    let content: Vec<open_router::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                open_router::MessagePart::Text {
+                                    text: text.to_string(),
+                                }
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                open_router::MessagePart::Image {
+                                    image_url: image.to_base64_url(),
+                                }
+                            }
+                        })
+                        .collect();
 
                     messages.push(open_router::RequestMessage::Tool {
                         content: content.into(),
@@ -515,6 +540,7 @@ fn add_message_content_part(
     new_part: open_router::MessagePart,
     role: Role,
     messages: &mut Vec<open_router::RequestMessage>,
+    reasoning_details: Option<serde_json::Value>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_router::RequestMessage::User { content }))
@@ -538,7 +564,7 @@ fn add_message_content_part(
                 Role::Assistant => open_router::RequestMessage::Assistant {
                     content: Some(open_router::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
-                    reasoning_details: None,
+                    reasoning_details,
                 },
                 Role::System => open_router::RequestMessage::System {
                     content: open_router::MessageContent::from(vec![new_part]),
@@ -582,13 +608,20 @@ impl OpenRouterEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::from(anyhow!(
-                "Response contained no choices"
-            )))];
-        };
-
         let mut events = Vec::new();
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
+        let Some(choice) = event.choices.first() else {
+            return events;
+        };
 
         if let Some(details) = choice.delta.reasoning_details.clone() {
             // Emit reasoning_details immediately
@@ -634,16 +667,24 @@ impl OpenRouterEventMapper {
                         entry.thought_signature = Some(signature);
                     }
                 }
-            }
-        }
 
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
+                if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &fix_streamed_json(&entry.arguments),
+                    ) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: entry.id.clone().into(),
+                                name: entry.name.as_str().into(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: entry.thought_signature.clone(),
+                            },
+                        )));
+                    }
+                }
+            }
         }
 
         match choice.finish_reason.as_deref() {
@@ -653,7 +694,7 @@ impl OpenRouterEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),
@@ -696,32 +737,6 @@ struct RawToolCall {
     thought_signature: Option<String>,
 }
 
-pub fn count_open_router_tokens(
-    request: LanguageModelRequest,
-    _model: open_router::Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
-    })
-    .boxed()
-}
-
 struct ConfigurationView {
     api_key_editor: Entity<InputField>,
     state: Entity<State>,
@@ -746,10 +761,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     let _ = task.await;
                 }
 
@@ -781,7 +793,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -794,7 +806,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -830,22 +842,20 @@ impl Render for ConfigurationView {
                 .child(Label::new("To use Zed's agent with OpenRouter, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
-                        .child(InstructionListItem::new(
-                            "Create an API key by visiting",
-                            Some("OpenRouter's console"),
-                            Some("https://openrouter.ai/keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your OpenRouter account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
+                        .child(
+                            ListBulletItem::new("")
+                                .child(Label::new("Create an API key by visiting"))
+                                .child(ButtonLink::new("OpenRouter's console", "https://openrouter.ai/keys"))
+                        )
+                        .child(ListBulletItem::new("Ensure your OpenRouter account has credits")
+                        )
+                        .child(ListBulletItem::new("Paste your API key below and hit enter to start using the assistant")
+                        ),
                 )
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -887,7 +897,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -912,7 +922,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -938,7 +948,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -965,7 +975,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -1049,6 +1059,32 @@ mod tests {
             thought_signature_value.unwrap(),
             "sha256:test_signature_xyz789"
         );
+    }
+
+    #[gpui::test]
+    async fn test_usage_only_chunk_with_empty_choices_does_not_error() {
+        let mut mapper = OpenRouterEventMapper::new();
+
+        let events = mapper.map_event(ResponseStreamEvent {
+            id: Some("response_123".into()),
+            created: 1234567890,
+            model: "google/gemini-3-flash-preview".into(),
+            choices: Vec::new(),
+            usage: Some(open_router::Usage {
+                prompt_tokens: 12,
+                completion_tokens: 7,
+                total_tokens: 19,
+            }),
+        });
+
+        assert_eq!(events.len(), 1);
+        match events.into_iter().next().unwrap() {
+            Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => {
+                assert_eq!(usage.input_tokens, 12);
+                assert_eq!(usage.output_tokens, 7);
+            }
+            other => panic!("Expected usage update event, got: {other:?}"),
+        }
     }
 
     #[gpui::test]

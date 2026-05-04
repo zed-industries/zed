@@ -23,6 +23,7 @@ pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
 pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
 pub const INDEX_LOCK: &str = "index.lock";
+pub const REPO_EXCLUDE: &str = "info/exclude";
 
 actions!(
     git,
@@ -39,10 +40,15 @@ actions!(
         /// Restores the selected hunks to their original state.
         #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
         Restore,
+        /// Restores the selected hunks to their original state and moves to the
+        /// next one.
+        RestoreAndNext,
         // per-file
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
+        /// Shows the git history for the selected file, folder, or project.
+        FileHistory,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.
@@ -88,6 +94,9 @@ actions!(
         Cancel,
         /// Expands the commit message editor.
         ExpandCommitEditor,
+        /// Toggles whether the commit message editor fills all the available
+        /// vertical space within the git panel.
+        ToggleFillCommitEditor,
         /// Generates a commit message using AI.
         GenerateCommitMessage,
         /// Initializes a new git repository.
@@ -96,8 +105,11 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        ViewCommit,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Copies the current branch name to the clipboard.
+        CopyBranchName,
     ]
 );
 
@@ -152,6 +164,14 @@ impl Oid {
     /// Returns this [`Oid`] as a short SHA.
     pub fn display_short(&self) -> String {
         self.to_string().chars().take(SHORT_SHA_LENGTH).collect()
+    }
+}
+
+impl TryFrom<&str> for Oid {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+        Oid::from_str(value)
     }
 }
 

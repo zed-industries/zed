@@ -1,12 +1,15 @@
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderState,
+    LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
 };
-use collections::BTreeMap;
+use collections::{BTreeMap, HashSet};
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
 use std::{str::FromStr, sync::Arc};
 use thiserror::Error;
-use util::maybe;
+
+/// Function type for checking if a built-in provider should be hidden.
+/// Returns Some(extension_id) if the provider should be hidden when that extension is installed.
+pub type BuiltinProviderHidingFn = Box<dyn Fn(&str) -> Option<&'static str> + Send + Sync>;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
@@ -42,12 +45,19 @@ impl std::fmt::Debug for ConfigurationError {
 #[derive(Default)]
 pub struct LanguageModelRegistry {
     default_model: Option<ConfiguredModel>,
-    default_fast_model: Option<ConfiguredModel>,
+    /// This model is automatically configured by a user's environment after
+    /// authenticating all providers. It's only used when `default_model` is not set.
+    available_fallback_model: Option<ConfiguredModel>,
     inline_assistant_model: Option<ConfiguredModel>,
     commit_message_model: Option<ConfiguredModel>,
     thread_summary_model: Option<ConfiguredModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
     inline_alternatives: Vec<Arc<dyn LanguageModel>>,
+    /// Set of installed extension IDs that provide language models.
+    /// Used to determine which built-in providers should be hidden.
+    installed_llm_extension_ids: HashSet<Arc<str>>,
+    /// Function to check if a built-in provider should be hidden by an extension.
+    builtin_provider_hiding_fn: Option<BuiltinProviderHidingFn>,
 }
 
 #[derive(Debug)]
@@ -92,7 +102,7 @@ impl ConfiguredModel {
     }
 
     pub fn is_provided_by_zed(&self) -> bool {
-        self.provider.id() == crate::ZED_CLOUD_PROVIDER_ID
+        self.provider.id() == ZED_CLOUD_PROVIDER_ID
     }
 }
 
@@ -104,6 +114,8 @@ pub enum Event {
     ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
+    /// Emitted when provider visibility changes due to extension install/uninstall.
+    ProvidersChanged,
 }
 
 impl EventEmitter<Event> for LanguageModelRegistry {}
@@ -133,6 +145,11 @@ impl LanguageModelRegistry {
         });
         cx.set_global(GlobalLanguageModelRegistry(registry));
         fake_provider
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_model(&self) -> Arc<dyn LanguageModel> {
+        self.default_model.as_ref().unwrap().model.clone()
     }
 
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
@@ -176,6 +193,60 @@ impl LanguageModelRegistry {
             }
         }));
         providers
+    }
+
+    /// Returns providers, filtering out hidden built-in providers.
+    pub fn visible_providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
+        self.providers()
+            .into_iter()
+            .filter(|p| !self.should_hide_provider(&p.id()))
+            .collect()
+    }
+
+    /// Sets the function used to check if a built-in provider should be hidden.
+    pub fn set_builtin_provider_hiding_fn(&mut self, hiding_fn: BuiltinProviderHidingFn) {
+        self.builtin_provider_hiding_fn = Some(hiding_fn);
+    }
+
+    /// Called when an extension is installed/loaded.
+    /// If the extension provides language models, track it so we can hide the corresponding built-in.
+    pub fn extension_installed(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+        if self.installed_llm_extension_ids.insert(extension_id) {
+            cx.emit(Event::ProvidersChanged);
+            cx.notify();
+        }
+    }
+
+    /// Called when an extension is uninstalled/unloaded.
+    pub fn extension_uninstalled(&mut self, extension_id: &str, cx: &mut Context<Self>) {
+        if self.installed_llm_extension_ids.remove(extension_id) {
+            cx.emit(Event::ProvidersChanged);
+            cx.notify();
+        }
+    }
+
+    /// Sync the set of installed LLM extension IDs.
+    pub fn sync_installed_llm_extensions(
+        &mut self,
+        extension_ids: HashSet<Arc<str>>,
+        cx: &mut Context<Self>,
+    ) {
+        if extension_ids != self.installed_llm_extension_ids {
+            self.installed_llm_extension_ids = extension_ids;
+            cx.emit(Event::ProvidersChanged);
+            cx.notify();
+        }
+    }
+
+    /// Returns true if a provider should be hidden from the UI.
+    /// Built-in providers are hidden when their corresponding extension is installed.
+    pub fn should_hide_provider(&self, provider_id: &LanguageModelProviderId) -> bool {
+        if let Some(ref hiding_fn) = self.builtin_provider_hiding_fn {
+            if let Some(extension_id) = hiding_fn(&provider_id.0) {
+                return self.installed_llm_extension_ids.contains(extension_id);
+            }
+        }
+        false
     }
 
     pub fn configuration_error(
@@ -279,20 +350,27 @@ impl LanguageModelRegistry {
     }
 
     pub fn set_default_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
-        match (self.default_model.as_ref(), model.as_ref()) {
+        match (self.default_model(), model.as_ref()) {
             (Some(old), Some(new)) if old.is_same_as(new) => {}
             (None, None) => {}
             _ => cx.emit(Event::DefaultModelChanged),
         }
-        self.default_fast_model = maybe!({
-            let provider = &model.as_ref()?.provider;
-            let fast_model = provider.default_fast_model(cx)?;
-            Some(ConfiguredModel {
-                provider: provider.clone(),
-                model: fast_model,
-            })
-        });
         self.default_model = model;
+    }
+
+    pub fn set_environment_fallback_model(
+        &mut self,
+        model: Option<ConfiguredModel>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.default_model.is_none() {
+            match (self.available_fallback_model.as_ref(), model.as_ref()) {
+                (Some(old), Some(new)) if old.is_same_as(new) => {}
+                (None, None) => {}
+                _ => cx.emit(Event::DefaultModelChanged),
+            }
+        }
+        self.available_fallback_model = model;
     }
 
     pub fn set_inline_assistant_model(
@@ -340,7 +418,18 @@ impl LanguageModelRegistry {
             return None;
         }
 
-        self.default_model.clone()
+        self.default_model
+            .clone()
+            .or_else(|| self.available_fallback_model.clone())
+    }
+
+    pub fn default_fast_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        let configured = self.default_model()?;
+        let fast_model = configured.provider.default_fast_model(cx)?;
+        Some(ConfiguredModel {
+            provider: configured.provider,
+            model: fast_model,
+        })
     }
 
     pub fn inline_assistant_model(&self) -> Option<ConfiguredModel> {
@@ -354,7 +443,7 @@ impl LanguageModelRegistry {
             .or_else(|| self.default_model.clone())
     }
 
-    pub fn commit_message_model(&self) -> Option<ConfiguredModel> {
+    pub fn commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -362,11 +451,11 @@ impl LanguageModelRegistry {
 
         self.commit_message_model
             .clone()
-            .or_else(|| self.default_fast_model.clone())
-            .or_else(|| self.default_model.clone())
+            .or_else(|| self.default_fast_model(cx))
+            .or_else(|| self.default_model())
     }
 
-    pub fn thread_summary_model(&self) -> Option<ConfiguredModel> {
+    pub fn thread_summary_model(&self, cx: &App) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -374,8 +463,8 @@ impl LanguageModelRegistry {
 
         self.thread_summary_model
             .clone()
-            .or_else(|| self.default_fast_model.clone())
-            .or_else(|| self.default_model.clone())
+            .or_else(|| self.default_fast_model(cx))
+            .or_else(|| self.default_model())
     }
 
     /// The models to use for inline assists. Returns the union of the active
@@ -410,5 +499,162 @@ mod tests {
 
         let providers = registry.read(cx).providers();
         assert!(providers.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_provider_hiding_on_extension_install(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        let provider_id = provider.id();
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "fake" {
+                    Some("fake-extension")
+                } else {
+                    None
+                }
+            }));
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id(), provider_id);
+
+        registry.update(cx, |registry, cx| {
+            registry.extension_installed("fake-extension".into(), cx);
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert!(visible.is_empty());
+
+        let all = registry.read(cx).providers();
+        assert_eq!(all.len(), 1);
+    }
+
+    #[gpui::test]
+    fn test_provider_unhiding_on_extension_uninstall(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        let provider_id = provider.id();
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "fake" {
+                    Some("fake-extension")
+                } else {
+                    None
+                }
+            }));
+
+            registry.extension_installed("fake-extension".into(), cx);
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert!(visible.is_empty());
+
+        registry.update(cx, |registry, cx| {
+            registry.extension_uninstalled("fake-extension", cx);
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id(), provider_id);
+    }
+
+    #[gpui::test]
+    fn test_should_hide_provider(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        registry.update(cx, |registry, cx| {
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "anthropic" {
+                    Some("anthropic")
+                } else if id == "openai" {
+                    Some("openai")
+                } else {
+                    None
+                }
+            }));
+
+            registry.extension_installed("anthropic".into(), cx);
+        });
+
+        let registry_read = registry.read(cx);
+
+        assert!(registry_read.should_hide_provider(&LanguageModelProviderId("anthropic".into())));
+
+        assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("openai".into())));
+
+        assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("unknown".into())));
+    }
+
+    #[gpui::test]
+    async fn test_configure_environment_fallback_model(cx: &mut gpui::TestAppContext) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+        });
+
+        cx.update(|cx| provider.authenticate(cx)).await.unwrap();
+
+        registry.update(cx, |registry, cx| {
+            let provider = registry.provider(&provider.id()).unwrap();
+            let model = provider.default_model(cx).unwrap();
+
+            registry.set_environment_fallback_model(
+                Some(ConfiguredModel {
+                    provider: provider.clone(),
+                    model: model.clone(),
+                }),
+                cx,
+            );
+
+            let default_model = registry.default_model().unwrap();
+            assert_eq!(default_model.model.id(), model.id());
+            assert_eq!(default_model.provider.id(), provider.id());
+        });
+    }
+
+    #[gpui::test]
+    fn test_sync_installed_llm_extensions(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "fake" {
+                    Some("fake-extension")
+                } else {
+                    None
+                }
+            }));
+        });
+
+        let mut extension_ids = HashSet::default();
+        extension_ids.insert(Arc::from("fake-extension"));
+
+        registry.update(cx, |registry, cx| {
+            registry.sync_installed_llm_extensions(extension_ids, cx);
+        });
+
+        assert!(registry.read(cx).visible_providers().is_empty());
+
+        registry.update(cx, |registry, cx| {
+            registry.sync_installed_llm_extensions(HashSet::default(), cx);
+        });
+
+        assert_eq!(registry.read(cx).visible_providers().len(), 1);
     }
 }

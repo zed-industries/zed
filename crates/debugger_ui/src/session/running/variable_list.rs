@@ -217,6 +217,12 @@ impl VariableList {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.subscribe(&session, |this, _, event, cx| match event {
+                SessionEvent::HistoricSnapshotSelected => {
+                    this.selection.take();
+                    this.edited_path.take();
+                    this.selected_stack_frame_id.take();
+                    this.build_entries(cx);
+                }
                 SessionEvent::Stopped(_) => {
                     this.selection.take();
                     this.edited_path.take();
@@ -225,7 +231,6 @@ impl VariableList {
                 SessionEvent::Variables | SessionEvent::Watchers => {
                     this.build_entries(cx);
                 }
-
                 _ => {}
             }),
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
@@ -524,7 +529,7 @@ impl VariableList {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.edited_path.take();
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -1062,7 +1067,7 @@ impl VariableList {
             editor.select_all(&editor::actions::SelectAll, window, cx);
             editor
         });
-        editor.focus_handle(cx).focus(window);
+        editor.focus_handle(cx).focus(window, cx);
         editor
     }
 
@@ -1071,7 +1076,12 @@ impl VariableList {
         presentation_hint: Option<&VariablePresentationHint>,
         cx: &Context<Self>,
     ) -> VariableColor {
-        let syntax_color_for = |name| cx.theme().syntax().get(name).color;
+        let syntax_color_for = |name| {
+            cx.theme()
+                .syntax()
+                .style_for_name(name)
+                .and_then(|style| style.color)
+        };
         let name = if self.disabled {
             Some(Color::Disabled.color(cx))
         } else {
@@ -1569,7 +1579,7 @@ impl Render for VariableList {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)

@@ -7,26 +7,27 @@ use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
+    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, HighlightKey,
     MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
-    Render, Subscription, Task, TextStyle, WeakEntity, actions,
+    Action as _, AppContext, Context, Entity, FocusHandle, Focusable, HighlightStyle, Hsla, Render,
+    Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionDisplayOptions, CompletionResponse,
+    CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 use settings::Settings;
 use std::fmt::Write;
-use std::{cell::RefCell, ops::Range, rc::Rc, usize};
-use theme::{Theme, ThemeSettings};
+use std::{ops::Range, rc::Rc, usize};
+use theme::Theme;
+use theme_settings::ThemeSettings;
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
 
@@ -72,6 +73,7 @@ impl Console {
             editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_line_numbers(false, cx);
@@ -83,6 +85,7 @@ impl Console {
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_use_modal_editing(false);
+            editor.disable_mouse_wheel_zoom();
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
@@ -105,7 +108,7 @@ impl Console {
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.on_focus(&focus_handle, window, |console, window, cx| {
                 if console.is_running(cx) {
-                    console.query_bar.focus_handle(cx).focus(window);
+                    console.query_bar.focus_handle(cx).focus(window, cx);
                 }
             }),
         ];
@@ -222,8 +225,6 @@ impl Console {
                     console.insert(&output, window, cx);
                     console.set_read_only(true);
 
-                    struct ConsoleAnsiHighlight;
-
                     let buffer = console.buffer().read(cx).snapshot(cx);
 
                     for (range, color) in spans {
@@ -238,8 +239,8 @@ impl Console {
                             )),
                             ..Default::default()
                         };
-                        console.highlight_text_key::<ConsoleAnsiHighlight>(
-                            start_offset,
+                        console.highlight_text_key(
+                            HighlightKey::ConsoleAnsiHighlight(start_offset),
                             vec![range],
                             style,
                             false,
@@ -252,10 +253,11 @@ impl Console {
                         let start_offset = range.start;
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
-                        console.highlight_background_key::<ConsoleAnsiHighlight>(
-                            start_offset,
+                        let color_fn = color_fetcher(color);
+                        console.highlight_background(
+                            HighlightKey::ConsoleAnsiHighlight(start_offset),
                             &[range],
-                            color_fetcher(color),
+                            move |_, theme| color_fn(theme),
                             cx,
                         );
                     }
@@ -304,7 +306,8 @@ impl Console {
     }
 
     fn previous_query(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        let prev = self.history.previous(&mut self.cursor);
+        let current_query = self.query_bar.read(cx).text(cx);
+        let prev = self.history.previous(&mut self.cursor, &current_query);
         if let Some(prev) = prev {
             self.query_bar.update(cx, |editor, cx| {
                 editor.set_text(prev, window, cx);
@@ -383,7 +386,7 @@ impl Console {
                     })
                 },
             )
-            .anchor(Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -527,7 +530,6 @@ struct ConsoleQueryBarCompletionProvider(WeakEntity<Console>);
 impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
@@ -553,24 +555,12 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         }
     }
 
-    fn apply_additional_edits_for_completion(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _completion_index: usize,
-        _push_to_history: bool,
-        _cx: &mut Context<Editor>,
-    ) -> gpui::Task<anyhow::Result<Option<language::Transaction>>> {
-        Task::ready(Ok(None))
-    }
-
     fn is_completion_trigger(
         &self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
-        menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let mut chars = text.chars();
@@ -581,9 +571,6 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         };
 
         let snapshot = buffer.read(cx).snapshot();
-        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
-            return false;
-        }
 
         let classifier = snapshot
             .char_classifier_at(position)

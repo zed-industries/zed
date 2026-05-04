@@ -27,7 +27,7 @@ pub struct RelPath(str);
 /// relative and normalized.
 ///
 /// This type is to [`RelPath`] as [`std::path::PathBuf`] is to [`std::path::Path`]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Ord, PartialOrd, Serialize)]
 pub struct RelPathBuf(String);
 
 impl RelPath {
@@ -161,7 +161,7 @@ impl RelPath {
         false
     }
 
-    pub fn strip_prefix<'a>(&'a self, other: &Self) -> Result<&'a Self> {
+    pub fn strip_prefix<'a>(&'a self, other: &Self) -> Result<&'a Self, StripPrefixError> {
         if other.is_empty() {
             return Ok(self);
         }
@@ -172,7 +172,7 @@ impl RelPath {
                 return Ok(Self::empty());
             }
         }
-        Err(anyhow!("failed to strip prefix: {other:?} from {self:?}"))
+        Err(StripPrefixError)
     }
 
     pub fn len(&self) -> usize {
@@ -228,7 +228,8 @@ impl RelPath {
     pub fn display(&self, style: PathStyle) -> Cow<'_, str> {
         match style {
             PathStyle::Posix => Cow::Borrowed(&self.0),
-            PathStyle::Windows => Cow::Owned(self.0.replace('/', "\\")),
+            PathStyle::Windows if self.0.contains('/') => Cow::Owned(self.0.replace('/', "\\")),
+            PathStyle::Windows => Cow::Borrowed(&self.0),
         }
     }
 
@@ -249,6 +250,17 @@ impl RelPath {
         Path::new(&self.0)
     }
 }
+
+#[derive(Debug)]
+pub struct StripPrefixError;
+
+impl std::fmt::Display for StripPrefixError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("prefix not found")
+    }
+}
+
+impl std::error::Error for StripPrefixError {}
 
 impl ToOwned for RelPath {
     type Owned = RelPathBuf;
@@ -329,15 +341,45 @@ impl RelPathBuf {
     }
 }
 
+impl<'de> Deserialize<'de> for RelPathBuf {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let path = String::deserialize(deserializer)?;
+        let rel_path =
+            RelPath::new(Path::new(&path), PathStyle::local()).map_err(serde::de::Error::custom)?;
+        Ok(rel_path.into_owned())
+    }
+}
+
 impl Into<Arc<RelPath>> for RelPathBuf {
     fn into(self) -> Arc<RelPath> {
         Arc::from(self.as_rel_path())
     }
 }
 
+impl AsRef<Path> for RelPathBuf {
+    fn as_ref(&self) -> &Path {
+        self.as_std_path()
+    }
+}
+
+impl AsRef<Path> for RelPath {
+    fn as_ref(&self) -> &Path {
+        self.as_std_path()
+    }
+}
+
 impl AsRef<RelPath> for RelPathBuf {
     fn as_ref(&self) -> &RelPath {
         self.as_rel_path()
+    }
+}
+
+impl AsRef<RelPath> for RelPath {
+    fn as_ref(&self) -> &RelPath {
+        self
     }
 }
 
@@ -368,9 +410,25 @@ pub fn rel_path(path: &str) -> &RelPath {
     RelPath::unix(path).unwrap()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[track_caller]
+pub fn rel_path_buf(path: &str) -> RelPathBuf {
+    RelPath::unix(path).unwrap().to_rel_path_buf()
+}
+
 impl PartialEq<str> for RelPath {
     fn eq(&self, other: &str) -> bool {
         self.0 == *other
+    }
+}
+
+pub trait PathExt {
+    fn to_rel_path_buf(&self) -> Result<RelPathBuf>;
+}
+
+impl<T: AsRef<Path> + ?Sized> PathExt for T {
+    fn to_rel_path_buf(&self) -> Result<RelPathBuf> {
+        Ok(RelPath::new(self.as_ref(), PathStyle::local())?.into_owned())
     }
 }
 

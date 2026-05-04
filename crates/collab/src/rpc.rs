@@ -1,12 +1,14 @@
 mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
+use crate::entities::User;
 use crate::{
     AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId,
+        UserId,
     },
     executor::Executor,
 };
@@ -32,9 +34,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
-use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
-use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
 use util::paths::PathStyle;
 
@@ -51,7 +51,6 @@ use rpc::{
     },
 };
 use semver::Version;
-use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
     future::Future,
@@ -132,7 +131,6 @@ impl<R: RequestMessage> Response<R> {
 #[derive(Clone, Debug)]
 pub enum Principal {
     User(User),
-    Impersonated { user: User, admin: User },
 }
 
 impl Principal {
@@ -141,11 +139,6 @@ impl Principal {
             Principal::User(user) => {
                 span.record("user_id", user.id.0);
                 span.record("login", &user.github_login);
-            }
-            Principal::Impersonated { user, admin } => {
-                span.record("user_id", user.id.0);
-                span.record("login", &user.github_login);
-                span.record("impersonator", &admin.github_login);
             }
         }
     }
@@ -195,7 +188,6 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    supermaven_client: Option<Arc<SupermavenAdminApi>>,
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
@@ -206,16 +198,16 @@ struct Session {
 
 impl Session {
     async fn db(&self) -> tokio::sync::MutexGuard<'_, DbHandle> {
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         tokio::task::yield_now().await;
         guard
     }
 
     async fn connection_pool(&self) -> ConnectionPoolGuard<'_> {
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         tokio::task::yield_now().await;
         let guard = self.connection_pool.lock();
         ConnectionPoolGuard {
@@ -224,24 +216,16 @@ impl Session {
         }
     }
 
+    #[expect(dead_code)]
     fn is_staff(&self) -> bool {
         match &self.principal {
             Principal::User(user) => user.admin,
-            Principal::Impersonated { .. } => true,
         }
     }
 
     fn user_id(&self) -> UserId {
         match &self.principal {
             Principal::User(user) => user.id,
-            Principal::Impersonated { user, .. } => user.id,
-        }
-    }
-
-    pub fn email(&self) -> Option<String> {
-        match &self.principal {
-            Principal::User(user) => user.email_address.clone(),
-            Principal::Impersonated { user, .. } => user.email_address.clone(),
         }
     }
 }
@@ -252,10 +236,6 @@ impl Debug for Session {
         match &self.principal {
             Principal::User(user) => {
                 result.field("user", &user.github_login);
-            }
-            Principal::Impersonated { user, admin } => {
-                result.field("user", &user.github_login);
-                result.field("impersonator", &admin.github_login);
             }
         }
         result.field("connection_id", &self.connection_id).finish()
@@ -275,31 +255,15 @@ impl Deref for DbHandle {
 pub struct Server {
     id: parking_lot::Mutex<ServerId>,
     peer: Arc<Peer>,
-    pub(crate) connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
+    pub connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
     handlers: HashMap<TypeId, MessageHandler>,
     teardown: watch::Sender<bool>,
 }
 
-pub(crate) struct ConnectionPoolGuard<'a> {
+struct ConnectionPoolGuard<'a> {
     guard: parking_lot::MutexGuard<'a, ConnectionPool>,
     _not_send: PhantomData<Rc<()>>,
-}
-
-#[derive(Serialize)]
-pub struct ServerSnapshot<'a> {
-    peer: &'a Peer,
-    #[serde(serialize_with = "serialize_deref")]
-    connection_pool: ConnectionPoolGuard<'a>,
-}
-
-pub fn serialize_deref<S, T, U>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-    T: Deref<Target = U>,
-    U: Serialize,
-{
-    Serialize::serialize(value.deref(), serializer)
 }
 
 impl Server {
@@ -347,6 +311,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenImageByPath>)
+            .add_request_handler(forward_read_only_project_request::<proto::DownloadFileByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDefaultBranch>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
@@ -399,6 +364,9 @@ impl Server {
             .add_message_handler(create_image_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshSemanticTokens>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
@@ -443,10 +411,6 @@ impl Server {
             .add_message_handler(update_followers)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
-            .add_request_handler(get_supermaven_api_key)
-            .add_request_handler(forward_mutating_project_request::<proto::OpenContext>)
-            .add_request_handler(forward_mutating_project_request::<proto::CreateContext>)
-            .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Stash>)
@@ -469,11 +433,24 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GetBlobContent>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
+            .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
+            .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitEditRef>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitRepairWorktrees>)
+            .add_request_handler(disallow_guest_request::<proto::GitCreateArchiveCheckpoint>)
+            .add_request_handler(disallow_guest_request::<proto::GitRestoreArchiveCheckpoint>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
-            .add_message_handler(update_context)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
+            .add_request_handler(share_agent_thread)
+            .add_request_handler(get_shared_agent_thread)
+            .add_request_handler(forward_project_search_chunk);
 
         Arc::new(server)
     }
@@ -655,7 +632,7 @@ impl Server {
         let _ = self.teardown.send(true);
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn reset(&self, id: ServerId) {
         self.teardown();
         *self.id.lock() = id;
@@ -663,7 +640,7 @@ impl Server {
         let _ = self.teardown.send(false);
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn id(&self) -> ServerId {
         *self.id.lock()
     }
@@ -780,7 +757,6 @@ impl Server {
             connection_id=field::Empty,
             user_id=field::Empty,
             login=field::Empty,
-            impersonator=field::Empty,
             user_agent=field::Empty,
             geoip_country_code=field::Empty,
             release_channel=field::Empty,
@@ -813,24 +789,6 @@ impl Server {
 
             tracing::info!("connection opened");
 
-            let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-            let http_client = match ReqwestClient::user_agent(&user_agent) {
-                Ok(http_client) => Arc::new(http_client),
-                Err(error) => {
-                    tracing::error!(?error, "failed to create HTTP client");
-                    return;
-                }
-            };
-
-            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(
-                |supermaven_admin_api_key| {
-                    Arc::new(SupermavenAdminApi::new(
-                        supermaven_admin_api_key.to_string(),
-                        http_client.clone(),
-                    ))
-                },
-            );
-
             let session = Session {
                 principal: principal.clone(),
                 connection_id,
@@ -841,7 +799,6 @@ impl Server {
                 geoip_country_code,
                 system_id,
                 _executor: executor.clone(),
-                supermaven_client,
             };
 
             if let Err(error) = this
@@ -908,7 +865,6 @@ impl Server {
                                 concurrent_handlers,
                                 user_id=field::Empty,
                                 login=field::Empty,
-                                impersonator=field::Empty,
                                 lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
@@ -972,7 +928,7 @@ impl Server {
         }
 
         match &session.principal {
-            Principal::User(user) | Principal::Impersonated { user, admin: _ } => {
+            Principal::User(user) => {
                 if !user.connected_once {
                     self.peer.send(connection_id, proto::ShowContacts {})?;
                     self.app_state
@@ -992,10 +948,6 @@ impl Server {
                     )?;
                 }
 
-                if should_auto_subscribe_to_channels(&zed_version) {
-                    subscribe_user_to_channels(user.id, session).await?;
-                }
-
                 if let Some(incoming_call) =
                     self.app_state.db.incoming_call_for_user(user.id).await?
                 {
@@ -1007,67 +959,6 @@ impl Server {
         }
 
         Ok(())
-    }
-
-    pub async fn invite_code_redeemed(
-        self: &Arc<Self>,
-        inviter_id: UserId,
-        invitee_id: UserId,
-    ) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await?
-            && let Some(code) = &user.invite_code
-        {
-            let pool = self.connection_pool.lock();
-            let invitee_contact = contact_for_user(invitee_id, false, &pool);
-            for connection_id in pool.user_connection_ids(inviter_id) {
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateContacts {
-                        contacts: vec![invitee_contact.clone()],
-                        ..Default::default()
-                    },
-                )?;
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateInviteInfo {
-                        url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
-                        count: user.invite_count as u32,
-                    },
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await?
-            && let Some(invite_code) = &user.invite_code
-        {
-            let pool = self.connection_pool.lock();
-            for connection_id in pool.user_connection_ids(user_id) {
-                self.peer.send(
-                    connection_id,
-                    proto::UpdateInviteInfo {
-                        url: format!(
-                            "{}{}",
-                            self.app_state.config.invite_link_prefix, invite_code
-                        ),
-                        count: user.invite_count as u32,
-                    },
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
-        ServerSnapshot {
-            connection_pool: ConnectionPoolGuard {
-                guard: self.connection_pool.lock(),
-                _not_send: PhantomData,
-            },
-            peer: &self.peer,
-        }
     }
 }
 
@@ -1087,7 +978,7 @@ impl DerefMut for ConnectionPoolGuard<'_> {
 
 impl Drop for ConnectionPoolGuard<'_> {
     fn drop(&mut self) {
-        #[cfg(test)]
+        #[cfg(feature = "test-support")]
         self.check_invariants();
     }
 }
@@ -1597,6 +1488,7 @@ fn notify_rejoined_projects(
                 worktree_id: worktree.id,
                 abs_path: worktree.abs_path.clone(),
                 root_name: worktree.root_name,
+                root_repo_common_dir: worktree.root_repo_common_dir,
                 updated_entries: worktree.updated_entries,
                 removed_entries: worktree.removed_entries,
                 scan_id: worktree.scan_id,
@@ -1629,6 +1521,7 @@ fn notify_rejoined_projects(
                         path: settings_file.path,
                         content: Some(settings_file.content),
                         kind: Some(settings_file.kind.to_proto().into()),
+                        outside_worktree: Some(settings_file.outside_worktree),
                     },
                 )?;
             }
@@ -1886,6 +1779,7 @@ async fn share_project(
             &request.worktrees,
             request.is_ssh_project,
             request.windows_paths.unwrap_or(false),
+            &request.features,
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -1951,6 +1845,28 @@ async fn join_project(
     tracing::info!(%project_id, "join project");
 
     let db = session.db().await;
+    let project_model = db.get_project(project_id).await?;
+    let host_features: Vec<String> =
+        serde_json::from_str(&project_model.features).unwrap_or_default();
+    let guest_features: HashSet<_> = request.features.iter().collect();
+    let host_features_set: HashSet<_> = host_features.iter().collect();
+    if guest_features != host_features_set {
+        let host_connection_id = project_model.host_connection()?;
+        let mut pool = session.connection_pool().await;
+        let host_version = pool
+            .connection(host_connection_id)
+            .map(|c| c.zed_version.to_string());
+        let guest_version = pool
+            .connection(session.connection_id)
+            .map(|c| c.zed_version.to_string());
+        drop(pool);
+        Err(anyhow!(
+            "The host (v{}) and guest (v{}) are using incompatible versions of Zed. The peer with the older version must update to collaborate.",
+            host_version.as_deref().unwrap_or("unknown"),
+            guest_version.as_deref().unwrap_or("unknown"),
+        ))?;
+    }
+
     let (project, replica_id) = &mut *db
         .join_project(
             project_id,
@@ -1961,6 +1877,7 @@ async fn join_project(
         )
         .await?;
     drop(db);
+
     tracing::info!(%project_id, "join remote project");
     let collaborators = project
         .collaborators
@@ -1979,6 +1896,7 @@ async fn join_project(
             root_name: worktree.root_name.clone(),
             visible: worktree.visible,
             abs_path: worktree.abs_path.clone(),
+            root_repo_common_dir: None,
         })
         .collect::<Vec<_>>();
 
@@ -2020,6 +1938,7 @@ async fn join_project(
         language_server_capabilities,
         role: project.role.into(),
         windows_paths: project.path_style == PathStyle::Windows,
+        features: project.features.clone(),
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2029,6 +1948,7 @@ async fn join_project(
             worktree_id,
             abs_path: worktree.abs_path.clone(),
             root_name: worktree.root_name,
+            root_repo_common_dir: worktree.root_repo_common_dir,
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
@@ -2061,6 +1981,7 @@ async fn join_project(
                     path: settings_file.path,
                     content: Some(settings_file.content),
                     kind: Some(settings_file.kind.to_proto() as i32),
+                    outside_worktree: Some(settings_file.outside_worktree),
                 },
             )?;
         }
@@ -2357,6 +2278,24 @@ where
     Ok(())
 }
 
+async fn disallow_guest_request<T>(
+    _request: T,
+    response: Response<T>,
+    _session: MessageContext,
+) -> Result<()>
+where
+    T: RequestMessage,
+{
+    response.peer.respond_with_error(
+        response.receipt,
+        ErrorCode::Forbidden
+            .message("request is not allowed for guests".to_string())
+            .to_proto(),
+    )?;
+    response.responded.store(true, SeqCst);
+    Ok(())
+}
+
 async fn lsp_query(
     request: proto::LspQuery,
     response: Response<proto::LspQuery>,
@@ -2459,45 +2398,17 @@ async fn update_buffer(
     Ok(())
 }
 
-async fn update_context(message: proto::UpdateContext, session: MessageContext) -> Result<()> {
-    let project_id = ProjectId::from_proto(message.project_id);
-
-    let operation = message.operation.as_ref().context("invalid operation")?;
-    let capability = match operation.variant.as_ref() {
-        Some(proto::context_operation::Variant::BufferOperation(buffer_op)) => {
-            if let Some(buffer_op) = buffer_op.operation.as_ref() {
-                match buffer_op.variant {
-                    None | Some(proto::operation::Variant::UpdateSelections(_)) => {
-                        Capability::ReadOnly
-                    }
-                    _ => Capability::ReadWrite,
-                }
-            } else {
-                Capability::ReadWrite
-            }
-        }
-        Some(_) => Capability::ReadWrite,
-        None => Capability::ReadOnly,
-    };
-
-    let guard = session
-        .db()
-        .await
-        .connections_for_buffer_update(project_id, session.connection_id, capability)
+async fn forward_project_search_chunk(
+    message: proto::FindSearchCandidatesChunk,
+    response: Response<proto::FindSearchCandidatesChunk>,
+    session: MessageContext,
+) -> Result<()> {
+    let peer_id = message.peer_id.context("missing peer_id")?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, peer_id.into(), message)
         .await?;
-
-    let (host, guests) = &*guard;
-
-    broadcast(
-        Some(session.connection_id),
-        guests.iter().chain([host]).copied(),
-        |connection_id| {
-            session
-                .peer
-                .forward_send(session.connection_id, connection_id, message.clone())
-        },
-    );
-
+    response.send(payload)?;
     Ok(())
 }
 
@@ -2832,10 +2743,6 @@ async fn remove_contact(
 
     response.send(proto::Ack {})?;
     Ok(())
-}
-
-fn should_auto_subscribe_to_channels(version: &ZedVersion) -> bool {
-    version.0.minor < 139
 }
 
 async fn subscribe_to_channels(
@@ -3652,35 +3559,6 @@ async fn acknowledge_buffer_version(
     Ok(())
 }
 
-/// Get a Supermaven API key for the user
-async fn get_supermaven_api_key(
-    _request: proto::GetSupermavenApiKey,
-    response: Response<proto::GetSupermavenApiKey>,
-    session: MessageContext,
-) -> Result<()> {
-    let user_id: String = session.user_id().to_string();
-    if !session.is_staff() {
-        return Err(anyhow!("supermaven not enabled for this account"))?;
-    }
-
-    let email = session.email().context("user must have an email")?;
-
-    let supermaven_admin_api = session
-        .supermaven_client
-        .as_ref()
-        .context("supermaven not configured")?;
-
-    let result = supermaven_admin_api
-        .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
-        .await?;
-
-    response.send(proto::GetSupermavenApiKeyResponse {
-        api_key: result.api_key,
-    })?;
-
-    Ok(())
-}
-
 /// Start receiving chat updates for a channel
 async fn join_channel_chat(
     _request: proto::JoinChannelChat,
@@ -4121,6 +3999,54 @@ fn project_left(project: &db::LeftProject, session: &Session) {
                 .trace_err();
         }
     }
+}
+
+async fn share_agent_thread(
+    request: proto::ShareAgentThread,
+    response: Response<proto::ShareAgentThread>,
+    session: MessageContext,
+) -> Result<()> {
+    let user_id = session.user_id();
+
+    let share_id = SharedThreadId::from_proto(request.session_id.clone())
+        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
+
+    session
+        .db()
+        .await
+        .upsert_shared_thread(share_id, user_id, &request.title, request.thread_data)
+        .await?;
+
+    response.send(proto::Ack {})?;
+
+    Ok(())
+}
+
+async fn get_shared_agent_thread(
+    request: proto::GetSharedAgentThread,
+    response: Response<proto::GetSharedAgentThread>,
+    session: MessageContext,
+) -> Result<()> {
+    let share_id = SharedThreadId::from_proto(request.session_id)
+        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
+
+    let result = session.db().await.get_shared_thread(share_id).await?;
+
+    match result {
+        Some((thread, username)) => {
+            response.send(proto::GetSharedAgentThreadResponse {
+                title: thread.title,
+                thread_data: thread.data,
+                sharer_username: username,
+                created_at: thread.created_at.and_utc().to_rfc3339(),
+            })?;
+        }
+        None => {
+            return Err(anyhow!("Shared thread not found").into());
+        }
+    }
+
+    Ok(())
 }
 
 pub trait ResultExt {

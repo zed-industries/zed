@@ -287,8 +287,7 @@ impl NeovimBackedTestContext {
         self.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
-                    settings.project.all_languages.defaults.soft_wrap =
-                        Some(SoftWrap::PreferredLineLength);
+                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
                     settings
                         .project
                         .all_languages
@@ -304,11 +303,10 @@ impl NeovimBackedTestContext {
         self.neovim.set_option(&format!("scrolloff={}", 3)).await;
         // +2 to account for the vim command UI at the bottom.
         self.neovim.set_option(&format!("lines={}", rows + 2)).await;
-        let (line_height, visible_line_count) = self.editor(|editor, window, _cx| {
+        let (line_height, visible_line_count) = self.update_editor(|editor, window, cx| {
             (
                 editor
-                    .style()
-                    .unwrap()
+                    .style(cx)
                     .text
                     .line_height_in_pixels(window.rem_size()),
                 editor.visible_line_count().unwrap(),

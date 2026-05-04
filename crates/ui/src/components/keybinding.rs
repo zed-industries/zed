@@ -1,13 +1,13 @@
 use std::rc::Rc;
 
 use crate::PlatformStyle;
+use crate::utils::capitalize;
 use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
     Action, AnyElement, App, FocusHandle, Global, IntoElement, KeybindingKeystroke, Keystroke,
     Modifiers, Window, relative,
 };
 use itertools::Itertools;
-use settings::KeybindSource;
 
 #[derive(Debug)]
 enum Source {
@@ -102,11 +102,11 @@ impl KeyBinding {
         }
     }
 
-    pub fn from_keystrokes(keystrokes: Rc<[KeybindingKeystroke]>, source: KeybindSource) -> Self {
+    pub fn from_keystrokes(keystrokes: Rc<[KeybindingKeystroke]>, vim_mode: bool) -> Self {
         Self {
             source: Source::Keystrokes { keystrokes },
             size: None,
-            vim_mode: source == KeybindSource::Vim,
+            vim_mode,
             platform_style: PlatformStyle::platform(),
             disabled: false,
         }
@@ -142,7 +142,7 @@ fn render_key(
     match key_icon {
         Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
         None => {
-            let key = util::capitalize(key);
+            let key = capitalize(key);
             Key::new(&key, color).size(size).into_any_element()
         }
     }
@@ -546,7 +546,7 @@ fn keystroke_text(
         let key = match key {
             "pageup" => "PageUp",
             "pagedown" => "PageDown",
-            key => &util::capitalize(key),
+            key => &capitalize(key),
         };
         text.push_str(key);
     }

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, ops::Not};
 
 use gh_workflow::{
     Concurrency, Env, Expression, Step, WorkflowCallInput, WorkflowCallSecret,
@@ -30,6 +30,8 @@ secret!(AZURE_SIGNING_CLIENT_ID);
 secret!(AZURE_SIGNING_CLIENT_SECRET);
 secret!(AZURE_SIGNING_TENANT_ID);
 secret!(CACHIX_AUTH_TOKEN);
+secret!(CLUSTER_NAME);
+secret!(DIGITALOCEAN_ACCESS_TOKEN);
 secret!(DIGITALOCEAN_SPACES_ACCESS_KEY);
 secret!(DIGITALOCEAN_SPACES_SECRET_KEY);
 secret!(GITHUB_TOKEN);
@@ -46,6 +48,12 @@ secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
 secret!(VERCEL_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
+secret!(R2_ACCOUNT_ID);
+secret!(R2_ACCESS_KEY_ID);
+secret!(R2_SECRET_ACCESS_KEY);
+secret!(CLOUDFLARE_API_TOKEN);
+secret!(CLOUDFLARE_ACCOUNT_ID);
+secret!(DOCS_AMPLITUDE_API_KEY);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -80,8 +88,18 @@ pub fn bundle_envs(platform: Platform) -> Env {
 }
 
 pub fn one_workflow_per_non_main_branch() -> Concurrency {
+    one_workflow_per_non_main_branch_and_token("")
+}
+
+pub fn one_workflow_per_non_main_branch_and_token<T: AsRef<str>>(token: T) -> Concurrency {
     Concurrency::default()
-        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}")
+        .group(format!(
+            concat!(
+                "${{{{ github.workflow }}}}-${{{{ github.ref_name }}}}-",
+                "${{{{ github.ref_name == 'main' && github.sha || 'anysha' }}}}{}"
+            ),
+            token.as_ref()
+        ))
         .cancel_in_progress(true)
 }
 
@@ -115,21 +133,50 @@ impl PathCondition {
             set_by_step: Default::default(),
         }
     }
-    pub fn guard(&self, job: NamedJob) -> NamedJob {
+
+    pub fn and_always<'a>(&'a self) -> PathContextCondition<'a> {
+        PathContextCondition {
+            condition: self,
+            run_in_merge_queue: true,
+        }
+    }
+
+    pub fn and_not_in_merge_queue<'a>(&'a self) -> PathContextCondition<'a> {
+        PathContextCondition {
+            condition: self,
+            run_in_merge_queue: false,
+        }
+    }
+}
+
+pub struct PathContextCondition<'a> {
+    condition: &'a PathCondition,
+    run_in_merge_queue: bool,
+}
+
+impl<'a> PathContextCondition<'a> {
+    pub fn then(&'a self, job: NamedJob) -> NamedJob {
         let set_by_step = self
+            .condition
             .set_by_step
             .borrow()
             .clone()
-            .unwrap_or_else(|| panic!("condition {},is never set", self.name));
+            .unwrap_or_else(|| panic!("condition {},is never set", self.condition.name));
         NamedJob {
             name: job.name,
-            job: job
-                .job
-                .add_need(set_by_step.clone())
-                .cond(Expression::new(format!(
-                    "needs.{}.outputs.{} == 'true'",
-                    &set_by_step, self.name
-                ))),
+            job: job.job.add_need(set_by_step.clone()).cond(Expression::new(
+                format!(
+                    "needs.{}.outputs.{} == 'true' {merge_queue_condition}",
+                    &set_by_step,
+                    self.condition.name,
+                    merge_queue_condition = self
+                        .run_in_merge_queue
+                        .not()
+                        .then_some("&& github.event_name != 'merge_group'")
+                        .unwrap_or_default()
+                )
+                .trim(),
+            )),
         }
     }
 }
@@ -141,14 +188,31 @@ pub(crate) struct StepOutput {
 
 impl StepOutput {
     pub fn new<T>(step: &Step<T>, name: &'static str) -> Self {
-        Self {
-            name,
-            step_id: step
-                .value
-                .id
-                .clone()
-                .expect("Steps that produce outputs must have an ID"),
-        }
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        assert!(
+            step.value
+                .run
+                .as_ref()
+                .is_none_or(|run_command| run_command.contains(name)),
+            "Step output with name '{name}' must occur at least once in run command with ID {step_id}!"
+        );
+
+        Self { name, step_id }
+    }
+
+    pub fn new_unchecked<T>(step: &Step<T>, name: &'static str) -> Self {
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        Self { name, step_id }
     }
 
     pub fn expr(&self) -> String {
@@ -208,6 +272,7 @@ pub struct WorkflowInput {
     pub input_type: &'static str,
     pub name: &'static str,
     pub default: Option<String>,
+    pub description: Option<String>,
 }
 
 impl WorkflowInput {
@@ -216,12 +281,30 @@ impl WorkflowInput {
             input_type: "string",
             name,
             default,
+            description: None,
         }
+    }
+
+    pub fn bool(name: &'static str, default: Option<bool>) -> Self {
+        Self {
+            input_type: "boolean",
+            name,
+            default: default.as_ref().map(ToString::to_string),
+            description: None,
+        }
+    }
+
+    pub fn description(mut self, description: impl ToString) -> Self {
+        self.description = Some(description.to_string());
+        self
     }
 
     pub fn input(&self) -> WorkflowDispatchInput {
         WorkflowDispatchInput {
-            description: self.name.to_owned(),
+            description: self
+                .description
+                .clone()
+                .unwrap_or_else(|| self.name.to_owned()),
             required: self.default.is_none(),
             input_type: self.input_type.to_owned(),
             default: self.default.clone(),
@@ -236,11 +319,15 @@ impl WorkflowInput {
             default: self.default.clone(),
         }
     }
+
+    pub(crate) fn expr(&self) -> String {
+        format!("inputs.{}", self.name)
+    }
 }
 
 impl std::fmt::Display for WorkflowInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "${{{{ inputs.{} }}}}", self.name)
+        write!(f, "${{{{ {} }}}}", self.expr())
     }
 }
 
@@ -304,6 +391,8 @@ pub mod assets {
     pub const REMOTE_SERVER_MAC_X86_64: &str = "zed-remote-server-macos-x86_64.gz";
     pub const REMOTE_SERVER_LINUX_AARCH64: &str = "zed-remote-server-linux-aarch64.gz";
     pub const REMOTE_SERVER_LINUX_X86_64: &str = "zed-remote-server-linux-x86_64.gz";
+    pub const REMOTE_SERVER_WINDOWS_AARCH64: &str = "zed-remote-server-windows-aarch64.zip";
+    pub const REMOTE_SERVER_WINDOWS_X86_64: &str = "zed-remote-server-windows-x86_64.zip";
 
     pub fn all() -> Vec<&'static str> {
         vec![
@@ -317,6 +406,8 @@ pub mod assets {
             REMOTE_SERVER_MAC_X86_64,
             REMOTE_SERVER_LINUX_AARCH64,
             REMOTE_SERVER_LINUX_X86_64,
+            REMOTE_SERVER_WINDOWS_AARCH64,
+            REMOTE_SERVER_WINDOWS_X86_64,
         ]
     }
 }

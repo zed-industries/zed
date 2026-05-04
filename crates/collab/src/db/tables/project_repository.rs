@@ -22,6 +22,12 @@ pub struct Model {
     pub branch_summary: Option<String>,
     // A JSON object representing the current Head commit values
     pub head_commit_details: Option<String>,
+    pub remote_upstream_url: Option<String>,
+    pub remote_origin_url: Option<String>,
+    pub repository_dir_abs_path: Option<String>,
+    pub common_dir_abs_path: Option<String>,
+    // JSON array of linked worktree objects
+    pub linked_worktrees: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

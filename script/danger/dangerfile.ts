@@ -6,10 +6,13 @@ prHygiene({
   rules: {
     // Don't enable this rule just yet, as it can have false positives.
     useImperativeMood: "off",
+    noConventionalCommits: {
+      bannedTypes: ["feat", "fix", "style", "refactor", "perf", "test", "chore", "build", "revert"],
+    },
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:\r?\n\s+-/gm;
+const RELEASE_NOTES_PATTERN = /Release Notes:(\r?\n)+- /gm;
 const body = danger.github.pr.body;
 
 const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
@@ -58,40 +61,23 @@ if (includesIssueUrl) {
   );
 }
 
-const PROMPT_PATHS = [
-  "assets/prompts/content_prompt.hbs",
-  "assets/prompts/terminal_assistant_prompt.hbs",
-  "crates/agent_settings/src/prompts/summarize_thread_detailed_prompt.txt",
-  "crates/agent_settings/src/prompts/summarize_thread_prompt.txt",
-  "crates/agent/src/templates/create_file_prompt.hbs",
-  "crates/agent/src/templates/edit_file_prompt_xml.hbs",
-  "crates/agent/src/templates/edit_file_prompt_diff_fenced.hbs",
-  "crates/git_ui/src/commit_message_prompt.txt",
+const MIGRATION_SCHEMA_FILES = [
+  "crates/collab/migrations/20251208000000_test_schema.sql",
+  "crates/collab/migrations.sqlite/20221109000000_test_schema.sql",
 ];
 
-const PROMPT_CHANGE_ATTESTATION = "I have ensured the LLM Worker works with these prompt changes.";
-
-const modifiedPrompts = danger.git.modified_files.filter((file) =>
-  PROMPT_PATHS.some((promptPath) => file.includes(promptPath)),
+const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
+  MIGRATION_SCHEMA_FILES.some((schemaFilePath) => file.endsWith(schemaFilePath)),
 );
 
-for (const promptPath of modifiedPrompts) {
-  if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
-    message(
-      [
-        `This PR contains changes to "${promptPath}".`,
-        "The author has attested the LLM Worker works with the changes to this prompt.",
-      ].join("\n"),
-    );
-  } else {
-    fail(
-      [
-        `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
-        "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
-        `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
-      ].join("\n"),
-    );
-  }
+if (modifiedSchemaFiles.length > 0) {
+  warn(
+    [
+      "This PR modifies database schema files.",
+      "",
+      "If you are making database changes, a migration needs to be added in the Cloud repository.",
+    ].join("\n"),
+  );
 }
 
 const FIXTURE_CHANGE_ATTESTATION = "Changes to test fixtures are intentional and necessary.";
