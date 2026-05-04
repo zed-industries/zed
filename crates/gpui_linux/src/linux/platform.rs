@@ -558,7 +558,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         let url = url.to_string();
         let username = username.to_string();
         let password = password.to_vec();
-        let keyring = self.with_common(|common| common.keyring.clone());
+        let keyring = self.inner.with_common(|common| common.keyring.clone());
 
         self.background_executor().spawn(async move {
             let keyring = get_keyring(&keyring).await?;
@@ -583,7 +583,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
-        let keyring = self.with_common(|common| common.keyring.clone());
+        let keyring = self.inner.with_common(|common| common.keyring.clone());
 
         self.background_executor().spawn(async move {
             let keyring = get_keyring(&keyring).await?;
@@ -613,7 +613,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let url = url.to_string();
-        let keyring = self.with_common(|common| common.keyring.clone());
+        let keyring = self.inner.with_common(|common| common.keyring.clone());
 
         self.background_executor().spawn(async move {
             let keyring = get_keyring(&keyring).await?;
