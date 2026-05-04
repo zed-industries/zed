@@ -721,7 +721,7 @@ pub enum LogSource {
     All,
     Branch(SharedString),
     Sha(Oid),
-    File(RepoPath),
+    Path(RepoPath),
 }
 
 impl LogSource {
@@ -732,7 +732,7 @@ impl LogSource {
             LogSource::Sha(oid) => {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
-            LogSource::File(_) => Ok("--follow"),
+            LogSource::Path(_) => Ok("--follow"),
         }
     }
 }
@@ -2954,8 +2954,8 @@ impl GitRepository for RealGitRepository {
                 log_source.get_arg()?,
             ];
 
-            if let LogSource::File(file_path) = &log_source {
-                git_log_command.extend(["--", file_path.as_unix_str()]);
+            if let LogSource::Path(path) = &log_source {
+                git_log_command.extend(["--", path.as_unix_str()]);
             }
 
             let mut command = git.build_command(&git_log_command);
@@ -3040,8 +3040,8 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
-            if let LogSource::File(file_path) = &log_source {
-                args.extend(["--", file_path.as_unix_str()]);
+            if let LogSource::Path(path) = &log_source {
+                args.extend(["--", path.as_unix_str()]);
             }
 
             let mut command = git.build_command(&args);

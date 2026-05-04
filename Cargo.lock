@@ -1268,7 +1268,7 @@ dependencies = [
  "simplelog",
  "tempfile",
  "windows 0.61.3",
- "winresource",
+ "windows_resources",
 ]
 
 [[package]]
@@ -2946,6 +2946,7 @@ dependencies = [
  "util",
  "walkdir",
  "windows 0.61.3",
+ "windows_resources",
 ]
 
 [[package]]
@@ -3279,6 +3280,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "feature_flags",
  "futures 0.3.32",
  "fuzzy",
  "gpui",
@@ -4095,9 +4097,9 @@ dependencies = [
 
 [[package]]
 name = "crash-handler"
-version = "0.6.3"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2066907075af649bcb8bcb1b9b986329b243677e6918b2d920aa64b0aac5ace3"
+checksum = "0df5c9639f4942eb7702b964b3f9adf03a55724a57558cc177407388a8b936e2"
 dependencies = [
  "cfg-if",
  "crash-context",
@@ -4111,15 +4113,11 @@ name = "crashes"
 version = "0.1.0"
 dependencies = [
  "async-process",
- "cfg-if",
  "crash-handler",
- "futures 0.3.32",
  "log",
  "mach2 0.5.0",
  "minidumper",
  "parking_lot",
- "paths",
- "release_channel",
  "serde",
  "serde_json",
  "system_specs",
@@ -6258,6 +6256,7 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
+ "client",
  "extension_host",
  "gpui",
  "system_specs",
@@ -9621,6 +9620,7 @@ dependencies = [
  "base64 0.22.1",
  "bedrock",
  "client",
+ "clock",
  "cloud_api_client",
  "cloud_api_types",
  "collections",
@@ -9630,9 +9630,11 @@ dependencies = [
  "copilot_chat",
  "copilot_ui",
  "credentials_provider",
+ "db",
  "deepseek",
  "extension",
  "extension_host",
+ "feature_flags",
  "fs",
  "futures 0.3.32",
  "google_ai",
@@ -9794,6 +9796,7 @@ dependencies = [
  "smol",
  "snippet",
  "task",
+ "tempfile",
  "terminal",
  "theme",
  "tree-sitter",
@@ -17561,7 +17564,6 @@ name = "system_specs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "gpui",
  "human_bytes",
  "pciid-parser",
@@ -21419,6 +21421,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e7ac75179f18232fe9c285163565a57ef8d3c89254a30685b57d83a38d326c2"
 
 [[package]]
+name = "windows_resources"
+version = "0.1.0"
+dependencies = [
+ "embed-resource",
+]
+
+[[package]]
 name = "windows_x86_64_gnu"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22513,7 +22522,7 @@ dependencies = [
  "web_search_providers",
  "which_key",
  "windows 0.61.3",
- "winresource",
+ "windows_resources",
  "workspace",
  "zed-reqwest",
  "zed_actions",

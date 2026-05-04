@@ -324,17 +324,34 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
 /// This function is not thread safe. Callers must ensure this is called on the AppKit main
 /// thread because it reads the active AppKit window and updates GPUI window state associated
 /// with Objective-C objects.
-pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
+pub(crate) unsafe fn set_active_window_cursor_style(
+    style: CursorStyle,
+    cursor_hidden: &AtomicBool,
+) {
     // SAFETY: The caller guarantees AppKit main-thread access. The class check ensures the
     // window has our WINDOW_STATE_IVAR before reading it.
     unsafe {
         let app = NSApplication::sharedApplication(nil);
+        let key_window: id = msg_send![app, keyWindow];
         let main_window: id = msg_send![app, mainWindow];
-        if main_window.is_null() || !msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
-            return;
-        }
+        let active_window = if !key_window.is_null()
+            && msg_send![key_window, isKindOfClass: WINDOW_CLASS]
+        {
+            Some(key_window)
+        } else if !main_window.is_null() && msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+            Some(main_window)
+        } else {
+            None
+        };
 
-        let window_state = get_window_state(&*main_window);
+        let Some(active_window) = active_window else {
+            if !matches!(style, CursorStyle::None) {
+                unhide_cursor(cursor_hidden);
+            }
+            return;
+        };
+
+        let window_state = get_window_state(&*active_window);
         let mut window_state = window_state.lock();
         if window_state.cursor_style != style {
             window_state.cursor_style = style;
@@ -342,6 +359,22 @@ pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
                 window_state.native_window,
                 invalidateCursorRectsForView: window_state.native_view.as_ptr()
             ];
+        }
+    }
+}
+
+/// Unhides the cursor if this GPUI platform instance has hidden it.
+///
+/// # Safety
+///
+/// Must be called on the AppKit main thread.
+unsafe fn unhide_cursor(cursor_hidden: &AtomicBool) {
+    unsafe {
+        if cursor_hidden
+            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            let _: () = msg_send![class!(NSCursor), unhide];
         }
     }
 }
@@ -463,7 +496,7 @@ struct MacWindowState {
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
-    cursor_hidden: bool,
+    cursor_hidden: Arc<AtomicBool>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -665,6 +698,7 @@ impl MacWindow {
             tabbing_identifier,
             ..
         }: WindowParams,
+        cursor_hidden: Arc<AtomicBool>,
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
@@ -782,7 +816,7 @@ impl MacWindow {
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
-                cursor_hidden: false,
+                cursor_hidden,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -1820,18 +1854,21 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
         let cursor_hidden;
 
         {
-            let mut window_state = window_state.lock();
+            let window_state = window_state.lock();
 
             if matches!(window_state.cursor_style, CursorStyle::None) {
-                if !window_state.cursor_hidden {
+                if window_state
+                    .cursor_hidden
+                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                {
                     let _: () = msg_send![class!(NSCursor), hide];
-                    window_state.cursor_hidden = true;
                 }
                 return;
             }
 
             cursor_style = window_state.cursor_style;
-            cursor_hidden = window_state.cursor_hidden;
+            cursor_hidden = window_state.cursor_hidden.clone();
         };
 
         let cursor: id = match cursor_style {
@@ -1871,10 +1908,7 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
             CursorStyle::None => unreachable!(),
         };
 
-        if cursor_hidden {
-            let _: () = msg_send![class!(NSCursor), unhide];
-            window_state.lock().cursor_hidden = false;
-        }
+        unhide_cursor(&cursor_hidden);
 
         let bounds = NSView::bounds(this as *const Object as id);
         let _: () = msg_send![this, addCursorRect: bounds cursor: cursor];
