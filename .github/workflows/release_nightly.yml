@@ -139,6 +139,7 @@ jobs:
         path: target/zed-remote-server-linux-aarch64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    continue-on-error: true
   bundle_linux_x86_64:
     needs:
     - check_style
@@ -185,6 +186,7 @@ jobs:
         path: target/zed-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
+    continue-on-error: true
   bundle_mac_aarch64:
     needs:
     - check_style
@@ -340,6 +342,7 @@ jobs:
         path: target/zed-remote-server-windows-aarch64.zip
         if-no-files-found: error
     timeout-minutes: 60
+    continue-on-error: true
   bundle_windows_x86_64:
     needs:
     - check_style
@@ -393,6 +396,7 @@ jobs:
         path: target/zed-remote-server-windows-x86_64.zip
         if-no-files-found: error
     timeout-minutes: 60
+    continue-on-error: true
   build_nix_linux_x86_64:
     needs:
     - check_style
@@ -498,22 +502,61 @@ jobs:
         path: ./artifacts/
     - name: ls -lR ./artifacts
       run: ls -lR ./artifacts
-    - name: release::prep_release_artifacts
-      run: |-
+    - name: release_nightly::prep_nightly_release_artifacts
+      run: |
         mkdir -p release-artifacts/
 
         mv ./artifacts/Zed-aarch64.dmg/Zed-aarch64.dmg release-artifacts/Zed-aarch64.dmg
         mv ./artifacts/Zed-x86_64.dmg/Zed-x86_64.dmg release-artifacts/Zed-x86_64.dmg
-        mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
-        mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
-        mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
-        mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
         mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
         mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
-        mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
-        mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
-        mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
+        if [ -f "./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz" ]; then
+          mv "./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz" "release-artifacts/zed-linux-aarch64.tar.gz"
+        else
+          echo "Skipping missing optional nightly artifact zed-linux-aarch64.tar.gz"
+        fi
+
+        if [ -f "./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz" ]; then
+          mv "./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz" "release-artifacts/zed-linux-x86_64.tar.gz"
+        else
+          echo "Skipping missing optional nightly artifact zed-linux-x86_64.tar.gz"
+        fi
+
+        if [ -f "./artifacts/Zed-x86_64.exe/Zed-x86_64.exe" ]; then
+          mv "./artifacts/Zed-x86_64.exe/Zed-x86_64.exe" "release-artifacts/Zed-x86_64.exe"
+        else
+          echo "Skipping missing optional nightly artifact Zed-x86_64.exe"
+        fi
+
+        if [ -f "./artifacts/Zed-aarch64.exe/Zed-aarch64.exe" ]; then
+          mv "./artifacts/Zed-aarch64.exe/Zed-aarch64.exe" "release-artifacts/Zed-aarch64.exe"
+        else
+          echo "Skipping missing optional nightly artifact Zed-aarch64.exe"
+        fi
+
+        if [ -f "./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz" ]; then
+          mv "./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz" "release-artifacts/zed-remote-server-linux-aarch64.gz"
+        else
+          echo "Skipping missing optional nightly artifact zed-remote-server-linux-aarch64.gz"
+        fi
+
+        if [ -f "./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz" ]; then
+          mv "./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz" "release-artifacts/zed-remote-server-linux-x86_64.gz"
+        else
+          echo "Skipping missing optional nightly artifact zed-remote-server-linux-x86_64.gz"
+        fi
+
+        if [ -f "./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip" ]; then
+          mv "./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip" "release-artifacts/zed-remote-server-windows-aarch64.zip"
+        else
+          echo "Skipping missing optional nightly artifact zed-remote-server-windows-aarch64.zip"
+        fi
+
+        if [ -f "./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip" ]; then
+          mv "./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip" "release-artifacts/zed-remote-server-windows-x86_64.zip"
+        else
+          echo "Skipping missing optional nightly artifact zed-remote-server-windows-x86_64.zip"
+        fi
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
       env:

@@ -2,7 +2,6 @@ use crate::tasks::workflows::{
     nix_build::build_nix,
     release::{
         ReleaseBundleJobs, create_sentry_release, download_workflow_artifacts, notify_on_failure,
-        prep_release_artifacts,
     },
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests::{clippy, run_platform_tests_no_filter},
@@ -10,7 +9,11 @@ use crate::tasks::workflows::{
     steps::{CommonJobConditions, FluentBuilder, NamedJob},
 };
 
-use super::{runners, steps, steps::named, vars};
+use super::{
+    runners, steps,
+    steps::named,
+    vars::{self, assets},
+};
 use gh_workflow::*;
 
 /// Generates the release_nightly.yml workflow
@@ -22,12 +25,28 @@ pub fn release_nightly() -> Workflow {
     let nightly = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
+        linux_aarch64: non_blocking_bundle_job(bundle_linux(
+            Arch::AARCH64,
+            nightly,
+            &[&style, &tests, &clippy_job],
+        )),
+        linux_x86_64: non_blocking_bundle_job(bundle_linux(
+            Arch::X86_64,
+            nightly,
+            &[&style, &tests, &clippy_job],
+        )),
         mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
         mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
-        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
+        windows_aarch64: non_blocking_bundle_job(bundle_windows(
+            Arch::AARCH64,
+            nightly,
+            &[&style, &tests, &clippy_job],
+        )),
+        windows_x86_64: non_blocking_bundle_job(bundle_windows(
+            Arch::X86_64,
+            nightly,
+            &[&style, &tests, &clippy_job],
+        )),
     };
 
     let nix_linux_x86 = build_nix(
@@ -69,6 +88,11 @@ pub fn release_nightly() -> Workflow {
         .add_job(notify_on_failure.name, notify_on_failure.job)
 }
 
+fn non_blocking_bundle_job(mut bundle_job: NamedJob) -> NamedJob {
+    bundle_job.job = bundle_job.job.continue_on_error(true);
+    bundle_job
+}
+
 fn check_style() -> NamedJob {
     let job = release_job(&[])
         .runs_on(runners::MAC_DEFAULT)
@@ -88,6 +112,45 @@ fn release_job(deps: &[&NamedJob]) -> Job {
     } else {
         job
     }
+}
+
+fn prep_nightly_release_artifacts() -> Step<Run> {
+    let mut script_lines = vec!["mkdir -p release-artifacts/\n".to_string()];
+
+    for asset in [
+        assets::MAC_AARCH64,
+        assets::MAC_X86_64,
+        assets::REMOTE_SERVER_MAC_AARCH64,
+        assets::REMOTE_SERVER_MAC_X86_64,
+    ] {
+        script_lines.push(format!(
+            "mv ./artifacts/{asset}/{asset} release-artifacts/{asset}"
+        ));
+    }
+
+    for asset in [
+        assets::LINUX_AARCH64,
+        assets::LINUX_X86_64,
+        assets::WINDOWS_X86_64,
+        assets::WINDOWS_AARCH64,
+        assets::REMOTE_SERVER_LINUX_AARCH64,
+        assets::REMOTE_SERVER_LINUX_X86_64,
+        assets::REMOTE_SERVER_WINDOWS_AARCH64,
+        assets::REMOTE_SERVER_WINDOWS_X86_64,
+    ] {
+        script_lines.push(format!(
+            indoc::indoc! {r#"
+                if [ -f "./artifacts/{asset}/{asset}" ]; then
+                  mv "./artifacts/{asset}/{asset}" "release-artifacts/{asset}"
+                else
+                  echo "Skipping missing optional nightly artifact {asset}"
+                fi
+            "#},
+            asset = asset,
+        ));
+    }
+
+    named::bash(&script_lines.join("\n"))
 }
 
 fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
@@ -111,7 +174,7 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
-            .add_step(prep_release_artifacts())
+            .add_step(prep_nightly_release_artifacts())
             .add_step(
                 steps::script("./script/upload-nightly")
                     .add_env((
