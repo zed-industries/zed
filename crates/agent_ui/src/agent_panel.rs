@@ -689,7 +689,6 @@ pub(crate) struct AgentThread {
 
 struct AgentTerminal {
     view: Entity<TerminalView>,
-    last_known_working_directory: Option<PathBuf>,
     last_known_title: String,
     last_interacted_at: DateTime<Utc>,
     has_unseen_bell: bool,
@@ -704,17 +703,10 @@ impl AgentTerminal {
             .unwrap_or_else(|| SharedString::from(view.terminal().read(cx).title(true)))
     }
 
-    fn current_working_directory(&self, cx: &App) -> Option<PathBuf> {
-        self.view.read(cx).terminal().read(cx).working_directory()
-    }
-
     fn refresh_metadata(&mut self, cx: &App) -> bool {
-        let working_directory = self.current_working_directory(cx);
         let title = self.display_title(cx).to_string();
-        let changed = self.last_known_working_directory != working_directory
-            || self.last_known_title != title;
+        let changed = self.last_known_title != title;
         if changed {
-            self.last_known_working_directory = working_directory;
             self.last_known_title = title;
         }
         changed
@@ -1443,7 +1435,6 @@ impl AgentPanel {
 
         let mut terminal = AgentTerminal {
             view: terminal_view,
-            last_known_working_directory: None,
             last_known_title: String::new(),
             last_interacted_at: Utc::now(),
             has_unseen_bell: false,
