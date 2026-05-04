@@ -28,7 +28,6 @@ use parking_lot::Mutex;
 use rope::Rope;
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
-use util::TakeUntilExt;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone)]
