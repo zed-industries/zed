@@ -1864,7 +1864,6 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
             CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
             CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
             CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-            CursorStyle::None => todo!(),
         };
 
         let bounds = NSView::bounds(this as *const Object as id);
