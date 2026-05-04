@@ -4097,9 +4097,9 @@ dependencies = [
 
 [[package]]
 name = "crash-handler"
-version = "0.6.3"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2066907075af649bcb8bcb1b9b986329b243677e6918b2d920aa64b0aac5ace3"
+checksum = "0df5c9639f4942eb7702b964b3f9adf03a55724a57558cc177407388a8b936e2"
 dependencies = [
  "cfg-if",
  "crash-context",
@@ -4113,15 +4113,11 @@ name = "crashes"
 version = "0.1.0"
 dependencies = [
  "async-process",
- "cfg-if",
  "crash-handler",
- "futures 0.3.32",
  "log",
  "mach2 0.5.0",
  "minidumper",
  "parking_lot",
- "paths",
- "release_channel",
  "serde",
  "serde_json",
  "system_specs",
@@ -6260,6 +6256,7 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
+ "client",
  "extension_host",
  "gpui",
  "system_specs",
@@ -17561,7 +17558,6 @@ name = "system_specs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "gpui",
  "human_bytes",
  "pciid-parser",
