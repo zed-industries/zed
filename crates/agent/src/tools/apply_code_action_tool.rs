@@ -54,10 +54,14 @@ impl AgentTool for ApplyCodeActionTool {
         cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            let title = self.code_action_store.read(cx).as_ref().and_then(|pending| {
-                let index = input.index.checked_sub(1)? as usize;
-                Some(pending.actions.get(index)?.lsp_action.title().to_string())
-            });
+            let title = self
+                .code_action_store
+                .read(cx)
+                .as_ref()
+                .and_then(|pending| {
+                    let index = input.index.checked_sub(1)? as usize;
+                    Some(pending.actions.get(index)?.lsp_action.title().to_string())
+                });
             if let Some(title) = title {
                 format!("Apply code action: {title}").into()
             } else {
@@ -82,15 +86,14 @@ impl AgentTool for ApplyCodeActionTool {
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
 
-            let pending = store
-                .update(cx, |store, _cx| store.take())
-                .ok_or_else(|| {
-                    "No code actions available. Call get_code_actions first.".to_string()
-                })?;
-
-            let zero_based_index = input.index.checked_sub(1).ok_or_else(|| {
-                "Index must be 1 or greater.".to_string()
+            let pending = store.update(cx, |store, _cx| store.take()).ok_or_else(|| {
+                "No code actions available. Call get_code_actions first.".to_string()
             })?;
+
+            let zero_based_index = input
+                .index
+                .checked_sub(1)
+                .ok_or_else(|| "Index must be 1 or greater.".to_string())?;
 
             let action = pending
                 .actions

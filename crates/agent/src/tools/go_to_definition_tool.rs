@@ -1,13 +1,13 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
+use super::symbol_locator::{LocationDisplay, SymbolLocator};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema as acp;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use super::symbol_locator::{LocationDisplay, SymbolLocator};
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Jumps to the definition of a symbol using the language server.
 ///
@@ -100,9 +100,10 @@ impl AgentTool for GoToDefinitionTool {
             }
 
             for link in &definitions {
-                let display = link.target.buffer.read_with(cx, |_, cx| {
-                    LocationDisplay::from_location(&link.target, cx)
-                });
+                let display = link
+                    .target
+                    .buffer
+                    .read_with(cx, |_, cx| LocationDisplay::from_location(&link.target, cx));
                 write!(output, "\n## {display}\n").ok();
             }
 

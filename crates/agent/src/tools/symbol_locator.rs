@@ -4,9 +4,9 @@ use std::fmt;
 use gpui::{App, AsyncApp, Entity};
 use language::{Buffer, Location};
 use project::{CodeAction, Project};
-use text::ToPoint as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use text::ToPoint as _;
 use text::{Anchor, Point};
 
 /// Identifies a specific symbol (declaration or usage) in the source code.
@@ -54,8 +54,8 @@ pub struct LocationDisplay {
 impl LocationDisplay {
     pub fn from_location(location: &Location, cx: &App) -> Self {
         let snapshot = location.buffer.read(cx).snapshot();
-        let range = location.range.start.to_point(&snapshot)
-            ..location.range.end.to_point(&snapshot);
+        let range =
+            location.range.start.to_point(&snapshot)..location.range.end.to_point(&snapshot);
         let path = location
             .buffer
             .read(cx)
@@ -69,9 +69,7 @@ impl LocationDisplay {
         let line_len = snapshot.line_len(range.start.row);
         let truncated = line_len as usize > MAX_LINE_DISPLAY_LEN;
         let snippet: String = snapshot
-            .text_for_range(
-                Point::new(range.start.row, 0)..Point::new(range.start.row, line_len),
-            )
+            .text_for_range(Point::new(range.start.row, 0)..Point::new(range.start.row, line_len))
             .flat_map(|chunk| chunk.chars())
             .skip_while(|c| c.is_whitespace())
             .take(MAX_LINE_DISPLAY_LEN)
@@ -86,7 +84,6 @@ impl LocationDisplay {
             truncated,
         }
     }
-
 }
 
 impl fmt::Display for LocationDisplay {
@@ -229,7 +226,6 @@ impl SymbolLocator {
 mod tests {
     use super::*;
     use gpui::proptest::prelude::*;
-    
 
     #[gpui::property_test]
     fn find_in_char_iter_test(

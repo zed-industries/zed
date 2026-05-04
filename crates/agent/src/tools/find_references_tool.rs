@@ -1,13 +1,13 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
+use super::symbol_locator::{LocationDisplay, SymbolLocator};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema as acp;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use super::symbol_locator::{LocationDisplay, SymbolLocator};
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Finds all references to a symbol across the project using the language server.
 ///
@@ -92,9 +92,9 @@ impl AgentTool for FindReferencesTool {
             );
 
             for location in &references {
-                let display = location.buffer.read_with(cx, |_, cx| {
-                    LocationDisplay::from_location(location, cx)
-                });
+                let display = location
+                    .buffer
+                    .read_with(cx, |_, cx| LocationDisplay::from_location(location, cx));
                 write!(output, "\n## {display}\n").ok();
             }
 

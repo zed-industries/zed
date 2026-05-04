@@ -1,17 +1,8 @@
 use crate::{
-    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
-    CreateDirectoryTool, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool,
-    EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
-    GoToDefinitionTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool,
-    ProjectSnapshot, ReadFileTool, RenameTool, RestoreFileFromDiskTool, SaveFileTool,
-    SpawnAgentTool, StreamingEditFileTool, SystemPromptTemplate, Template, Templates,
-    TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
-    decide_permission_from_settings,
-};
-use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
+    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
+    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
+    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RenameTool,
     RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
     Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
     decide_permission_from_settings,
@@ -1577,7 +1568,7 @@ impl Thread {
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
-        
+
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
         if cx.has_flag::<LspToolFeatureFlag>() {
             let code_action_store: CodeActionStore = cx.new(|_cx| None);
