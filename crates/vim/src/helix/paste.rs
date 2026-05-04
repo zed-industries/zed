@@ -28,6 +28,10 @@ impl Vim {
         // (none of the other helix_ methods call it)
 
         self.update_editor(cx, |vim, editor, cx| {
+            if editor.read_only(cx) {
+                return;
+            }
+
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
@@ -199,6 +203,19 @@ mod test {
         cx.write_to_clipboard(ClipboardItem::new_string("X".to_string()));
         cx.simulate_keystrokes("p");
         cx.assert_state("«Xˇ»\n«Xˇ»\n«Xˇ»\nend", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_read_only_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("aˇb", Mode::HelixNormal);
+        cx.write_to_clipboard(ClipboardItem::new_string("clipboard".to_string()));
+        cx.update_editor(|editor, _window, _cx| editor.set_read_only(true));
+
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state("aˇb", Mode::HelixNormal);
     }
 
     #[gpui::test]
