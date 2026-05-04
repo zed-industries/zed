@@ -155,7 +155,7 @@ impl AgentTool for ListDirectoryTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
 
             // Sometimes models will return these even though we tell it to give a path and not a glob.
             // When this happens, just list the root worktree directories.

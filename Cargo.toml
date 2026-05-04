@@ -553,7 +553,7 @@ core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
-crash-handler = "0.6"
+crash-handler = "0.7"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
@@ -913,6 +913,7 @@ wasmtime = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 wasmtime-environ = { opt-level = 3 }
 wasmtime-internal-cranelift = { opt-level = 3 }
+minidumper = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }
