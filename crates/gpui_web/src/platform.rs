@@ -292,6 +292,7 @@ impl Platform for WebPlatform {
             CursorStyle::DragLink => "alias",
             CursorStyle::DragCopy => "copy",
             CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::None => "none",
         };
 
         if let Some(document) = self.browser_window.document() {

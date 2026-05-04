@@ -1677,11 +1677,17 @@ impl LinuxClient for X11Client {
             return;
         }
 
+        state.cursor_styles.insert(focused_window, style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_styles`.
+        if state.cursor_hidden_window == Some(focused_window) {
+            return;
+        }
+
         let Some(cursor) = state.get_cursor_icon(style) else {
             return;
         };
 
-        state.cursor_styles.insert(focused_window, style);
         check_reply(
             || "Failed to set cursor style",
             state.xcb_connection.change_window_attributes(

@@ -846,26 +846,33 @@ impl LinuxClient for WaylandClient {
                     .as_ref()
                     .is_some_and(|w| !w.is_blocked()));
 
-        if need_update {
-            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
-            state.cursor_style = Some(style);
+        if !need_update {
+            return;
+        }
 
-            if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                cursor_shape_device.set_shape(serial, to_shape(style));
-            } else if let Some(focused_window) = &state.mouse_focused_window {
-                // cursor-shape-v1 isn't supported, set the cursor using a surface.
-                let wl_pointer = state
-                    .wl_pointer
-                    .clone()
-                    .expect("window is focused by pointer");
-                let scale = focused_window.primary_output_scale();
-                state.cursor.set_icon(
-                    &wl_pointer,
-                    serial,
-                    cursor_style_to_icon_names(style),
-                    scale,
-                );
-            }
+        state.cursor_style = Some(style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
+        if state.cursor_hidden_window.is_some() {
+            return;
+        }
+
+        let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+            cursor_shape_device.set_shape(serial, to_shape(style));
+        } else if let Some(focused_window) = &state.mouse_focused_window {
+            // cursor-shape-v1 isn't supported, set the cursor using a surface.
+            let wl_pointer = state
+                .wl_pointer
+                .clone()
+                .expect("window is focused by pointer");
+            let scale = focused_window.primary_output_scale();
+            state.cursor.set_icon(
+                &wl_pointer,
+                serial,
+                cursor_style_to_icon_names(style),
+                scale,
+            );
         }
     }
 
