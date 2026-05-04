@@ -3,7 +3,7 @@ use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
     ops::DerefMut,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock, OnceLock},
     time::Duration,
 };
@@ -246,8 +246,11 @@ fn is_covered_rescan(kind: Option<PathEventKind>, path: &Path, ancestor: &Path) 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct WatcherRegistrationId(u32);
 
+type WatcherCallback =
+    Arc<dyn for<'a> Fn(Result<&'a notify::Event, &'a notify::Error>) + Send + Sync>;
+
 struct WatcherRegistrationState {
-    callback: Arc<dyn for<'a> Fn(Result<&'a notify::Event, &'a notify::Error>) + Send + Sync>,
+    callback: WatcherCallback,
     path: Arc<std::path::Path>,
     mode: WatcherMode,
 }
@@ -460,31 +463,50 @@ fn handle_poll_event(event: Result<notify::Event, notify::Error>) {
 fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
     log::trace!("global handle event for {mode:?}: {event:?}");
 
-    let callbacks = {
-        let state = global_watcher().state.lock();
-        state
-            .watchers
-            .values()
-            .filter(|registration| registration.mode == mode)
-            .map(|registration| registration.callback.clone())
-            .collect::<Vec<_>>()
-    };
-
     match event {
         Ok(event) => {
             if matches!(event.kind, EventKind::Access(_)) {
                 return;
             }
-            for callback in callbacks {
+            if event.paths.is_empty() {
+                log::trace!("filesystem watcher event without paths for {mode:?}: {event:?}");
+                return;
+            }
+
+            for callback in callbacks_for_paths(mode, &event.paths) {
                 callback(Ok(&event));
             }
         }
         Err(error) => {
-            for callback in callbacks {
+            if error.paths.is_empty() {
+                log::warn!("filesystem watcher error without paths for {mode:?}: {error}");
+                return;
+            }
+
+            for callback in callbacks_for_paths(mode, &error.paths) {
                 callback(Err(&error));
             }
         }
     }
+}
+
+fn callbacks_for_paths(mode: WatcherMode, paths: &[PathBuf]) -> Vec<WatcherCallback> {
+    let state = global_watcher().state.lock();
+    state
+        .watchers
+        .values()
+        .filter(|registration| {
+            registration.mode == mode && registration_path_matches(&registration.path, paths)
+        })
+        .map(|registration| registration.callback.clone())
+        .collect()
+}
+
+fn registration_path_matches(registration_path: &Path, paths: &[PathBuf]) -> bool {
+    paths.iter().any(|path| {
+        let path = SanitizedPath::new(path);
+        path.as_path().starts_with(registration_path)
+    })
 }
 
 #[cfg(test)]
@@ -512,6 +534,23 @@ mod tests {
         path_events: Vec<PathEvent>,
         expected_pending_paths: Vec<PathEvent>,
         expected_path_events: Vec<PathEvent>,
+    }
+
+    #[test]
+    fn test_registration_path_matches() {
+        assert!(registration_path_matches(
+            Path::new("/root"),
+            &[PathBuf::from("/root/child/file.txt")]
+        ));
+        assert!(!registration_path_matches(
+            Path::new("/root/child"),
+            &[PathBuf::from("/root")]
+        ));
+        assert!(!registration_path_matches(
+            Path::new("/root-a"),
+            &[PathBuf::from("/root-b/file.txt")]
+        ));
+        assert!(!registration_path_matches(Path::new("/root"), &[]));
     }
 
     #[test]

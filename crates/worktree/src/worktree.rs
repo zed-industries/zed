@@ -77,6 +77,7 @@ pub use worktree_settings::WorktreeSettings;
 use crate::ignore::IgnoreKind;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+const SCAN_STATE_UPDATE_STRESS_MULTIPLIER: usize = 100;
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -1148,7 +1149,11 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let scanning_enabled = self.scanning_enabled;
         let settings = self.settings.clone();
-        let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
+        let (scan_states_tx, scan_states_rx) = async_channel::bounded(1);
+        let (scan_state_permits_tx, scan_state_permits_rx) = async_channel::bounded(1);
+        scan_state_permits_tx
+            .try_send(())
+            .expect("scan state permit channel should not be closed");
         let background_scanner = cx.background_spawn({
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
@@ -1165,6 +1170,7 @@ impl LocalWorktree {
                     fs,
                     fs_case_sensitive,
                     status_updates_tx: scan_states_tx,
+                    status_update_permits_rx: scan_state_permits_rx,
                     executor: background,
                     scan_requests_rx,
                     path_prefixes_to_scan_rx,
@@ -1194,7 +1200,10 @@ impl LocalWorktree {
             }
         });
         let scan_state_updater = cx.spawn(async move |this, cx| {
-            while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade()) {
+            while let Ok(state) = scan_states_rx.recv().await {
+                let Some(this) = this.upgrade() else {
+                    break;
+                };
                 this.update(cx, |this, cx| {
                     let this = this.as_local_mut().unwrap();
                     match state {
@@ -1223,6 +1232,9 @@ impl LocalWorktree {
                         }
                     }
                 });
+                if scan_state_permits_tx.try_send(()).is_err() {
+                    break;
+                }
             }
         });
         self._background_scanner_tasks = vec![background_scanner, scan_state_updater];
@@ -3927,7 +3939,8 @@ struct BackgroundScanner {
     state: async_lock::Mutex<BackgroundScannerState>,
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
-    status_updates_tx: UnboundedSender<ScanState>,
+    status_updates_tx: Sender<ScanState>,
+    status_update_permits_rx: async_channel::Receiver<()>,
     executor: BackgroundExecutor,
     scan_requests_rx: async_channel::Receiver<ScanRequest>,
     path_prefixes_to_scan_rx: async_channel::Receiver<PathPrefixScanRequest>,
@@ -4295,9 +4308,11 @@ impl BackgroundScanner {
                         root_path.as_path(),
                         new_path.as_path(),
                     );
-                    self.status_updates_tx
-                        .unbounded_send(ScanState::RootUpdated { new_path })
-                        .ok();
+                    if self.status_update_permits_rx.recv().await.is_ok() {
+                        self.status_updates_tx
+                            .try_send(ScanState::RootUpdated { new_path })
+                            .ok();
+                    }
                 } else {
                     log::error!("root path could not be canonicalized: {err:#}");
 
@@ -4308,9 +4323,9 @@ impl BackgroundScanner {
                             "single-file worktree root {:?} no longer exists, marking as deleted",
                             root_path.as_path()
                         );
-                        self.status_updates_tx
-                            .unbounded_send(ScanState::RootDeleted)
-                            .ok();
+                        if self.status_update_permits_rx.recv().await.is_ok() {
+                            self.status_updates_tx.try_send(ScanState::RootDeleted).ok();
+                        }
                     }
                 }
                 return;
@@ -4619,11 +4634,10 @@ impl BackgroundScanner {
         enable_progress_updates: bool,
         scan_jobs_rx: async_channel::Receiver<ScanJob>,
     ) {
-        if self
-            .status_updates_tx
-            .unbounded_send(ScanState::Started)
-            .is_err()
-        {
+        if self.status_update_permits_rx.recv().await.is_err() {
+            return;
+        }
+        if self.status_updates_tx.try_send(ScanState::Started).is_err() {
             return;
         }
 
@@ -4691,11 +4705,18 @@ impl BackgroundScanner {
         barrier: SmallVec<[barrier::Sender; 1]>,
         event_roots: &[EventRoot],
     ) -> bool {
-        let mut state = self.state.lock().await;
-        if state.changed_paths.is_empty() && event_roots.is_empty() && scanning {
-            return true;
+        {
+            let state = self.state.lock().await;
+            if state.changed_paths.is_empty() && event_roots.is_empty() && scanning {
+                return true;
+            }
         }
 
+        if self.status_update_permits_rx.recv().await.is_err() {
+            return false;
+        }
+
+        let mut state = self.state.lock().await;
         let merged_event_roots = merge_event_roots(&state.changed_paths, event_roots);
 
         let new_snapshot = state.snapshot.clone();
@@ -4707,9 +4728,28 @@ impl BackgroundScanner {
             &merged_event_roots,
         );
         state.changed_paths.clear();
+        drop(state);
+
+        for _ in 1..SCAN_STATE_UPDATE_STRESS_MULTIPLIER {
+            if self
+                .status_updates_tx
+                .try_send(ScanState::Updated {
+                    snapshot: new_snapshot.clone(),
+                    changes: changes.clone(),
+                    scanning,
+                    barrier: SmallVec::new(),
+                })
+                .is_err()
+            {
+                return false;
+            }
+            if self.status_update_permits_rx.recv().await.is_err() {
+                return false;
+            }
+        }
 
         self.status_updates_tx
-            .unbounded_send(ScanState::Updated {
+            .try_send(ScanState::Updated {
                 snapshot: new_snapshot,
                 changes,
                 scanning,
