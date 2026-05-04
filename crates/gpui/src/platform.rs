@@ -212,6 +212,19 @@ pub trait Platform: 'static {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+
+    /// Hides the mouse cursor until the user moves the mouse over one of
+    /// this application's windows.
+    fn hide_cursor_until_mouse_moves(&self) {
+        // todo!("implement on each platform and drop this default")
+    }
+
+    /// Returns whether the mouse cursor is currently visible.
+    fn is_cursor_visible(&self) -> bool {
+        // todo!("implement on each platform and drop this default")
+        true
+    }
+
     fn should_auto_hide_scrollbars(&self) -> bool;
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
