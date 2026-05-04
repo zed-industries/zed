@@ -1495,6 +1495,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.enter_token.take();
                 // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
                 state.repeat.current_id += 1;
+                state.restore_cursor_after_hide();
 
                 if let Some(window) = keyboard_focused_window {
                     if let Some(ref mut compose) = state.compose_state {

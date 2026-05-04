@@ -978,6 +978,7 @@ impl X11Client {
                     compose_state.reset();
                 }
                 state.pre_edit_text.take();
+                state.restore_cursor_after_hide();
                 drop(state);
                 self.reset_ime();
                 window.handle_ime_delete();
