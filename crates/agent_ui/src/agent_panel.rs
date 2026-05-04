@@ -703,7 +703,7 @@ impl AgentTerminal {
             .unwrap_or_else(|| SharedString::from(view.terminal().read(cx).title(true)))
     }
 
-    fn refresh_metadata(&mut self, cx: &App) -> bool {
+    fn refresh_title(&mut self, cx: &App) -> bool {
         let title = self.display_title(cx).to_string();
         let changed = self.last_known_title != title;
         if changed {
@@ -1407,7 +1407,7 @@ impl AgentPanel {
             &terminal_view,
             move |this, _terminal_view, event: &TerminalViewEvent, cx| match event {
                 TerminalViewEvent::CustomTitleChanged => {
-                    this.refresh_terminal_metadata(terminal_id, cx);
+                    this.refresh_terminal_title(terminal_id, cx);
                 }
                 TerminalViewEvent::InputSubmitted => {
                     this.record_terminal_interaction(terminal_id, cx);
@@ -1420,11 +1420,12 @@ impl AgentPanel {
             &terminal_entity,
             window,
             move |this, _terminal, event: &TerminalEvent, window, cx| match event {
-                TerminalEvent::TitleChanged | TerminalEvent::BreadcrumbsChanged => {
-                    this.refresh_terminal_metadata(terminal_id, cx);
+                TerminalEvent::TitleChanged => {
+                    this.refresh_terminal_title(terminal_id, cx);
                 }
                 TerminalEvent::Bell => this.mark_terminal_bell_unseen(terminal_id, window, cx),
-                TerminalEvent::CloseTerminal
+                TerminalEvent::BreadcrumbsChanged
+                | TerminalEvent::CloseTerminal
                 | TerminalEvent::Wakeup
                 | TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
@@ -1440,7 +1441,7 @@ impl AgentPanel {
             has_unseen_bell: false,
             _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
         };
-        terminal.refresh_metadata(cx);
+        terminal.refresh_title(cx);
         self.terminals.insert(terminal_id, terminal);
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
@@ -1505,9 +1506,9 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn refresh_terminal_metadata(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+    fn refresh_terminal_title(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         if let Some(terminal) = self.terminals.get_mut(&terminal_id)
-            && terminal.refresh_metadata(cx)
+            && terminal.refresh_title(cx)
         {
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
