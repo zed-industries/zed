@@ -547,7 +547,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_prev_page(&mut self, _: &menu::SelectPrevPage, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_prev_page(
+        &mut self,
+        _: &menu::SelectPrevPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.delegate.match_count();
 
         if count > 0 {
@@ -568,7 +573,12 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_next_page(&mut self, _: &menu::SelectNextPage, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_next_page(
+        &mut self,
+        _: &menu::SelectNextPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.delegate.match_count();
 
         if count > 0 {
@@ -804,7 +814,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn scroll_item_index_to_top(&mut self, ix: usize) {
         match &mut self.element_container {
-            ElementContainer::List(state) => state.scroll_to(gpui::ListOffset{item_ix: ix, offset_in_item: px(0.0)}),
+            ElementContainer::List(state) => state.scroll_to(gpui::ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.0),
+            }),
             ElementContainer::UniformList(scroll_handle) => {
                 scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
             }
@@ -922,175 +935,6 @@ impl<D: PickerDelegate> Picker<D> {
                 scroll_handle.logical_scroll_top_index()
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::TestAppContext;
-    use std::cell::Cell;
-
-    struct TestDelegate {
-        items: Vec<bool>,
-        selected_index: usize,
-        confirmed_index: Rc<Cell<Option<usize>>>,
-    }
-
-    impl TestDelegate {
-        fn new(items: Vec<bool>) -> Self {
-            Self {
-                items,
-                selected_index: 0,
-                confirmed_index: Rc::new(Cell::new(None)),
-            }
-        }
-    }
-
-    impl PickerDelegate for TestDelegate {
-        type ListItem = ui::ListItem;
-
-        fn match_count(&self) -> usize {
-            self.items.len()
-        }
-
-        fn selected_index(&self) -> usize {
-            self.selected_index
-        }
-
-        fn set_selected_index(
-            &mut self,
-            ix: usize,
-            _window: &mut Window,
-            _cx: &mut Context<Picker<Self>>,
-        ) {
-            self.selected_index = ix;
-        }
-
-        fn can_select(
-            &self,
-            ix: usize,
-            _window: &mut Window,
-            _cx: &mut Context<Picker<Self>>,
-        ) -> bool {
-            self.items.get(ix).copied().unwrap_or(false)
-        }
-
-        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-            "Test".into()
-        }
-
-        fn update_matches(
-            &mut self,
-            _query: String,
-            _window: &mut Window,
-            _cx: &mut Context<Picker<Self>>,
-        ) -> Task<()> {
-            Task::ready(())
-        }
-
-        fn confirm(
-            &mut self,
-            _secondary: bool,
-            _window: &mut Window,
-            _cx: &mut Context<Picker<Self>>,
-        ) {
-            self.confirmed_index.set(Some(self.selected_index));
-        }
-
-        fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
-
-        fn render_match(
-            &self,
-            ix: usize,
-            selected: bool,
-            _window: &mut Window,
-            _cx: &mut Context<Picker<Self>>,
-        ) -> Option<Self::ListItem> {
-            Some(
-                ui::ListItem::new(ix)
-                    .inset(true)
-                    .toggle_state(selected)
-                    .child(ui::Label::new(format!("Item {ix}"))),
-            )
-        }
-    }
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-            theme_settings::init(theme::LoadThemes::JustBase, cx);
-            editor::init(cx);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_clicking_non_selectable_item_does_not_confirm(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let confirmed_index = Rc::new(Cell::new(None));
-        let (picker, cx) = cx.add_window_view(|window, cx| {
-            let mut delegate = TestDelegate::new(vec![true, false, true]);
-            delegate.confirmed_index = confirmed_index.clone();
-            Picker::uniform_list(delegate, window, cx)
-        });
-
-        picker.update(cx, |picker, _cx| {
-            assert_eq!(picker.delegate.selected_index(), 0);
-        });
-
-        picker.update_in(cx, |picker, window, cx| {
-            picker.handle_click(1, false, window, cx);
-        });
-        assert!(
-            confirmed_index.get().is_none(),
-            "clicking a non-selectable item should not confirm"
-        );
-
-        picker.update_in(cx, |picker, window, cx| {
-            picker.handle_click(0, false, window, cx);
-        });
-        assert_eq!(
-            confirmed_index.get(),
-            Some(0),
-            "clicking a selectable item should confirm"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_keyboard_navigation_skips_non_selectable_items(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (picker, cx) = cx.add_window_view(|window, cx| {
-            Picker::uniform_list(TestDelegate::new(vec![true, false, true]), window, cx)
-        });
-
-        picker.update(cx, |picker, _cx| {
-            assert_eq!(picker.delegate.selected_index(), 0);
-        });
-
-        picker.update_in(cx, |picker, window, cx| {
-            picker.select_next(&menu::SelectNext, window, cx);
-        });
-        picker.update(cx, |picker, _cx| {
-            assert_eq!(
-                picker.delegate.selected_index(),
-                2,
-                "select_next should skip non-selectable item at index 1"
-            );
-        });
-
-        picker.update_in(cx, |picker, window, cx| {
-            picker.select_previous(&menu::SelectPrevious, window, cx);
-        });
-        picker.update(cx, |picker, _cx| {
-            assert_eq!(
-                picker.delegate.selected_index(),
-                0,
-                "select_previous should skip non-selectable item at index 1"
-            );
-        });
     }
 }
 
@@ -1267,5 +1111,226 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .child(render_aside(aside, cx))
                 .child(menu)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use std::cell::Cell;
+
+    struct TestDelegate {
+        items: Vec<bool>,
+        selected_index: usize,
+        confirmed_index: Rc<Cell<Option<usize>>>,
+    }
+
+    impl TestDelegate {
+        fn new(items: Vec<bool>) -> Self {
+            Self {
+                items,
+                selected_index: 0,
+                confirmed_index: Rc::new(Cell::new(None)),
+            }
+        }
+    }
+
+    impl PickerDelegate for TestDelegate {
+        type ListItem = ui::ListItem;
+
+        fn match_count(&self) -> usize {
+            self.items.len()
+        }
+
+        fn selected_index(&self) -> usize {
+            self.selected_index
+        }
+
+        fn set_selected_index(
+            &mut self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.selected_index = ix;
+        }
+
+        fn can_select(
+            &self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> bool {
+            self.items.get(ix).copied().unwrap_or(false)
+        }
+
+        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+            "Test".into()
+        }
+
+        fn update_matches(
+            &mut self,
+            _query: String,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Task<()> {
+            Task::ready(())
+        }
+
+        fn confirm(
+            &mut self,
+            _secondary: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.confirmed_index.set(Some(self.selected_index));
+        }
+
+        fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+        fn render_match(
+            &self,
+            ix: usize,
+            selected: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Option<Self::ListItem> {
+            Some(
+                ui::ListItem::new(ix)
+                    .inset(true)
+                    .toggle_state(selected)
+                    .child(ui::Label::new(format!("Item {ix}"))),
+            )
+        }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_clicking_non_selectable_item_does_not_confirm(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let confirmed_index = Rc::new(Cell::new(None));
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            let mut delegate = TestDelegate::new(vec![true, false, true]);
+            delegate.confirmed_index = confirmed_index.clone();
+            Picker::uniform_list(delegate, window, cx)
+        });
+
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 0);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.handle_click(1, false, window, cx);
+        });
+        assert!(
+            confirmed_index.get().is_none(),
+            "clicking a non-selectable item should not confirm"
+        );
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.handle_click(0, false, window, cx);
+        });
+        assert_eq!(
+            confirmed_index.get(),
+            Some(0),
+            "clicking a selectable item should confirm"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_navigation_skips_non_selectable_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true, false, true]), window, cx)
+        });
+
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 0);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.select_next(&menu::SelectNext, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(
+                picker.delegate.selected_index(),
+                2,
+                "select_next should skip non-selectable item at index 1"
+            );
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.select_previous(&menu::SelectPrevious, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(
+                picker.delegate.selected_index(),
+                0,
+                "select_previous should skip non-selectable item at index 1"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_next_page_jumps_to_page_end(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true; 20]), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.visible_range = 0..17;
+            picker.select_next_page(&menu::SelectNextPage, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 16);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.visible_range = 0..17;
+            picker.select_next_page(&menu::SelectNextPage, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 19);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prev_page_jumps_to_page_start(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true; 30]), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(29, Some(Direction::Up), false, window, cx);
+            picker.visible_range = 20..30;
+            picker.select_prev_page(&menu::SelectPrevPage, window, cx);
+        });
+
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 20);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.visible_range = 20..30;
+            picker.select_prev_page(&menu::SelectPrevPage, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 10);
+        });
     }
 }
