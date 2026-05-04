@@ -46,21 +46,13 @@ Zed Business consolidates your team's costs. Seat licenses and AI usage for all 
 
 ### Billing dashboard {#dashboard}
 
-<!-- TODO: confirm exactly what billing information is shown in the dashboard before launch -->
-
-Owners and admins can access billing information at [dashboard.zed.dev](https://dashboard.zed.dev). The dashboard shows:
-
-- Current member count and seat charges
-- AI usage and spend across the organization
-- Per-member usage and spending visibility
+Owners and admins can access billing information at [dashboard.zed.dev](https://dashboard.zed.dev). The dashboard shows the plan you're currently on and offers jumping off points to update billing details, such as the billing name and address, as well as payment information. You can also access your invoices history, accessible through the Orb billing portal.
 
 ### AI usage {#ai-usage}
 
 AI usage across the organization is metered on a token basis at the same rates as individual Pro subscriptions. See [Plans & Pricing](./plans-and-usage.md#usage) for rate details.
 
-<!-- TODO: confirm org-wide spend limit behavior at launch (how limits are set, what happens when reached) -->
-
-Administrators can set an org-wide AI spend limit from [Admin Controls](../business/admin-controls.md). Once the limit is reached, AI usage is paused until the next billing period.
+Administrators can set an org-wide AI spend limit from the **Data & Privacy** page in the organization dashboard. The limit starts at $0, so it must be increased before members can use any hosted models. Once the limit is reached, members will see an error when attempting to use hosted models.
 
 ### Invoice history {#org-invoice-history}
 
