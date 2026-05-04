@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
+    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
@@ -22,7 +22,8 @@ pub struct TestAppContext {
     pub background_executor: BackgroundExecutor,
     #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
-    dispatcher: TestDispatcher,
+    #[doc(hidden)]
+    pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
@@ -81,6 +82,15 @@ impl AppContext for TestAppContext {
     {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
+    }
+
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        let mut lock = self.app.borrow_mut();
+        lock.with_window(entity_id, f)
     }
 
     fn read_window<T, R>(
@@ -192,12 +202,6 @@ impl TestAppContext {
         &self.foreground_executor
     }
 
-    #[expect(clippy::wrong_self_convention)]
-    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
-        let mut cx = self.app.borrow_mut();
-        cx.new(build_entity)
-    }
-
     /// Gives you an `&mut App` for the duration of the closure
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
         let mut cx = self.app.borrow_mut();
@@ -224,6 +228,33 @@ impl TestAppContext {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| build_window(window, cx)),
+        )
+        .unwrap()
+    }
+
+    /// Opens a new window with a specific size.
+    ///
+    /// Unlike `add_window` which uses maximized bounds, this allows controlling
+    /// the window dimensions, which is important for layout-sensitive tests.
+    pub fn open_window<F, V>(
+        &mut self,
+        window_size: Size<Pixels>,
+        build_window: F,
+    ) -> WindowHandle<V>
+    where
+        F: FnOnce(&mut Window, &mut Context<V>) -> V,
+        V: 'static + Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: Point::default(),
+                    size: window_size,
+                })),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),
@@ -707,6 +738,16 @@ impl VisualTestContext {
         self.cx.test_window(self.window).0.lock().title.clone()
     }
 
+    /// Read the document path off the window (set by `Window#set_document_path`)
+    pub fn document_path(&mut self) -> Option<std::path::PathBuf> {
+        self.cx
+            .test_window(self.window)
+            .0
+            .lock()
+            .document_path
+            .clone()
+    }
+
     /// Simulate a sequence of keystrokes `cx.simulate_keystrokes("cmd-p escape")`
     /// Automatically runs until parked.
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
@@ -902,7 +943,9 @@ impl VisualTestContext {
 
 impl AppContext for VisualTestContext {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
-        self.cx.new(build_entity)
+        self.window
+            .update(&mut self.cx, |_, _, cx| cx.new(build_entity))
+            .expect("window was unexpectedly closed")
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> crate::Reservation<T> {
@@ -914,7 +957,11 @@ impl AppContext for VisualTestContext {
         reservation: crate::Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Entity<T> {
-        self.cx.insert_entity(reservation, build_entity)
+        self.window
+            .update(&mut self.cx, |_, _, cx| {
+                cx.insert_entity(reservation, build_entity)
+            })
+            .expect("window was unexpectedly closed")
     }
 
     fn update_entity<T, R>(
@@ -947,6 +994,14 @@ impl AppContext for VisualTestContext {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.cx.update_window(window, f)
+    }
+
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        self.cx.with_window(entity_id, f)
     }
 
     fn read_window<T, R>(
@@ -999,11 +1054,14 @@ impl VisualContext for VisualTestContext {
         view: &Entity<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
     ) -> R {
-        self.window
-            .update(&mut self.cx, |_, window, cx| {
-                view.update(cx, |v, cx| update(v, window, cx))
+        let view = view.clone();
+        self.cx
+            .app
+            .borrow_mut()
+            .with_window(view.entity_id(), |window, app| {
+                view.update(app, |v, cx| update(v, window, cx))
             })
-            .expect("window was unexpectedly closed")
+            .expect("entity has no current window; use `update` instead of `update_in`")
     }
 
     fn replace_root_view<V>(

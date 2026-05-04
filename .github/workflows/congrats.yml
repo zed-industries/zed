@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Get PR info and check if author is external
         id: check
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           github-token: ${{ secrets.CONGRATSBOT_GITHUB_TOKEN }}
           script: |
@@ -29,6 +29,13 @@ jobs:
             }
 
             const mergedPR = prs.find(pr => pr.merged_at !== null) || prs[0];
+
+            if (mergedPR.user.type === "Bot") {
+              // They are a good bot, but not good enough to be congratulated
+              core.setOutput('should_congratulate', 'false');
+              return;
+            }
+
             const prAuthor = mergedPR.user.login;
 
             try {
@@ -50,7 +57,7 @@ jobs:
   congrats:
     needs: check-author
     if: needs.check-author.outputs.should_congratulate == 'true'
-    uses: withastro/automation/.github/workflows/congratsbot.yml@main
+    uses: withastro/automation/.github/workflows/congratsbot.yml@a5bd0c5748c4d56e687cdd558064f9ee8adfb1f2 # main
     with:
       EMOJIS: 🎉,🎊,🧑‍🚀,🥳,🙌,🚀,🦀,🔥,🚢
     secrets:

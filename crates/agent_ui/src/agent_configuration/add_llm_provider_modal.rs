@@ -68,14 +68,17 @@ impl AddLlmProviderInput {
         let provider_name =
             single_line_input("Provider Name", provider.name(), None, 1, window, cx);
         let api_url = single_line_input("API URL", provider.api_url(), None, 2, window, cx);
-        let api_key = single_line_input(
-            "API Key",
-            "000000000000000000000000000000000000000000000000",
-            None,
-            3,
-            window,
-            cx,
-        );
+        let api_key = cx.new(|cx| {
+            InputField::new(
+                window,
+                cx,
+                "000000000000000000000000000000000000000000000000",
+            )
+            .label("API Key")
+            .tab_index(3)
+            .tab_stop(true)
+            .masked(true)
+        });
 
         Self {
             provider_name,
@@ -154,6 +157,7 @@ impl ModelInput {
             parallel_tool_calls,
             prompt_cache_key,
             chat_completions,
+            ..
         } = ModelCapabilities::default();
 
         Self {
@@ -199,12 +203,14 @@ impl ModelInput {
                 .text(cx)
                 .parse::<u64>()
                 .map_err(|_| SharedString::from("Max Tokens must be a number"))?,
+            reasoning_effort: None,
             capabilities: ModelCapabilities {
                 tools: self.capabilities.supports_tools.selected(),
                 images: self.capabilities.supports_images.selected(),
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
                 chat_completions: self.capabilities.supports_chat_completions.selected(),
+                interleaved_reasoning: false,
             },
         })
     }
@@ -340,10 +346,11 @@ impl AddLlmProviderModal {
                     .child(Label::new("Models").size(LabelSize::Small))
                     .child(
                         Button::new("add-model", "Add Model")
-                            .icon(IconName::Plus)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
+                            .start_icon(
+                                Icon::new(IconName::Plus)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.input.add_model(window, cx);
@@ -446,10 +453,11 @@ impl AddLlmProviderModal {
             .when(has_more_than_one_model, |this| {
                 this.child(
                     Button::new(("remove-model", ix), "Remove Model")
-                        .icon(IconName::Trash)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
+                        .start_icon(
+                            Icon::new(IconName::Trash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
                         .full_width()
@@ -808,9 +816,9 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
 
-            language_model::init_settings(cx);
+            language_model::init(cx);
             editor::init(cx);
         });
 

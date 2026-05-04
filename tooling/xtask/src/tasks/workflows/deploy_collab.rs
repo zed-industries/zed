@@ -3,7 +3,7 @@ use indoc::indoc;
 
 use crate::tasks::workflows::runners::{self, Platform};
 use crate::tasks::workflows::steps::{
-    self, CommonJobConditions, FluentBuilder as _, NamedJob, dependant_job, named,
+    self, CommonJobConditions, FluentBuilder as _, NamedJob, dependant_job, named, use_clang,
 };
 use crate::tasks::workflows::vars;
 
@@ -23,7 +23,7 @@ pub(crate) fn deploy_collab() -> Workflow {
 }
 
 fn style() -> NamedJob {
-    named::job(
+    named::job(use_clang(
         dependant_job(&[])
             .name("Check formatting and Clippy lints")
             .with_repository_owner_guard()
@@ -33,8 +33,8 @@ fn style() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_fmt())
-            .add_step(steps::clippy(Platform::Linux)),
-    )
+            .add_step(steps::clippy(Platform::Linux, None)),
+    ))
 }
 
 fn tests(deps: &[&NamedJob]) -> NamedJob {
@@ -42,7 +42,7 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
         named::bash("cargo nextest run --package collab --no-fail-fast")
     }
 
-    named::job(
+    named::job(use_clang(
         dependant_job(deps)
             .name("Run tests")
             .runs_on(runners::LINUX_XL)
@@ -65,7 +65,7 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
             .add_step(steps::cargo_install_nextest())
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
             .add_step(run_collab_tests()),
-    )
+    ))
 }
 
 fn publish(deps: &[&NamedJob]) -> NamedJob {

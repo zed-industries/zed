@@ -1,7 +1,9 @@
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
+use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
+use gpui::AppContext;
 use gpui::{Entity, TestAppContext};
 use indoc::indoc;
 use project::{FakeFs, Project};
@@ -13,6 +15,7 @@ use std::{
     time::Duration,
 };
 use util::path;
+use util::path_list::PathList;
 
 pub async fn test_basic<T, F>(server: F, cx: &mut TestAppContext)
 where
@@ -206,8 +209,10 @@ pub async fn test_tool_call_with_permission<T, F>(
     thread.update(cx, |thread, cx| {
         thread.authorize_tool_call(
             tool_call_id,
-            allow_option_id,
-            acp::PermissionOptionKind::AllowOnce,
+            acp_thread::SelectedPermissionOutcome::new(
+                allow_option_id,
+                acp::PermissionOptionKind::AllowOnce,
+            ),
             cx,
         );
 
@@ -374,7 +379,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::PermissionOptionId::new($allow_option_id),
+                    ::agent_client_protocol::schema::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;
@@ -408,7 +413,9 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         let http_client = reqwest_client::ReqwestClient::user_agent("agent tests").unwrap();
         cx.set_http_client(Arc::new(http_client));
         let client = client::Client::production(cx);
-        language_model::init(client, cx);
+        let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
+        language_model::init(cx);
+        RefreshLlmTokenListener::register(client.clone(), user_store, cx);
 
         #[cfg(test)]
         project::agent_server_store::AllAgentServersSettings::override_global(
@@ -429,13 +436,18 @@ pub async fn new_test_thread(
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
     let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
-    let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
+    let delegate = AgentServerDelegate::new(store, None);
 
-    let connection = cx.update(|cx| server.connect(delegate, cx)).await.unwrap();
-
-    cx.update(|cx| connection.new_session(project.clone(), current_dir.as_ref(), cx))
+    let connection = cx
+        .update(|cx| server.connect(delegate, project.clone(), cx))
         .await
-        .unwrap()
+        .unwrap();
+
+    cx.update(|cx| {
+        connection.new_session(project.clone(), PathList::new(&[current_dir.as_ref()]), cx)
+    })
+    .await
+    .unwrap()
 }
 
 pub async fn run_until_first_tool_call(

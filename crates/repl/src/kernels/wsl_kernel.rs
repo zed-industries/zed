@@ -1,5 +1,6 @@
 use super::{
-    KernelSession, KernelSpecification, RunningKernel, WslKernelSpecification, start_kernel_tasks,
+    KernelSession, KernelSpecification, RunningKernel, WslKernelSpecification,
+    build_python_exec_shell_script, start_kernel_tasks,
 };
 use anyhow::{Context as _, Result};
 use futures::{
@@ -228,8 +229,6 @@ impl WslRunningKernel {
             kernel_args.extend(resolved_argv.iter().cloned());
 
             let shell_command = if needs_python_resolution {
-                // 1. Check for .venv/bin/python or .venv/bin/python3 in working directory
-                // 2. Fall back to system python3 or python
                 let rest_args: Vec<String> = resolved_argv.iter().skip(1).cloned().collect();
                 let arg_string = quote_posix_shell_arguments(&rest_args)?;
                 let set_env_command = if env_assignments.is_empty() {
@@ -245,36 +244,26 @@ impl WslRunningKernel {
                 } else {
                     String::new()
                 };
-                // TODO: find a better way to debug missing python issues in WSL
 
-                format!(
-                    "set -e; \
-                     {} \
-                     {} \
-                     echo \"Working directory: $(pwd)\" >&2; \
-                     if [ -x .venv/bin/python ]; then \
-                       echo \"Found .venv/bin/python\" >&2; \
-                       exec .venv/bin/python {}; \
-                     elif [ -x .venv/bin/python3 ]; then \
-                       echo \"Found .venv/bin/python3\" >&2; \
-                       exec .venv/bin/python3 {}; \
-                     elif command -v python3 >/dev/null 2>&1; then \
-                       echo \"Found system python3\" >&2; \
-                       exec python3 {}; \
-                     elif command -v python >/dev/null 2>&1; then \
-                       echo \"Found system python\" >&2; \
-                       exec python {}; \
-                     else \
-                       echo 'Error: Python not found in .venv or PATH' >&2; \
-                       echo 'Contents of current directory:' >&2; \
-                       ls -la >&2; \
-                       echo 'PATH:' \"$PATH\" >&2; \
-                       exit 127; \
-                     fi",
-                    cd_command, set_env_command, arg_string, arg_string, arg_string, arg_string
-                )
+                build_python_exec_shell_script(&arg_string, &cd_command, &set_env_command)
             } else {
-                quote_posix_shell_arguments(&kernel_args)?
+                let args_string = quote_posix_shell_arguments(&resolved_argv)?;
+
+                let cd_command = if let Some(wd) = wsl_working_directory.as_ref() {
+                    let quoted_wd = shlex::try_quote(wd)
+                        .map(|quoted| quoted.into_owned())?;
+                    format!("cd {quoted_wd} && ")
+                } else {
+                    String::new()
+                };
+
+                let env_prefix_inline = if !env_assignments.is_empty() {
+                    format!("env {} ", env_assignments.join(" "))
+                } else {
+                    String::new()
+                };
+
+                format!("{cd_command}exec {env_prefix_inline}{args_string}")
             };
 
             cmd.arg("bash")
@@ -338,7 +327,8 @@ impl WslRunningKernel {
                 "",
                 &session_id,
             )
-            .await?;
+            .await
+            .context("Failed to create iopub connection. Is `ipykernel` installed in the WSL environment? Try running `pip install ipykernel` inside your WSL distribution.")?;
 
             let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
             let shell_socket = runtimelib::create_client_shell_connection_with_identity(
@@ -578,8 +568,20 @@ pub async fn wsl_kernel_specifications(
                                 })
                             })
                             .collect::<Vec<_>>();
+                    } else if let Err(e) =
+                        serde_json::from_str::<LocalKernelSpecsResponse>(&json_str)
+                    {
+                        log::error!(
+                            "wsl_kernel_specifications parse error: {} \nJSON: {}",
+                            e,
+                            json_str
+                        );
                     }
+                } else {
+                    log::error!("wsl_kernel_specifications command failed");
                 }
+            } else if let Err(e) = output {
+                log::error!("wsl_kernel_specifications command execution failed: {}", e);
             }
 
             Vec::new()

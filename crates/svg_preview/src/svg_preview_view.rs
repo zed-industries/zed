@@ -110,7 +110,7 @@ impl SvgPreviewView {
         let renderer = cx.svg_renderer();
         let content = buffer.read(cx).snapshot();
         let background_task = cx.background_spawn(async move {
-            renderer.render_single_frame(content.text().as_bytes(), SCALE_FACTOR, true)
+            renderer.render_single_frame(content.text().as_bytes(), SCALE_FACTOR)
         });
 
         self._refresh = cx.spawn_in(window, async move |this, cx| {
@@ -182,7 +182,7 @@ impl SvgPreviewView {
             buffer,
             window,
             move |this, _buffer, event: &BufferEvent, window, cx| match event {
-                BufferEvent::Edited | BufferEvent::Saved => {
+                BufferEvent::Edited { .. } | BufferEvent::Saved => {
                     this.render_image(window, cx);
                 }
                 _ => {}

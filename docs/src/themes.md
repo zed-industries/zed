@@ -44,6 +44,35 @@ You can set the mode to `"dark"` or `"light"` to ignore the current system mode.
 }
 ```
 
+### Toggle Theme Mode from the Keyboard
+
+Use {#kb theme::ToggleMode} to switch the current theme mode between light and dark.
+
+If your settings currently use a static theme value, like:
+
+```json [settings]
+{
+  "theme": "Any Theme"
+}
+```
+
+the first toggle converts it to dynamic theme selection with default themes:
+
+```json [settings]
+{
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  }
+}
+```
+
+You are required to set both `light` and `dark` themes manually after the first toggle.
+
+After that, toggling updates only `theme.mode`.
+If `light` and `dark` are the same theme, the first toggle may not produce a visible UI change until you set different values for `light` and `dark`.
+
 ## Theme Overrides
 
 To override specific attributes of a theme, use the `theme_overrides` setting.
@@ -77,7 +106,7 @@ For example, add the following to your `settings.json` if you wish to override t
 }
 ```
 
-To see a comprehensive list of list of captures (like `comment` and `comment.doc`) see [Language Extensions: Syntax highlighting](./extensions/languages.md#syntax-highlighting).
+To see a comprehensive list of captures (like `comment` and `comment.doc`) see [Language Extensions: Syntax highlighting](./extensions/languages.md#syntax-highlighting).
 
 To see a list of available theme attributes look at the JSON file for your theme.
 For example, [assets/themes/one/one.json](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json) for the default One Dark and One Light themes.

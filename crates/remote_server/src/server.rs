@@ -41,6 +41,7 @@ use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::{
+    Timer,
     channel::{Receiver, Sender},
     io::AsyncReadExt,
     stream::StreamExt as _,
@@ -181,7 +182,7 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         .open(log_file_path)
         .context("Failed to open log file in append mode")?;
 
-    let (tx, rx) = smol::channel::unbounded();
+    let (tx, rx) = async_channel::unbounded();
 
     let target = Box::new(MultiWrite {
         file: log_file,
@@ -461,18 +462,35 @@ pub fn execute_run(
     let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    crashes::init(
-        crashes::InitCrashHandler {
-            session_id: id,
-            zed_version: VERSION.to_owned(),
-            binary: "zed-remote-server".to_string(),
-            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        },
-        |task| {
-            app.background_executor().spawn(task).detach();
-        },
-    );
+    let should_install_crash_handler = matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
+
+    let crash_handler = if should_install_crash_handler {
+        Some(app.background_executor().spawn(crashes::init(
+            crashes::InitCrashHandler {
+                session_id: id,
+                zed_version: VERSION.to_owned(),
+                binary: "zed-remote-server".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+            },
+            {
+                let background_executor = app.background_executor();
+                move |task| {
+                    background_executor.spawn(task).detach();
+                }
+            },
+            |pid| paths::temp_dir().join(format!("zed-remote-server-crash-handler-{pid}")),
+            // we are running outside gpui
+            #[allow(clippy::disallowed_methods)]
+            |duration| FutureExt::map(Timer::after(duration), |_| ()),
+        )))
+    } else {
+        crashes::force_backtrace();
+        None
+    };
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
         "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -511,7 +529,14 @@ pub fn execute_run(
     let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let run = move |cx: &mut _| {
+    let run = move |cx: &mut App| {
+        if let Some(crash_handler) = crash_handler {
+            cx.spawn(async move |_cx| {
+                let _crash_handler = crash_handler.await;
+                // cx.update(|cx| cx.set_global(CrashHandler(crash_handler)))
+            })
+            .detach();
+        }
         settings::init(cx);
         let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
         let app_version = AppVersion::load(
@@ -716,19 +741,30 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    crashes::init(
-        crashes::InitCrashHandler {
-            session_id: id,
-            zed_version: VERSION.to_owned(),
-            binary: "zed-remote-server".to_string(),
-            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        },
-        |task| {
-            smol::spawn(task).detach();
-        },
-    );
+    let should_install_crash_handler = matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
 
+    if should_install_crash_handler {
+        smol::spawn(crashes::init(
+            crashes::InitCrashHandler {
+                session_id: id,
+                zed_version: VERSION.to_owned(),
+                binary: "zed-remote-proxy".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+            },
+            |task| {
+                smol::spawn(task).detach();
+            },
+            |pid| paths::temp_dir().join(format!("zed-remote-server-proxy-crash-handler-{pid}")),
+            // we are running outside gpui
+            #[allow(clippy::disallowed_methods)]
+            |duration| FutureExt::map(Timer::after(duration), |_| ()),
+        ))
+        .detach();
+    };
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
         let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
@@ -755,7 +791,7 @@ pub(crate) fn execute_proxy(
                 );
                 kill_running_server(pid, &server_paths)?;
             }
-            smol::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
+            gpui::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
             std::fs::read_to_string(&server_paths.pid_file)
                 .and_then(|contents| {
                     contents.parse::<u32>().map_err(|_| {
@@ -826,7 +862,7 @@ pub(crate) fn execute_proxy(
         }
     });
 
-    if let Err(forwarding_result) = smol::block_on(async move {
+    if let Err(forwarding_result) = gpui::block_on(async move {
         futures::select! {
             result = stdin_task.fuse() => result.map_err(ExecuteProxyError::StdinTask),
             result = stdout_task.fuse() => result.map_err(ExecuteProxyError::StdoutTask),
@@ -834,7 +870,7 @@ pub(crate) fn execute_proxy(
         }
     }) {
         log::error!("encountered error while forwarding messages: {forwarding_result:#}",);
-        if !matches!(smol::block_on(check_server_running(server_pid)), Ok(true)) {
+        if !matches!(gpui::block_on(check_server_running(server_pid)), Ok(true)) {
             log::error!("server exited unexpectedly");
             return Err(ExecuteProxyError::ServerNotRunning(
                 ProxyLaunchError::ServerNotRunning,
