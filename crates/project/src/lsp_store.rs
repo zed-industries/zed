@@ -6678,7 +6678,7 @@ impl LspStore {
                 }
                 CompletionSource::BufferWord { .. }
                 | CompletionSource::Dap { .. }
-                | CompletionSource::Custom => {
+                | CompletionSource::Custom { .. } => {
                     return Ok(());
                 }
             }
@@ -6844,7 +6844,7 @@ impl LspStore {
                     }
                     serde_json::to_string(lsp_completion).unwrap().into_bytes()
                 }
-                CompletionSource::Custom
+                CompletionSource::Custom { .. }
                 | CompletionSource::Dap { .. }
                 | CompletionSource::BufferWord { .. } => {
                     return Ok(());
@@ -12193,7 +12193,7 @@ impl LspStore {
                 serialized_completion.buffer_word_end = Some(serialize_anchor(&word_range.end));
                 serialized_completion.resolved = *resolved;
             }
-            CompletionSource::Custom => {
+            CompletionSource::Custom { .. } => {
                 serialized_completion.source = proto::completion::Source::Custom as i32;
                 serialized_completion.resolved = true;
             }
@@ -12229,7 +12229,9 @@ impl LspStore {
             replace_range: old_replace_start..old_replace_end,
             new_text: completion.new_text,
             source: match proto::completion::Source::from_i32(completion.source) {
-                Some(proto::completion::Source::Custom) => CompletionSource::Custom,
+                Some(proto::completion::Source::Custom) => CompletionSource::Custom {
+                    compose_new_text: None,
+                },
                 Some(proto::completion::Source::Lsp) => CompletionSource::Lsp {
                     insert_range,
                     server_id: LanguageServerId::from_proto(completion.server_id),

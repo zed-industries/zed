@@ -670,7 +670,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())
                     }),
-                    source: CompletionSource::Custom,
+                    source: CompletionSource::custom(),
                     insert_text_mode: None,
                     confirm: None,
                 })

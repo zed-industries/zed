@@ -258,7 +258,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 label: CodeLabel::plain(mode.label().to_string(), None),
                 icon_path: Some(mode.icon().path().into()),
                 documentation: None,
-                source: project::CompletionSource::Custom,
+                source: project::CompletionSource::custom(),
                 match_start: None,
                 snippet_deduplication_key: None,
                 insert_text_mode: None,
@@ -310,7 +310,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             label: CodeLabel::plain(title.to_string(), None),
             documentation: None,
             insert_text_mode: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::custom(),
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_for_completion),
@@ -349,7 +349,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             label: CodeLabel::plain(rule.title.to_string(), None),
             documentation: None,
             insert_text_mode: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::custom(),
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_path),
@@ -371,6 +371,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         path_prefix: &RelPath,
         is_recent: bool,
         is_directory: bool,
+        mention_mode: Option<PromptContextType>,
         source_range: Range<Anchor>,
         source: Arc<T>,
         editor: WeakEntity<Editor>,
@@ -409,12 +410,30 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
+        let compose_new_text = if is_directory {
+            let full_rel = path_prefix.join(project_path.path.as_ref());
+            let display_rel = full_rel.display(path_style).to_string();
+            let path_with_slash = if display_rel.ends_with('/') {
+                display_rel
+            } else {
+                format!("{}/", display_rel)
+            };
+            Some(match mention_mode {
+                Some(PromptContextType::File) => format!("@file {}", path_with_slash),
+                _ => format!("@{}", path_with_slash),
+            })
+        } else {
+            None
+        };
+
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
             label,
             documentation: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::Custom {
+                compose_new_text,
+            },
             icon_path: Some(completion_icon_path),
             match_start: None,
             snippet_deduplication_key: None,
@@ -479,7 +498,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             new_text,
             label,
             documentation: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::custom(),
             icon_path: Some(icon_path),
             match_start: None,
             snippet_deduplication_key: None,
@@ -519,7 +538,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             new_text: new_text.clone(),
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::custom(),
             icon_path: Some(icon_path),
             match_start: None,
             snippet_deduplication_key: None,
@@ -680,7 +699,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             label: CodeLabel::plain(action.label().to_string(), None),
             icon_path: Some(action.icon().path().into()),
             documentation: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::custom(),
             match_start: None,
             snippet_deduplication_key: None,
             insert_text_mode: None,
@@ -770,7 +789,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             new_text,
             label: CodeLabel::plain(menu_label, None),
             documentation: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::custom(),
             icon_path: Some(icon_path),
             match_start: None,
             snippet_deduplication_key: None,
@@ -811,7 +830,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             new_text,
             label: CodeLabel::plain(crease_text.to_string(), None),
             documentation: None,
-            source: project::CompletionSource::Custom,
+            source: project::CompletionSource::custom(),
             icon_path: Some(icon_path),
             match_start: None,
             snippet_deduplication_key: None,
@@ -1270,7 +1289,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                 documentation: Some(CompletionDocumentation::MultiLinePlainText(
                                     command.description.into(),
                                 )),
-                                source: project::CompletionSource::Custom,
+                                source: project::CompletionSource::custom(),
                                 icon_path: None,
                                 match_start: None,
                                 snippet_deduplication_key: None,
@@ -1391,6 +1410,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         &path_prefix,
                                         is_recent,
                                         mat.is_dir,
+                                        mode,
                                         source_range.clone(),
                                         source.clone(),
                                         editor.clone(),
@@ -1548,7 +1568,12 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
     mention_set: WeakEntity<MentionSet>,
     workspace: Entity<Workspace>,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new(move |_, window, cx| {
+    Arc::new(move |intent, window, cx| {
+        if intent == CompletionIntent::Compose
+            && matches!(&mention_uri, MentionUri::Directory { .. })
+        {
+            return true;
+        }
         let source = source.clone();
         let editor = editor.clone();
         let mention_set = mention_set.clone();

@@ -26839,8 +26839,20 @@ fn process_completion_for_edit(
 ) -> CompletionEdit {
     let buffer = buffer.read(cx);
     let buffer_snapshot = buffer.snapshot();
+    let insert_text = match intent {
+        CompletionIntent::Compose => {
+            if let CompletionSource::Custom { compose_new_text } = &completion.source {
+                compose_new_text
+                    .clone()
+                    .unwrap_or_else(|| completion.new_text.clone())
+            } else {
+                completion.new_text.clone()
+            }
+        }
+        _ => completion.new_text.clone(),
+    };
     let (snippet, new_text) = if completion.is_snippet() {
-        let mut snippet_source = completion.new_text.clone();
+        let mut snippet_source = insert_text.clone();
         // Workaround for typescript language server issues so that methods don't expand within
         // strings and functions with type expressions. The previous point is used because the query
         // for function identifier doesn't match when the cursor is immediately after. See PR #30312
@@ -26862,10 +26874,10 @@ fn process_completion_for_edit(
         }
         match Snippet::parse(&snippet_source).log_err() {
             Some(parsed_snippet) => (Some(parsed_snippet.clone()), parsed_snippet.text),
-            None => (None, completion.new_text.clone()),
+            None => (None, insert_text),
         }
     } else {
-        (None, completion.new_text.clone())
+        (None, insert_text)
     };
 
     let mut range_to_replace = {
