@@ -1,13 +1,14 @@
 mod reindent;
 mod streaming_fuzzy_matcher;
+mod streaming_parser;
 
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
-use super::tool_edit_parser::{ToolEditEvent, ToolEditParser};
 use crate::ToolInputPayload;
 use crate::tools::edit_file_tool::{
     reindent::{Reindenter, compute_indent_delta},
     streaming_fuzzy_matcher::StreamingFuzzyMatcher,
+    streaming_parser::{EditEvent, StreamingParser, WriteEvent},
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput};
 use acp_thread::Diff;
@@ -598,16 +599,23 @@ pub struct EditSession {
     buffer: Entity<Buffer>,
     old_text: Arc<String>,
     diff: Entity<Diff>,
-    mode: EditFileMode,
-    parser: ToolEditParser,
-    pipeline: EditPipeline,
-    file_changed_since_last_read: bool,
+    parser: StreamingParser,
+    pipeline: Pipeline,
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
+}
+
+enum Pipeline {
+    Write(WritePipeline),
+    Edit(EditPipeline),
+}
+
+struct WritePipeline {
+    content_written: bool,
 }
 
 struct EditPipeline {
     current_edit: Option<EditPipelineEntry>,
-    content_written: bool,
+    file_changed_since_last_read: bool,
 }
 
 enum EditPipelineEntry {
@@ -622,14 +630,51 @@ enum EditPipelineEntry {
     },
 }
 
-impl EditPipeline {
-    fn new() -> Self {
-        Self {
-            current_edit: None,
-            content_written: false,
+impl Pipeline {
+    fn new(mode: EditFileMode, file_changed_since_last_read: bool) -> Self {
+        match mode {
+            EditFileMode::Write => Self::Write(WritePipeline {
+                content_written: false,
+            }),
+            EditFileMode::Edit => Self::Edit(EditPipeline {
+                current_edit: None,
+                file_changed_since_last_read,
+            }),
         }
     }
+}
 
+impl WritePipeline {
+    fn process_event(
+        &mut self,
+        event: &WriteEvent,
+        buffer: &Entity<Buffer>,
+        tool: &EditFileTool,
+        cx: &mut AsyncApp,
+    ) {
+        let WriteEvent::ContentChunk { chunk } = event;
+
+        let (buffer_id, buffer_len) =
+            buffer.read_with(cx, |buffer, _cx| (buffer.remote_id(), buffer.len()));
+        let edit_range = if self.content_written {
+            buffer_len..buffer_len
+        } else {
+            0..buffer_len
+        };
+
+        agent_edit_buffer(buffer, [(edit_range, chunk.as_str())], &tool.action_log, cx);
+        cx.update(|cx| {
+            tool.set_agent_location(
+                buffer.downgrade(),
+                text::Anchor::max_for_buffer(buffer_id),
+                cx,
+            );
+        });
+        self.content_written = true;
+    }
+}
+
+impl EditPipeline {
     fn ensure_resolving_old_text(&mut self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
         if self.current_edit.is_none() {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
@@ -637,6 +682,199 @@ impl EditPipeline {
                 matcher: StreamingFuzzyMatcher::new(snapshot),
             });
         }
+    }
+
+    fn process_event(
+        &mut self,
+        event: &EditEvent,
+        buffer: &Entity<Buffer>,
+        diff: &Entity<Diff>,
+        abs_path: &PathBuf,
+        tool: &EditFileTool,
+        event_stream: &ToolCallEventStream,
+        cx: &mut AsyncApp,
+    ) -> Result<(), String> {
+        match event {
+            EditEvent::OldTextChunk {
+                chunk, done: false, ..
+            } => {
+                log::debug!("old_text_chunk: done=false, chunk='{}'", chunk);
+                self.ensure_resolving_old_text(buffer, cx);
+
+                if let Some(EditPipelineEntry::ResolvingOldText { matcher }) =
+                    &mut self.current_edit
+                    && !chunk.is_empty()
+                {
+                    if let Some(match_range) = matcher.push(chunk, None) {
+                        let anchor_range = buffer.read_with(cx, |buffer, _cx| {
+                            buffer.anchor_range_outside(match_range.clone())
+                        });
+                        diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
+
+                        cx.update(|cx| {
+                            let position = buffer.read(cx).anchor_before(match_range.end);
+                            tool.set_agent_location(buffer.downgrade(), position, cx);
+                        });
+                    }
+                }
+            }
+            EditEvent::OldTextChunk {
+                edit_index,
+                chunk,
+                done: true,
+            } => {
+                log::debug!("old_text_chunk: done=true, chunk='{}'", chunk);
+
+                self.ensure_resolving_old_text(buffer, cx);
+
+                let Some(EditPipelineEntry::ResolvingOldText { matcher }) = &mut self.current_edit
+                else {
+                    return Ok(());
+                };
+
+                if !chunk.is_empty() {
+                    matcher.push(chunk, None);
+                }
+                let range = extract_match(
+                    matcher.finish(),
+                    buffer,
+                    edit_index,
+                    self.file_changed_since_last_read,
+                    cx,
+                )?;
+
+                let anchor_range =
+                    buffer.read_with(cx, |buffer, _cx| buffer.anchor_range_outside(range.clone()));
+                diff.update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
+
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+                let line = snapshot.offset_to_point(range.start).row;
+                event_stream.update_fields(
+                    ToolCallUpdateFields::new()
+                        .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
+                );
+
+                let buffer_indent = snapshot.line_indent_for_row(line);
+                let query_indent = text::LineIndent::from_iter(
+                    matcher
+                        .query_lines()
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("")
+                        .chars(),
+                );
+                let indent_delta = compute_indent_delta(buffer_indent, query_indent);
+
+                let old_text_in_buffer = snapshot.text_for_range(range.clone()).collect::<String>();
+
+                log::debug!(
+                    "edit[{}] old_text matched at {}..{}: {:?}",
+                    edit_index,
+                    range.start,
+                    range.end,
+                    old_text_in_buffer,
+                );
+
+                let text_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
+                self.current_edit = Some(EditPipelineEntry::StreamingNewText {
+                    streaming_diff: StreamingDiff::new(old_text_in_buffer),
+                    edit_cursor: range.start,
+                    reindenter: Reindenter::new(indent_delta),
+                    original_snapshot: text_snapshot,
+                });
+
+                cx.update(|cx| {
+                    let position = buffer.read(cx).anchor_before(range.end);
+                    tool.set_agent_location(buffer.downgrade(), position, cx);
+                });
+            }
+            EditEvent::NewTextChunk {
+                chunk, done: false, ..
+            } => {
+                log::debug!("new_text_chunk: done=false, chunk='{}'", chunk);
+
+                let Some(EditPipelineEntry::StreamingNewText {
+                    streaming_diff,
+                    edit_cursor,
+                    reindenter,
+                    original_snapshot,
+                    ..
+                }) = &mut self.current_edit
+                else {
+                    return Ok(());
+                };
+
+                let reindented = reindenter.push(chunk);
+                if reindented.is_empty() {
+                    return Ok(());
+                }
+
+                let char_ops = streaming_diff.push_new(&reindented);
+                apply_char_operations(
+                    &char_ops,
+                    buffer,
+                    original_snapshot,
+                    edit_cursor,
+                    &tool.action_log,
+                    cx,
+                );
+
+                let position = original_snapshot.anchor_before(*edit_cursor);
+                cx.update(|cx| {
+                    tool.set_agent_location(buffer.downgrade(), position, cx);
+                });
+            }
+            EditEvent::NewTextChunk {
+                chunk, done: true, ..
+            } => {
+                log::debug!("new_text_chunk: done=true, chunk='{}'", chunk);
+
+                let Some(EditPipelineEntry::StreamingNewText {
+                    mut streaming_diff,
+                    mut edit_cursor,
+                    mut reindenter,
+                    original_snapshot,
+                }) = self.current_edit.take()
+                else {
+                    return Ok(());
+                };
+
+                // Flush any remaining reindent buffer + final chunk.
+                let mut final_text = reindenter.push(chunk);
+                final_text.push_str(&reindenter.finish());
+
+                log::debug!("new_text_chunk: done=true, final_text='{}'", final_text);
+
+                if !final_text.is_empty() {
+                    let char_ops = streaming_diff.push_new(&final_text);
+                    apply_char_operations(
+                        &char_ops,
+                        buffer,
+                        &original_snapshot,
+                        &mut edit_cursor,
+                        &tool.action_log,
+                        cx,
+                    );
+                }
+
+                let remaining_ops = streaming_diff.finish();
+                apply_char_operations(
+                    &remaining_ops,
+                    buffer,
+                    &original_snapshot,
+                    &mut edit_cursor,
+                    &tool.action_log,
+                    cx,
+                );
+
+                let position = original_snapshot.anchor_before(edit_cursor);
+                cx.update(|cx| {
+                    tool.set_agent_location(buffer.downgrade(), position, cx);
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -704,10 +942,8 @@ impl EditSession {
             buffer,
             old_text,
             diff,
-            mode,
-            parser: ToolEditParser::default(),
-            pipeline: EditPipeline::new(),
-            file_changed_since_last_read,
+            parser: StreamingParser::default(),
+            pipeline: Pipeline::new(mode, file_changed_since_last_read),
             _finalize_diff_guard: finalize_diff_guard,
         })
     }
@@ -719,21 +955,39 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<(), String> {
-        match input.mode {
-            EditFileMode::Write => {
+        let Self {
+            abs_path,
+            buffer,
+            diff,
+            parser,
+            pipeline,
+            ..
+        } = self;
+        match pipeline {
+            Pipeline::Write(write) => {
                 let content = input
                     .content
                     .ok_or_else(|| "'content' field is required for write mode".to_string())?;
 
-                let events = self.parser.finalize_content(&content);
-                self.process_events(&events, tool, event_stream, cx)?;
+                for event in &parser.finalize_content(&content) {
+                    write.process_event(event, buffer, tool, cx);
+                }
             }
-            EditFileMode::Edit => {
+            Pipeline::Edit(edit_pipeline) => {
                 let edits = input
                     .edits
                     .ok_or_else(|| "'edits' field is required for edit mode".to_string())?;
-                let events = self.parser.finalize_edits(&edits);
-                self.process_events(&events, tool, event_stream, cx)?;
+                for event in &parser.finalize_edits(&edits) {
+                    edit_pipeline.process_event(
+                        event,
+                        buffer,
+                        diff,
+                        abs_path,
+                        tool,
+                        event_stream,
+                        cx,
+                    )?;
+                }
 
                 if log::log_enabled!(log::Level::Debug) {
                     log::debug!("Got edits:");
@@ -773,246 +1027,35 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<(), String> {
-        match &self.mode {
-            EditFileMode::Write => {
+        let Self {
+            abs_path,
+            buffer,
+            diff,
+            parser,
+            pipeline,
+            ..
+        } = self;
+        match pipeline {
+            Pipeline::Write(write) => {
                 if let Some(content) = &partial.content {
-                    let events = self.parser.push_content(content);
-                    self.process_events(&events, tool, event_stream, cx)?;
+                    for event in &parser.push_content(content) {
+                        write.process_event(event, buffer, tool, cx);
+                    }
                 }
             }
-            EditFileMode::Edit => {
+            Pipeline::Edit(edit_pipeline) => {
                 if let Some(edits) = partial.edits {
-                    let events = self.parser.push_edits(&edits);
-                    self.process_events(&events, tool, event_stream, cx)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn process_events(
-        &mut self,
-        events: &[ToolEditEvent],
-        tool: &EditFileTool,
-        event_stream: &ToolCallEventStream,
-        cx: &mut AsyncApp,
-    ) -> Result<(), String> {
-        for event in events {
-            match event {
-                ToolEditEvent::ContentChunk { chunk } => {
-                    let (buffer_id, buffer_len) = self
-                        .buffer
-                        .read_with(cx, |buffer, _cx| (buffer.remote_id(), buffer.len()));
-                    let edit_range = if self.pipeline.content_written {
-                        buffer_len..buffer_len
-                    } else {
-                        0..buffer_len
-                    };
-
-                    agent_edit_buffer(
-                        &self.buffer,
-                        [(edit_range, chunk.as_str())],
-                        &tool.action_log,
-                        cx,
-                    );
-                    cx.update(|cx| {
-                        tool.set_agent_location(
-                            self.buffer.downgrade(),
-                            text::Anchor::max_for_buffer(buffer_id),
+                    for event in &parser.push_edits(&edits) {
+                        edit_pipeline.process_event(
+                            event,
+                            buffer,
+                            diff,
+                            abs_path,
+                            tool,
+                            event_stream,
                             cx,
-                        );
-                    });
-                    self.pipeline.content_written = true;
-                }
-
-                ToolEditEvent::OldTextChunk {
-                    chunk, done: false, ..
-                } => {
-                    log::debug!("old_text_chunk: done=false, chunk='{}'", chunk);
-                    self.pipeline.ensure_resolving_old_text(&self.buffer, cx);
-
-                    if let Some(EditPipelineEntry::ResolvingOldText { matcher }) =
-                        &mut self.pipeline.current_edit
-                        && !chunk.is_empty()
-                    {
-                        if let Some(match_range) = matcher.push(chunk, None) {
-                            let anchor_range = self.buffer.read_with(cx, |buffer, _cx| {
-                                buffer.anchor_range_outside(match_range.clone())
-                            });
-                            self.diff
-                                .update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
-
-                            cx.update(|cx| {
-                                let position = self.buffer.read(cx).anchor_before(match_range.end);
-                                tool.set_agent_location(self.buffer.downgrade(), position, cx);
-                            });
-                        }
+                        )?;
                     }
-                }
-
-                ToolEditEvent::OldTextChunk {
-                    edit_index,
-                    chunk,
-                    done: true,
-                } => {
-                    log::debug!("old_text_chunk: done=true, chunk='{}'", chunk);
-
-                    self.pipeline.ensure_resolving_old_text(&self.buffer, cx);
-
-                    let Some(EditPipelineEntry::ResolvingOldText { matcher }) =
-                        &mut self.pipeline.current_edit
-                    else {
-                        continue;
-                    };
-
-                    if !chunk.is_empty() {
-                        matcher.push(chunk, None);
-                    }
-                    let range = extract_match(
-                        matcher.finish(),
-                        &self.buffer,
-                        edit_index,
-                        self.file_changed_since_last_read,
-                        cx,
-                    )?;
-
-                    let anchor_range = self
-                        .buffer
-                        .read_with(cx, |buffer, _cx| buffer.anchor_range_outside(range.clone()));
-                    self.diff
-                        .update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
-
-                    let snapshot = self.buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-
-                    let line = snapshot.offset_to_point(range.start).row;
-                    event_stream.update_fields(
-                        ToolCallUpdateFields::new().locations(vec![
-                            ToolCallLocation::new(&self.abs_path).line(Some(line)),
-                        ]),
-                    );
-
-                    let buffer_indent = snapshot.line_indent_for_row(line);
-                    let query_indent = text::LineIndent::from_iter(
-                        matcher
-                            .query_lines()
-                            .first()
-                            .map(|s| s.as_str())
-                            .unwrap_or("")
-                            .chars(),
-                    );
-                    let indent_delta = compute_indent_delta(buffer_indent, query_indent);
-
-                    let old_text_in_buffer =
-                        snapshot.text_for_range(range.clone()).collect::<String>();
-
-                    log::debug!(
-                        "edit[{}] old_text matched at {}..{}: {:?}",
-                        edit_index,
-                        range.start,
-                        range.end,
-                        old_text_in_buffer,
-                    );
-
-                    let text_snapshot = self
-                        .buffer
-                        .read_with(cx, |buffer, _cx| buffer.text_snapshot());
-                    self.pipeline.current_edit = Some(EditPipelineEntry::StreamingNewText {
-                        streaming_diff: StreamingDiff::new(old_text_in_buffer),
-                        edit_cursor: range.start,
-                        reindenter: Reindenter::new(indent_delta),
-                        original_snapshot: text_snapshot,
-                    });
-
-                    cx.update(|cx| {
-                        let position = self.buffer.read(cx).anchor_before(range.end);
-                        tool.set_agent_location(self.buffer.downgrade(), position, cx);
-                    });
-                }
-
-                ToolEditEvent::NewTextChunk {
-                    chunk, done: false, ..
-                } => {
-                    log::debug!("new_text_chunk: done=false, chunk='{}'", chunk);
-
-                    let Some(EditPipelineEntry::StreamingNewText {
-                        streaming_diff,
-                        edit_cursor,
-                        reindenter,
-                        original_snapshot,
-                        ..
-                    }) = &mut self.pipeline.current_edit
-                    else {
-                        continue;
-                    };
-
-                    let reindented = reindenter.push(chunk);
-                    if reindented.is_empty() {
-                        continue;
-                    }
-
-                    let char_ops = streaming_diff.push_new(&reindented);
-                    apply_char_operations(
-                        &char_ops,
-                        &self.buffer,
-                        original_snapshot,
-                        edit_cursor,
-                        &tool.action_log,
-                        cx,
-                    );
-
-                    let position = original_snapshot.anchor_before(*edit_cursor);
-                    cx.update(|cx| {
-                        tool.set_agent_location(self.buffer.downgrade(), position, cx);
-                    });
-                }
-
-                ToolEditEvent::NewTextChunk {
-                    chunk, done: true, ..
-                } => {
-                    log::debug!("new_text_chunk: done=true, chunk='{}'", chunk);
-
-                    let Some(EditPipelineEntry::StreamingNewText {
-                        mut streaming_diff,
-                        mut edit_cursor,
-                        mut reindenter,
-                        original_snapshot,
-                    }) = self.pipeline.current_edit.take()
-                    else {
-                        continue;
-                    };
-
-                    // Flush any remaining reindent buffer + final chunk.
-                    let mut final_text = reindenter.push(chunk);
-                    final_text.push_str(&reindenter.finish());
-
-                    log::debug!("new_text_chunk: done=true, final_text='{}'", final_text);
-
-                    if !final_text.is_empty() {
-                        let char_ops = streaming_diff.push_new(&final_text);
-                        apply_char_operations(
-                            &char_ops,
-                            &self.buffer,
-                            &original_snapshot,
-                            &mut edit_cursor,
-                            &tool.action_log,
-                            cx,
-                        );
-                    }
-
-                    let remaining_ops = streaming_diff.finish();
-                    apply_char_operations(
-                        &remaining_ops,
-                        &self.buffer,
-                        &original_snapshot,
-                        &mut edit_cursor,
-                        &tool.action_log,
-                        cx,
-                    );
-
-                    let position = original_snapshot.anchor_before(edit_cursor);
-                    cx.update(|cx| {
-                        tool.set_agent_location(self.buffer.downgrade(), position, cx);
-                    });
                 }
             }
         }

@@ -3964,19 +3964,22 @@ impl BackgroundScanner {
         let repo = if scanning_enabled {
             let (ignores, exclude, repo) =
                 discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
-            self.state
-                .lock()
-                .await
-                .snapshot
-                .ignores_by_parent_abs_path
-                .extend(ignores);
+            let mut state = self.state.lock().await;
+            state.snapshot.ignores_by_parent_abs_path.extend(ignores);
             if let Some(exclude) = exclude {
-                self.state
-                    .lock()
-                    .await
+                let work_directory_abs_path: Arc<Path> = repo
+                    .as_ref()
+                    .map(|(_, work_directory)| {
+                        state
+                            .snapshot
+                            .work_directory_abs_path(work_directory)
+                            .into()
+                    })
+                    .unwrap_or_else(|| root_abs_path.as_path().into());
+                state
                     .snapshot
                     .repo_exclude_by_work_dir_abs_path
-                    .insert(root_abs_path.as_path().into(), (exclude, false));
+                    .insert(work_directory_abs_path, (exclude, false));
             }
 
             repo
@@ -5078,12 +5081,8 @@ impl BackgroundScanner {
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
                             if let Some(exclude) = exclude {
-                                let work_directory_abs_path = self
-                                    .state
-                                    .lock()
-                                    .await
-                                    .snapshot
-                                    .work_directory_abs_path(&work_directory);
+                                let work_directory_abs_path =
+                                    state.snapshot.work_directory_abs_path(&work_directory);
 
                                 state
                                     .snapshot
@@ -5201,7 +5200,11 @@ impl BackgroundScanner {
 
                 if *needs_update {
                     *needs_update = false;
-                    ignores_to_update.push(work_dir_abs_path.clone());
+                    if work_dir_abs_path.starts_with(abs_path.as_path()) {
+                        ignores_to_update.push(work_dir_abs_path.clone());
+                    } else {
+                        ignores_to_update.push(abs_path.as_path().into());
+                    }
 
                     if let Some((_, repository)) = repository {
                         let exclude_abs_path = repository.common_dir_abs_path.join(REPO_EXCLUDE);
@@ -5543,39 +5546,45 @@ async fn discover_ancestor_git_repo(
             .await
             .is_ok_and(|metadata| metadata.is_some())
         {
-            if index != 0 {
+            let dot_git_abs_path = if index != 0 {
                 // We canonicalize, since the FS events use the canonicalized path.
-                if let Some(ancestor_dot_git) = fs.canonicalize(&ancestor_dot_git).await.log_err() {
-                    let location_in_repo = root_abs_path
-                        .as_path()
-                        .strip_prefix(ancestor)
-                        .unwrap()
-                        .into();
-                    log::info!("inserting parent git repo for this worktree: {location_in_repo:?}");
-                    // We associate the external git repo with our root folder and
-                    // also mark where in the git repo the root folder is located.
-                    return (
-                        ignores,
-                        exclude,
-                        Some((
-                            ancestor_dot_git,
-                            WorkDirectory::AboveProject {
-                                absolute_path: ancestor.into(),
-                                location_in_repo,
-                            },
-                        )),
-                    );
-                };
-            }
+                match fs.canonicalize(&ancestor_dot_git).await.log_err() {
+                    Some(path) => path,
+                    None => continue,
+                }
+            } else {
+                ancestor_dot_git.clone()
+            };
+            let dot_git_abs_path: Arc<Path> = dot_git_abs_path.as_path().into();
+            let (_, common_dir_abs_path) = discover_git_paths(&dot_git_abs_path, fs.as_ref()).await;
 
-            let dot_git_path: Arc<Path> = ancestor_dot_git.into();
-            let (_, common_dir_abs_path) = discover_git_paths(&dot_git_path, fs.as_ref()).await;
             let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
             if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
                 exclude = Some(Arc::new(repo_exclude));
             }
 
-            // Reached root of git repository.
+            if index != 0 {
+                let location_in_repo = root_abs_path
+                    .as_path()
+                    .strip_prefix(ancestor)
+                    .unwrap()
+                    .into();
+                log::info!("inserting parent git repo for this worktree: {location_in_repo:?}");
+                // We associate the external git repo with our root folder and
+                // also mark where in the git repo the root folder is located.
+                return (
+                    ignores,
+                    exclude,
+                    Some((
+                        dot_git_abs_path.as_ref().into(),
+                        WorkDirectory::AboveProject {
+                            absolute_path: ancestor.into(),
+                            location_in_repo,
+                        },
+                    )),
+                );
+            }
+
             break;
         }
     }
@@ -6285,6 +6294,26 @@ fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     Ok(Path::new(path.trim()))
 }
 
+fn resolve_gitfile_path(dot_git_abs_path: &Path, gitfile_path: &Path) -> PathBuf {
+    if gitfile_path.is_absolute() {
+        gitfile_path.into()
+    } else {
+        dot_git_abs_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(gitfile_path)
+    }
+}
+
+fn resolve_commondir_path(repository_dir_abs_path: &Path, commondir_path: &str) -> PathBuf {
+    let commondir_path = Path::new(commondir_path.trim());
+    if commondir_path.is_absolute() {
+        commondir_path.into()
+    } else {
+        repository_dir_abs_path.join(commondir_path)
+    }
+}
+
 pub async fn discover_root_repo_common_dir(root_abs_path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
     let root_dot_git = root_abs_path.join(DOT_GIT);
     if !fs.metadata(&root_dot_git).await.is_ok_and(|m| m.is_some()) {
@@ -6306,17 +6335,14 @@ async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<P
         .as_ref()
         .and_then(|contents| parse_gitfile(contents).log_err())
     {
-        let path = dot_git_abs_path
-            .parent()
-            .unwrap_or(Path::new(""))
-            .join(path);
+        let path = resolve_gitfile_path(dot_git_abs_path, path);
         if let Some(path) = fs.canonicalize(&path).await.log_err() {
             repository_dir_abs_path = Path::new(&path).into();
             common_dir_abs_path = repository_dir_abs_path.clone();
 
             if let Some(commondir_contents) = fs.load(&path.join("commondir")).await.ok()
                 && let Some(commondir_path) = fs
-                    .canonicalize(&path.join(commondir_contents.trim()))
+                    .canonicalize(&resolve_commondir_path(&path, &commondir_contents))
                     .await
                     .log_err()
             {
