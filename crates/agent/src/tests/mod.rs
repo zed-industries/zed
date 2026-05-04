@@ -53,7 +53,6 @@ use std::{
 };
 use util::path;
 
-mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
@@ -1119,7 +1118,7 @@ fn test_permission_options_terminal_single_word_command() {
 #[test]
 fn test_permission_options_edit_file_with_path_pattern() {
     let permission_options =
-        ToolPermissionContext::new(EditFileTool::NAME, vec!["src/main.rs".to_string()])
+        ToolPermissionContext::new(StreamingEditFileTool::NAME, vec!["src/main.rs".to_string()])
             .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
@@ -1176,9 +1175,11 @@ fn test_permission_options_without_pattern() {
 
 #[test]
 fn test_permission_options_symlink_target_are_flat_once_only() {
-    let permission_options =
-        ToolPermissionContext::symlink_target(EditFileTool::NAME, vec!["/outside/file.txt".into()])
-            .build_permission_options();
+    let permission_options = ToolPermissionContext::symlink_target(
+        StreamingEditFileTool::NAME,
+        vec!["/outside/file.txt".into()],
+    )
+    .build_permission_options();
 
     let PermissionOptions::Flat(options) = permission_options else {
         panic!("Expected flat permission options for symlink target authorization");
@@ -6028,7 +6029,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            EditFileTool::NAME.into(),
+            StreamingEditFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
@@ -6054,22 +6055,25 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
             cx,
         )
     });
+    let action_log = cx.update(|cx| thread.read(cx).action_log.clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::EditFileTool::new(
+    let tool = Arc::new(crate::StreamingEditFileTool::new(
         project.clone(),
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
     let task = cx.update(|cx| {
         tool.run(
-            ToolInput::resolved(crate::EditFileToolInput {
+            ToolInput::resolved(crate::StreamingEditFileToolInput {
                 display_description: "Edit sensitive file".to_string(),
                 path: "root/sensitive_config.txt".into(),
-                mode: crate::EditFileMode::Edit,
+                mode: crate::StreamingEditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,
@@ -6460,7 +6464,7 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.tools.insert(
-            EditFileTool::NAME.into(),
+            StreamingEditFileTool::NAME.into(),
             agent_settings::ToolRules {
                 default: Some(settings::ToolPermissionMode::Confirm),
                 always_allow: vec![agent_settings::CompiledRegex::new(r"\.md$", false).unwrap()],
@@ -6486,22 +6490,25 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
             cx,
         )
     });
+    let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::EditFileTool::new(
+    let tool = Arc::new(crate::StreamingEditFileTool::new(
         project,
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
     let _task = cx.update(|cx| {
         tool.run(
-            ToolInput::resolved(crate::EditFileToolInput {
+            ToolInput::resolved(crate::StreamingEditFileToolInput {
                 display_description: "Edit README".to_string(),
                 path: "root/README.md".into(),
-                mode: crate::EditFileMode::Edit,
+                mode: crate::StreamingEditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,
@@ -6554,13 +6561,14 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
             cx,
         )
     });
+    let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::EditFileTool::new(
+    let tool = Arc::new(crate::StreamingEditFileTool::new(
         project,
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
 
     // Editing a file inside .zed/ should still prompt even with global default: allow,
@@ -6568,10 +6576,12 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
     let _task = cx.update(|cx| {
         tool.run(
-            ToolInput::resolved(crate::EditFileToolInput {
+            ToolInput::resolved(crate::StreamingEditFileToolInput {
                 display_description: "Edit local settings".to_string(),
                 path: "root/.zed/settings.json".into(),
-                mode: crate::EditFileMode::Edit,
+                mode: crate::StreamingEditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,

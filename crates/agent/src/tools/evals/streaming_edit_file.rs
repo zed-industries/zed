@@ -1,6 +1,6 @@
 use crate::tools::streaming_edit_file_tool::*;
 use crate::{
-    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ListDirectoryTool,
+    AgentTool, ContextServerRegistry, GrepTool, GrepToolInput, ListDirectoryTool,
     ListDirectoryToolInput, ReadFileTool, ReadFileToolInput, StreamingEditFileTool, Template,
     Templates, Thread, ToolCallEventStream, ToolInput,
 };
@@ -355,10 +355,10 @@ impl StreamingEditToolTest {
     /// the model has never seen the name `"streaming_edit_file"`.
     fn build_tools() -> Vec<LanguageModelRequestTool> {
         let mut tools: Vec<LanguageModelRequestTool> = crate::built_in_tools()
-            .filter(|tool| tool.name != EditFileTool::NAME)
+            .filter(|tool| tool.name != StreamingEditFileTool::NAME)
             .collect();
         tools.push(LanguageModelRequestTool {
-            name: EditFileTool::NAME.to_string(),
+            name: StreamingEditFileTool::NAME.to_string(),
             description: StreamingEditFileTool::description().to_string(),
             input_schema: StreamingEditFileTool::input_schema(
                 LanguageModelToolSchemaFormat::JsonSchema,
@@ -537,7 +537,7 @@ impl StreamingEditToolTest {
             match event {
                 Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
                     if tool_use.is_input_complete
-                        && tool_use.name.as_ref() == EditFileTool::NAME =>
+                        && tool_use.name.as_ref() == StreamingEditFileTool::NAME =>
                 {
                     let input: StreamingEditFileToolInput = serde_json::from_value(tool_use.input)
                         .context("Failed to parse tool input as StreamingEditFileToolInput")?;
@@ -556,7 +556,7 @@ impl StreamingEditToolTest {
                     raw_input,
                     json_parse_error,
                     ..
-                }) if tool_name.as_ref() == EditFileTool::NAME => {
+                }) if tool_name.as_ref() == StreamingEditFileTool::NAME => {
                     parse_errors.push(format!("{json_parse_error}\nRaw input:\n{raw_input:?}"));
                 }
                 Err(err) => {
