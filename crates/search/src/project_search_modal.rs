@@ -9,17 +9,19 @@ use gpui::{
 use language::{Point, ToPoint as _};
 use picker::{Picker, PickerDelegate};
 use project::search::SearchResult;
-use project::{Project, ProjectPath, search::SearchQuery};
+use project::{Project, ProjectPath, SearchResults, search::SearchQuery};
 use settings::Settings;
 use std::{mem, pin::pin, sync::Arc};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ButtonStyle, Divider, HighlightedLabel, IconButton, IconButtonShape, ListItem, ListItemSpacing,
     Tooltip, prelude::*,
 };
+use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
-    DismissDecision, Item, ModalView, Workspace, WorkspaceSettings, searchable::SearchableItem,
+    DismissDecision, Item, ModalView, Workspace, WorkspaceSettings,
+    searchable::{SearchToken, SearchableItem},
 };
 
 const MAX_MATCHES: usize = 100;
@@ -421,7 +423,7 @@ impl ProjectSearchModalDelegate {
 
         let match_range = match_ranges[self.selected_index].clone();
         self.results_editor.update(cx, |editor, cx| {
-            editor.replace(&match_range, &query, window, cx);
+            editor.replace(&match_range, &query, SearchToken::default(), window, cx);
         });
 
         if self.selected_index + 1 < self.matches.len() {
@@ -451,7 +453,13 @@ impl ProjectSearchModalDelegate {
             .update(cx, |model, _| mem::take(&mut model.match_ranges));
 
         self.results_editor.update(cx, |editor, cx| {
-            editor.replace_all(&mut match_ranges.iter(), &query, window, cx);
+            editor.replace_all(
+                &mut match_ranges.iter(),
+                &query,
+                SearchToken::default(),
+                window,
+                cx,
+            );
         });
 
         self.project_search.update(cx, |model, _cx| {
@@ -506,8 +514,8 @@ impl PickerDelegate for ProjectSearchModalDelegate {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
-        _window: &mut Window,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Div {
         v_flex()
@@ -517,7 +525,7 @@ impl PickerDelegate for ProjectSearchModalDelegate {
                     .flex_none()
                     .h_9()
                     .px_2p5()
-                    .child(div().flex_1().child(editor.clone()))
+                    .child(div().flex_1().child(editor.render(window, cx)))
                     .child(
                         h_flex()
                             .flex_shrink_0()
@@ -664,7 +672,8 @@ impl PickerDelegate for ProjectSearchModalDelegate {
             .update(cx, |project, cx| project.search(search_query, cx));
 
         cx.spawn_in(window, async move |picker, cx| {
-            let mut search_stream = pin!(search.ready_chunks(1024));
+            let SearchResults { rx, _task_handle } = search;
+            let mut search_stream = pin!(rx.ready_chunks(1024));
             let mut limit_reached = false;
 
             while let Some(results) = search_stream.next().await {
@@ -786,6 +795,7 @@ impl PickerDelegate for ProjectSearchModalDelegate {
                                     limit_reached = true;
                                     break;
                                 }
+                                SearchResult::WaitingForScan | SearchResult::Searching => {}
                             }
                         }
 

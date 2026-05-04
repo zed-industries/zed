@@ -41,6 +41,7 @@ settings.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 util_macros.workspace = true
 workspace.workspace = true

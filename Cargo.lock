@@ -15756,6 +15756,7 @@ dependencies = [
  "theme_settings",
  "tracing",
  "ui",
+ "ui_input",
  "unindent",
  "util",
  "util_macros",
