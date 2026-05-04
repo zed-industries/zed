@@ -319,9 +319,11 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         let Some(text_input) = state.text_input.take() else {
+            log::debug!("enable_ime: no text input available");
             return;
         };
 
+        log::debug!("enable_ime: enabling text input");
         text_input.enable();
         text_input.set_content_type(ContentHint::None, ContentPurpose::Normal);
         if let Some(window) = state.keyboard_focused_window.clone() {
@@ -1418,15 +1420,21 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 this.handle_keyboard_layout_change();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
+                log::debug!("keyboard: Enter event for surface {:?}", surface.id());
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.enter_token = Some(());
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
                     drop(state);
                     window.set_focused(true);
+                    // Enable IME when keyboard enters the surface, similar to X11 behavior.
+                    // This helps with virtual desktop switching where the text input
+                    // might not receive an Enter event.
+                    this.enable_ime();
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
+                log::debug!("keyboard: Leave event for surface {:?}", surface.id());
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
                 state.enter_token.take();
@@ -1614,10 +1622,12 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         match event {
             zwp_text_input_v3::Event::Enter { .. } => {
+                log::debug!("text_input: Enter event");
                 drop(state);
                 this.enable_ime();
             }
             zwp_text_input_v3::Event::Leave { .. } => {
+                log::debug!("text_input: Leave event");
                 drop(state);
                 this.disable_ime();
             }
