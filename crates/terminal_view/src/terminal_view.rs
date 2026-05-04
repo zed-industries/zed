@@ -192,6 +192,7 @@ struct HoverTarget {
 
 pub enum TerminalViewEvent {
     CustomTitleChanged,
+    InputSubmitted,
 }
 
 impl EventEmitter<Event> for TerminalView {}
@@ -1158,6 +1159,10 @@ impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
 }
 
 impl TerminalView {
+    fn is_input_submission_keystroke(keystroke: &Keystroke) -> bool {
+        keystroke.key == "enter"
+    }
+
     /// Attempts to process a keystroke in the terminal. Returns true if handled.
     ///
     /// In vi mode, explicitly triggers a re-render because vi navigation (like j/k)
@@ -1170,6 +1175,10 @@ impl TerminalView {
                 term.vi_mode_enabled(),
             )
         });
+
+        if handled && Self::is_input_submission_keystroke(keystroke) {
+            cx.emit(TerminalViewEvent::InputSubmitted);
+        }
 
         if handled && vi_mode_enabled {
             cx.notify();

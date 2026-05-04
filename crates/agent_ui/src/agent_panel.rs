@@ -123,7 +123,7 @@ impl fmt::Display for TerminalId {
 pub struct AgentPanelTerminalInfo {
     pub id: TerminalId,
     pub title: SharedString,
-    pub updated_at: DateTime<Utc>,
+    pub last_interacted_at: DateTime<Utc>,
     pub has_unseen_bell: bool,
 }
 
@@ -691,7 +691,7 @@ struct AgentTerminal {
     view: Entity<TerminalView>,
     last_known_working_directory: Option<PathBuf>,
     last_known_title: String,
-    updated_at: DateTime<Utc>,
+    last_interacted_at: DateTime<Utc>,
     has_unseen_bell: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -716,7 +716,6 @@ impl AgentTerminal {
         if changed {
             self.last_known_working_directory = working_directory;
             self.last_known_title = title;
-            self.updated_at = Utc::now();
         }
         changed
     }
@@ -1418,6 +1417,9 @@ impl AgentPanel {
                 TerminalViewEvent::CustomTitleChanged => {
                     this.refresh_terminal_metadata(terminal_id, cx);
                 }
+                TerminalViewEvent::InputSubmitted => {
+                    this.record_terminal_interaction(terminal_id, cx);
+                }
             },
         );
         // Listen on the underlying `Terminal` entity for shell-driven metadata
@@ -1443,7 +1445,7 @@ impl AgentPanel {
             view: terminal_view,
             last_known_working_directory: None,
             last_known_title: String::new(),
-            updated_at: Utc::now(),
+            last_interacted_at: Utc::now(),
             has_unseen_bell: false,
             _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
         };
@@ -1471,7 +1473,6 @@ impl AgentPanel {
         };
         let had_unseen_bell = terminal.has_unseen_bell;
         terminal.has_unseen_bell = false;
-        terminal.updated_at = Utc::now();
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         if had_unseen_bell {
             cx.emit(AgentPanelEvent::TerminalsChanged);
@@ -1493,7 +1494,7 @@ impl AgentPanel {
             if let Some(next_terminal_id) = self
                 .terminals
                 .iter()
-                .max_by_key(|(terminal_id, terminal)| (terminal.updated_at, **terminal_id))
+                .max_by_key(|(terminal_id, terminal)| (terminal.last_interacted_at, **terminal_id))
                 .map(|(terminal_id, _)| *terminal_id)
             {
                 self.set_base_view(
@@ -1522,6 +1523,15 @@ impl AgentPanel {
         }
     }
 
+    fn record_terminal_interaction(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            return;
+        };
+        terminal.last_interacted_at = Utc::now();
+        cx.emit(AgentPanelEvent::TerminalsChanged);
+        cx.notify();
+    }
+
     fn mark_terminal_bell_unseen(
         &mut self,
         terminal_id: TerminalId,
@@ -1545,7 +1555,6 @@ impl AgentPanel {
         };
         if !terminal.has_unseen_bell {
             terminal.has_unseen_bell = true;
-            terminal.updated_at = Utc::now();
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
@@ -1756,7 +1765,7 @@ impl AgentPanel {
             .map(|(id, terminal)| AgentPanelTerminalInfo {
                 id: *id,
                 title: terminal.display_title(cx),
-                updated_at: terminal.updated_at,
+                last_interacted_at: terminal.last_interacted_at,
                 has_unseen_bell: terminal.has_unseen_bell,
             })
             .collect()
@@ -2583,7 +2592,6 @@ impl AgentPanel {
                             cx.on_focus_in(&focus_handle, window, move |this, _window, cx| {
                                 if let Some(terminal) = this.terminals.get_mut(&terminal_id) {
                                     terminal.has_unseen_bell = false;
-                                    terminal.updated_at = Utc::now();
                                 }
                                 cx.emit(AgentPanelEvent::TerminalFocused);
                                 cx.notify();
