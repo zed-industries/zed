@@ -282,6 +282,14 @@ actions!(
         OpenCommitView,
         /// Focuses the search field.
         FocusSearch,
+        /// Focuses the next git graph tab stop.
+        FocusNextTabStop,
+        /// Focuses the previous git graph tab stop.
+        FocusPreviousTabStop,
+        /// Selects a commit half a page above the current selection.
+        ScrollUp,
+        /// Selects a commit half a page below the current selection.
+        ScrollDown,
     ]
 );
 
@@ -1021,6 +1029,20 @@ impl GitGraph {
         (raw * scale).round() / scale
     }
 
+    fn visible_row_count(&self, window: &Window, cx: &App) -> usize {
+        let row_height = Self::row_height(window, cx);
+        let viewport_height = self
+            .table_interaction_state
+            .read(cx)
+            .scroll_handle
+            .0
+            .borrow()
+            .last_item_size
+            .map_or(window.viewport_size().height, |size| size.item.height);
+
+        ((viewport_height / row_height).ceil() as usize).min(self.graph_data.commits.len())
+    }
+
     fn graph_canvas_content_width(&self) -> Pixels {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
@@ -1110,7 +1132,11 @@ impl GitGraph {
             editor
         });
 
-        let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
+        let table_interaction_state = cx.new(|cx| {
+            let mut state = TableInteractionState::new(cx);
+            state.focus_handle = state.focus_handle.tab_index(1).tab_stop(true);
+            state
+        });
 
         let column_widths = if matches!(log_source, LogSource::Path(_)) {
             cx.new(|_cx| {
@@ -1526,6 +1552,28 @@ impl GitGraph {
         );
     }
 
+    fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
+        let step = (self.visible_row_count(window, cx) / 2).max(1);
+        let target_idx = self.selected_entry_idx.unwrap_or(0).saturating_sub(step);
+
+        self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
+    }
+
+    fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(last_entry_idx) = self.graph_data.commits.len().checked_sub(1) else {
+            return;
+        };
+
+        let step = (self.visible_row_count(window, cx) / 2).max(1);
+        let target_idx = self
+            .selected_entry_idx
+            .unwrap_or(0)
+            .saturating_add(step)
+            .min(last_entry_idx);
+
+        self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
+    }
+
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         self.open_selected_commit_view(window, cx);
     }
@@ -1602,13 +1650,51 @@ impl GitGraph {
         self.search(query, cx);
     }
 
+    fn activate_search_editor_if_focused(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_state.editor.update(cx, |editor, cx| {
+            if editor.is_focused(window) {
+                editor.select_all(&Default::default(), window, cx);
+                editor.show_cursor(cx);
+            }
+        });
+    }
+
+    fn focus_next_tab_stop(
+        &mut self,
+        _: &FocusNextTabStop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_next(cx);
+        self.activate_search_editor_if_focused(window, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn focus_previous_tab_stop(
+        &mut self,
+        _: &FocusPreviousTabStop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_prev(cx);
+        self.activate_search_editor_if_focused(window, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     fn select_entry(
         &mut self,
         idx: usize,
         scroll_strategy: ScrollStrategy,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_entry_idx == Some(idx) {
+        if self.selected_entry_idx == Some(idx) || idx >= self.graph_data.commits.len() {
+            debug_assert!(
+                idx < self.graph_data.commits.len(),
+                "attempted to select out of bounds index: {idx}, commits.len: {}",
+                self.graph_data.commits.len()
+            );
             return;
         }
 
@@ -1783,7 +1869,12 @@ impl GitGraph {
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
-        let query_focus_handle = self.search_state.editor.focus_handle(cx);
+        let query_focus_handle = self
+            .search_state
+            .editor
+            .focus_handle(cx)
+            .tab_index(1)
+            .tab_stop(true);
         let search_options = {
             let mut options = SearchOptions::NONE;
             options.set(
@@ -1794,6 +1885,10 @@ impl GitGraph {
         };
 
         h_flex()
+            .key_context("GitGraphSearchBar")
+            .tab_index(1)
+            .tab_group()
+            .tab_stop(false)
             .w_full()
             .p_1p5()
             .gap_1p5()
@@ -1806,6 +1901,7 @@ impl GitGraph {
                     .min_w_0()
                     .px_1p5()
                     .gap_1()
+                    .track_focus(&query_focus_handle)
                     .border_1()
                     .border_color(color.border_variant)
                     .rounded_md()
@@ -2294,6 +2390,7 @@ impl GitGraph {
 
     fn render_graph_canvas(&self, window: &Window, cx: &mut Context<GitGraph>) -> impl IntoElement {
         let row_height = Self::row_height(window, cx);
+        let visible_row_count = self.visible_row_count(window, cx);
         let table_state = self.table_interaction_state.read(cx);
         let viewport_height = table_state
             .scroll_handle
@@ -2317,8 +2414,7 @@ impl GitGraph {
         } else {
             graph_viewport_width
         };
-        let last_visible_row =
-            first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
+        let last_visible_row = first_visible_row + visible_row_count + 1;
 
         let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
             ..(last_visible_row).min(loaded_commit_count);
@@ -2811,6 +2907,8 @@ impl Render for GitGraph {
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
+                            let table_focus_handle =
+                                self.table_interaction_state.read(cx).focus_handle.clone();
 
                             let graph_canvas = div()
                                 .id("graph-canvas")
@@ -2840,7 +2938,9 @@ impl Render for GitGraph {
                                 .map_row(move |(index, row), window, cx| {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
-                                    let is_focused = focus_handle.is_focused(window);
+                                    let table_focus_handle = table_focus_handle.clone();
+                                    let is_focused = focus_handle.is_focused(window)
+                                        || table_focus_handle.is_focused(window);
                                     let weak = weak_self.clone();
                                     let weak_for_hover = weak.clone();
 
@@ -2873,6 +2973,7 @@ impl Render for GitGraph {
                                         })
                                         .on_click(move |event, window, cx| {
                                             let click_count = event.click_count();
+                                            table_focus_handle.focus(window, cx);
                                             weak.update(cx, |this, cx| {
                                                 this.select_entry(
                                                     index,
@@ -2914,6 +3015,9 @@ impl Render for GitGraph {
                                             })
                                             .child(
                                                 div()
+                                                    .tab_index(2)
+                                                    .tab_group()
+                                                    .tab_stop(false)
                                                     .w(DefiniteLength::Fraction(table_fraction))
                                                     .h_full()
                                                     .min_w_0()
@@ -2958,12 +3062,17 @@ impl Render for GitGraph {
                 this.search_state
                     .editor
                     .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
+                this.activate_search_editor_if_focused(window, cx);
             }))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::scroll_up))
+            .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::focus_next_tab_stop))
+            .on_action(cx.listener(Self::focus_previous_tab_stop))
             .on_action(cx.listener(|this, _: &SelectNextMatch, _window, cx| {
                 this.select_next_match(cx);
             }))
@@ -5111,8 +5220,8 @@ mod tests {
             workspace::MultiWorkspace::test_new(project.clone(), window, cx)
         });
 
-        let workspace_weak =
-            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
 
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
@@ -5126,6 +5235,11 @@ mod tests {
         });
         cx.run_until_parked();
 
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
         git_graph.update_in(cx, |graph, window, cx| {
             graph.focus_handle(cx).focus(window, cx);
         });
@@ -5134,8 +5248,13 @@ mod tests {
         cx.draw(
             point(px(0.), px(0.)),
             gpui::size(px(1200.), px(800.)),
-            |_, _| git_graph.clone().into_any_element(),
+            |_, _| multi_workspace.clone().into_any_element(),
         );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
         cx.run_until_parked();
 
         git_graph.read_with(&*cx, |graph, _| {
@@ -5148,6 +5267,22 @@ mod tests {
         git_graph.update_in(cx, |graph, window, cx| {
             graph.select_first(&menu::SelectFirst, window, cx);
         });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+        });
+
+        let scroll_step = git_graph.update_in(cx, |graph, window, cx| {
+            (graph.visible_row_count(window, cx) / 2).max(1)
+        });
+
+        cx.dispatch_action(ScrollDown);
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(scroll_step));
+        });
+
+        cx.dispatch_action(ScrollUp);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(0));
@@ -5172,6 +5307,12 @@ mod tests {
         git_graph.update_in(cx, |graph, window, cx| {
             graph.select_last(&menu::SelectLast, window, cx);
         });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(9));
+        });
+
+        cx.dispatch_action(ScrollDown);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(9));
