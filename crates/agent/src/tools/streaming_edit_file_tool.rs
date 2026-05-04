@@ -603,6 +603,7 @@ pub struct EditSession {
     mode: StreamingEditFileMode,
     parser: ToolEditParser,
     pipeline: EditPipeline,
+    file_changed_since_last_read: bool,
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
 }
 
@@ -674,7 +675,7 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        ensure_buffer_saved(&buffer, &abs_path, tool, cx)?;
+        let file_changed_since_last_read = ensure_buffer_saved(&buffer, &abs_path, tool, cx)?;
 
         let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
         event_stream.update_diff(diff.clone());
@@ -708,6 +709,7 @@ impl EditSession {
             mode,
             parser: ToolEditParser::default(),
             pipeline: EditPipeline::new(),
+            file_changed_since_last_read,
             _finalize_diff_guard: finalize_diff_guard,
         })
     }
@@ -868,7 +870,13 @@ impl EditSession {
                     if !chunk.is_empty() {
                         matcher.push(chunk, None);
                     }
-                    let range = extract_match(matcher.finish(), &self.buffer, edit_index, cx)?;
+                    let range = extract_match(
+                        matcher.finish(),
+                        &self.buffer,
+                        edit_index,
+                        self.file_changed_since_last_read,
+                        cx,
+                    )?;
 
                     let anchor_range = self
                         .buffer
@@ -1045,14 +1053,21 @@ fn extract_match(
     matches: Vec<Range<usize>>,
     buffer: &Entity<Buffer>,
     edit_index: &usize,
+    file_changed_since_last_read: bool,
     cx: &mut AsyncApp,
 ) -> Result<Range<usize>, String> {
+    let file_changed_since_last_read_message = if file_changed_since_last_read {
+        " The file has changed on disk since you last read it."
+    } else {
+        ""
+    };
+
     match matches.len() {
         0 => Err(format!(
             "Could not find matching text for edit at index {}. \
-                The old_text did not match any content in the file. \
+                The old_text did not match any content in the file.{} \
                 Please read the file again to get the current content.",
-            edit_index,
+            edit_index, file_changed_since_last_read_message,
         )),
         1 => Ok(matches.into_iter().next().unwrap()),
         _ => {
@@ -1099,7 +1114,7 @@ fn ensure_buffer_saved(
     abs_path: &PathBuf,
     tool: &StreamingEditFileTool,
     cx: &mut AsyncApp,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let last_read_mtime = tool
         .action_log
         .read_with(cx, |log, _| log.file_read_time(abs_path));
@@ -1115,7 +1130,7 @@ fn ensure_buffer_saved(
     });
 
     let Ok((current_mtime, is_dirty, has_save_tool, has_restore_tool)) = check_result else {
-        return Ok(());
+        return Ok(false);
     };
 
     if is_dirty {
@@ -1143,15 +1158,13 @@ fn ensure_buffer_saved(
         return Err(message.to_string());
     }
 
-    if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
-        if current != last_read {
-            return Err("The file has been modified since you last read it. \
-                    Please read the file again to get the current state before editing it."
-                .to_string());
-        }
+    if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime)
+        && current != last_read
+    {
+        return Ok(true);
     }
 
-    Ok(())
+    Ok(false)
 }
 
 fn resolve_path(
@@ -3316,7 +3329,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_streaming_external_modification_detected(cx: &mut TestAppContext) {
+    async fn test_streaming_external_modification_matching_edit_succeeds(cx: &mut TestAppContext) {
         let (tool, project, action_log, fs, _thread) =
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
@@ -3368,7 +3381,6 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        // Try to edit - should fail because file was modified externally
         let result = cx
             .update(|cx| {
                 tool.clone().run(
@@ -3379,6 +3391,91 @@ mod tests {
                         content: None,
                         edits: Some(vec![Edit {
                             old_text: "externally modified content".into(),
+                            new_text: "new content".into(),
+                        }]),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let StreamingEditFileToolOutput::Success {
+            new_text,
+            input_path,
+            ..
+        } = result
+        else {
+            panic!("expected success");
+        };
+
+        assert_eq!(new_text, "new content");
+        assert_eq!(input_path, PathBuf::from("root/test.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_streaming_external_modification_mentioned_when_match_fails(
+        cx: &mut TestAppContext,
+    ) {
+        let (tool, project, action_log, fs, _thread) =
+            setup_test(cx, json!({"test.txt": "original content"})).await;
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
+
+        cx.update(|cx| {
+            read_tool.clone().run(
+                ToolInput::resolved(crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                }),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_secs(2));
+        fs.save(
+            path!("/root/test.txt").as_ref(),
+            &"externally modified content".into(),
+            language::LineEnding::Unix,
+        )
+        .await
+        .unwrap();
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/test.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer
+            .update(cx, |buffer, cx| buffer.reload(cx))
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(StreamingEditFileToolInput {
+                        display_description: "Edit after external change".into(),
+                        path: "root/test.txt".into(),
+                        mode: StreamingEditFileMode::Edit,
+                        content: None,
+                        edits: Some(vec![Edit {
+                            old_text: "original content".into(),
                             new_text: "new content".into(),
                         }]),
                     }),
@@ -3398,12 +3495,15 @@ mod tests {
         };
 
         assert!(
-            error.contains("has been modified since you last read it"),
-            "Error should mention file modification, got: {}",
-            error
+            error.contains("Could not find matching text for edit at index 0"),
+            "Error should mention failed match, got: {error}"
+        );
+        assert!(
+            error.contains("has changed on disk since you last read it"),
+            "Error should mention possible disk change, got: {error}"
         );
         assert!(diff.is_empty());
-        assert!(input_path.is_none());
+        assert_eq!(input_path, Some(PathBuf::from("root/test.txt")));
     }
 
     #[gpui::test]
