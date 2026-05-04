@@ -20,7 +20,8 @@ use agent_ui::{
 use chrono::{DateTime, Utc};
 use editor::Editor;
 use feature_flags::{
-    AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
+    AgentPanelTerminalFeatureFlag, AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag,
+    FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _,
 };
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
@@ -544,6 +545,17 @@ impl Sidebar {
             .detach();
 
         AgentThreadWorktreeLabelFlag::watch(cx);
+        cx.observe_flag::<AgentPanelTerminalFeatureFlag, _>(
+            window,
+            |enabled, this, _window, cx| {
+                if !*enabled && matches!(this.active_entry, Some(ActiveEntry::Terminal { .. })) {
+                    this.active_entry = None;
+                }
+                this.sync_active_entry_from_active_workspace(cx);
+                this.update_entries(cx);
+            },
+        )
+        .detach();
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -884,7 +896,9 @@ impl Sidebar {
             return false;
         }
 
-        if let Some(terminal_id) = panel.active_terminal_id() {
+        if cx.has_flag::<AgentPanelTerminalFeatureFlag>()
+            && let Some(terminal_id) = panel.active_terminal_id()
+        {
             self.active_entry = Some(ActiveEntry::Terminal {
                 terminal_id,
                 workspace: active_workspace,
@@ -3144,6 +3158,9 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+            return;
+        }
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -5306,6 +5323,9 @@ fn terminal_entries_for_workspace(
     workspace: &Entity<Workspace>,
     cx: &App,
 ) -> impl Iterator<Item = TerminalEntry> {
+    if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+        return None.into_iter().flatten();
+    }
     let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
         return None.into_iter().flatten();
     };

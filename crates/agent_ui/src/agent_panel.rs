@@ -58,6 +58,9 @@ use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
+use feature_flags::{
+    AgentPanelTerminalFeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _,
+};
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -237,6 +240,9 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &NewAgentPanelTerminal, window, cx| {
+                    if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+                        return;
+                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
@@ -800,6 +806,7 @@ pub struct AgentPanel {
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
     _window_activation_subscription: Subscription,
+    _terminal_feature_flag_subscription: Subscription,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
@@ -1132,6 +1139,16 @@ impl AgentPanel {
             cx.observe_window_activation(window, |this, window, cx| {
                 this.clear_active_terminal_notification_if_focused(window, cx);
             });
+        let _terminal_feature_flag_subscription = cx
+            .observe_flag::<AgentPanelTerminalFeatureFlag, _>(
+                window,
+                |enabled, this, window, cx| {
+                    if !*enabled {
+                        this.clear_terminals_for_disabled_feature_flag(window, cx);
+                    }
+                    cx.notify();
+                },
+            );
 
         let mut panel = Self {
             workspace_id,
@@ -1165,6 +1182,7 @@ impl AgentPanel {
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
             _window_activation_subscription,
+            _terminal_feature_flag_subscription,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
@@ -1315,6 +1333,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+            return;
+        }
         if !self.project.read(cx).supports_terminal(cx) {
             self.show_terminal_unavailable_toast(cx);
             return;
@@ -1326,7 +1347,8 @@ impl AgentPanel {
     }
 
     pub fn supports_terminal(&self, cx: &App) -> bool {
-        self.project.read(cx).supports_terminal(cx)
+        cx.has_flag::<AgentPanelTerminalFeatureFlag>()
+            && self.project.read(cx).supports_terminal(cx)
     }
 
     fn spawn_terminal(
@@ -1374,6 +1396,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+            return;
+        }
         let terminal_entity = terminal_view.read(cx).terminal().clone();
         // Listen on `TerminalView` for close, since it bridges both shell-exit
         // (`Event::CloseTerminal`) and user-driven close (`ItemEvent::CloseItem`).
@@ -1438,6 +1463,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+            return;
+        }
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
@@ -1551,6 +1579,24 @@ impl AgentPanel {
             .is_some_and(|terminal| terminal.view.focus_handle(cx).contains_focused(window, cx));
         if is_focused {
             self.clear_terminal_notification(terminal_id, cx);
+        }
+    }
+
+    fn clear_terminals_for_disabled_feature_flag(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let had_terminals = !self.terminals.is_empty();
+        self.terminals.clear();
+
+        if matches!(self.base_view, BaseView::Terminal { .. }) {
+            let focus = self.focus_handle.contains_focused(window, cx);
+            self.activate_draft(focus, "agent_panel", window, cx);
+        }
+
+        if had_terminals {
+            cx.emit(AgentPanelEvent::TerminalsChanged);
         }
     }
 
@@ -1701,6 +1747,10 @@ impl AgentPanel {
     }
 
     pub fn terminals(&self, cx: &App) -> Vec<AgentPanelTerminalInfo> {
+        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+            return Vec::new();
+        }
+
         self.terminals
             .iter()
             .map(|(id, terminal)| AgentPanelTerminalInfo {
