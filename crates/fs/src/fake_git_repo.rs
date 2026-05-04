@@ -28,6 +28,7 @@ use parking_lot::Mutex;
 use rope::Rope;
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
+use util::TakeUntilExt;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone)]
@@ -1111,32 +1112,34 @@ impl GitRepository for FakeGitRepository {
             })
         }
 
+        fn strip_drive_prefix(path: &Path) -> PathBuf {
+            path.components()
+                .filter(|c| !matches!(c, std::path::Component::Prefix(_)))
+                .collect()
+        }
+
         let path_prefixes = path_prefixes.to_vec();
 
         let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
-        eprintln!("dbg!: workdir_path: {workdir_path:?}");
         let worktree_files: HashMap<RepoPath, String> = self
             .fs
             .files()
             .iter()
             .filter_map(|path| {
-                eprintln!("dbg!: path: {path:?}");
-                eprintln!("dbg!: workdir_path: {workdir_path:?}");
+                let path = strip_drive_prefix(path);
                 let repo_path = path.strip_prefix(&workdir_path).ok()?;
                 if repo_path.starts_with(".git") {
                     return None;
                 }
-                eprintln!("dbg!: repo_path: {repo_path:?}");
                 let content = self
                     .fs
-                    .read_file_sync(path)
+                    .read_file_sync(&path)
                     .ok()
                     .and_then(|bytes| String::from_utf8(bytes).ok())?;
                 let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
                 Some((RepoPath::from_rel_path(&repo_path), content))
             })
             .collect();
-        eprintln!("dbg!: worktree_files: {worktree_files:?}");
 
         self.with_state_async(false, move |state| {
             let mut entries = Vec::new();
@@ -1146,10 +1149,7 @@ impl GitRepository for FakeGitRepository {
                 .chain(worktree_files.keys())
                 .collect();
             for path in all_paths {
-                eprintln!("dbg!: path: {path:?}");
-                eprintln!("dbg!: path_prefixes: {path_prefixes:?}");
                 if !matches_prefixes(path, &path_prefixes) {
-                    eprintln!("dbg!: continuing");
                     continue;
                 }
                 let head = state.head_contents.get(path);
