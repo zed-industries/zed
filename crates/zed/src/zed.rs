@@ -100,6 +100,10 @@ use zed_actions::{
     OpenZedUrl, Quit,
 };
 
+pub struct CrashHandler(pub Arc<crashes::Client>);
+
+impl gpui::Global for CrashHandler {}
+
 actions!(
     zed,
     [
@@ -515,7 +519,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            crashes::set_gpu_info(specs);
+            if let Some(crash_client) = cx.try_global::<CrashHandler>() {
+                crashes::set_gpu_info(&crash_client.0, specs);
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -2074,16 +2080,16 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
 
 pub fn load_default_keymap(cx: &mut App) {
     let base_keymap = *BaseKeymap::get_global(cx);
-    if base_keymap != BaseKeymap::None {
-        cx.bind_keys(
-            KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
-        );
+    if base_keymap == BaseKeymap::None {
+        return;
+    }
 
-        if let Some(asset_path) = base_keymap.asset_path() {
-            cx.bind_keys(
-                KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap(),
-            );
-        }
+    cx.bind_keys(
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
+    );
+
+    if let Some(asset_path) = base_keymap.asset_path() {
+        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {

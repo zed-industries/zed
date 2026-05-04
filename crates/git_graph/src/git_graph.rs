@@ -282,6 +282,14 @@ actions!(
         OpenCommitView,
         /// Focuses the search field.
         FocusSearch,
+        /// Focuses the next git graph tab stop.
+        FocusNextTabStop,
+        /// Focuses the previous git graph tab stop.
+        FocusPreviousTabStop,
+        /// Selects a commit half a page above the current selection.
+        ScrollUp,
+        /// Selects a commit half a page below the current selection.
+        ScrollDown,
     ]
 );
 
@@ -834,20 +842,25 @@ fn resolve_file_history_target(
 ) -> Option<(RepositoryId, LogSource)> {
     if let Some(panel) = workspace.panel::<ProjectPanel>(cx)
         && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
-        && let Some(project_path) = panel.read(cx).selected_file_project_path(cx)
+        && let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
     {
         let git_store = workspace.project().read(cx).git_store();
         let (repo, repo_path) = git_store
             .read(cx)
             .repository_and_path_for_project_path(&project_path, cx)?;
-        return Some((repo.read(cx).id, LogSource::File(repo_path)));
+        let log_source = if repo_path.is_empty() {
+            LogSource::All
+        } else {
+            LogSource::Path(repo_path)
+        };
+        return Some((repo.read(cx).id, log_source));
     }
 
     if let Some(panel) = workspace.panel::<git_ui::git_panel::GitPanel>(cx)
         && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
         && let Some((repository, repo_path)) = panel.read(cx).selected_file_history_target()
     {
-        return Some((repository.read(cx).id, LogSource::File(repo_path)));
+        return Some((repository.read(cx).id, LogSource::Path(repo_path)));
     }
 
     let editor = workspace.active_item_as::<Editor>(cx)?;
@@ -864,7 +877,7 @@ fn resolve_file_history_target(
     let (repo, repo_path) = git_store
         .read(cx)
         .repository_and_path_for_project_path(&project_path, cx)?;
-    Some((repo.read(cx).id, LogSource::File(repo_path)))
+    Some((repo.read(cx).id, LogSource::Path(repo_path)))
 }
 
 fn open_or_reuse_graph(
@@ -1016,6 +1029,20 @@ impl GitGraph {
         (raw * scale).round() / scale
     }
 
+    fn visible_row_count(&self, window: &Window, cx: &App) -> usize {
+        let row_height = Self::row_height(window, cx);
+        let viewport_height = self
+            .table_interaction_state
+            .read(cx)
+            .scroll_handle
+            .0
+            .borrow()
+            .last_item_size
+            .map_or(window.viewport_size().height, |size| size.item.height);
+
+        ((viewport_height / row_height).ceil() as usize).min(self.graph_data.commits.len())
+    }
+
     fn graph_canvas_content_width(&self) -> Pixels {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
@@ -1027,9 +1054,9 @@ impl GitGraph {
             .read(cx)
             .preview_fractions(window.rem_size());
 
-        let is_file_history = matches!(self.log_source, LogSource::File(_));
-        let graph_fraction = if is_file_history { 0.0 } else { fractions[0] };
-        let offset = if is_file_history { 0 } else { 1 };
+        let is_path_history = matches!(self.log_source, LogSource::Path(_));
+        let graph_fraction = if is_path_history { 0.0 } else { fractions[0] };
+        let offset = if is_path_history { 0 } else { 1 };
 
         [
             graph_fraction,
@@ -1105,9 +1132,13 @@ impl GitGraph {
             editor
         });
 
-        let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
+        let table_interaction_state = cx.new(|cx| {
+            let mut state = TableInteractionState::new(cx);
+            state.focus_handle = state.focus_handle.tab_index(1).tab_stop(true);
+            state
+        });
 
-        let column_widths = if matches!(log_source, LogSource::File(_)) {
+        let column_widths = if matches!(log_source, LogSource::Path(_)) {
             cx.new(|_cx| {
                 RedistributableColumnsState::new(
                     4,
@@ -1521,6 +1552,28 @@ impl GitGraph {
         );
     }
 
+    fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
+        let step = (self.visible_row_count(window, cx) / 2).max(1);
+        let target_idx = self.selected_entry_idx.unwrap_or(0).saturating_sub(step);
+
+        self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
+    }
+
+    fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(last_entry_idx) = self.graph_data.commits.len().checked_sub(1) else {
+            return;
+        };
+
+        let step = (self.visible_row_count(window, cx) / 2).max(1);
+        let target_idx = self
+            .selected_entry_idx
+            .unwrap_or(0)
+            .saturating_add(step)
+            .min(last_entry_idx);
+
+        self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
+    }
+
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         self.open_selected_commit_view(window, cx);
     }
@@ -1597,13 +1650,51 @@ impl GitGraph {
         self.search(query, cx);
     }
 
+    fn activate_search_editor_if_focused(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_state.editor.update(cx, |editor, cx| {
+            if editor.is_focused(window) {
+                editor.select_all(&Default::default(), window, cx);
+                editor.show_cursor(cx);
+            }
+        });
+    }
+
+    fn focus_next_tab_stop(
+        &mut self,
+        _: &FocusNextTabStop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_next(cx);
+        self.activate_search_editor_if_focused(window, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn focus_previous_tab_stop(
+        &mut self,
+        _: &FocusPreviousTabStop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_prev(cx);
+        self.activate_search_editor_if_focused(window, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     fn select_entry(
         &mut self,
         idx: usize,
         scroll_strategy: ScrollStrategy,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_entry_idx == Some(idx) {
+        if self.selected_entry_idx == Some(idx) || idx >= self.graph_data.commits.len() {
+            debug_assert!(
+                idx < self.graph_data.commits.len(),
+                "attempted to select out of bounds index: {idx}, commits.len: {}",
+                self.graph_data.commits.len()
+            );
             return;
         }
 
@@ -1778,7 +1869,12 @@ impl GitGraph {
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
-        let query_focus_handle = self.search_state.editor.focus_handle(cx);
+        let query_focus_handle = self
+            .search_state
+            .editor
+            .focus_handle(cx)
+            .tab_index(1)
+            .tab_stop(true);
         let search_options = {
             let mut options = SearchOptions::NONE;
             options.set(
@@ -1789,6 +1885,10 @@ impl GitGraph {
         };
 
         h_flex()
+            .key_context("GitGraphSearchBar")
+            .tab_index(1)
+            .tab_group()
+            .tab_stop(false)
             .w_full()
             .p_1p5()
             .gap_1p5()
@@ -1801,6 +1901,7 @@ impl GitGraph {
                     .min_w_0()
                     .px_1p5()
                     .gap_1()
+                    .track_focus(&query_focus_handle)
                     .border_1()
                     .border_color(color.border_variant)
                     .rounded_md()
@@ -2289,6 +2390,7 @@ impl GitGraph {
 
     fn render_graph_canvas(&self, window: &Window, cx: &mut Context<GitGraph>) -> impl IntoElement {
         let row_height = Self::row_height(window, cx);
+        let visible_row_count = self.visible_row_count(window, cx);
         let table_state = self.table_interaction_state.read(cx);
         let viewport_height = table_state
             .scroll_handle
@@ -2312,8 +2414,7 @@ impl GitGraph {
         } else {
             graph_viewport_width
         };
-        let last_visible_row =
-            first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
+        let last_visible_row = first_visible_row + visible_row_count + 1;
 
         let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
             ..(last_visible_row).min(loaded_commit_count);
@@ -2738,7 +2839,7 @@ impl Render for GitGraph {
                     this.child(self.render_loading_spinner(cx))
                 })
         } else {
-            let is_file_history = matches!(self.log_source, LogSource::File(_));
+            let is_path_history = matches!(self.log_source, LogSource::Path(_));
             let header_resize_info =
                 HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
             let header_context = TableRenderContext::for_column_widths(
@@ -2766,7 +2867,7 @@ impl Render for GitGraph {
                         .flex()
                         .flex_col()
                         .child(render_table_header(
-                            if !is_file_history {
+                            if !is_path_history {
                                 TableRow::from_vec(
                                     vec![
                                         Label::new("Graph")
@@ -2806,11 +2907,14 @@ impl Render for GitGraph {
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
+                            let table_focus_handle =
+                                self.table_interaction_state.read(cx).focus_handle.clone();
 
                             let graph_canvas = div()
                                 .id("graph-canvas")
                                 .size_full()
                                 .overflow_hidden()
+                                .cursor_pointer()
                                 .child(
                                     div()
                                         .size_full()
@@ -2834,7 +2938,9 @@ impl Render for GitGraph {
                                 .map_row(move |(index, row), window, cx| {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
-                                    let is_focused = focus_handle.is_focused(window);
+                                    let table_focus_handle = table_focus_handle.clone();
+                                    let is_focused = focus_handle.is_focused(window)
+                                        || table_focus_handle.is_focused(window);
                                     let weak = weak_self.clone();
                                     let weak_for_hover = weak.clone();
 
@@ -2846,6 +2952,7 @@ impl Render for GitGraph {
                                     };
 
                                     row.h(row_height)
+                                        .cursor_pointer()
                                         .when(is_selected, |row| row.bg(selected_bg))
                                         .when(is_hovered && !is_selected, |row| row.bg(hover_bg))
                                         .on_hover(move |&is_hovered, _, cx| {
@@ -2866,6 +2973,7 @@ impl Render for GitGraph {
                                         })
                                         .on_click(move |event, window, cx| {
                                             let click_count = event.click_count();
+                                            table_focus_handle.focus(window, cx);
                                             weak.update(cx, |this, cx| {
                                                 this.select_entry(
                                                     index,
@@ -2895,7 +3003,7 @@ impl Render for GitGraph {
                                     .child(
                                         h_flex()
                                             .size_full()
-                                            .when(!is_file_history, |this| {
+                                            .when(!is_path_history, |this| {
                                                 this.child(
                                                     div()
                                                         .w(DefiniteLength::Fraction(graph_fraction))
@@ -2907,6 +3015,9 @@ impl Render for GitGraph {
                                             })
                                             .child(
                                                 div()
+                                                    .tab_index(2)
+                                                    .tab_group()
+                                                    .tab_stop(false)
                                                     .w(DefiniteLength::Fraction(table_fraction))
                                                     .h_full()
                                                     .min_w_0()
@@ -2951,12 +3062,17 @@ impl Render for GitGraph {
                 this.search_state
                     .editor
                     .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
+                this.activate_search_editor_if_focused(window, cx);
             }))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::scroll_up))
+            .on_action(cx.listener(Self::scroll_down))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::focus_next_tab_stop))
+            .on_action(cx.listener(Self::focus_previous_tab_stop))
             .on_action(cx.listener(|this, _: &SelectNextMatch, _window, cx| {
                 this.select_next_match(cx);
             }))
@@ -3013,20 +3129,20 @@ impl Item for GitGraph {
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
         });
-        let file_history_path = match &self.log_source {
-            LogSource::File(path) => Some(path.as_unix_str().to_string()),
+        let path_history_path = match &self.log_source {
+            LogSource::Path(path) => Some(path.as_unix_str().to_string()),
             _ => None,
         };
 
         Some(TabTooltipContent::Custom(Box::new(Tooltip::element({
             move |_, _| {
                 v_flex()
-                    .child(Label::new(if file_history_path.is_some() {
-                        "File History"
+                    .child(Label::new(if path_history_path.is_some() {
+                        "Path History"
                     } else {
                         "Git Graph"
                     }))
-                    .when_some(file_history_path.clone(), |this, path| {
+                    .when_some(path_history_path.clone(), |this, path| {
                         this.child(Label::new(path).color(Color::Muted).size(LabelSize::Small))
                     })
                     .when_some(repo_name.clone(), |this, name| {
@@ -3038,7 +3154,7 @@ impl Item for GitGraph {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        if let LogSource::File(path) = &self.log_source {
+        if let LogSource::Path(path) = &self.log_source {
             return path
                 .as_ref()
                 .file_name()
@@ -3284,7 +3400,7 @@ mod persistence {
     pub const LOG_SOURCE_ALL: i32 = 0;
     pub const LOG_SOURCE_BRANCH: i32 = 1;
     pub const LOG_SOURCE_SHA: i32 = 2;
-    pub const LOG_SOURCE_FILE: i32 = 3;
+    pub const LOG_SOURCE_PATH: i32 = 3;
 
     pub const LOG_ORDER_DATE: i32 = 0;
     pub const LOG_ORDER_TOPO: i32 = 1;
@@ -3296,7 +3412,7 @@ mod persistence {
             LogSource::All => LOG_SOURCE_ALL,
             LogSource::Branch(_) => LOG_SOURCE_BRANCH,
             LogSource::Sha(_) => LOG_SOURCE_SHA,
-            LogSource::File(_) => LOG_SOURCE_FILE,
+            LogSource::Path(_) => LOG_SOURCE_PATH,
         }
     }
 
@@ -3305,7 +3421,7 @@ mod persistence {
             LogSource::All => None,
             LogSource::Branch(branch) => Some(branch.to_string()),
             LogSource::Sha(oid) => Some(oid.to_string()),
-            LogSource::File(path) => Some(path.as_unix_str().to_string()),
+            LogSource::Path(path) => Some(path.as_unix_str().to_string()),
         }
     }
 
@@ -3332,11 +3448,11 @@ mod persistence {
                 .and_then(|v| Oid::from_str(v).ok())
                 .map(LogSource::Sha)
                 .unwrap_or_default(),
-            Some(LOG_SOURCE_FILE) => state
+            Some(LOG_SOURCE_PATH) => state
                 .log_source_value
                 .as_ref()
                 .and_then(|v| RepoPath::new(v).ok())
-                .map(LogSource::File)
+                .map(LogSource::Path)
                 .unwrap_or_default(),
             None | Some(_) => LogSource::default(),
         }
@@ -4430,7 +4546,7 @@ mod tests {
             assert_eq!(graphs.len(), 1);
             assert_eq!(
                 graphs[0].read(cx).log_source,
-                LogSource::File(tracked1_repo_path.clone())
+                LogSource::Path(tracked1_repo_path.clone())
             );
         });
 
@@ -4458,7 +4574,7 @@ mod tests {
             assert_eq!(graphs.len(), 1);
             assert_eq!(
                 graphs[0].read(cx).log_source,
-                LogSource::File(tracked1_repo_path.clone())
+                LogSource::Path(tracked1_repo_path.clone())
             );
         });
 
@@ -4538,7 +4654,7 @@ mod tests {
                 .expect("expected a git graph");
             assert_eq!(
                 latest.read(cx).log_source,
-                LogSource::File(tracked2_repo_path)
+                LogSource::Path(tracked2_repo_path)
             );
         });
     }
@@ -4547,11 +4663,11 @@ mod tests {
     fn test_serialized_state_roundtrip(_cx: &mut TestAppContext) {
         use persistence::SerializedGitGraphState;
 
-        let file_path = RepoPath::new(&"src/main.rs").unwrap();
+        let path = RepoPath::new(&"src/main.rs").unwrap();
         let sha = Oid::from_bytes(&[0xab; 20]).unwrap();
 
         let state = SerializedGitGraphState {
-            log_source_type: Some(persistence::LOG_SOURCE_FILE),
+            log_source_type: Some(persistence::LOG_SOURCE_PATH),
             log_source_value: Some("src/main.rs".to_string()),
             log_order: Some(persistence::LOG_ORDER_TOPO),
             selected_sha: Some(sha.to_string()),
@@ -4561,7 +4677,7 @@ mod tests {
 
         assert_eq!(
             persistence::deserialize_log_source(&state),
-            LogSource::File(file_path)
+            LogSource::Path(path)
         );
         assert!(matches!(
             persistence::deserialize_log_order(&state),
@@ -5104,8 +5220,8 @@ mod tests {
             workspace::MultiWorkspace::test_new(project.clone(), window, cx)
         });
 
-        let workspace_weak =
-            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
 
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
@@ -5119,6 +5235,11 @@ mod tests {
         });
         cx.run_until_parked();
 
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
         git_graph.update_in(cx, |graph, window, cx| {
             graph.focus_handle(cx).focus(window, cx);
         });
@@ -5127,8 +5248,13 @@ mod tests {
         cx.draw(
             point(px(0.), px(0.)),
             gpui::size(px(1200.), px(800.)),
-            |_, _| git_graph.clone().into_any_element(),
+            |_, _| multi_workspace.clone().into_any_element(),
         );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
         cx.run_until_parked();
 
         git_graph.read_with(&*cx, |graph, _| {
@@ -5141,6 +5267,22 @@ mod tests {
         git_graph.update_in(cx, |graph, window, cx| {
             graph.select_first(&menu::SelectFirst, window, cx);
         });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+        });
+
+        let scroll_step = git_graph.update_in(cx, |graph, window, cx| {
+            (graph.visible_row_count(window, cx) / 2).max(1)
+        });
+
+        cx.dispatch_action(ScrollDown);
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(scroll_step));
+        });
+
+        cx.dispatch_action(ScrollUp);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(0));
@@ -5165,6 +5307,12 @@ mod tests {
         git_graph.update_in(cx, |graph, window, cx| {
             graph.select_last(&menu::SelectLast, window, cx);
         });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(9));
+        });
+
+        cx.dispatch_action(ScrollDown);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(9));

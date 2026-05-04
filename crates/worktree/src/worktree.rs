@@ -5019,7 +5019,7 @@ impl BackgroundScanner {
             }
         }
 
-        for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
+        for (path, metadata) in relative_paths.iter().zip(metadata) {
             let abs_path: Arc<Path> = root_abs_path.join(path.as_std_path()).into();
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
@@ -5568,7 +5568,9 @@ async fn discover_ancestor_git_repo(
                 };
             }
 
-            let repo_exclude_abs_path = ancestor_dot_git.join(REPO_EXCLUDE);
+            let dot_git_path: Arc<Path> = ancestor_dot_git.into();
+            let (_, common_dir_abs_path) = discover_git_paths(&dot_git_path, fs.as_ref()).await;
+            let repo_exclude_abs_path = common_dir_abs_path.join(REPO_EXCLUDE);
             if let Ok(repo_exclude) = build_gitignore(&repo_exclude_abs_path, fs.as_ref()).await {
                 exclude = Some(Arc::new(repo_exclude));
             }

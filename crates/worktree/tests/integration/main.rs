@@ -2845,6 +2845,76 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": ".env.*"
+                },
+                "worktrees": {
+                    "my-worktree": {
+                        "commondir": "../.."
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            // .git is pointing to the repo
+            ".git": "gitdir: /repo/.git/worktrees/my-worktree",
+            ".env.local": "secret=1234",
+            "not-ignored.txt": "",
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        path!("/worktree").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // .env.local should be ignored via info/exclude from the repo's exclude
+    worktree.update(cx, |worktree, _cx| {
+        let expected_excluded_paths = [];
+        let expected_ignored_paths = [".env.local"];
+        let expected_tracked_paths = ["not-ignored.txt"];
+        let expected_included_paths = [];
+
+        check_worktree_entries(
+            worktree,
+            &expected_excluded_paths,
+            &expected_ignored_paths,
+            &expected_tracked_paths,
+            &expected_included_paths,
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 

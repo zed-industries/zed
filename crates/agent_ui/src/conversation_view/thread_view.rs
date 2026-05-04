@@ -2295,11 +2295,9 @@ impl ThreadView {
             .id("edited_files_list")
             .max_h_40()
             .overflow_y_scroll()
-            .children(
-                sorted_buffers
-                    .into_iter()
-                    .enumerate()
-                    .flat_map(|(index, (buffer, diff))| {
+            .child(
+                v_flex().children(sorted_buffers.into_iter().enumerate().flat_map(
+                    |(index, (buffer, diff))| {
                         let file = buffer.read(cx).file()?;
                         let path = file.path();
                         let path_style = file.path_style(cx);
@@ -2402,7 +2400,8 @@ impl ThreadView {
                             .child(buttons);
 
                         Some(element)
-                    }),
+                    },
+                )),
             )
             .into_any_element()
     }
@@ -2786,66 +2785,69 @@ impl ThreadView {
             .id("plan_items_list")
             .max_h_40()
             .overflow_y_scroll()
-            .children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
-                let entry_bg = cx.theme().colors().editor_background;
-                let tooltip_text: SharedString = entry.content.read(cx).source().to_string().into();
+            .child(
+                v_flex().children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
+                    let entry_bg = cx.theme().colors().editor_background;
+                    let tooltip_text: SharedString =
+                        entry.content.read(cx).source().to_string().into();
 
-                Some(
-                    h_flex()
-                        .id(("plan_entry_row", index))
-                        .py_1()
-                        .px_2()
-                        .gap_2()
-                        .justify_between()
-                        .relative()
-                        .bg(entry_bg)
-                        .when(index < plan.entries.len() - 1, |parent| {
-                            parent.border_color(cx.theme().colors().border).border_b_1()
-                        })
-                        .overflow_hidden()
-                        .child(
-                            h_flex()
-                                .id(("plan_entry", index))
-                                .gap_1p5()
-                                .min_w_0()
-                                .text_xs()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child(match entry.status {
-                                    acp::PlanEntryStatus::InProgress => {
-                                        Icon::new(IconName::TodoProgress)
-                                            .size(IconSize::Small)
-                                            .color(Color::Accent)
-                                            .with_rotate_animation(2)
-                                            .into_any_element()
-                                    }
-                                    acp::PlanEntryStatus::Completed => {
-                                        Icon::new(IconName::TodoComplete)
-                                            .size(IconSize::Small)
-                                            .color(Color::Success)
-                                            .into_any_element()
-                                    }
-                                    acp::PlanEntryStatus::Pending | _ => {
-                                        Icon::new(IconName::TodoPending)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted)
-                                            .into_any_element()
-                                    }
-                                })
-                                .child(MarkdownElement::new(
-                                    entry.content.clone(),
-                                    plan_label_markdown_style(&entry.status, window, cx),
-                                )),
-                        )
-                        .child(div().absolute().top_0().right_0().h_full().w_8().bg(
-                            linear_gradient(
-                                90.,
-                                linear_color_stop(entry_bg, 1.),
-                                linear_color_stop(entry_bg.opacity(0.), 0.),
-                            ),
-                        ))
-                        .tooltip(Tooltip::text(tooltip_text)),
-                )
-            }))
+                    Some(
+                        h_flex()
+                            .id(("plan_entry_row", index))
+                            .py_1()
+                            .px_2()
+                            .gap_2()
+                            .justify_between()
+                            .relative()
+                            .bg(entry_bg)
+                            .when(index < plan.entries.len() - 1, |parent| {
+                                parent.border_color(cx.theme().colors().border).border_b_1()
+                            })
+                            .overflow_hidden()
+                            .child(
+                                h_flex()
+                                    .id(("plan_entry", index))
+                                    .gap_1p5()
+                                    .min_w_0()
+                                    .text_xs()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(match entry.status {
+                                        acp::PlanEntryStatus::InProgress => {
+                                            Icon::new(IconName::TodoProgress)
+                                                .size(IconSize::Small)
+                                                .color(Color::Accent)
+                                                .with_rotate_animation(2)
+                                                .into_any_element()
+                                        }
+                                        acp::PlanEntryStatus::Completed => {
+                                            Icon::new(IconName::TodoComplete)
+                                                .size(IconSize::Small)
+                                                .color(Color::Success)
+                                                .into_any_element()
+                                        }
+                                        acp::PlanEntryStatus::Pending | _ => {
+                                            Icon::new(IconName::TodoPending)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted)
+                                                .into_any_element()
+                                        }
+                                    })
+                                    .child(MarkdownElement::new(
+                                        entry.content.clone(),
+                                        plan_label_markdown_style(&entry.status, window, cx),
+                                    )),
+                            )
+                            .child(div().absolute().top_0().right_0().h_full().w_8().bg(
+                                linear_gradient(
+                                    90.,
+                                    linear_color_stop(entry_bg, 1.),
+                                    linear_color_stop(entry_bg.opacity(0.), 0.),
+                                ),
+                            ))
+                            .tooltip(Tooltip::text(tooltip_text)),
+                    )
+                })),
+            )
             .into_any_element()
     }
 
@@ -3211,10 +3213,9 @@ impl ThreadView {
             .child(
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
-                    .when(max_content_width.is_none(), |this| this.w_full())
+                    .when(fills_container, |this| this.h_full())
                     .flex_shrink()
                     .flex_grow_0()
-                    .when(fills_container, |this| this.h_full())
                     .justify_between()
                     .gap_2()
                     .child(
@@ -3275,6 +3276,7 @@ impl ThreadView {
                             )
                             .child(
                                 h_flex()
+                                    .flex_wrap()
                                     .gap_1()
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())

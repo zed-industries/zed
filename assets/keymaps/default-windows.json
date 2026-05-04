@@ -1069,6 +1069,8 @@
       "ctrl-shift-enter": "git::Amend",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage",
+      "shift-escape": "git::ExpandCommitEditor",
+      "alt-shift-escape": "git::ToggleFillCommitEditor",
     },
   },
   {
@@ -1549,6 +1551,20 @@
       "ctrl-shift-r": "notebook::RestartKernel",
       "ctrl-c": "notebook::InterruptKernel",
       "escape": "notebook::EnterCommandMode",
+    },
+  },
+  {
+    "context": "GitGraph",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
     },
   },
 ]
