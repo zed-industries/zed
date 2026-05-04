@@ -639,6 +639,7 @@ fn render_remote_button(
     branch: &Branch,
     keybinding_target: Option<FocusHandle>,
     show_fetch_button: bool,
+    pending_push: bool,
 ) -> Option<impl IntoElement> {
     let id = id.into();
     let upstream = branch.upstream.as_ref();
@@ -655,6 +656,7 @@ fn render_remote_button(
                 keybinding_target,
                 id,
                 ahead,
+                pending_push,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
                 keybinding_target,
@@ -677,9 +679,10 @@ fn render_remote_button(
 mod remote_button {
     use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
     use ui::{
-        App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
-        IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
-        PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div, h_flex, rems,
+        App, ButtonCommon, Clickable, ContextMenu, Disableable, ElementId, FluentBuilder, Icon,
+        IconName, IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle,
+        ParentElement, PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div,
+        h_flex, rems,
     };
 
     pub fn render_fetch_button(
@@ -692,6 +695,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ArrowCircle),
+            false,
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Fetch), cx);
@@ -712,13 +716,16 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
         ahead: u32,
+        pending_push: bool,
     ) -> SplitButton {
+        let push_text = if pending_push { "Pushing..." } else { "Push" };
         split_button(
             id,
-            "Push",
+            push_text,
             ahead as usize,
             0,
             None,
+            pending_push,
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
@@ -747,6 +754,7 @@ mod remote_button {
             ahead as usize,
             behind as usize,
             None,
+            false,
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Pull), cx);
@@ -773,6 +781,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ExpandUp),
+            false,
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
@@ -799,6 +808,7 @@ mod remote_button {
             0,
             0,
             Some(IconName::ExpandUp),
+            false,
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
@@ -873,6 +883,7 @@ mod remote_button {
         ahead_count: usize,
         behind_count: usize,
         left_icon: Option<IconName>,
+        pending_push: bool,
         keybinding_target: Option<FocusHandle>,
         left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
@@ -897,6 +908,7 @@ mod remote_button {
             format!("split-button-left-{}", id).into(),
         ))
         .layer(ui::ElevationIndex::ModalSurface)
+        .disabled(pending_push)
         .size(ui::ButtonSize::Compact)
         .when(should_render_counts, |this| {
             this.child(
