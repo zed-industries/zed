@@ -215,15 +215,10 @@ pub trait Platform: 'static {
 
     /// Hides the mouse cursor until the user moves the mouse over one of
     /// this application's windows.
-    fn hide_cursor_until_mouse_moves(&self) {
-        // todo!("implement on each platform and drop this default")
-    }
+    fn hide_cursor_until_mouse_moves(&self);
 
     /// Returns whether the mouse cursor is currently visible.
-    fn is_cursor_visible(&self) -> bool {
-        // todo!("implement on each platform and drop this default")
-        true
-    }
+    fn is_cursor_visible(&self) -> bool;
 
     fn should_auto_hide_scrollbars(&self) -> bool;
 
