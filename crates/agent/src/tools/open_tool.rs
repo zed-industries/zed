@@ -67,10 +67,7 @@ impl AgentTool for OpenTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
 
             // If path_or_url turns out to be a path in the project, make it absolute.
             let (abs_path, initial_title) = cx.update(|cx| {

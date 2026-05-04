@@ -420,7 +420,7 @@ impl LanguageServerState {
                             let workspace_for_debug = workspace.clone();
                             let server_selector_for_debug = server_selector.clone();
                             submenu = submenu.entry("View Logs", None, move |window, cx| {
-                                lsp_log_view::open_server_trace(
+                                lsp_log_view::open(
                                     &lsp_logs_for_debug,
                                     workspace_for_debug.clone(),
                                     server_selector_for_debug.clone(),
