@@ -14436,6 +14436,17 @@ impl Editor {
             return;
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        let selection_count = self.selections.count();
+        let first_selection = self.selections.first_anchor();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let first_selection_is_empty = first_selection.start == first_selection.end;
+        let selection_start_point = first_selection.start.to_point(&snapshot);
+        let selection_start_row = selection_start_point.row;
+        let selection_start_column = selection_start_point.column;
+        let Some(buffer_id) = first_selection.start.text_anchor.buffer_id else {
+            return;
+        };
+
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |snapshot, sel| {
                 if sel.is_empty() {
@@ -14447,7 +14458,78 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        cx.set_global(KillRing(item))
+
+        let Some(item_text) = item.text() else {
+            return;
+        };
+
+        let entry_metadata = item.entries().first().and_then(|entry| match entry {
+            ClipboardEntry::String(entry) => entry.metadata_json::<Vec<ClipboardSelection>>(),
+            _ => None,
+        });
+
+        let item = if selection_count == 1 && first_selection_is_empty {
+            if let Some(previous_ring) = cx.try_global::<KillRing>() {
+                if previous_ring.can_append
+                    && previous_ring.buffer_id == buffer_id
+                    && previous_ring.row == selection_start_row
+                    && previous_ring.column == selection_start_column
+                {
+                    let mut entries = previous_ring
+                        .metadata
+                        .as_ref()
+                        .map_or_else(Vec::new, Clone::clone);
+                    if let Some(metadata) = entry_metadata {
+                        entries.extend_from_slice(&metadata);
+                    }
+
+                    let mut text = previous_ring.text.clone();
+                    text.push_str(&item_text);
+
+                    KillRing {
+                        text,
+                        metadata: if entries.is_empty() {
+                            None
+                        } else {
+                            Some(entries)
+                        },
+                        row: previous_ring.row,
+                        column: previous_ring.column,
+                        buffer_id: previous_ring.buffer_id,
+                        can_append: true,
+                    }
+                } else {
+                    KillRing {
+                        text: item_text,
+                        metadata: entry_metadata,
+                        row: selection_start_row,
+                        column: selection_start_column,
+                        buffer_id,
+                        can_append: true,
+                    }
+                }
+            } else {
+                KillRing {
+                    text: item_text,
+                    metadata: entry_metadata,
+                    row: selection_start_row,
+                    column: selection_start_column,
+                    buffer_id,
+                    can_append: true,
+                }
+            }
+        } else {
+            KillRing {
+                text: item_text,
+                metadata: entry_metadata,
+                row: selection_start_row,
+                column: selection_start_column,
+                buffer_id,
+                can_append: true,
+            }
+        };
+
+        cx.set_global(item)
     }
 
     pub fn kill_ring_yank(
@@ -14457,15 +14539,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-        let (text, metadata) = if let Some(KillRing(item)) = cx.try_global() {
-            if let Some(ClipboardEntry::String(kill_ring)) = item.entries().first() {
-                (kill_ring.text().to_string(), kill_ring.metadata_json())
-            } else {
-                return;
-            }
-        } else {
+        if !cx.has_global::<KillRing>() {
             return;
-        };
+        }
+
+        let (text, metadata) = cx.update_global::<KillRing, _>(|kill_ring, _| {
+            kill_ring.can_append = false;
+            (kill_ring.text.clone(), kill_ring.metadata.clone())
+        });
+
         self.do_paste(&text, metadata, false, window, cx);
     }
 
@@ -30006,7 +30088,14 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
         range.start..range.start
     }
 }
-pub struct KillRing(ClipboardItem);
+pub struct KillRing {
+    text: String,
+    metadata: Option<Vec<ClipboardSelection>>,
+    row: u32,
+    column: u32,
+    buffer_id: BufferId,
+    can_append: bool,
+}
 impl Global for KillRing {}
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
