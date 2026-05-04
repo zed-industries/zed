@@ -53,7 +53,6 @@ use std::{
 };
 use util::path;
 
-mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
@@ -1457,6 +1456,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         "test_server",
         vec![context_server::types::Tool {
             name: "echo".into(),
+            title: None,
             description: None,
             input_schema: serde_json::to_value(EchoTool::input_schema(
                 LanguageModelToolSchemaFormat::JsonSchema,
@@ -1621,6 +1621,7 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
         "screenshot_server",
         vec![context_server::types::Tool {
             name: "screenshot".into(),
+            title: None,
             description: None,
             input_schema: json!({"type": "object", "properties": {}}),
             output_schema: None,
@@ -1742,6 +1743,7 @@ async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAp
         "github_server",
         vec![context_server::types::Tool {
             name: "issue_read".into(),
+            title: None,
             description: Some("Read a GitHub issue".into()),
             input_schema: json!({
                 "type": "object",
@@ -1936,6 +1938,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         vec![
             context_server::types::Tool {
                 name: "echo".into(), // Conflicts with native EchoTool
+                title: None,
                 description: None,
                 input_schema: serde_json::to_value(EchoTool::input_schema(
                     LanguageModelToolSchemaFormat::JsonSchema,
@@ -1946,6 +1949,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             },
             context_server::types::Tool {
                 name: "unique_tool_1".into(),
+                title: None,
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -1961,6 +1965,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         vec![
             context_server::types::Tool {
                 name: "echo".into(), // Also conflicts with native EchoTool
+                title: None,
                 description: None,
                 input_schema: serde_json::to_value(EchoTool::input_schema(
                     LanguageModelToolSchemaFormat::JsonSchema,
@@ -1971,6 +1976,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             },
             context_server::types::Tool {
                 name: "unique_tool_2".into(),
+                title: None,
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -1978,6 +1984,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             },
             context_server::types::Tool {
                 name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
+                title: None,
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -1985,6 +1992,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             },
             context_server::types::Tool {
                 name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                title: None,
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -1999,6 +2007,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         vec![
             context_server::types::Tool {
                 name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
+                title: None,
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -2006,6 +2015,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             },
             context_server::types::Tool {
                 name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                title: None,
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -2013,6 +2023,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             },
             context_server::types::Tool {
                 name: "c".repeat(MAX_TOOL_NAME_LENGTH + 1),
+                title: None,
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
@@ -2028,6 +2039,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         "Azure DevOps",
         vec![context_server::types::Tool {
             name: "echo".into(), // Also conflicts - will be disambiguated as azure_dev_ops_echo
+            title: None,
             description: None,
             input_schema: serde_json::to_value(EchoTool::input_schema(
                 LanguageModelToolSchemaFormat::JsonSchema,
@@ -4051,14 +4063,8 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
-                        content: vec![
-                            "Failed to receive tool input: tool input was not fully received"
-                                .into(),
-                        ],
-                        output: Some(
-                            "Failed to receive tool input: tool input was not fully received"
-                                .into()
-                        ),
+                        content: vec!["tool input was not fully received".into(),],
+                        output: Some("tool input was not fully received".into()),
                     }
                 )],
                 cache: true,
@@ -4406,7 +4412,9 @@ fn setup_context_server(
                 ),
                 server_info: context_server::types::Implementation {
                     name: name.into(),
+                    title: None,
                     version: "1.0.0".to_string(),
+                    description: None,
                 },
                 capabilities: context_server::types::ServerCapabilities {
                     tools: Some(context_server::types::ToolsCapabilities {
@@ -6039,13 +6047,14 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
             cx,
         )
     });
+    let action_log = cx.update(|cx| thread.read(cx).action_log.clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project.clone(),
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -6055,6 +6064,8 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
                 display_description: "Edit sensitive file".to_string(),
                 path: "root/sensitive_config.txt".into(),
                 mode: crate::EditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,
@@ -6471,13 +6482,14 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
             cx,
         )
     });
+    let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -6487,6 +6499,8 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
                 display_description: "Edit README".to_string(),
                 path: "root/README.md".into(),
                 mode: crate::EditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,
@@ -6539,13 +6553,14 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
             cx,
         )
     });
+    let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
+        action_log,
         language_registry,
-        templates,
     ));
 
     // Editing a file inside .zed/ should still prompt even with global default: allow,
@@ -6557,6 +6572,8 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
                 display_description: "Edit local settings".to_string(),
                 path: "root/.zed/settings.json".into(),
                 mode: crate::EditFileMode::Edit,
+                content: None,
+                edits: Some(vec![]),
             }),
             event_stream,
             cx,

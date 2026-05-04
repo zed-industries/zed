@@ -52,7 +52,7 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, atomic::AtomicBool},
 };
 use util::{
     ResultExt,
@@ -179,6 +179,7 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
+    cursor_hidden: Arc<AtomicBool>,
 }
 
 impl MacPlatform {
@@ -215,6 +216,7 @@ impl MacPlatform {
             on_thermal_state_change: None,
             menus: None,
             keyboard_mapper,
+            cursor_hidden: Arc::new(AtomicBool::new(false)),
         }))
     }
 
@@ -619,12 +621,22 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let renderer_context = self.0.lock().renderer_context.clone();
+        let (cursor_hidden, foreground_executor, background_executor, renderer_context) = {
+            let guard = self.0.lock();
+            (
+                guard.cursor_hidden.clone(),
+                guard.foreground_executor.clone(),
+                guard.background_executor.clone(),
+                guard.renderer_context.clone(),
+            )
+        };
+
         Ok(Box::new(MacWindow::open(
             handle,
             options,
-            self.foreground_executor(),
-            self.background_executor(),
+            cursor_hidden,
+            foreground_executor,
+            background_executor,
             renderer_context,
         )))
     }
@@ -979,8 +991,9 @@ impl Platform for MacPlatform {
     /// Match cursor style to one of the styles available
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
+        let cursor_hidden = self.0.lock().cursor_hidden.clone();
         unsafe {
-            set_active_window_cursor_style(style);
+            set_active_window_cursor_style(style, &cursor_hidden);
         }
     }
 
