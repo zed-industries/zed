@@ -31,7 +31,7 @@ use serde::{
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use streaming_diff::{CharOperation, StreamingDiff};
+use streaming_diff::{CharOperation, LineDiff, StreamingDiff};
 use text::ToOffset;
 use ui::SharedString;
 use util::rel_path::RelPath;
@@ -611,6 +611,9 @@ enum Pipeline {
 
 struct WritePipeline {
     content_written: bool,
+    streaming_diff: StreamingDiff,
+    line_diff: LineDiff,
+    original_snapshot: text::BufferSnapshot,
 }
 
 struct EditPipeline {
@@ -631,10 +634,17 @@ enum EditPipelineEntry {
 }
 
 impl Pipeline {
-    fn new(mode: EditFileMode, file_changed_since_last_read: bool) -> Self {
+    fn new(
+        mode: EditFileMode,
+        original_snapshot: text::BufferSnapshot,
+        file_changed_since_last_read: bool,
+    ) -> Self {
         match mode {
             EditFileMode::Write => Self::Write(WritePipeline {
                 content_written: false,
+                streaming_diff: StreamingDiff::new(original_snapshot.text()),
+                line_diff: LineDiff::default(),
+                original_snapshot,
             }),
             EditFileMode::Edit => Self::Edit(EditPipeline {
                 current_edit: None,
@@ -649,6 +659,7 @@ impl WritePipeline {
         &mut self,
         event: &WriteEvent,
         buffer: &Entity<Buffer>,
+        diff: &Entity<Diff>,
         tool: &EditFileTool,
         cx: &mut AsyncApp,
     ) {
@@ -663,6 +674,17 @@ impl WritePipeline {
         };
 
         agent_edit_buffer(buffer, [(edit_range, chunk.as_str())], &tool.action_log, cx);
+        let char_ops = self.streaming_diff.push_new(chunk);
+        self.line_diff
+            .push_char_operations(&char_ops, self.original_snapshot.as_rope());
+        diff.update(cx, |diff, cx| {
+            diff.push_line_operations(
+                self.line_diff.line_operations(),
+                self.original_snapshot.clone(),
+                cx,
+            )
+        });
+
         cx.update(|cx| {
             tool.set_agent_location(
                 buffer.downgrade(),
@@ -671,6 +693,22 @@ impl WritePipeline {
             );
         });
         self.content_written = true;
+    }
+
+    fn finalize(&mut self, diff: &Entity<Diff>, cx: &mut AsyncApp) {
+        let streaming_diff =
+            std::mem::replace(&mut self.streaming_diff, StreamingDiff::new(String::new()));
+        let char_ops = streaming_diff.finish();
+        self.line_diff
+            .push_char_operations(&char_ops, self.original_snapshot.as_rope());
+        self.line_diff.finish(self.original_snapshot.as_rope());
+        diff.update(cx, |diff, cx| {
+            diff.push_line_operations(
+                self.line_diff.line_operations(),
+                self.original_snapshot.clone(),
+                cx,
+            )
+        });
     }
 }
 
@@ -913,7 +951,10 @@ impl EditSession {
 
         let file_changed_since_last_read = ensure_buffer_saved(&buffer, &abs_path, tool, cx)?;
 
-        let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        let diff = cx.new(|cx| match mode {
+            EditFileMode::Write => Diff::manual(buffer.clone(), cx),
+            EditFileMode::Edit => Diff::new(buffer.clone(), cx),
+        });
         event_stream.update_diff(diff.clone());
         let finalize_diff_guard = util::defer(Box::new({
             let diff = diff.downgrade();
@@ -943,7 +984,7 @@ impl EditSession {
             old_text,
             diff,
             parser: StreamingParser::default(),
-            pipeline: Pipeline::new(mode, file_changed_since_last_read),
+            pipeline: Pipeline::new(mode, old_snapshot.text, file_changed_since_last_read),
             _finalize_diff_guard: finalize_diff_guard,
         })
     }
@@ -970,8 +1011,9 @@ impl EditSession {
                     .ok_or_else(|| "'content' field is required for write mode".to_string())?;
 
                 for event in &parser.finalize_content(&content) {
-                    write.process_event(event, buffer, tool, cx);
+                    write.process_event(event, buffer, diff, tool, cx);
                 }
+                write.finalize(diff, cx);
             }
             Pipeline::Edit(edit_pipeline) => {
                 let edits = input
@@ -1039,7 +1081,7 @@ impl EditSession {
             Pipeline::Write(write) => {
                 if let Some(content) = &partial.content {
                     for event in &parser.push_content(content) {
-                        write.process_event(event, buffer, tool, cx);
+                        write.process_event(event, buffer, diff, tool, cx);
                     }
                 }
             }
