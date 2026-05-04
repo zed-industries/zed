@@ -163,7 +163,6 @@ dependencies = [
  "context_server",
  "ctor",
  "db",
- "derive_more",
  "editor",
  "env_logger 0.11.8",
  "eval_utils",
