@@ -65,8 +65,8 @@ pub use display_map::{
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DiffViewStyle, DocumentColorsRenderMode,
-    EditorSettings, EditorSettingsScrollbarProxy, HideMouseMode, ScrollBeyondLastLine,
-    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine, ScrollbarAxes,
+    SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -25860,7 +25860,9 @@ impl Editor {
                 }
             });
 
-            if let Some(position_map) = self.last_position_map.clone() {
+            if cx.is_cursor_visible()
+                && let Some(position_map) = self.last_position_map.clone()
+            {
                 EditorElement::mouse_moved(
                     self,
                     &MouseMoveEvent {

@@ -125,6 +125,11 @@ impl Editor {
             return;
         }
 
+        if !cx.is_cursor_visible() {
+            self.hide_hovered_link(cx);
+            return;
+        }
+
         match point_for_position.as_valid() {
             Some(point) => {
                 let trigger_point = TriggerPoint::Text(

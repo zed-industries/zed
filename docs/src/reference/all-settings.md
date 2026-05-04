@@ -801,9 +801,9 @@ List of `string` values
 
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in an editor or input box.
+- Description: Determines when the mouse cursor should be hidden in response to keyboard input. Restoration on mouse motion is handled by the platform.
 - Setting: `hide_mouse`
-- Default: `on_typing_and_movement`
+- Default: `on_typing_and_action`
 
 **Options**
 
@@ -823,11 +823,11 @@ List of `string` values
 }
 ```
 
-3. Hide on both typing and cursor movement:
+3. Hide on typing and on key bindings that resolve to an action:
 
 ```json [settings]
 {
-  "hide_mouse": "on_typing_and_movement"
+  "hide_mouse": "on_typing_and_action"
 }
 ```
 

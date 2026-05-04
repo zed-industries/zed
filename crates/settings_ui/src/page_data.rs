@@ -1145,9 +1145,9 @@ fn appearance_page() -> SettingsPage {
                 description: "When to hide the mouse cursor.",
                 field: Box::new(SettingField {
                     json_path: Some("hide_mouse"),
-                    pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
+                    pick: |settings_content| settings_content.hide_mouse.as_ref(),
                     write: |settings_content, value, _| {
-                        settings_content.editor.hide_mouse = value;
+                        settings_content.hide_mouse = value;
                     },
                 }),
                 metadata: None,

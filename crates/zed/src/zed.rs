@@ -382,6 +382,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     })
     .detach();
 
+    init_cursor_hide_mode(cx);
+
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -1850,6 +1852,25 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             }
         }
     };
+}
+
+#[derive(Copy, Clone, Debug, settings::RegisterSetting)]
+struct CursorHideModeSetting(gpui::CursorHideMode);
+
+impl Settings for CursorHideModeSetting {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(match content.hide_mouse.unwrap_or_default() {
+            settings::HideMouseMode::Never => gpui::CursorHideMode::Never,
+            settings::HideMouseMode::OnTyping => gpui::CursorHideMode::OnTyping,
+            settings::HideMouseMode::OnTypingAndAction => gpui::CursorHideMode::OnTypingAndAction,
+        })
+    }
+}
+
+fn init_cursor_hide_mode(cx: &mut App) {
+    let apply = |cx: &mut App| cx.set_cursor_hide_mode(CursorHideModeSetting::get_global(cx).0);
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
 }
 
 pub fn watch_settings_files(fs: Arc<dyn fs::Fs>, cx: &mut App) {
