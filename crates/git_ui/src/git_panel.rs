@@ -3148,6 +3148,7 @@ impl GitPanel {
 
         self.pending_push = Some(task);
         cx.notify();
+<<<<<<< HEAD
     }
 
     /// Updates git's configuration, adding the directory of the current
@@ -3179,6 +3180,8 @@ impl GitPanel {
             })
             .detach();
         }
+=======
+>>>>>>> 9c020a6c6c60726f7886a195eabd682eb321c1af
     }
 
     pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -8384,6 +8387,7 @@ mod tests {
     }
 
     #[gpui::test]
+<<<<<<< HEAD
     async fn test_fill_commit_editor_toggle(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -8449,6 +8453,8 @@ mod tests {
     }
 
     #[gpui::test]
+=======
+>>>>>>> 9c020a6c6c60726f7886a195eabd682eb321c1af
     async fn test_push_is_noop_when_pending(cx: &mut TestAppContext) {
         init_test(cx);
 
