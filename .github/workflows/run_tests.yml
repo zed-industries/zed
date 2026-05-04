@@ -6,6 +6,7 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 on:
+  merge_group: {}
   pull_request:
     branches:
     - '**'
@@ -80,7 +81,7 @@ jobs:
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
-            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "assets" | sort -u)
           fi
 
           # Combine all changed packages
@@ -175,7 +176,7 @@ jobs:
   clippy_windows:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -243,7 +244,7 @@ jobs:
   clippy_mac:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -274,7 +275,7 @@ jobs:
   clippy_mac_x86_64:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -307,7 +308,7 @@ jobs:
   run_tests_windows:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
@@ -324,7 +325,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
@@ -349,7 +350,7 @@ jobs:
   run_tests_linux:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -379,7 +380,7 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 250
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -407,7 +408,7 @@ jobs:
   run_tests_mac:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -430,7 +431,7 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -440,8 +441,6 @@ jobs:
         SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
-    - name: steps::cargo_build_visual_tests
-      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -452,7 +451,7 @@ jobs:
   doctests:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -496,7 +495,7 @@ jobs:
   check_workspace_binaries:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-8x16-ubuntu-2204
     env:
       CC: clang
@@ -537,10 +536,35 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  build_visual_tests_binary:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-mac-large
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::build_visual_tests_binary::cargo_build_visual_tests
+      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
   check_wasm:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -566,9 +590,10 @@ jobs:
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
     - name: run_tests::check_wasm::cargo_check_wasm
-      run: cargo +nightly -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform
+      run: cargo -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform
       env:
         CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
+        RUSTC_BOOTSTRAP: '1'
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -579,7 +604,7 @@ jobs:
   check_dependencies:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-2x4-ubuntu-2404
     env:
       CC: clang
@@ -595,14 +620,11 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: run_tests::check_dependencies::install_cargo_machete
-      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
       with:
-        command: install
-        args: cargo-machete@0.7.0
+        tool: cargo-machete@0.7.0
     - name: run_tests::check_dependencies::run_cargo_machete
-      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
-      with:
-        command: machete
+      run: cargo machete
     - name: run_tests::check_dependencies::check_cargo_lock
       run: cargo update --locked --workspace
     - name: run_tests::check_dependencies::check_vulnerable_dependencies
@@ -614,9 +636,10 @@ jobs:
   check_docs:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_docs == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    if: needs.orchestrate.outputs.run_docs == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-16x32-ubuntu-2204
     env:
+      DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
       CC: clang
       CXX: clang++
     steps:
@@ -633,27 +656,30 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - name: run_tests::check_docs::lychee_link_check
-      uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
-      with:
-        args: --no-progress --exclude '^http' './docs/src/**/*'
-        fail: true
-        jobSummary: false
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/generate-action-metadata
       run: ./script/generate-action-metadata
-    - name: run_tests::check_docs::install_mdbook
+    - name: deploy_docs::lychee_link_check
+      uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
+      with:
+        args: --no-progress --exclude '^http' './docs/src/**/*'
+        fail: true
+        jobSummary: false
+    - name: deploy_docs::install_mdbook
       uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08
       with:
         mdbook-version: 0.4.37
-    - name: run_tests::check_docs::build_docs
+    - name: deploy_docs::build_docs_book
       run: |
         mkdir -p target/deploy
         mdbook build ./docs --dest-dir=../target/deploy/docs/
-    - name: run_tests::check_docs::lychee_link_check
+      env:
+        DOCS_CHANNEL: stable
+        MDBOOK_BOOK__SITE_URL: /docs/
+    - name: deploy_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
@@ -663,7 +689,7 @@ jobs:
   check_licenses:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_licenses == 'true'
+    if: needs.orchestrate.outputs.run_licenses == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -683,7 +709,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_action_checks == 'true'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -780,6 +806,7 @@ jobs:
     - run_tests_mac
     - doctests
     - check_workspace_binaries
+    - build_visual_tests_binary
     - check_wasm
     - check_dependencies
     - check_docs
@@ -810,6 +837,7 @@ jobs:
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
+        check_result "build_visual_tests_binary" "$RESULT_BUILD_VISUAL_TESTS_BINARY"
         check_result "check_wasm" "$RESULT_CHECK_WASM"
         check_result "check_dependencies" "$RESULT_CHECK_DEPENDENCIES"
         check_result "check_docs" "$RESULT_CHECK_DOCS"
@@ -830,6 +858,7 @@ jobs:
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
+        RESULT_BUILD_VISUAL_TESTS_BINARY: ${{ needs.build_visual_tests_binary.result }}
         RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
         RESULT_CHECK_DEPENDENCIES: ${{ needs.check_dependencies.result }}
         RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}

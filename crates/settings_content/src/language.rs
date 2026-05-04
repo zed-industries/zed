@@ -2,7 +2,7 @@ use std::{num::NonZeroU32, path::Path};
 
 use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize, de::Error as _};
+use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
@@ -75,7 +75,9 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 }
 
 /// The provider that supplies edit predictions.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -86,50 +88,6 @@ pub enum EditPredictionProvider {
     Ollama,
     OpenAiCompatibleApi,
     Mercury,
-    Experimental(&'static str),
-}
-
-const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
-
-impl<'de> Deserialize<'de> for EditPredictionProvider {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case")]
-        pub enum Content {
-            None,
-            Copilot,
-            Zed,
-            Codestral,
-            Ollama,
-            OpenAiCompatibleApi,
-            Mercury,
-            Experimental(String),
-        }
-
-        Ok(match Content::deserialize(deserializer)? {
-            Content::None => EditPredictionProvider::None,
-            Content::Copilot => EditPredictionProvider::Copilot,
-            Content::Zed => EditPredictionProvider::Zed,
-            Content::Codestral => EditPredictionProvider::Codestral,
-            Content::Ollama => EditPredictionProvider::Ollama,
-            Content::OpenAiCompatibleApi => EditPredictionProvider::OpenAiCompatibleApi,
-            Content::Mercury => EditPredictionProvider::Mercury,
-            Content::Experimental(name)
-                if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
-            {
-                EditPredictionProvider::Zed
-            }
-            Content::Experimental(name) => {
-                return Err(D::Error::custom(format!(
-                    "Unknown experimental edit prediction provider: {}",
-                    name
-                )));
-            }
-        })
-    }
 }
 
 impl EditPredictionProvider {
@@ -141,8 +99,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
-            | EditPredictionProvider::Mercury
-            | EditPredictionProvider::Experimental(_) => false,
+            | EditPredictionProvider::Mercury => false,
         }
     }
 
@@ -152,7 +109,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
             EditPredictionProvider::Codestral => Some("Codestral"),
             EditPredictionProvider::Mercury => Some("Mercury"),
-            EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
+            EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }
@@ -182,6 +139,14 @@ pub struct EditPredictionSettingsContent {
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
+    /// Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    /// Data is only ever captured for files in projects that are detected as open source.
+    ///
+    /// - `"default"`: use the preference previously set via the status-bar toggle,
+    ///   or false if no preference has been stored.
+    /// - `"yes"`: allow data collection for files in open-source projects.
+    /// - `"no"`: never allow data collection.
+    pub allow_data_collection: Option<EditPredictionDataCollectionChoice>,
 }
 
 #[with_fallible_options]
@@ -318,6 +283,33 @@ pub struct OllamaEditPredictionSettingsContent {
     pub prompt_format: Option<EditPredictionPromptFormat>,
 }
 
+/// Controls whether Zed collects training data when using Zed's Edit Predictions.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EditPredictionDataCollectionChoice {
+    /// Use the preference previously set via the status-bar toggle, or false
+    /// if no preference has been stored.
+    #[default]
+    Default,
+    /// Allow Zed to collect training data from open-source projects.
+    Yes,
+    /// Never allow training data collection.
+    No,
+}
+
 /// The mode in which edit predictions should be displayed.
 #[derive(
     Copy,
@@ -394,9 +386,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
@@ -450,6 +441,23 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// How line endings should be handled for new files and during format and
+    /// save operations.
+    ///
+    /// - `detect`: Detect existing line endings and otherwise use the platform
+    ///   default (`lf` on Unix, `crlf` on Windows).
+    /// - `prefer_lf`: Prefer LF for new files and files with no existing line
+    ///   ending.
+    /// - `prefer_crlf`: Prefer CRLF for new files and files with no existing
+    ///   line ending.
+    /// - `enforce_lf`: Enforce LF during format and save.
+    /// - `enforce_crlf`: Enforce CRLF during format and save.
+    ///
+    /// The EditorConfig `end_of_line` property overrides this setting and
+    /// behaves like `enforce_lf` or `enforce_crlf`.
+    ///
+    /// Default: detect
+    pub line_ending: Option<LineEndingSetting>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
@@ -898,6 +906,42 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
+}
+
+/// Controls how line endings are normalized when a buffer is saved.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LineEndingSetting {
+    /// Preserve the existing line endings of the file. New files use the
+    /// platform default line ending.
+    #[strum(serialize = "Detect")]
+    Detect,
+    /// Use LF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer LF")]
+    PreferLf,
+    /// Use CRLF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer CRLF")]
+    PreferCrlf,
+    /// Normalize line endings to LF (`\n`) during format and save.
+    #[strum(serialize = "Enforce LF")]
+    EnforceLf,
+    /// Normalize line endings to CRLF (`\r\n`) during format and save.
+    #[strum(serialize = "Enforce CRLF")]
+    EnforceCrlf,
 }
 
 /// Controls which formatters should be used when formatting code.

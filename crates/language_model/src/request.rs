@@ -118,10 +118,12 @@ impl LanguageModelImageExt for LanguageModelImage {
             // SAFETY: The base64 encoder should not produce non-UTF8.
             let source = unsafe { String::from_utf8_unchecked(base64_image) };
 
+            let (final_width, final_height) = processed_image.dimensions();
+
             Some(LanguageModelImage {
                 size: Some(ImageSize {
-                    width: width as i32,
-                    height: height as i32,
+                    width: final_width as i32,
+                    height: final_height as i32,
                 }),
                 source: source.into(),
             })
@@ -226,6 +228,16 @@ mod tests {
             "Dimensions should have shrunk: got {}×{}",
             w,
             h
+        );
+
+        let size = lm_image.size.expect("ImageSize should be present");
+        assert_eq!(
+            size.width, w as i32,
+            "ImageSize.width should match the encoded PNG width after downscaling"
+        );
+        assert_eq!(
+            size.height, h as i32,
+            "ImageSize.height should match the encoded PNG height after downscaling"
         );
     }
 }

@@ -11,6 +11,7 @@ use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
 use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
+use feature_flags::{AutoWatchFeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
@@ -35,13 +36,13 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton, Facepile,
-    HighlightedLabel, IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*,
-    tooltip_container,
+    HighlightedLabel, IconButtonShape, Indicator, ListHeader, ListItem, Tab, TintColor, Tooltip,
+    prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, OpenChannelNotesById,
-    ScreenShare, ShareProject, Workspace,
+    AutoWatch, CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes,
+    OpenChannelNotesById, ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{
         DetachAndPromptErr, Notification as WorkspaceNotification, NotificationId, NotifyResultExt,
@@ -2620,6 +2621,18 @@ impl CollabPanel {
         cx.write_to_clipboard(item)
     }
 
+    fn render_disabled_by_organization(&mut self, _cx: &mut Context<Self>) -> Div {
+        v_flex()
+            .p_4()
+            .gap_4()
+            .size_full()
+            .text_center()
+            .justify_center()
+            .child(Label::new(
+                "Collaboration is disabled for this organization.",
+            ))
+    }
+
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
@@ -2883,13 +2896,75 @@ impl CollabPanel {
             Section::Offline => SharedString::from("Offline"),
         };
 
+        let auto_watch_state = self
+            .workspace
+            .upgrade()
+            .map_or(AutoWatch::Off, |workspace| {
+                *workspace.read(cx).auto_watch_state()
+            });
+        let is_auto_watching = auto_watch_state.enabled();
+
         let button = match section {
-            Section::ActiveCall => channel_link.map(|channel_link| {
-                CopyButton::new("copy-channel-link", channel_link)
-                    .visible_on_hover("section-header")
-                    .tooltip_label("Copy Channel Link")
-                    .into_any_element()
-            }),
+            Section::ActiveCall => {
+                let has_auto_watch_flag = cx.has_flag::<AutoWatchFeatureFlag>();
+                let show_auto_watch = has_auto_watch_flag && is_auto_watching;
+                let show_copy = channel_link.is_some();
+
+                if show_auto_watch || show_copy {
+                    Some(
+                        h_flex()
+                            .when(has_auto_watch_flag, |this| {
+                                this.child(
+                                    IconButton::new(
+                                        "auto-watch-screens",
+                                        if is_auto_watching {
+                                            IconName::Eye
+                                        } else {
+                                            IconName::EyeOff
+                                        },
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .toggle_state(is_auto_watching)
+                                    .selected_style(match auto_watch_state {
+                                        AutoWatch::Paused => {
+                                            ButtonStyle::Tinted(TintColor::Warning)
+                                        }
+                                        _ => ButtonStyle::Tinted(TintColor::Accent),
+                                    })
+                                    .when(!is_auto_watching, |this| {
+                                        this.visible_on_hover("section-header")
+                                    })
+                                    .tooltip(Tooltip::text(match auto_watch_state {
+                                        AutoWatch::Paused => {
+                                            "Auto Watch Screens (paused while sharing)"
+                                        }
+                                        AutoWatch::Active { .. } => "Stop Auto Watching Screens",
+                                        AutoWatch::Off => "Auto Watch Screens",
+                                    }))
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            this.workspace
+                                                .update(cx, |workspace, cx| {
+                                                    workspace.toggle_auto_watch(window, cx)
+                                                })
+                                                .ok();
+                                        },
+                                    )),
+                                )
+                            })
+                            .when_some(channel_link, |this, channel_link| {
+                                this.child(
+                                    CopyButton::new("copy-channel-link", channel_link)
+                                        .visible_on_hover("section-header")
+                                        .tooltip_label("Copy Channel Link"),
+                                )
+                            })
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                }
+            }
             Section::Contacts => Some(
                 IconButton::new("add-contact", IconName::Plus)
                     .icon_size(IconSize::Small)
@@ -3648,6 +3723,12 @@ impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = *self.client.status().borrow();
 
+        let is_collaboration_disabled = self
+            .user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_some_and(|config| !config.is_collaboration_enabled);
+
         v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
@@ -3667,7 +3748,9 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if !status.is_or_was_connected() || status.is_signing_in() {
+            .child(if is_collaboration_disabled {
+                self.render_disabled_by_organization(cx)
+            } else if !status.is_or_was_connected() || status.is_signing_in() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)
@@ -3676,7 +3759,7 @@ impl Render for CollabPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -3729,17 +3812,6 @@ impl Panel for CollabPanel {
         CollaborationPanelSettings::get_global(cx)
             .button
             .then_some(ui::IconName::UserGroup)
-    }
-
-    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
-        let user_store = self.user_store.read(cx);
-        let count = user_store.incoming_contact_requests().len()
-            + self.channel_store.read(cx).channel_invitations().len();
-        if count == 0 {
-            None
-        } else {
-            Some(count.to_string())
-        }
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {

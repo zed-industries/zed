@@ -15,7 +15,8 @@ use buffer_diff::{
     DiffHunkStatus, DiffHunkStatusKind,
 };
 use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet};
+use collections::{BTreeMap, Bound, HashMap, HashSet, IndexSet};
+use futures_lite::future::yield_now;
 use gpui::{App, Context, Entity, EventEmitter};
 use itertools::Itertools;
 use language::{
@@ -33,7 +34,6 @@ use gpui::AppContext as _;
 use rope::DimensionPair;
 use settings::Settings;
 use smallvec::SmallVec;
-use smol::future::yield_now;
 use std::{
     any::type_name,
     borrow::Cow,
@@ -676,7 +676,7 @@ impl DiffState {
 
 #[derive(Clone)]
 struct BufferStateSnapshot {
-    path_key: PathKey,
+    pub(crate) path_key: PathKey,
     path_key_index: PathKeyIndex,
     buffer_snapshot: BufferSnapshot,
 }
@@ -695,8 +695,7 @@ impl fmt::Debug for BufferStateSnapshot {
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     buffers: TreeMap<BufferId, BufferStateSnapshot>,
-    path_keys_by_index: TreeMap<PathKeyIndex, PathKey>,
-    indices_by_path_key: TreeMap<PathKey, PathKeyIndex>,
+    path_keys: Arc<IndexSet<PathKey>>,
     diffs: SumTree<DiffStateSnapshot>,
     diff_transforms: SumTree<DiffTransform>,
     non_text_state_update_count: usize,
@@ -870,6 +869,7 @@ impl ExcerptRange<text::Anchor> {
 #[derive(Clone, Debug)]
 pub struct ExcerptSummary {
     path_key: PathKey,
+    path_key_index: Option<PathKeyIndex>,
     max_anchor: Option<text::Anchor>,
     widest_line_number: u32,
     text: MBTextSummary,
@@ -880,6 +880,7 @@ impl ExcerptSummary {
     pub fn min() -> Self {
         ExcerptSummary {
             path_key: PathKey::min(),
+            path_key_index: None,
             max_anchor: None,
             widest_line_number: 0,
             text: MBTextSummary::default(),
@@ -1800,8 +1801,7 @@ impl MultiBuffer {
             show_deleted_hunks: _,
             use_extended_diff_range: _,
             show_headers: _,
-            path_keys_by_index: _,
-            indices_by_path_key: _,
+            path_keys: _,
             buffers,
         } = self.snapshot.get_mut();
         let start = ExcerptDimension(MultiBufferOffset::ZERO);
@@ -2495,8 +2495,7 @@ impl MultiBuffer {
             excerpts,
             diffs: buffer_diff,
             buffers: buffer_snapshots,
-            path_keys_by_index: _,
-            indices_by_path_key: _,
+            path_keys: _,
             diff_transforms: _,
             non_text_state_update_count,
             edit_count,
@@ -3576,11 +3575,8 @@ impl MultiBufferSnapshot {
                     continue 'anchors;
                 };
                 cursor.seek_forward(path, Bias::Left);
-                'excerpts: loop {
-                    let Some(excerpt) = cursor.item() else {
-                        break;
-                    };
-                    if &excerpt.path_key != path {
+                'excerpts: while let Some(excerpt) = cursor.item() {
+                    if excerpt.path_key != *path {
                         break;
                     }
                     let buffer_snapshot = excerpt.buffer_snapshot(self);
@@ -3637,6 +3633,7 @@ impl MultiBufferSnapshot {
         result
     }
 
+    /// Callers should not provide a range where `end < start`
     pub fn range_to_buffer_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -3648,6 +3645,7 @@ impl MultiBufferSnapshot {
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
+        let range_non_empty = end > start;
         cursor.seek(&start);
 
         let mut result: Vec<(
@@ -3656,7 +3654,7 @@ impl MultiBufferSnapshot {
             ExcerptRange<text::Anchor>,
         )> = Vec::new();
         while let Some(region) = cursor.region() {
-            if region.range.start >= end {
+            if region.range.start > end || (region.range.start == end && range_non_empty) {
                 break;
             }
             if region.is_main_buffer {
@@ -5262,12 +5260,11 @@ impl MultiBufferSnapshot {
 
     /// Creates a multibuffer anchor for the given buffer anchor, if it is contained in any excerpt.
     pub fn anchor_in_excerpt(&self, text_anchor: text::Anchor) -> Option<Anchor> {
-        for excerpt in {
-            let this = &self;
+        let excerpts = {
             let buffer_id = text_anchor.buffer_id;
-            if let Some(buffer_state) = this.buffers.get(&buffer_id) {
+            if let Some(buffer_state) = self.buffers.get(&buffer_id) {
                 let path_key = buffer_state.path_key.clone();
-                let mut cursor = this.excerpts.cursor::<PathKey>(());
+                let mut cursor = self.excerpts.cursor::<PathKey>(());
                 cursor.seek_forward(&path_key, Bias::Left);
                 Some(iter::from_fn(move || {
                     let excerpt = cursor.item()?;
@@ -5282,7 +5279,8 @@ impl MultiBufferSnapshot {
             }
             .into_iter()
             .flatten()
-        } {
+        };
+        for excerpt in excerpts {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
             if excerpt.range.contains(&text_anchor, &buffer_snapshot) {
                 return Some(Anchor::in_buffer(excerpt.path_key_index, text_anchor));
@@ -6354,13 +6352,6 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    pub fn buffer_for_path(&self, path: &PathKey) -> Option<&BufferSnapshot> {
-        let (_, _, excerpt) = self
-            .excerpts
-            .find::<ExcerptSummary, _>((), path, Bias::Left);
-        Some(excerpt?.buffer_snapshot(self))
-    }
-
     pub fn path_for_buffer(&self, buffer_id: BufferId) -> Option<&PathKey> {
         Some(&self.buffers.get(&buffer_id)?.path_key)
     }
@@ -6376,9 +6367,7 @@ impl MultiBufferSnapshot {
     }
 
     fn first_excerpt_for_path(&self, path_key: &PathKey) -> Option<&Excerpt> {
-        let (_, _, first_excerpt) =
-            self.excerpts
-                .find::<ExcerptSummary, _>((), path_key, Bias::Left);
+        let (_, _, first_excerpt) = self.excerpts.find::<PathKey, _>((), path_key, Bias::Left);
         first_excerpt
     }
 
@@ -6386,11 +6375,11 @@ impl MultiBufferSnapshot {
         self.buffers.get(&id).map(|state| &state.buffer_snapshot)
     }
 
-    fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<PathKey> {
-        self.path_keys_by_index.get(&anchor.path).cloned()
+    fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<&PathKey> {
+        self.path_keys.get_index(anchor.path.0 as usize)
     }
 
-    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> PathKey {
+    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> &PathKey {
         self.try_path_for_anchor(anchor)
             .expect("invalid anchor: path was never added to multibuffer")
     }
@@ -6829,7 +6818,7 @@ impl MultiBufferSnapshot {
                 excerpt.path_key
             );
             assert_eq!(
-                self.path_keys_by_index.get(&excerpt.path_key_index),
+                self.path_keys.get_index(excerpt.path_key_index.0 as usize),
                 Some(&excerpt.path_key),
                 "excerpt path key index does not match path key: {:#?}",
                 excerpt.path_key,
@@ -7327,6 +7316,7 @@ impl sum_tree::Item for Excerpt {
         }
         ExcerptSummary {
             path_key: self.path_key.clone(),
+            path_key_index: Some(self.path_key_index),
             max_anchor: Some(self.range.context.end),
             widest_line_number: self.max_buffer_row,
             text: text.into(),
@@ -7425,6 +7415,7 @@ impl sum_tree::ContextLessSummary for ExcerptSummary {
         );
 
         self.path_key = summary.path_key.clone();
+        self.path_key_index = summary.path_key_index;
         self.max_anchor = summary.max_anchor;
         self.text += summary.text;
         self.widest_line_number = cmp::max(self.widest_line_number, summary.widest_line_number);
@@ -7432,39 +7423,54 @@ impl sum_tree::ContextLessSummary for ExcerptSummary {
     }
 }
 
-impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarget {
+impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarget<'_> {
     fn cmp(
         &self,
         cursor_location: &ExcerptSummary,
         _cx: <ExcerptSummary as sum_tree::Summary>::Context<'_>,
     ) -> cmp::Ordering {
         match self {
+            AnchorSeekTarget::Missing { path_key } => {
+                // Want to end up after any excerpts for (a different buffer at) the original path
+                match Ord::cmp(*path_key, &cursor_location.path_key) {
+                    Ordering::Less => Ordering::Less,
+                    Ordering::Equal | Ordering::Greater => Ordering::Greater,
+                }
+            }
             AnchorSeekTarget::Excerpt {
                 path_key,
+                path_key_index,
                 anchor,
                 snapshot,
             } => {
-                let path_comparison = Ord::cmp(path_key, &cursor_location.path_key);
-                if path_comparison.is_ne() {
-                    path_comparison
-                } else if let Some(snapshot) = snapshot {
-                    if anchor.text_anchor.buffer_id != snapshot.remote_id() {
-                        Ordering::Greater
-                    } else if let Some(max_anchor) = cursor_location.max_anchor {
-                        debug_assert_eq!(max_anchor.buffer_id, snapshot.remote_id());
-                        anchor.text_anchor().cmp(&max_anchor, snapshot)
-                    } else {
-                        Ordering::Greater
-                    }
+                if Some(*path_key_index) != cursor_location.path_key_index {
+                    Ord::cmp(*path_key, &cursor_location.path_key)
+                } else if let Some(max_anchor) = cursor_location.max_anchor {
+                    debug_assert_eq!(max_anchor.buffer_id, snapshot.remote_id());
+                    anchor.cmp(&max_anchor, snapshot)
                 } else {
-                    // shouldn't happen because we expect this buffer not to have any excerpts
-                    // (otherwise snapshot would have been Some)
-                    Ordering::Equal
+                    Ordering::Greater
                 }
             }
-            // This should be dead code because Empty is only constructed for an empty snapshot
-            AnchorSeekTarget::Empty => Ordering::Equal,
+            AnchorSeekTarget::Empty => Ordering::Greater,
         }
+    }
+}
+
+impl sum_tree::ContextLessSummary for PathKey {
+    fn zero() -> Self {
+        PathKey::min()
+    }
+
+    fn add_summary(&mut self, summary: &Self) {
+        debug_assert!(
+            summary >= self,
+            "Path keys must be in ascending order: {:?} > {:?}",
+            summary,
+            self
+        );
+
+        *self = summary.clone();
     }
 }
 

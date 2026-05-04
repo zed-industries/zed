@@ -574,7 +574,7 @@ mod tests {
             flexible: true,
             default_width: px(300.),
             default_height: px(600.),
-            max_content_width: px(850.),
+            max_content_width: Some(px(850.)),
             default_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
@@ -597,7 +597,6 @@ mod tests {
             tool_permissions,
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            new_thread_location: Default::default(),
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         }

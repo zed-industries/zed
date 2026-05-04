@@ -132,7 +132,7 @@ pub async fn open_remote_project(
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) -> Result<WindowHandle<MultiWorkspace>> {
     let created_new_window = open_options.requesting_window.is_none();
 
     let (existing, open_visible) = find_existing_workspace(
@@ -160,7 +160,7 @@ pub async fn open_remote_project(
             let open_results = existing_window
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
-                    multi_workspace.activate(existing_workspace.clone(), window, cx);
+                    multi_workspace.activate(existing_workspace.clone(), None, window, cx);
                     existing_workspace.update(cx, |workspace, cx| {
                         workspace.open_paths(
                             resolved_paths,
@@ -193,7 +193,7 @@ pub async fn open_remote_project(
                 .collect::<Vec<_>>();
             navigate_to_positions(&existing_window, items, &paths_with_positions, cx);
 
-            return Ok(());
+            return Ok(existing_window);
         }
         // If the remote connection is dead (e.g. server not running after failed reconnect),
         // fall through to establish a fresh connection instead of showing an error.
@@ -341,7 +341,7 @@ pub async fn open_remote_project(
                         .update(cx, |_, window, _| window.remove_window())
                         .ok();
                 }
-                return Ok(());
+                return Ok(window);
             }
         };
 
@@ -436,7 +436,7 @@ pub async fn open_remote_project(
             });
         })
         .ok();
-    Ok(())
+    Ok(window)
 }
 
 pub fn navigate_to_positions(
