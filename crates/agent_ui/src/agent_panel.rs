@@ -124,7 +124,7 @@ pub struct AgentPanelTerminalInfo {
     pub id: TerminalId,
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
-    pub notified: bool,
+    pub has_unseen_bell: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -692,7 +692,7 @@ struct AgentTerminal {
     last_known_working_directory: Option<PathBuf>,
     last_known_title: String,
     updated_at: DateTime<Utc>,
-    notified: bool,
+    has_unseen_bell: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1137,7 +1137,7 @@ impl AgentPanel {
         );
         let _window_activation_subscription =
             cx.observe_window_activation(window, |this, window, cx| {
-                this.clear_active_terminal_notification_if_focused(window, cx);
+                this.clear_active_terminal_unseen_bell_if_focused(window, cx);
             });
         let _terminal_feature_flag_subscription = cx
             .observe_flag::<AgentPanelTerminalFeatureFlag, _>(
@@ -1429,7 +1429,7 @@ impl AgentPanel {
                 TerminalEvent::TitleChanged | TerminalEvent::BreadcrumbsChanged => {
                     this.refresh_terminal_metadata(terminal_id, cx);
                 }
-                TerminalEvent::Bell => this.notify_terminal(terminal_id, window, cx),
+                TerminalEvent::Bell => this.mark_terminal_bell_unseen(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal
                 | TerminalEvent::Wakeup
                 | TerminalEvent::BlinkChanged(_)
@@ -1444,7 +1444,7 @@ impl AgentPanel {
             last_known_working_directory: None,
             last_known_title: String::new(),
             updated_at: Utc::now(),
-            notified: false,
+            has_unseen_bell: false,
             _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
         };
         terminal.refresh_metadata(cx);
@@ -1469,11 +1469,11 @@ impl AgentPanel {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
-        let was_notified = terminal.notified;
-        terminal.notified = false;
+        let had_unseen_bell = terminal.has_unseen_bell;
+        terminal.has_unseen_bell = false;
         terminal.updated_at = Utc::now();
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
-        if was_notified {
+        if had_unseen_bell {
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
@@ -1522,7 +1522,7 @@ impl AgentPanel {
         }
     }
 
-    fn notify_terminal(
+    fn mark_terminal_bell_unseen(
         &mut self,
         terminal_id: TerminalId,
         window: &mut Window,
@@ -1531,7 +1531,7 @@ impl AgentPanel {
         let is_active = self.active_terminal_id() == Some(terminal_id);
         // Only suppress when the user can actually see the bell, i.e. the
         // terminal is focused AND the OS window is active. A bell delivered to
-        // a background window should still mark the terminal as notified.
+        // a background window should still be marked unseen.
         let user_is_looking = is_active
             && window.is_window_active()
             && self.terminals.get(&terminal_id).is_some_and(|terminal| {
@@ -1543,26 +1543,26 @@ impl AgentPanel {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
-        if !terminal.notified {
-            terminal.notified = true;
+        if !terminal.has_unseen_bell {
+            terminal.has_unseen_bell = true;
             terminal.updated_at = Utc::now();
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
     }
 
-    fn clear_terminal_notification(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+    fn clear_terminal_unseen_bell(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
-        if terminal.notified {
-            terminal.notified = false;
+        if terminal.has_unseen_bell {
+            terminal.has_unseen_bell = false;
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
     }
 
-    fn clear_active_terminal_notification_if_focused(
+    fn clear_active_terminal_unseen_bell_if_focused(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1578,7 +1578,7 @@ impl AgentPanel {
             .get(&terminal_id)
             .is_some_and(|terminal| terminal.view.focus_handle(cx).contains_focused(window, cx));
         if is_focused {
-            self.clear_terminal_notification(terminal_id, cx);
+            self.clear_terminal_unseen_bell(terminal_id, cx);
         }
     }
 
@@ -1757,7 +1757,7 @@ impl AgentPanel {
                 id: *id,
                 title: terminal.display_title(cx),
                 updated_at: terminal.updated_at,
-                notified: terminal.notified,
+                has_unseen_bell: terminal.has_unseen_bell,
             })
             .collect()
     }
@@ -2582,7 +2582,7 @@ impl AgentPanel {
                         Some(
                             cx.on_focus_in(&focus_handle, window, move |this, _window, cx| {
                                 if let Some(terminal) = this.terminals.get_mut(&terminal_id) {
-                                    terminal.notified = false;
+                                    terminal.has_unseen_bell = false;
                                     terminal.updated_at = Utc::now();
                                 }
                                 cx.emit(AgentPanelEvent::TerminalFocused);

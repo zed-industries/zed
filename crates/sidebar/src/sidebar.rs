@@ -229,7 +229,7 @@ struct TerminalEntry {
     title: SharedString,
     workspace: Entity<Workspace>,
     updated_at: DateTime<Utc>,
-    notified: bool,
+    has_unseen_bell: bool,
     highlight_positions: Vec<usize>,
 }
 
@@ -309,7 +309,7 @@ impl From<TerminalEntry> for ListEntry {
 struct SidebarContents {
     entries: Vec<ListEntry>,
     notified_threads: HashSet<agent_ui::ThreadId>,
-    notified_terminals: HashSet<TerminalId>,
+    terminals_with_unseen_bells: HashSet<TerminalId>,
     project_header_indices: Vec<usize>,
     has_open_projects: bool,
 }
@@ -1070,7 +1070,7 @@ impl Sidebar {
 
         let mut entries = Vec::new();
         let mut notified_threads = previous.notified_threads;
-        let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
+        let mut terminals_with_unseen_bells: HashSet<TerminalId> = HashSet::new();
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
@@ -1138,10 +1138,10 @@ impl Sidebar {
                 .iter()
                 .flat_map(|workspace| terminal_entries_for_workspace(workspace, cx))
                 .collect();
-            notified_terminals.extend(
+            terminals_with_unseen_bells.extend(
                 terminals
                     .iter()
-                    .filter_map(|terminal| terminal.notified.then_some(terminal.id)),
+                    .filter_map(|terminal| terminal.has_unseen_bell.then_some(terminal.id)),
             );
             if group_key.path_list().paths().is_empty() {
                 continue;
@@ -1484,7 +1484,7 @@ impl Sidebar {
         self.contents = SidebarContents {
             entries,
             notified_threads,
-            notified_terminals,
+            terminals_with_unseen_bells,
             project_header_indices,
             has_open_projects,
         };
@@ -4262,7 +4262,7 @@ impl Sidebar {
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
             .timestamp(timestamp)
-            .notified(terminal.notified)
+            .notified(terminal.has_unseen_bell)
             .highlight_positions(terminal.highlight_positions.clone())
             .selected(is_active)
             .focused(is_focused)
@@ -5143,7 +5143,8 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn has_notifications(&self, _cx: &App) -> bool {
-        !self.contents.notified_threads.is_empty() || !self.contents.notified_terminals.is_empty()
+        !self.contents.notified_threads.is_empty()
+            || !self.contents.terminals_with_unseen_bells.is_empty()
     }
 
     fn is_threads_list_view_active(&self) -> bool {
@@ -5339,7 +5340,7 @@ fn terminal_entries_for_workspace(
                 title: terminal.title,
                 workspace: workspace.clone(),
                 updated_at: terminal.updated_at,
-                notified: terminal.notified,
+                has_unseen_bell: terminal.has_unseen_bell,
                 highlight_positions: Vec::new(),
             });
 
