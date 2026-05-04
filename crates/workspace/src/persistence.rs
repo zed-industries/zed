@@ -2051,6 +2051,50 @@ impl WorkspaceDb {
         ))
     }
 
+    pub async fn delete_recent_workspace_group(
+        &self,
+        target: &RecentWorkspace,
+    ) -> Result<Vec<WorkspaceId>> {
+        let target_paths = &target.identity_paths;
+        let target_remote_connection = match &target.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(connection) => {
+                Some(remote_connection_identity(connection))
+            }
+        };
+
+        let remote_connections = self.remote_connections()?;
+
+        let mut workspace_ids = Vec::new();
+        for (workspace_id, paths, identity_paths, remote_connection_id, _, _) in
+            self.recent_workspaces()?
+        {
+            let remote_connection = if let Some(id) = remote_connection_id {
+                let Some(connection_options) = remote_connections.get(&id) else {
+                    continue;
+                };
+                Some(remote_connection_identity(connection_options))
+            } else {
+                None
+            };
+            if remote_connection == target_remote_connection
+                && &identity_paths.unwrap_or(paths) == target_paths
+            {
+                workspace_ids.push(workspace_id);
+            }
+        }
+
+        futures::future::join_all(
+            workspace_ids
+                .iter()
+                .copied()
+                .map(|workspace_id| self.delete_workspace_by_id(workspace_id)),
+        )
+        .await;
+
+        Ok(workspace_ids)
+    }
+
     // Deletes workspace rows that can no longer be restored from. Remote workspaces whose
     // connection was removed, and (on Windows) workspaces pointing at WSL paths, are cleaned
     // up immediately. Local workspaces with no valid paths on disk are kept for seven days
@@ -2644,10 +2688,9 @@ async fn resolve_local_workspace_identity(fs: &dyn Fs, paths: &PathList) -> Opti
 fn dedupe_recent_workspaces(
     workspaces: impl IntoIterator<Item = RecentWorkspace>,
 ) -> Vec<RecentWorkspace> {
-    let mut seen: collections::HashMap<(Option<RemoteConnectionIdentity>, Vec<PathBuf>), usize> =
-        collections::HashMap::default();
+    let mut indices_by_key: HashMap<(Option<RemoteConnectionIdentity>, Vec<PathBuf>), usize> =
+        HashMap::default();
     let mut result: Vec<RecentWorkspace> = Vec::new();
-
     for workspace in workspaces {
         let location_identity = match &workspace.location {
             SerializedWorkspaceLocation::Local => None,
@@ -2656,12 +2699,12 @@ fn dedupe_recent_workspaces(
             }
         };
         let key = (location_identity, workspace.identity_paths.paths().to_vec());
-        if let Some(&existing_index) = seen.get(&key) {
+        if let Some(&existing_index) = indices_by_key.get(&key) {
             if workspace.timestamp > result[existing_index].timestamp {
                 result[existing_index] = workspace;
             }
         } else {
-            seen.insert(key, result.len());
+            indices_by_key.insert(key, result.len());
             result.push(workspace);
         }
     }
@@ -5451,6 +5494,74 @@ mod tests {
         assert_eq!(recents.len(), 2);
         assert_eq!(recents[0].workspace_id, WorkspaceId(2));
         assert_eq!(recents[1].workspace_id, WorkspaceId(1));
+    }
+
+    #[gpui::test]
+    async fn test_delete_recent_workspace_group_removes_all_matching_rows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db(
+            "test_delete_recent_workspace_group_removes_all_matching_rows",
+        )
+        .await;
+
+        fs.insert_tree(
+            "/the-group",
+            json!({
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/the-group/feature-a",
+            json!({
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(PathList::new(&["/the-group"])),
+            ..workspace_with(1, &[Path::new("/the-group")], empty_pane_group(), None)
+        })
+        .await;
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(PathList::new(&["/the-group"])),
+            ..workspace_with(
+                2,
+                &[Path::new("/the-group/feature-a")],
+                empty_pane_group(),
+                None,
+            )
+        })
+        .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        assert_eq!(recents.len(), 1);
+
+        let deleted = db.delete_recent_workspace_group(&recents[0]).await.unwrap();
+        assert_eq!(deleted, vec![WorkspaceId(2), WorkspaceId(1)]);
+
+        let recents = db.recent_project_workspaces(fs.as_ref()).await.unwrap();
+        assert!(recents.is_empty());
     }
 
     #[gpui::test]

@@ -108,7 +108,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 #[cfg(target_os = "windows")]
 use remote::wsl_path_to_windows_path;
-use remote::{RemoteClient, RemoteConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions, same_remote_connection_identity};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -6229,17 +6229,7 @@ impl ProjectGroupKey {
 
     pub fn matches(&self, other: &ProjectGroupKey) -> bool {
         self.paths == other.paths
-            && if let (
-                Some(RemoteConnectionOptions::Ssh(left)),
-                Some(RemoteConnectionOptions::Ssh(right)),
-            ) = (&self.host, &other.host)
-            {
-                left.host == right.host
-                    && left.port == right.port
-                    && left.username == right.username
-            } else {
-                self.host == other.host
-            }
+            && same_remote_connection_identity(self.host.as_ref(), other.host.as_ref())
     }
 }
 

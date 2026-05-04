@@ -2115,15 +2115,19 @@ impl RecentProjectsDelegate {
         if let Some(ProjectPickerEntry::RecentProject(selected_match)) =
             self.filtered_entries.get(ix)
         {
-            let workspace_id = self.workspaces[selected_match.candidate_id].workspace_id;
+            let recent_workspace = self.workspaces[selected_match.candidate_id].clone();
             let fs = self
                 .workspace
                 .upgrade()
                 .map(|ws| ws.read(cx).app_state().fs.clone());
             let db = WorkspaceDb::global(cx);
             cx.spawn_in(window, async move |this, cx| {
-                db.delete_workspace_by_id(workspace_id).await.log_err();
                 let Some(fs) = fs else { return };
+                let deleted_workspace_ids = db
+                    .delete_recent_workspace_group(&recent_workspace)
+                    .await
+                    .log_err()
+                    .unwrap_or_default();
                 let workspaces = db
                     .recent_project_workspaces(fs.as_ref())
                     .await
@@ -2138,8 +2142,11 @@ impl RecentProjectsDelegate {
                     // After deleting a project, we want to update the history manager to reflect the change.
                     // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
                     if let Some(history_manager) = HistoryManager::global(cx) {
-                        history_manager
-                            .update(cx, |this, cx| this.delete_history(workspace_id, cx));
+                        history_manager.update(cx, |this, cx| {
+                            for workspace_id in &deleted_workspace_ids {
+                                this.delete_history(*workspace_id, cx);
+                            }
+                        });
                     }
                 })
                 .ok();
