@@ -1,14 +1,15 @@
+mod reindent;
+mod streaming_fuzzy_matcher;
+
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use super::tool_edit_parser::{ToolEditEvent, ToolEditParser};
 use crate::ToolInputPayload;
-use crate::{
-    AgentTool, Thread, ToolCallEventStream, ToolInput,
-    edit_agent::{
-        reindent::{Reindenter, compute_indent_delta},
-        streaming_fuzzy_matcher::StreamingFuzzyMatcher,
-    },
+use crate::tools::edit_file_tool::{
+    reindent::{Reindenter, compute_indent_delta},
+    streaming_fuzzy_matcher::StreamingFuzzyMatcher,
 };
+use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput};
 use acp_thread::Diff;
 use action_log::ActionLog;
 use agent_client_protocol::schema::{self as acp, ToolCallLocation, ToolCallUpdateFields};
