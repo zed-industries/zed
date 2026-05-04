@@ -13931,7 +13931,6 @@ impl Editor {
                         let line_text_after_indent = buffer
                             .text_for_range(indent_end..line_end)
                             .collect::<String>();
-
                         let is_within_comment_override = buffer
                             .language_scope_at(indent_end)
                             .is_some_and(|scope| scope.override_name() == Some("comment"));
@@ -14047,7 +14046,40 @@ impl Editor {
                 }
             }
 
-            let mut non_blank_rows_iter = (start_row..=end_row)
+            let rewrap_start_row = if language_scope
+                .as_ref()
+                .is_some_and(|scope| scope.language_name().as_ref() == "Markdown")
+            {
+                let line_start = Point::new(start_row, 0);
+                let line_end = Point::new(start_row, buffer.line_len(MultiBufferRow(start_row)));
+                let first_non_blank_line =
+                    buffer.text_for_range(line_start..line_end).collect::<String>();
+                if first_non_blank_line.trim() == "---" {
+                    let mut frontmatter_end_row = None;
+                    for row in start_row.saturating_add(1)..=end_row {
+                        let row_start = Point::new(row, 0);
+                        let row_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+                        let row_text = buffer.text_for_range(row_start..row_end).collect::<String>();
+                        if row_text.trim() == "---" {
+                            frontmatter_end_row = Some(row);
+                            break;
+                        }
+                    }
+                    frontmatter_end_row
+                        .map(|row| row.saturating_add(1))
+                        .unwrap_or(start_row)
+                } else {
+                    start_row
+                }
+            } else {
+                start_row
+            };
+
+            if rewrap_start_row > end_row {
+                return Vec::new();
+            }
+
+            let mut non_blank_rows_iter = (rewrap_start_row..=end_row)
                 .filter(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
                 .peekable();
 
