@@ -14,8 +14,6 @@ mod move_path_tool;
 mod now_tool;
 mod open_tool;
 mod read_file_tool;
-mod restore_file_from_disk_tool;
-mod save_file_tool;
 mod spawn_agent_tool;
 mod terminal_tool;
 mod tool_edit_parser;
@@ -40,8 +38,6 @@ pub use move_path_tool::*;
 pub use now_tool::*;
 pub use open_tool::*;
 pub use read_file_tool::*;
-pub use restore_file_from_disk_tool::*;
-pub use save_file_tool::*;
 pub use spawn_agent_tool::*;
 pub use terminal_tool::*;
 pub use tool_permissions::*;
@@ -130,8 +126,6 @@ tools! {
     NowTool,
     OpenTool,
     ReadFileTool,
-    RestoreFileFromDiskTool,
-    SaveFileTool,
     SpawnAgentTool,
     TerminalTool,
     UpdatePlanTool,

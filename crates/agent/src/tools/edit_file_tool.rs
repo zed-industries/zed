@@ -1,8 +1,6 @@
 mod reindent;
 mod streaming_fuzzy_matcher;
 
-use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
-use super::save_file_tool::SaveFileTool;
 use super::tool_edit_parser::{ToolEditEvent, ToolEditParser};
 use crate::ToolInputPayload;
 use crate::tools::edit_file_tool::{
@@ -1116,44 +1114,15 @@ fn ensure_buffer_saved(
     let last_read_mtime = tool
         .action_log
         .read_with(cx, |log, _| log.file_read_time(abs_path));
-    let check_result = tool.thread.read_with(cx, |thread, cx| {
-        let current = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| file.disk_state().mtime());
-        let dirty = buffer.read(cx).is_dirty();
-        let has_save = thread.has_tool(SaveFileTool::NAME);
-        let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
-        (current, dirty, has_save, has_restore)
+    let (current_mtime, is_dirty) = buffer.read_with(cx, |buffer, _cx| {
+        let current = buffer.file().and_then(|file| file.disk_state().mtime());
+        let dirty = buffer.is_dirty();
+        (current, dirty)
     });
 
-    let Ok((current_mtime, is_dirty, has_save_tool, has_restore_tool)) = check_result else {
-        return Ok(false);
-    };
-
     if is_dirty {
-        let message = match (has_save_tool, has_restore_tool) {
-            (true, true) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-            }
-            (true, false) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                         If they want to discard them, ask the user to manually revert the file, then inform you when it's ok to proceed."
-            }
-            (false, true) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask the user to manually save the file, then inform you when it's ok to proceed. \
-                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-            }
-            (false, false) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
-                         then ask them to save or revert the file manually and inform you when it's ok to proceed."
-            }
-        };
-        return Err(message.to_string());
+        return Err("This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
+                 then ask them to save or revert the file manually and inform you when it's ok to proceed.".to_string());
     }
 
     if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime)

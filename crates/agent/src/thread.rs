@@ -2,9 +2,8 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
-    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
-    decide_permission_from_settings,
+    SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, UpdatePlanTool, WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -823,7 +822,6 @@ impl ToolPermissionContext {
                 || tool_name == EditFileTool::NAME
                 || tool_name == DeletePathTool::NAME
                 || tool_name == CreateDirectoryTool::NAME
-                || tool_name == SaveFileTool::NAME
             {
                 (
                     extract_path_pattern(value),
@@ -1564,8 +1562,6 @@ impl Thread {
             self.action_log.clone(),
             update_agent_location,
         ));
-        self.add_tool(SaveFileTool::new(self.project.clone()));
-        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
