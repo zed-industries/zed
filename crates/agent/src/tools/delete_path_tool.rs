@@ -84,7 +84,7 @@ impl AgentTool for DeletePathTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
             let path = input.path;
 
             let decision = cx.update(|cx| {

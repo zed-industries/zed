@@ -146,7 +146,7 @@ impl AgentTool for FetchTool {
             let input: FetchToolInput = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
 
             let authorize = cx.update(|cx| {
                 let context =

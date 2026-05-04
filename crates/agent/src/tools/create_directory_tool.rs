@@ -80,7 +80,7 @@ impl AgentTool for CreateDirectoryTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
             let decision = cx.update(|cx| {
                 decide_permission_for_path(Self::NAME, &input.path, AgentSettings::get_global(cx))
             });

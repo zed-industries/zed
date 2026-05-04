@@ -96,7 +96,7 @@ impl AgentTool for DiagnosticsTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
 
             match input.path {
                 Some(path) if !path.is_empty() => {
