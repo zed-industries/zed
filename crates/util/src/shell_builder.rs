@@ -140,7 +140,11 @@ impl ShellBuilder {
         if let Some(task_command) = task_command {
             let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&self.kind.to_shell_variable(arg));
+                let shell_variable = self.kind.to_shell_variable(arg);
+                command.push_str(&match self.kind.try_quote(&shell_variable) {
+                    Some(shell_variable) => shell_variable,
+                    None => Cow::Owned(shell_variable),
+                });
                 command
             });
             if self.redirect_stdin {
@@ -323,5 +327,17 @@ mod test {
 
         assert_eq!(program, "fish");
         assert_eq!(args, vec!["-i", "-c", "echo oo"]);
+    }
+
+    #[test]
+    fn build_no_quote_preserves_spaced_arguments() {
+        let shell = Shell::Program("sh".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let (program, args) = shell_builder
+            .build_no_quote(Some("echo".into()), &["test2 test3".to_string()]);
+
+        assert_eq!(program, "sh");
+        assert_eq!(args, vec!["-i", "-c", "echo 'test2 test3'"]);
     }
 }

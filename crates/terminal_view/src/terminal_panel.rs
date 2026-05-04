@@ -1797,6 +1797,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_prepare_task_preserves_spaced_arguments() {
+        let input = SpawnInTerminal {
+            command: Some("echo".to_string()),
+            args: vec!["test2 test3".to_string()],
+            ..SpawnInTerminal::default()
+        };
+        let shell = Shell::Program("sh".to_owned());
+
+        let result = prepare_task_for_spawn(&input, &shell, false);
+
+        assert_eq!(result.command, Some("sh".to_string()));
+        assert_eq!(result.args, vec!["-i".to_string(), "-c".to_string(), "echo 'test2 test3'".to_string()]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_prepare_script_like_task() {
