@@ -2594,26 +2594,39 @@ pub async fn resolve_worktree_workspaces(
     }))
     .await;
 
-    // Second pass: deduplicate by PathList.
-    // When two entries resolve to the same paths, keep the one with the
-    // more recent timestamp.
-    let mut seen: collections::HashMap<Vec<PathBuf>, usize> = collections::HashMap::default();
     let mut result: Vec<WorkspaceEntry> = Vec::new();
+    let mut entries_by_location_and_paths: HashMap<
+        (Option<RemoteConnectionIdentity>, Vec<PathBuf>),
+        usize,
+    > = HashMap::default();
 
     for entry in resolved {
-        let key: Vec<PathBuf> = entry.2.paths().to_vec();
-        if let Some(&existing_idx) = seen.get(&key) {
-            // Keep the entry with the more recent timestamp
+        let key = (
+            workspace_location_identity(&entry.1),
+            entry.2.paths().to_vec(),
+        );
+        if let Some(existing_idx) = entries_by_location_and_paths.get(&key).copied() {
             if entry.3 > result[existing_idx].3 {
                 result[existing_idx] = entry;
             }
         } else {
-            seen.insert(key, result.len());
+            entries_by_location_and_paths.insert(key, result.len());
             result.push(entry);
         }
     }
 
     result
+}
+
+fn workspace_location_identity(
+    location: &SerializedWorkspaceLocation,
+) -> Option<RemoteConnectionIdentity> {
+    match location {
+        SerializedWorkspaceLocation::Local => None,
+        SerializedWorkspaceLocation::Remote(connection) => {
+            Some(remote_connection_identity(connection))
+        }
+    }
 }
 
 pub fn delete_unloaded_items(
@@ -2667,7 +2680,7 @@ mod tests {
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
     use project::Project;
-    use remote::SshConnectionOptions;
+    use remote::{RemoteConnectionOptions, SshConnectionOptions};
     use serde_json::json;
     use std::{thread, time::Duration};
 
@@ -5111,6 +5124,52 @@ mod tests {
         // and cannot serve as a working-tree root, so resolution must return None.
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].2.paths(), &[PathBuf::from("/foo/my-feature")]);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_worktree_workspaces_keeps_local_and_remote_entries(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let timestamp = Utc::now();
+        let workspaces = vec![
+            (
+                WorkspaceId(1),
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&["/repo"]),
+                timestamp,
+            ),
+            (
+                WorkspaceId(2),
+                SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(
+                    SshConnectionOptions {
+                        host: "remote-host".into(),
+                        ..Default::default()
+                    },
+                )),
+                PathList::new(&["/repo"]),
+                timestamp,
+            ),
+        ];
+
+        let result = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].1, SerializedWorkspaceLocation::Local);
+        assert!(matches!(
+            result[1].1,
+            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Ssh(_))
+        ));
     }
 
     #[gpui::test]
