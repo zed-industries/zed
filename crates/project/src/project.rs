@@ -6226,6 +6226,21 @@ impl ProjectGroupKey {
     pub fn host(&self) -> Option<RemoteConnectionOptions> {
         self.host.clone()
     }
+
+    pub fn matches(&self, other: &ProjectGroupKey) -> bool {
+        self.paths == other.paths
+            && if let (
+                Some(RemoteConnectionOptions::Ssh(left)),
+                Some(RemoteConnectionOptions::Ssh(right)),
+            ) = (&self.host, &other.host)
+            {
+                left.host == right.host
+                    && left.port == right.port
+                    && left.username == right.username
+            } else {
+                self.host == other.host
+            }
+    }
 }
 
 pub fn path_suffix(path: &Path, detail: usize) -> String {

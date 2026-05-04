@@ -195,7 +195,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     && !self
                         .window_project_groups
                         .iter()
-                        .any(|key| key == &workspace.project_group_key())
+                        .any(|key| key.matches(&workspace.project_group_key()))
             })
             .map(|(id, workspace)| {
                 let combined_string = workspace

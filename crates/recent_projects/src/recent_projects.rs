@@ -2195,7 +2195,7 @@ impl RecentProjectsDelegate {
     fn is_in_current_window_groups(&self, workspace: &RecentWorkspace) -> bool {
         self.window_project_groups
             .iter()
-            .any(|key| key == &workspace.project_group_key())
+            .any(|key| key.matches(&workspace.project_group_key()))
     }
 
     fn is_open_folder(&self, paths: &PathList) -> bool {
