@@ -3170,13 +3170,11 @@ async fn get_channel_members(
 
     let channel = db.get_channel(channel_id, session.user_id()).await?;
 
-    let (members, users) = db
-        .get_channel_participant_details(&channel, &request.query, limit)
+    let (members, users) = session
+        .app_state
+        .user_service
+        .search_channel_members(&channel, &request.query, limit as u32)
         .await?;
-    let members = members
-        .into_iter()
-        .map(proto::ChannelMember::from)
-        .collect();
     let users = users.into_iter().map(proto::User::from).collect();
 
     response.send(proto::GetChannelMembersResponse { members, users })?;
@@ -4085,6 +4083,20 @@ where
                 tracing::error!("{:?}", error);
                 None
             }
+        }
+    }
+}
+
+impl From<User> for proto::User {
+    fn from(user: User) -> Self {
+        Self {
+            id: user.id.to_proto(),
+            avatar_url: format!(
+                "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
+                user.github_user_id
+            ),
+            github_login: user.github_login,
+            name: user.name,
         }
     }
 }

@@ -581,7 +581,7 @@ impl TestServer {
             blob_store_client: None,
             executor,
             kinesis_client: None,
-            user_service: FakeUserService::new(),
+            user_service: FakeUserService::new(test_db.db().clone()),
             config: Config {
                 http_port: 0,
                 database_url: "".into(),

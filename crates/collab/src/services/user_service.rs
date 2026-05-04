@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use rpc::proto;
 
 use crate::Result;
-use crate::db::{Database, UserId};
+use crate::db::{Channel, Database, UserId};
 use crate::entities::User;
 
 #[cfg(feature = "test-support")]
@@ -16,6 +17,18 @@ pub trait UserService: Send + Sync + 'static {
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>>;
 
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>>;
+
+    // NOTE: This method is only tangentially related to users, but we're putting it on the `UserService` to avoid
+    // introducing a separate service.
+    //
+    // We're also using the `proto::ChannelMember` representation in the return type, as we don't yet have a domain
+    // representation of a channel member (and doesn't seem necessary to introduce one, at this point).
+    async fn search_channel_members(
+        &self,
+        channel: &Channel,
+        query: &str,
+        limit: u32,
+    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)>;
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeUserService> {
@@ -53,6 +66,26 @@ impl UserService for DatabaseUserService {
 
         Ok(users.into_iter().map(User::from).collect())
     }
+
+    async fn search_channel_members(
+        &self,
+        channel: &Channel,
+        query: &str,
+        limit: u32,
+    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
+        let (members, users) = self
+            .database
+            .get_channel_participant_details(channel, query, limit as u64)
+            .await?;
+
+        Ok((
+            members
+                .into_iter()
+                .map(proto::ChannelMember::from)
+                .collect(),
+            users.into_iter().map(User::from).collect(),
+        ))
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -73,6 +106,7 @@ mod fake_user_service {
     pub struct FakeUserService {
         this: Weak<Self>,
         state: Arc<Mutex<FakeUserServiceState>>,
+        database: Arc<Database>,
     }
 
     struct FakeUserServiceState {
@@ -90,10 +124,11 @@ mod fake_user_service {
     }
 
     impl FakeUserService {
-        pub fn new() -> Arc<Self> {
+        pub fn new(database: Arc<Database>) -> Arc<Self> {
             Arc::new_cyclic(|this| Self {
                 this: this.clone(),
                 state: Arc::new(Mutex::default()),
+                database,
             })
         }
 
@@ -113,6 +148,7 @@ mod fake_user_service {
                 User {
                     id: user_id,
                     github_login: params.github_login,
+                    github_user_id: params.github_user_id,
                     name: name.map(|name| name.to_string()),
                     admin,
                     connected_once: false,
@@ -164,6 +200,39 @@ mod fake_user_service {
             let _ = query;
             let _ = limit;
             unimplemented!()
+        }
+
+        async fn search_channel_members(
+            &self,
+            channel: &Channel,
+            query: &str,
+            limit: u32,
+        ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
+            let state = self.state.lock().await;
+
+            let users = state
+                .users
+                .values()
+                .filter(|user| user.github_login.contains(query))
+                .take(limit as usize)
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let members = self
+                .database
+                .get_channel_memberships_for_user_ids(
+                    channel,
+                    users.iter().map(|user| user.id).collect(),
+                )
+                .await?;
+
+            Ok((
+                members
+                    .into_iter()
+                    .map(proto::ChannelMember::from)
+                    .collect(),
+                users,
+            ))
         }
 
         #[cfg(feature = "test-support")]
