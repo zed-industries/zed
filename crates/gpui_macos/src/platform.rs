@@ -1002,7 +1002,9 @@ impl Platform for MacPlatform {
 
     fn hide_cursor_until_mouse_moves(&self) {
         let cursor_visible = self.0.lock().cursor_visible.clone();
-        cursor_visible.store(false, Ordering::Relaxed);
+        if !cursor_visible.swap(false, Ordering::Relaxed) {
+            return;
+        }
         unsafe {
             let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: YES];
         }
