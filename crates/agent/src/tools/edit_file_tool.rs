@@ -439,7 +439,7 @@ impl EditFileTool {
                         },
                         Err(error) => {
                             return EditSessionResult::Failed {
-                                error: format!("Failed to receive tool input: {error}"),
+                                error: error.to_string(),
                                 session,
                             };
                         }
