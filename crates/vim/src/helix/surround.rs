@@ -82,7 +82,7 @@ fn apply_helix_surround_edits<F>(
             let selections = editor.selections.all_display(&display_map);
             let (mut edits, anchors) = build(&display_map, selections);
 
-            edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+            edits.sort_by_key(|edit| edit.0.start);
             editor.edit(edits, cx);
 
             editor.change_selections(Default::default(), window, cx, |s| {

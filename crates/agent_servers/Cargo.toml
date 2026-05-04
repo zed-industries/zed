@@ -6,7 +6,7 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [features]
-test-support = ["acp_tools/test-support", "acp_thread/test-support", "gpui/test-support", "project/test-support", "dep:env_logger", "client/test-support", "dep:gpui_tokio", "reqwest_client/test-support"]
+test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support", "dep:env_logger", "client/test-support", "dep:gpui_tokio", "reqwest_client/test-support"]
 e2e = []
 
 [lints]
@@ -17,9 +17,9 @@ path = "src/agent_servers.rs"
 doctest = false
 
 [dependencies]
-acp_tools.workspace = true
 acp_thread.workspace = true
 action_log.workspace = true
+async-channel.workspace = true
 agent-client-protocol.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
@@ -43,7 +43,6 @@ reqwest_client = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smol.workspace = true
 task.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

@@ -2424,6 +2424,47 @@ Example:
 }
 ```
 
+## Go to Definition Scroll Strategy
+
+- Description: How to scroll the target into view when navigating to a definition or reference (e.g. {#action editor::GoToDefinition}, {#action editor::GoToTypeDefinition}, {#action editor::FindAllReferences}).
+- Setting: `go_to_definition_scroll_strategy`
+- Default: `"center"`
+
+**Options**
+
+1. Vertically center the target in the viewport (default):
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "center"
+}
+```
+
+2. Scroll the minimum amount needed to make the target visible:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "minimum"
+}
+```
+
+3. Scroll so the target appears near the top of the viewport:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "top"
+}
+```
+
+4. Preserve the cursor's vertical position within the viewport, falling back to
+   `center` when the cursor is offscreen.
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "preserve"
+}
+```
+
 ## Hard Tabs
 
 - Description: Whether to indent lines using tab characters or multiple spaces.
@@ -3891,8 +3932,7 @@ Positive integer values
 1. `none` to avoid wrapping generally, unless the line is too long
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
-4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
-5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
+4. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
 ## Show Wrap Guides
 

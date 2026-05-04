@@ -622,7 +622,7 @@ fn appearance_page() -> SettingsPage {
                                     .as_ref()?
                                     .discriminant() as usize])
                         },
-                        write: |settings_content, value, _| {
+                        write: |settings_content, value, app| {
                             let Some(value) = value else {
                                 settings_content.theme.icon_theme = None;
                                 return;
@@ -638,7 +638,13 @@ fn appearance_page() -> SettingsPage {
                                             match mode {
                                                 theme_settings::ThemeAppearanceMode::Light => light.clone(),
                                                 theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::System => {
+                                                    if SystemAppearance::global(app).is_light() {
+                                                        light.clone()
+                                                    } else {
+                                                        dark.clone()
+                                                    }
+                                                }
                                             }
                                         },
                                     };
@@ -7423,29 +7429,6 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
         ];
 
-        items.push(SettingsPageItem::SettingItem(SettingItem {
-            title: "New Thread Location",
-            description: "Whether to start a new thread in the current local project or in a new Git worktree.",
-            field: Box::new(SettingField {
-                json_path: Some("agent.new_thread_location"),
-                pick: |settings_content| {
-                    settings_content
-                        .agent
-                        .as_ref()?
-                        .new_thread_location
-                        .as_ref()
-                },
-                write: |settings_content, value, _| {
-                    settings_content
-                        .agent
-                        .get_or_insert_default()
-                        .new_thread_location = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }));
-
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
@@ -9106,7 +9089,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 8] {
+    fn lsp_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -9183,6 +9166,24 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.go_to_definition_fallback = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Go To Definition Scroll Strategy",
+                description: "How to scroll the target into view when navigating to a definition or reference.",
+                field: Box::new(SettingField {
+                    json_path: Some("go_to_definition_scroll_strategy"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .go_to_definition_scroll_strategy
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.go_to_definition_scroll_strategy = value;
                     },
                 }),
                 metadata: None,

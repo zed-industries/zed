@@ -19,7 +19,6 @@ mod qa;
 mod reorder_patch;
 mod repair;
 mod retrieve_context;
-mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
@@ -988,7 +987,7 @@ fn main() {
 
     match &command {
         Command::ImportBatch(import_args) => {
-            smol::block_on(async {
+            gpui::block_on(async {
                 match import_args.provider {
                     BatchProvider::Anthropic => {
                         let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
@@ -1047,7 +1046,7 @@ fn main() {
                 output_dir,
                 fresh: synth_args.fresh,
             };
-            smol::block_on(async {
+            gpui::block_on(async {
                 if let Err(e) = run_synthesize(config).await {
                     eprintln!("Error: {:?}", e);
                     std::process::exit(1);

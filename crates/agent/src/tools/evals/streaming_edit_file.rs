@@ -1,8 +1,8 @@
-use crate::tools::streaming_edit_file_tool::*;
+use crate::tools::edit_file_tool::*;
 use crate::{
     AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ListDirectoryTool,
-    ListDirectoryToolInput, ReadFileTool, ReadFileToolInput, StreamingEditFileTool, Template,
-    Templates, Thread, ToolCallEventStream, ToolInput,
+    ListDirectoryToolInput, ReadFileTool, ReadFileToolInput, Template, Templates, Thread,
+    ToolCallEventStream, ToolInput,
 };
 use Role::*;
 use anyhow::{Context as _, Result};
@@ -73,7 +73,7 @@ impl EvalInput {
 struct EvalSample {
     text_before: String,
     text_after: String,
-    tool_input: StreamingEditFileToolInput,
+    tool_input: EditFileToolInput,
     diff: String,
 }
 
@@ -359,12 +359,10 @@ impl StreamingEditToolTest {
             .collect();
         tools.push(LanguageModelRequestTool {
             name: EditFileTool::NAME.to_string(),
-            description: StreamingEditFileTool::description().to_string(),
-            input_schema: StreamingEditFileTool::input_schema(
-                LanguageModelToolSchemaFormat::JsonSchema,
-            )
-            .to_value(),
-            use_input_streaming: StreamingEditFileTool::supports_input_streaming(),
+            description: EditFileTool::description().to_string(),
+            input_schema: EditFileTool::input_schema(LanguageModelToolSchemaFormat::JsonSchema)
+                .to_value(),
+            use_input_streaming: EditFileTool::supports_input_streaming(),
         });
         tools
     }
@@ -464,7 +462,7 @@ impl StreamingEditToolTest {
         });
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let tool = Arc::new(StreamingEditFileTool::new(
+        let tool = Arc::new(EditFileTool::new(
             self.project.clone(),
             thread.downgrade(),
             action_log,
@@ -488,7 +486,7 @@ impl StreamingEditToolTest {
             }
         };
 
-        let StreamingEditFileToolOutput::Success { new_text, .. } = &output else {
+        let EditFileToolOutput::Success { new_text, .. } = &output else {
             anyhow::bail!("Tool returned error output: {}", output);
         };
 
@@ -517,7 +515,7 @@ impl StreamingEditToolTest {
         &self,
         request: LanguageModelRequest,
         cx: &mut TestAppContext,
-    ) -> Result<StreamingEditFileToolInput> {
+    ) -> Result<EditFileToolInput> {
         let model = self.model.clone();
         let events = cx
             .update(|cx| {
@@ -539,7 +537,7 @@ impl StreamingEditToolTest {
                     if tool_use.is_input_complete
                         && tool_use.name.as_ref() == EditFileTool::NAME =>
                 {
-                    let input: StreamingEditFileToolInput = serde_json::from_value(tool_use.input)
+                    let input: EditFileToolInput = serde_json::from_value(tool_use.input)
                         .context("Failed to parse tool input as StreamingEditFileToolInput")?;
                     return Ok(input);
                 }
@@ -666,7 +664,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: LanguageModelToolResultContent::Text(result.into()),
+        content: vec![LanguageModelToolResultContent::Text(result.into())],
         output: None,
     })
 }
@@ -729,7 +727,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
             #[allow(clippy::disallowed_methods)]
-            smol::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_after + jitter).await;
         } else {
             return response;
         }

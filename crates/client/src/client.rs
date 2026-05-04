@@ -24,6 +24,7 @@ use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::{mpsc, oneshot},
     future::BoxFuture,
+    stream::BoxStream,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
@@ -1789,6 +1790,34 @@ impl ProtoClient for Client {
         self.request_dynamic(envelope, request_type).boxed()
     }
 
+    fn request_stream(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        let client_id = self.id();
+        let response = self.connection_id().map(|connection_id| {
+            self.peer
+                .request_stream_dynamic(connection_id, envelope, request_type)
+        });
+
+        async move {
+            log::debug!(
+                "rpc stream request start. client_id:{}. name:{}",
+                client_id,
+                request_type
+            );
+            let response = response?.await;
+            log::debug!(
+                "rpc stream request opened. client_id:{}. name:{}",
+                client_id,
+                request_type
+            );
+            response
+        }
+        .boxed()
+    }
+
     fn send(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
         log::debug!("rpc send. client_id:{}, name:{}", self.id(), message_type);
         let connection_id = self.connection_id()?;
@@ -2181,8 +2210,8 @@ mod tests {
         });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let (done_tx1, done_rx1) = smol::channel::unbounded();
-        let (done_tx2, done_rx2) = smol::channel::unbounded();
+        let (done_tx1, done_rx1) = async_channel::unbounded();
+        let (done_tx2, done_rx2) = async_channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
             move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, cx| {
                 match entity.read_with(&cx, |entity, _| entity.id) {
@@ -2252,8 +2281,8 @@ mod tests {
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let entity = cx.new(|_| TestEntity::default());
-        let (done_tx1, _done_rx1) = smol::channel::unbounded();
-        let (done_tx2, done_rx2) = smol::channel::unbounded();
+        let (done_tx1, _done_rx1) = async_channel::unbounded();
+        let (done_tx2, done_rx2) = async_channel::unbounded();
         let subscription1 = client.add_message_handler(
             entity.downgrade(),
             move |_, _: TypedEnvelope<proto::Ping>, _| {
@@ -2287,7 +2316,7 @@ mod tests {
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let entity = cx.new(|_| TestEntity::default());
-        let (done_tx, done_rx) = smol::channel::unbounded();
+        let (done_tx, done_rx) = async_channel::unbounded();
         let subscription = client.add_message_handler(
             entity.clone().downgrade(),
             move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::Ping>, mut cx| {

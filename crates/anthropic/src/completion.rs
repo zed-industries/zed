@@ -70,25 +70,38 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
             input: tool_use.input,
             cache_control: None,
         }),
-        MessageContent::ToolResult(tool_result) => Some(RequestContent::ToolResult {
-            tool_use_id: tool_result.tool_use_id.to_string(),
-            is_error: tool_result.is_error,
-            content: match tool_result.content {
-                LanguageModelToolResultContent::Text(text) => {
+        MessageContent::ToolResult(tool_result) => {
+            let content = match tool_result.content.as_slice() {
+                [LanguageModelToolResultContent::Text(text)] => {
                     ToolResultContent::Plain(text.to_string())
                 }
-                LanguageModelToolResultContent::Image(image) => {
-                    ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                        source: ImageSource {
-                            source_type: "base64".to_string(),
-                            media_type: "image/png".to_string(),
-                            data: image.source.to_string(),
-                        },
-                    }])
+                _ => {
+                    let parts = tool_result
+                        .content
+                        .into_iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => ToolResultPart::Text {
+                                text: text.to_string(),
+                            },
+                            LanguageModelToolResultContent::Image(image) => ToolResultPart::Image {
+                                source: ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: image.source.to_string(),
+                                },
+                            },
+                        })
+                        .collect();
+                    ToolResultContent::Multipart(parts)
                 }
-            },
-            cache_control: None,
-        }),
+            };
+            Some(RequestContent::ToolResult {
+                tool_use_id: tool_result.tool_use_id.to_string(),
+                is_error: tool_result.is_error,
+                content,
+                cache_control: None,
+            })
+        }
     }
 }
 

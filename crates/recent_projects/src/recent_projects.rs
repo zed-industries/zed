@@ -220,7 +220,7 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
         })
         .collect();
 
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by_key(|entry| entry.name.to_lowercase());
     entries
 }
 
@@ -1115,6 +1115,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                     return;
                 };
 
+                if secondary && key.host().is_none() && self.window_project_groups.len() >= 2 {
+                    move_project_group_to_new_window(key, window, cx);
+                    cx.emit(DismissEvent);
+                    return;
+                }
+
                 let key = key.clone();
                 let path_list = key.path_list().clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
@@ -1406,8 +1412,40 @@ impl PickerDelegate for RecentProjectsDelegate {
                 };
 
                 let project_group_key = key.clone();
+                let is_local = key.host().is_none();
+                let has_multiple_groups = self.window_project_groups.len() >= 2;
                 let secondary_actions = h_flex()
-                    .gap_1()
+                    .gap_0p5()
+                    .when(is_local && has_multiple_groups, |this| {
+                        this.child(
+                            IconButton::new("move_to_new_window", IconName::ArrowUpRight)
+                                .icon_size(IconSize::Small)
+                                .tooltip({
+                                    let focus_handle = self.focus_handle.clone();
+                                    move |_, cx| {
+                                        Tooltip::for_action_in(
+                                            "Open in New Window",
+                                            &menu::SecondaryConfirm,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click({
+                                    let project_group_key = project_group_key.clone();
+                                    cx.listener(move |_picker, _, window, cx| {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        move_project_group_to_new_window(
+                                            &project_group_key,
+                                            window,
+                                            cx,
+                                        );
+                                        cx.emit(DismissEvent);
+                                    })
+                                }),
+                        )
+                    })
                     .when(!is_active, |this| {
                         this.child(
                             IconButton::new("remove_open_project", IconName::Close)
@@ -1433,12 +1471,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 Some(
                     ListItem::new(ix)
-                        .toggle_state(selected)
                         .inset(true)
+                        .toggle_state(selected)
                         .spacing(ListItemSpacing::Sparse)
                         .child(
                             h_flex()
                                 .id("open_project_info_container")
+                                .w_full()
                                 .gap_2p5()
                                 .when(self.has_any_non_local_projects, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
@@ -1540,7 +1579,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                     })
                     .child(
-                        IconButton::new("open_new_window", IconName::OpenNewWindow)
+                        IconButton::new("open_new_window", IconName::ArrowUpRight)
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 move |_, cx| {
@@ -1616,10 +1655,22 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
         let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
+
         let is_already_open_entry = matches!(
             self.filtered_entries.get(self.selected_index),
             Some(ProjectPickerEntry::OpenFolder { .. } | ProjectPickerEntry::ProjectGroup(_))
         );
+
+        let show_move_to_new_window = match self.filtered_entries.get(self.selected_index) {
+            Some(ProjectPickerEntry::ProjectGroup(hit)) => {
+                self.window_project_groups.len() >= 2
+                    && self
+                        .window_project_groups
+                        .get(hit.candidate_id)
+                        .is_some_and(|key| key.host().is_none())
+            }
+            _ => false,
+        };
 
         if popover_style {
             return Some(
@@ -1753,7 +1804,31 @@ impl PickerDelegate for RecentProjectsDelegate {
                 })
                 .map(|this| {
                     if is_already_open_entry {
-                        this.child(
+                        this.when(show_move_to_new_window, |this| {
+                            this.child({
+                                let window_project_groups = self.window_project_groups.clone();
+                                let selected_index = self.selected_index;
+                                let filtered_entries = self.filtered_entries.clone();
+                                Button::new("move_to_new_window", "New Window")
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &menu::SecondaryConfirm,
+                                        &focus_handle,
+                                        cx,
+                                    ))
+                                    .on_click(move |_, window, cx| {
+                                        let key = match filtered_entries.get(selected_index) {
+                                            Some(ProjectPickerEntry::ProjectGroup(hit)) => {
+                                                window_project_groups.get(hit.candidate_id).cloned()
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some(key) = key {
+                                            move_project_group_to_new_window(&key, window, cx);
+                                        }
+                                    })
+                            })
+                        })
+                        .child(
                             Button::new("activate", "Activate")
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
@@ -1930,6 +2005,22 @@ pub(crate) fn highlights_for_path(
         },
     )
 }
+
+fn move_project_group_to_new_window(key: &ProjectGroupKey, window: &mut Window, cx: &mut App) {
+    if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
+        let key = key.clone();
+        cx.defer(move |cx| {
+            handle
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace
+                        .open_project_group_in_new_window(&key, window, cx)
+                        .detach_and_log_err(cx);
+                })
+                .log_err();
+        });
+    }
+}
+
 fn open_local_project(
     workspace: WeakEntity<Workspace>,
     create_new_window: bool,

@@ -355,6 +355,15 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // How to scroll the target into view when navigating to a definition or reference
+  // (e.g. Go to Definition, Go to Type Definition, Find All References).
+  //
+  // 1. Vertically center the target in the viewport: `center` (default)
+  // 2. Scroll the minimum amount needed to make the target visible: `minimum`
+  // 3. Scroll so the target appears near the top of the viewport: `top`
+  // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
+  //    offscreen: `preserve`
+  "go_to_definition_scroll_strategy": "center",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt
@@ -1143,10 +1152,6 @@
         "tools": {},
       },
     },
-    // Whether to start a new thread in the current local project or in a new Git worktree.
-    //
-    // Default: local_project
-    "new_thread_location": "local_project",
     // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
@@ -2246,7 +2251,16 @@
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "!kanayago", "..."],
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "!kanayago",
+        "!fuzzy-ruby-server",
+        "...",
+      ],
     },
     "Rust": {
       "debuggers": ["CodeLLDB"],
@@ -2342,9 +2356,6 @@
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1",
-    },
-    "vercel": {
-      "api_url": "https://api.v0.dev/v1",
     },
     "vercel_ai_gateway": {
       "api_url": "https://ai-gateway.vercel.sh/v1",

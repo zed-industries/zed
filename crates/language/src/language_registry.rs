@@ -33,7 +33,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{ResultExt, maybe, post_inc};
+use util::{maybe, post_inc};
 
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
@@ -1095,18 +1095,6 @@ impl LanguageRegistry {
         &self,
     ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
-    }
-
-    pub async fn delete_server_container(&self, name: LanguageServerName) {
-        log::info!("deleting server container");
-        let Some(dir) = self.language_server_download_dir(&name) else {
-            return;
-        };
-
-        smol::fs::remove_dir_all(dir)
-            .await
-            .context("server container removal")
-            .log_err();
     }
 }
 

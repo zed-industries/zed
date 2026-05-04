@@ -100,6 +100,10 @@ use zed_actions::{
     OpenZedUrl, Quit,
 };
 
+pub struct CrashHandler(pub Arc<crashes::Client>);
+
+impl gpui::Global for CrashHandler {}
+
 actions!(
     zed,
     [
@@ -515,7 +519,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            crashes::set_gpu_info(specs);
+            if let Some(crash_client) = cx.try_global::<CrashHandler>() {
+                crashes::set_gpu_info(&crash_client.0, specs);
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -573,8 +579,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(active_file_name, window, cx);
-            status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_left_item(merge_conflict_indicator, window, cx);
+            status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);

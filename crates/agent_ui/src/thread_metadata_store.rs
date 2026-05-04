@@ -162,7 +162,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                 .push(entry);
         }
         for entries in per_project.values_mut() {
-            entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
             for entry in entries.iter_mut().take(5) {
                 entry.archived = false;
             }
@@ -469,8 +469,8 @@ pub struct ThreadMetadataStore {
     threads_by_session: HashMap<acp::SessionId, ThreadId>,
     reload_task: Option<Shared<Task<()>>>,
     conversation_subscriptions: HashMap<gpui::EntityId, Subscription>,
-    pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
-    in_flight_archives: HashMap<ThreadId, (Task<()>, smol::channel::Sender<()>)>,
+    pending_thread_ops_tx: async_channel::Sender<DbOperation>,
+    in_flight_archives: HashMap<ThreadId, (Task<()>, async_channel::Sender<()>)>,
     _db_operations_task: Task<()>,
 }
 
@@ -526,7 +526,7 @@ impl ThreadMetadataStore {
     #[cfg(any(test, feature = "test-support"))]
     pub fn init_global(cx: &mut App) {
         let db_name = TestMetadataDbName::global(cx);
-        let db = smol::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
+        let db = gpui::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
         let thread_store = cx.new(|cx| Self::new(ThreadMetadataDb(db), cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
     }
@@ -786,7 +786,7 @@ impl ThreadMetadataStore {
     pub fn archive(
         &mut self,
         thread_id: ThreadId,
-        archive_job: Option<(Task<()>, smol::channel::Sender<()>)>,
+        archive_job: Option<(Task<()>, async_channel::Sender<()>)>,
         cx: &mut Context<Self>,
     ) {
         self.update_archived(thread_id, true, cx);
@@ -1109,7 +1109,7 @@ impl ThreadMetadataStore {
         })
         .detach();
 
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let _db_operations_task = cx.background_spawn({
             let db = db.clone();
             async move {
@@ -1787,7 +1787,7 @@ mod tests {
 
     fn clear_thread_metadata_remote_connection_backfill(cx: &mut TestAppContext) {
         let kvp = cx.update(|cx| KeyValueStore::global(cx));
-        smol::block_on(kvp.delete_kvp("thread-metadata-remote-connection-backfill".to_string()))
+        gpui::block_on(kvp.delete_kvp("thread-metadata-remote-connection-backfill".to_string()))
             .unwrap();
     }
 
@@ -1810,7 +1810,7 @@ mod tests {
         let thread = std::thread::current();
         let test_name = thread.name().unwrap_or("unknown_test");
         let db_name = format!("THREAD_METADATA_DB_{}", test_name);
-        let db = ThreadMetadataDb(smol::block_on(db::open_test_db::<ThreadMetadataDb>(
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
             &db_name,
         )));
 
@@ -2321,7 +2321,7 @@ mod tests {
             .filter(|m| *m.folder_paths() == project_a_paths)
             .collect();
         assert_eq!(project_a_entries.len(), 7);
-        project_a_entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        project_a_entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
 
         for entry in &project_a_entries[..5] {
             assert!(

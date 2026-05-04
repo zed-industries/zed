@@ -545,6 +545,7 @@
       "m": "vim::PushHelixMatch",
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
+      "ctrl-s": "editor::SaveLocation",
       "g q": "vim::PushRewrap",
     },
   },
@@ -1031,6 +1032,31 @@
     "bindings": {
       "enter": "menu::Cancel",
     },
+  },
+  {
+    "context": "GitGraph",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraph && !GitGraphSearchBar",
+    "bindings": {
+      "j": "vim::MenuSelectNext",
+      "k": "vim::MenuSelectPrevious",
+      "ctrl-d": "git_graph::ScrollDown",
+      "ctrl-u": "git_graph::ScrollUp",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst"
+    }
   },
   {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
