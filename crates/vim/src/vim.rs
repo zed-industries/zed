@@ -1961,12 +1961,10 @@ impl Vim {
         }
 
         let newest = editor.read(cx).selections.newest_anchor().clone();
-        let has_pending_completion = editor.read(cx).completion_additional_edits_pending();
         let is_multicursor = editor.read(cx).selections.count() > 1;
         if self.mode == Mode::Insert && self.current_tx.is_some() {
             if let Some(current_anchor) = &self.current_anchor {
                 if current_anchor != &newest
-                    && !has_pending_completion
                     && let Some(tx_id) = self.current_tx.take()
                 {
                     self.update_editor(cx, |_, editor, cx| {
