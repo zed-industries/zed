@@ -3148,7 +3148,6 @@ impl GitPanel {
 
         self.pending_push = Some(task);
         cx.notify();
-<<<<<<< HEAD
     }
 
     /// Updates git's configuration, adding the directory of the current
