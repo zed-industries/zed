@@ -2632,9 +2632,7 @@ fn matching(
     let line_range = line_range.start.to_offset(&map.buffer_snapshot())
         ..line_range.end.to_offset(&map.buffer_snapshot());
 
-    if let Some(preproc_range) =
-        find_matching_c_preprocessor_directive(map, line_range.clone(), offset)
-    {
+    if let Some(preproc_range) = find_matching_c_preprocessor_directive(map, line_range, offset) {
         return preproc_range.to_display_point(map);
     }
 
