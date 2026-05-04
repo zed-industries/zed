@@ -20,7 +20,7 @@ use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::{Fs, RemoveOptions};
 use futures::{
-    FutureExt, StreamExt,
+    FutureExt, SinkExt, Stream, StreamExt,
     channel::{
         mpsc,
         oneshot::{self, Canceled},
@@ -680,6 +680,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
         client.add_entity_request_handler(Self::handle_get_commit_data);
+        client.add_entity_stream_request_handler(Self::handle_search_commits);
     }
 
     pub fn is_local(&self) -> bool {
@@ -2667,6 +2668,63 @@ impl GitStore {
         );
 
         Ok(proto::GetCommitDataResponse { commits })
+    }
+
+    async fn handle_search_commits(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SearchCommits>,
+        mut cx: AsyncApp,
+    ) -> Result<impl Stream<Item = Result<proto::SearchCommitsResponse>>> {
+        const CHUNK_SIZE: usize = 100;
+
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let log_source = log_source_from_proto(
+            envelope
+                .payload
+                .log_source
+                .context("missing search commit log source")?,
+        )?;
+        let search_args = SearchCommitArgs {
+            query: SharedString::from(envelope.payload.query),
+            case_sensitive: envelope.payload.case_sensitive,
+        };
+
+        let (request_tx, request_rx) = async_channel::unbounded();
+        repository_handle.update(&mut cx, |repository, cx| {
+            repository.search_commits(log_source, search_args, request_tx, cx);
+        });
+
+        let (mut response_tx, response_rx) = mpsc::unbounded();
+        cx.background_spawn(async move {
+            let mut shas = Vec::new();
+
+            while let Ok(sha) = request_rx.recv().await {
+                shas.push(sha.to_string());
+
+                if shas.len() >= CHUNK_SIZE {
+                    if response_tx
+                        .send(Ok(proto::SearchCommitsResponse {
+                            shas: mem::take(&mut shas),
+                        }))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if !shas.is_empty() {
+                response_tx
+                    .send(Ok(proto::SearchCommitsResponse { shas }))
+                    .await
+                    .ok();
+            }
+        })
+        .detach();
+
+        Ok(response_rx)
     }
 
     async fn handle_edit_ref(
@@ -4974,6 +5032,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         let repository_state = self.repository_state.clone();
+        let repository_id = self.id;
 
         cx.background_spawn(async move {
             let repo_state = repository_state.await;
@@ -4985,8 +5044,50 @@ impl Repository {
                         .await
                         .log_err();
                 }
-                Ok(RepositoryState::Remote(_)) => {}
-                Err(_) => {}
+
+                Ok(RepositoryState::Remote(RemoteRepositoryState { client, project_id })) => {
+                    let result = client
+                        .request_stream(proto::SearchCommits {
+                            project_id: project_id.to_proto(),
+                            repository_id: repository_id.to_proto(),
+                            log_source: Some(log_source_to_proto(&log_source)),
+                            query: search_args.query.to_string(),
+                            case_sensitive: search_args.case_sensitive,
+                        })
+                        .await;
+
+                    let mut stream = match result {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            log::error!("failed to search commits remotely: {error:?}");
+                            return;
+                        }
+                    };
+
+                    while let Some(response) = stream.next().await {
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(error) => {
+                                log::error!(
+                                    "failed to receive remote commit search results: {error:?}"
+                                );
+                                return;
+                            }
+                        };
+
+                        for sha in &response.shas {
+                            let Ok(oid) = Oid::from_str(sha) else {
+                                return;
+                            };
+                            if request_tx.send(oid).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::error!("failed to get repository state for commit search: {error}");
+                }
             };
         })
         .detach();
@@ -8117,6 +8218,31 @@ fn deserialize_blame_buffer_response(
         .collect::<HashMap<_, _>>();
 
     Some(Blame { entries, messages })
+}
+
+fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
+    proto::GitLogSource {
+        source: Some(match log_source {
+            LogSource::All => proto::git_log_source::Source::All(proto::GitLogSourceAll {}),
+            LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
+            LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
+            LogSource::Path(path) => proto::git_log_source::Source::Path(path.to_proto()),
+        }),
+    }
+}
+
+fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
+    match log_source
+        .source
+        .context("git log source is missing source")?
+    {
+        proto::git_log_source::Source::All(_) => Ok(LogSource::All),
+        proto::git_log_source::Source::Branch(branch) => Ok(LogSource::Branch(branch.into())),
+        proto::git_log_source::Source::Sha(sha) => Ok(LogSource::Sha(Oid::from_str(&sha)?)),
+        proto::git_log_source::Source::Path(path) => {
+            Ok(LogSource::Path(RepoPath::from_proto(&path)?))
+        }
+    }
 }
 
 fn commit_data_to_proto(commit: &CommitData) -> proto::CommitData {

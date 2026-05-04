@@ -75,10 +75,7 @@ impl AgentTool for RestoreFileFromDiskTool {
         let project = self.project.clone();
 
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
 
             // Check for any immediate deny before doing async work.
             for path in &input.paths {
