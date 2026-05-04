@@ -3673,14 +3673,15 @@ impl Workspace {
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
                     let (worktree, project_path) = project_path?;
-                    let (entry_is_directory, worktree_is_local) = worktree.read_with(cx, |worktree, _| {
-                        let entry = if project_path.path.as_unix_str().is_empty() {
-                            worktree.root_entry()
-                        } else {
-                            worktree.entry_for_path(&project_path.path)
-                        };
-                        (entry.map(|entry| entry.is_dir()), worktree.is_local())
-                    });
+                    let (entry_is_directory, worktree_is_local) =
+                        worktree.read_with(cx, |worktree, _| {
+                            let entry = if project_path.path.as_unix_str().is_empty() {
+                                worktree.root_entry()
+                            } else {
+                                worktree.entry_for_path(&project_path.path)
+                            };
+                            (entry.map(|entry| entry.is_dir()), worktree.is_local())
+                        });
                     let is_directory = match entry_is_directory {
                         Some(is_directory) => is_directory,
                         None if worktree_is_local => fs.is_dir(&abs_path).await,
