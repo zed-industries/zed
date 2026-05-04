@@ -7,19 +7,20 @@ use super::{
         hidden_render_sources, pinned_notify_recent_count, render_summary, short_type_name,
         top_dirty_path, top_notify_sources, truncate_chars,
     },
-    state::GpuiDevTools,
+    state::{GpuiDevTools, HudDragState},
 };
 use crate::{
     App, BorderStyle, Bounds, DispatchPhase, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent,
-    Pixels, Point, SharedString, TextAlign, TextRun, Window, WindowId, fill, font, hsla, outline,
-    point, px, quad, rgba, size,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextAlign, TextRun, Window,
+    WindowId, fill, font, hsla, outline, point, px, quad, rgba, size,
 };
 use scheduler::Instant;
 
 pub(super) fn prepaint_window_overlay(window: &mut Window) {
     let window_id = window.handle.window_id();
     let snapshot = overlay_snapshot(window_id);
-    let prepared_overlay = prepaint_overlay(window, snapshot);
+    let hud_origin = GPUI_DEVTOOLS.write().window_state(window_id).hud_origin;
+    let prepared_overlay = prepaint_overlay(window, snapshot, hud_origin);
 
     GPUI_DEVTOOLS
         .write()
@@ -96,6 +97,7 @@ impl OverlayRow {
 pub(super) struct PreparedOverlay {
     snapshot: OverlaySnapshot,
     hud_bounds: Bounds<Pixels>,
+    hud_hitbox: Hitbox,
     row_hitboxes: Vec<OverlayRowHitbox>,
 }
 
@@ -287,8 +289,13 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     rows.into_iter().map(OverlayRow::truncate).collect()
 }
 
-fn prepaint_overlay(window: &mut Window, snapshot: OverlaySnapshot) -> PreparedOverlay {
-    let hud_bounds = hud_bounds(snapshot.rows.len(), window.viewport_size());
+fn prepaint_overlay(
+    window: &mut Window,
+    snapshot: OverlaySnapshot,
+    hud_origin: Option<Point<Pixels>>,
+) -> PreparedOverlay {
+    let hud_bounds = hud_bounds(snapshot.rows.len(), window.viewport_size(), hud_origin);
+    let hud_hitbox = window.insert_hitbox(hud_bounds, HitboxBehavior::Normal);
     let row_hitboxes = snapshot
         .rows
         .iter()
@@ -306,18 +313,46 @@ fn prepaint_overlay(window: &mut Window, snapshot: OverlaySnapshot) -> PreparedO
     PreparedOverlay {
         snapshot,
         hud_bounds,
+        hud_hitbox,
         row_hitboxes,
     }
 }
 
-fn hud_bounds(row_count: usize, viewport_size: crate::Size<Pixels>) -> Bounds<Pixels> {
+fn hud_bounds(
+    row_count: usize,
+    viewport_size: Size<Pixels>,
+    hud_origin: Option<Point<Pixels>>,
+) -> Bounds<Pixels> {
     let margin = px(12.);
     let padding = hud_padding();
     let hud_width = px(460.);
     let line_height = hud_line_height();
     let hud_height = padding * 2. + line_height * (row_count as f32);
-    let origin_x = (viewport_size.width - hud_width - margin).max(margin);
-    Bounds::new(point(origin_x, margin), size(hud_width, hud_height))
+    let hud_size = size(hud_width, hud_height);
+    let default_origin = point(
+        (viewport_size.width - hud_width - margin).max(margin),
+        margin,
+    );
+    let origin = hud_origin.unwrap_or(default_origin);
+    Bounds::new(clamp_hud_origin(origin, viewport_size, hud_size), hud_size)
+}
+
+fn clamp_hud_origin(
+    origin: Point<Pixels>,
+    viewport_size: Size<Pixels>,
+    hud_size: Size<Pixels>,
+) -> Point<Pixels> {
+    let visible_handle_size = px(28.);
+    let min = point(
+        visible_handle_size - hud_size.width,
+        visible_handle_size - hud_size.height,
+    );
+    let max = point(
+        viewport_size.width - visible_handle_size,
+        viewport_size.height - visible_handle_size,
+    );
+    let max = max.max(&min);
+    origin.clamp(&min, &max)
 }
 
 fn hud_button_bounds(hud_bounds: Bounds<Pixels>, row_index: usize) -> Bounds<Pixels> {
@@ -378,6 +413,8 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
         paint_text_line(window, cx, origin, &row.text, line_height);
     }
 
+    register_drag_handlers(window, prepared_overlay);
+
     for row_hitbox in prepared_overlay.row_hitboxes.iter().cloned() {
         let hitbox = row_hitbox.hitbox;
         let action = row_hitbox.action;
@@ -392,6 +429,99 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
                 cx.stop_propagation();
             }
         });
+    }
+}
+
+fn register_drag_handlers(window: &mut Window, prepared_overlay: &PreparedOverlay) {
+    let hitbox = prepared_overlay.hud_hitbox.clone();
+    let hud_size = prepared_overlay.hud_bounds.size;
+
+    window.on_mouse_event({
+        let hitbox = hitbox.clone();
+        move |event: &MouseDownEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble
+                && event.button == MouseButton::Left
+                && hitbox.is_hovered(window)
+            {
+                let window_id = window.handle.window_id();
+                let cursor_offset = event.position - hitbox.origin;
+                GPUI_DEVTOOLS.write().window_state(window_id).hud_drag =
+                    Some(HudDragState { cursor_offset });
+                window.capture_pointer(hitbox.id);
+                window.prevent_default();
+                window.refresh();
+                cx.stop_propagation();
+            }
+        }
+    });
+
+    window.on_mouse_event({
+        let hitbox = hitbox.clone();
+        move |event: &MouseMoveEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                let window_id = window.handle.window_id();
+                let handled = {
+                    let mut devtools = GPUI_DEVTOOLS.write();
+                    let window_state = devtools.window_state(window_id);
+                    if let Some(drag) = window_state.hud_drag {
+                        if !event.dragging() {
+                            window_state.hud_drag = None;
+                            false
+                        } else {
+                            let origin = event.position - drag.cursor_offset;
+                            window_state.hud_origin =
+                                Some(clamp_hud_origin(origin, window.viewport_size(), hud_size));
+                            true
+                        }
+                    } else {
+                        false
+                    }
+                };
+
+                if handled {
+                    window.refresh();
+                    cx.stop_propagation();
+                } else if !event.dragging() {
+                    window.release_pointer();
+                }
+            }
+        }
+    });
+
+    window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+        if phase == DispatchPhase::Bubble
+            && event.button == MouseButton::Left
+            && hitbox.is_hovered(window)
+        {
+            let window_id = window.handle.window_id();
+            GPUI_DEVTOOLS.write().window_state(window_id).hud_drag = None;
+            window.release_pointer();
+            window.refresh();
+            cx.stop_propagation();
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_hud_origin_keeps_a_handle_visible() {
+        let viewport_size = size(px(100.), px(80.));
+        let hud_size = size(px(460.), px(140.));
+
+        assert_eq!(
+            clamp_hud_origin(point(px(-1000.), px(1000.)), viewport_size, hud_size),
+            point(px(28.) - hud_size.width, viewport_size.height - px(28.))
+        );
+    }
+
+    #[test]
+    fn dragged_hud_bounds_use_the_requested_origin() {
+        let bounds = hud_bounds(4, size(px(800.), px(600.)), Some(point(px(120.), px(140.))));
+
+        assert_eq!(bounds.origin, point(px(120.), px(140.)));
     }
 }
 

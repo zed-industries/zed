@@ -6,7 +6,7 @@ use super::{
     ring_buffer::RingBuffer,
     sources::{NotifySourceKey, RenderSourceKey},
 };
-use crate::{Bounds, EntityId, Pixels, WindowId};
+use crate::{Bounds, EntityId, Pixels, Point, WindowId};
 use collections::{FxHashMap, FxHashSet};
 use scheduler::Instant;
 
@@ -51,6 +51,8 @@ pub(super) struct WindowDevToolsState {
     pub(super) view_bounds: FxHashMap<EntityId, Bounds<Pixels>>,
     pub(super) active_flashes: FxHashMap<EntityId, FlashState>,
     pub(super) prepared_overlay: Option<PreparedOverlay>,
+    pub(super) hud_origin: Option<Point<Pixels>>,
+    pub(super) hud_drag: Option<HudDragState>,
 }
 
 impl WindowDevToolsState {
@@ -60,6 +62,8 @@ impl WindowDevToolsState {
             view_bounds: FxHashMap::default(),
             active_flashes: FxHashMap::default(),
             prepared_overlay: None,
+            hud_origin: None,
+            hud_drag: None,
         }
     }
 }
@@ -68,4 +72,9 @@ impl WindowDevToolsState {
 pub(super) struct FlashState {
     pub(super) timestamp: Instant,
     pub(super) source: RenderSourceKey,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct HudDragState {
+    pub(super) cursor_offset: Point<Pixels>,
 }
