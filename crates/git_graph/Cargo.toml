@@ -16,22 +16,27 @@ default = []
 test-support = [
     "project/test-support",
     "gpui/test-support",
+    "remote_connection/test-support",
 ]
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 collections.workspace = true
 db.workspace = true
-feature_flags.workspace = true
+editor.workspace = true
 git.workspace = true
 git_ui.workspace = true
 gpui.workspace = true
 language.workspace = true
 menu.workspace = true
 project.workspace = true
+project_panel.workspace = true
+search.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 time.workspace = true
 ui.workspace = true
 workspace.workspace = true
@@ -41,8 +46,10 @@ db = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+language_model.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+remote_connection = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

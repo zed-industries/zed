@@ -410,6 +410,17 @@ impl Platform for WindowsPlatform {
 
         self.inner
             .with_callback(|callbacks| &callbacks.quit, |callback| callback());
+
+        // Bypass the CRT exit logic, which runs atexit handlers before calling ExitProcess.
+        // aws-lc registers an atexit handler that intentionally acquires a lock without releasing it.
+        // aws-lc also has thread_local objects which acquire this lock in their destructor.
+        // Destructors for thread_locals run under the loader lock, so there is a race condition
+        // where, if a thread exits after atexit handlers have run, the TLS destructors will block
+        // indefinitely on this lock while holding the loader lock. Since ExitProcess also requires
+        // the loader lock, process teardown will deadlock.
+        unsafe {
+            windows::Win32::System::Threading::ExitProcess(0);
+        }
     }
 
     fn quit(&self) {
@@ -1326,7 +1337,15 @@ unsafe extern "system" fn window_procedure(
     }
     let inner = unsafe { &*ptr };
     let result = if let Some(inner) = inner.upgrade() {
-        inner.handle_msg(hwnd, msg, wparam, lparam)
+        if cfg!(debug_assertions) {
+            let inner = std::panic::AssertUnwindSafe(inner);
+            match std::panic::catch_unwind(|| { inner }.handle_msg(hwnd, msg, wparam, lparam)) {
+                Ok(result) => result,
+                Err(_) => std::process::abort(),
+            }
+        } else {
+            inner.handle_msg(hwnd, msg, wparam, lparam)
+        }
     } else {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };

@@ -8,9 +8,10 @@ pub const CHANNEL_COUNT: ChannelCount = nz!(2);
 
 mod audio_settings;
 pub use audio_settings::AudioSettings;
+pub use audio_settings::LIVE_SETTINGS;
 
 mod audio_pipeline;
-pub use audio_pipeline::{Audio, VoipParts};
+pub use audio_pipeline::Audio;
 pub use audio_pipeline::{AudioDeviceInfo, AvailableAudioDevices};
 pub use audio_pipeline::{ensure_devices_initialized, resolve_device};
 // TODO(audio) replace with input test functionality in the audio crate

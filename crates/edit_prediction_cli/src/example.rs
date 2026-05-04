@@ -64,7 +64,8 @@ pub struct ExampleState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrompt {
     pub input: String,
-    pub expected_output: String,
+    #[serde(default)]
+    pub expected_output: Option<String>,
     pub rejected_output: Option<String>, // For DPO
     #[serde(default)]
     pub prefill: Option<String>,
@@ -82,6 +83,10 @@ pub struct ExamplePrediction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub provider: PredictionProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cumulative_logprob: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_logprob: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -143,30 +148,7 @@ where
     Ok(opt.unwrap_or_default())
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExampleScore {
-    pub delta_chr_f: f32,
-    pub braces_disbalance: usize,
-    #[serde(default)]
-    pub exact_lines_tp: usize,
-    #[serde(default)]
-    pub exact_lines_fp: usize,
-    #[serde(default)]
-    pub exact_lines_fn: usize,
-    #[serde(default)]
-    pub reversal_ratio: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor_distance: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor_exact_match: Option<bool>,
-    pub wrong_editable_region: Option<bool>,
-    #[serde(default)]
-    pub has_isolated_whitespace_changes: bool,
-    #[serde(default)]
-    pub inserted_tokens: usize,
-    #[serde(default)]
-    pub deleted_tokens: usize,
-}
+pub type ExampleScore = edit_prediction_metrics::PredictionScore;
 
 impl Example {
     pub fn repo_name(&self) -> Result<RepoName<'_>> {

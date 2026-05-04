@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use chrono::{Local, Utc};
 use gpui::{App, SharedString, Task};
 use schemars::JsonSchema;
@@ -13,8 +13,10 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 #[schemars(inline)]
 pub enum Timezone {
     /// Use UTC for the datetime.
+    #[serde(alias = "UTC", alias = "Utc")]
     Utc,
     /// Use local time for the datetime.
+    #[serde(alias = "LOCAL", alias = "Local")]
     Local,
 }
 
@@ -53,10 +55,7 @@ impl AgentTool for NowTool {
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         cx.spawn(async move |_cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let now = match input.timezone {
                 Timezone::Utc => Utc::now().to_rfc3339(),
                 Timezone::Local => Local::now().to_rfc3339(),

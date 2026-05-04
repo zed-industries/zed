@@ -17,6 +17,8 @@ default = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
+collections.workspace = true
 component.workspace = true
 db.workspace = true
 documented.workspace = true
@@ -32,6 +34,7 @@ serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 vim_mode_setting.workspace = true

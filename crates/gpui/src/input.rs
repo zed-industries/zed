@@ -187,4 +187,9 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         self.view
             .update(cx, |view, cx| view.accepts_text_input(window, cx))
     }
+
+    fn prefers_ime_for_printable_keys(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.view
+            .update(cx, |view, cx| view.accepts_text_input(window, cx))
+    }
 }

@@ -26,8 +26,12 @@ use super::{latest, since_v0_6_0};
 pub const MIN_VERSION: Version = Version::new(0, 1, 0);
 
 wasmtime::component::bindgen!({
-    async: true,
-    trappable_imports: true,
+    imports: {
+        default: async | trappable,
+    },
+    exports: {
+        default: async,
+    },
     path: "../extension_api/wit/since_v0.1.0",
     with: {
          "worktree": ExtensionWorktree,
@@ -52,7 +56,11 @@ pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBo
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
+    })
 }
 
 impl From<Command> for latest::Command {
@@ -523,7 +531,7 @@ impl ExtensionImports for WasmState {
                 "download failed with status {}",
                 response.status()
             );
-            let body = BufReader::new(response.body_mut());
+            let mut body = BufReader::new(response.body_mut());
 
             match file_type {
                 DownloadedFileType::Uncompressed => {
@@ -542,11 +550,14 @@ impl ExtensionImports for WasmState {
                         .await?;
                 }
                 DownloadedFileType::GzipTar => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
+                    let mut tar_gz_bytes = Vec::new();
+                    body.read_to_end(&mut tar_gz_bytes).await?;
+                    let decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+                    futures::pin_mut!(decompressed_bytes);
                     self.host
                         .fs
-                        .extract_tar_file(&destination_path, Archive::new(body))
+                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
                         .await?;
                 }
                 DownloadedFileType::Zip => {

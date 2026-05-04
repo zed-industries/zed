@@ -1,26 +1,28 @@
-use std::sync::{Arc, Mutex};
-
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
+
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
-    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
+use parking_lot::Mutex;
 use project::{
     context_server_store::{
-        ContextServerStatus, ContextServerStore, registry::ContextServerDescriptorRegistry,
+        ContextServerStatus, ContextServerStore, ServerStatusChangedEvent,
+        registry::ContextServerDescriptorRegistry,
     },
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
 use serde::Deserialize;
 use settings::{Settings as _, update_settings_file};
-use theme::ThemeSettings;
+use std::sync::Arc;
+use theme_settings::ThemeSettings;
 use ui::{
     CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
     WithScrollbar, prelude::*,
@@ -237,6 +239,8 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
 
     format!(
         r#"{{
+  /// Configure an MCP server that runs locally via stdin/stdout
+  ///
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
@@ -280,6 +284,8 @@ fn context_server_http_input(
 
     format!(
         r#"{{
+  /// Configure an MCP server that you connect to over HTTP
+  ///
   /// The name of your remote MCP server
   "{name}": {{
     /// The URL of the remote MCP server
@@ -342,6 +348,8 @@ fn resolve_context_server_extension(
 enum State {
     Idle,
     Waiting,
+    AuthRequired { server_id: ContextServerId },
+    Authenticating { _server_id: ContextServerId },
     Error(SharedString),
 }
 
@@ -352,6 +360,7 @@ pub struct ConfigureContextServerModal {
     state: State,
     original_server_id: Option<ContextServerId>,
     scroll_handle: ScrollHandle,
+    _auth_subscription: Option<Subscription>,
 }
 
 impl ConfigureContextServerModal {
@@ -475,6 +484,7 @@ impl ConfigureContextServerModal {
                         cx,
                     ),
                     scroll_handle: ScrollHandle::new(),
+                    _auth_subscription: None,
                 })
             })
         })
@@ -486,6 +496,13 @@ impl ConfigureContextServerModal {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
+        if matches!(
+            self.state,
+            State::Waiting | State::AuthRequired { .. } | State::Authenticating { .. }
+        ) {
+            return;
+        }
+
         self.state = State::Idle;
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -515,14 +532,19 @@ impl ConfigureContextServerModal {
             async move |this, cx| {
                 let result = wait_for_context_server_task.await;
                 this.update(cx, |this, cx| match result {
-                    Ok(_) => {
+                    Ok(ContextServerStatus::Running) => {
                         this.state = State::Idle;
                         this.show_configured_context_server_toast(id, cx);
                         cx.emit(DismissEvent);
                     }
+                    Ok(ContextServerStatus::AuthRequired) => {
+                        this.state = State::AuthRequired { server_id: id };
+                        cx.notify();
+                    }
                     Err(err) => {
                         this.set_error(err, cx);
                     }
+                    Ok(_) => {}
                 })
             }
         })
@@ -558,6 +580,49 @@ impl ConfigureContextServerModal {
         cx.emit(DismissEvent);
     }
 
+    fn authenticate(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
+        self.context_server_store.update(cx, |store, cx| {
+            store.authenticate_server(&server_id, cx).log_err();
+        });
+
+        self.state = State::Authenticating {
+            _server_id: server_id.clone(),
+        };
+
+        self._auth_subscription = Some(cx.subscribe(
+            &self.context_server_store,
+            move |this, _, event: &ServerStatusChangedEvent, cx| {
+                if event.server_id != server_id {
+                    return;
+                }
+                match &event.status {
+                    ContextServerStatus::Running => {
+                        this._auth_subscription = None;
+                        this.state = State::Idle;
+                        this.show_configured_context_server_toast(event.server_id.clone(), cx);
+                        cx.emit(DismissEvent);
+                    }
+                    ContextServerStatus::AuthRequired => {
+                        this._auth_subscription = None;
+                        this.state = State::AuthRequired {
+                            server_id: event.server_id.clone(),
+                        };
+                        cx.notify();
+                    }
+                    ContextServerStatus::Error(error) => {
+                        this._auth_subscription = None;
+                        this.set_error(error.clone(), cx);
+                    }
+                    ContextServerStatus::Authenticating
+                    | ContextServerStatus::Starting
+                    | ContextServerStatus::Stopped => {}
+                }
+            },
+        ));
+
+        cx.notify();
+    }
+
     fn show_configured_context_server_toast(&self, id: ContextServerId, cx: &mut App) {
         self.workspace
             .update(cx, {
@@ -566,8 +631,12 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
-                                .action("Dismiss", |_, _| {})
+                            this.icon(
+                                Icon::new(IconName::ToolHammer)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .action("Dismiss", |_, _| {})
                         },
                     );
 
@@ -615,7 +684,8 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
+        const MODAL_DESCRIPTION: &str =
+            "Check the server docs for required arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
             installation_instructions: Some(installation_instructions),
@@ -635,6 +705,67 @@ impl ConfigureContextServerModal {
                 .color(Color::Muted)
                 .into_any_element()
         }
+    }
+
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let is_http = match &self.source {
+            ConfigurationSource::New { is_http, .. } => *is_http,
+            _ => return None,
+        };
+
+        let tab = |label: &'static str, active: bool| {
+            div()
+                .id(label)
+                .cursor_pointer()
+                .p_1()
+                .text_sm()
+                .border_b_1()
+                .when(active, |this| {
+                    this.border_color(cx.theme().colors().border_focused)
+                })
+                .when(!active, |this| {
+                    this.border_color(gpui::transparent_black())
+                        .text_color(cx.theme().colors().text_muted)
+                        .hover(|s| s.text_color(cx.theme().colors().text))
+                })
+                .child(label)
+        };
+
+        Some(
+            h_flex()
+                .pt_1()
+                .mb_2p5()
+                .gap_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border.opacity(0.5))
+                .child(
+                    tab("Local", !is_http).on_click(cx.listener(|this, _, window, cx| {
+                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
+                            if *is_http {
+                                *is_http = false;
+                                let new_text = context_server_input(None);
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(new_text, window, cx);
+                                });
+                            }
+                        }
+                    })),
+                )
+                .child(
+                    tab("Remote", is_http).on_click(cx.listener(|this, _, window, cx| {
+                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
+                            if !*is_http {
+                                *is_http = true;
+                                let new_text = context_server_http_input(None);
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(new_text, window, cx);
+                                });
+                            }
+                        }
+                    })),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_modal_content(&self, cx: &App) -> AnyElement {
@@ -682,7 +813,10 @@ impl ConfigureContextServerModal {
 
     fn render_modal_footer(&self, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
-        let is_connecting = matches!(self.state, State::Waiting);
+        let is_busy = matches!(
+            self.state,
+            State::Waiting | State::AuthRequired { .. } | State::Authenticating { .. }
+        );
 
         ModalFooter::new()
             .start_slot::<Button>(
@@ -713,36 +847,6 @@ impl ConfigureContextServerModal {
                                 let repository_url = repository_url.clone();
                                 move |_, _, cx| cx.open_url(&repository_url)
                             }),
-                    )
-                } else if let ConfigurationSource::New { is_http, .. } = &self.source {
-                    let label = if *is_http {
-                        "Configure Local"
-                    } else {
-                        "Configure Remote"
-                    };
-                    let tooltip = if *is_http {
-                        "Configure an MCP server that runs on stdin/stdout."
-                    } else {
-                        "Configure an MCP server that you connect to over HTTP"
-                    };
-
-                    Some(
-                        Button::new("toggle-kind", label)
-                            .tooltip(Tooltip::text(tooltip))
-                            .on_click(cx.listener(|this, _, window, cx| match &mut this.source {
-                                ConfigurationSource::New { editor, is_http } => {
-                                    *is_http = !*is_http;
-                                    let new_text = if *is_http {
-                                        context_server_http_input(None)
-                                    } else {
-                                        context_server_input(None)
-                                    };
-                                    editor.update(cx, |editor, cx| {
-                                        editor.set_text(new_text, window, cx);
-                                    })
-                                }
-                                _ => {}
-                            })),
                     )
                 } else {
                     None
@@ -777,7 +881,7 @@ impl ConfigureContextServerModal {
                                 "Configure Server"
                             },
                         )
-                        .disabled(is_connecting)
+                        .disabled(is_busy)
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -791,29 +895,62 @@ impl ConfigureContextServerModal {
             )
     }
 
-    fn render_waiting_for_context_server() -> Div {
+    fn render_loading(&self, label: impl Into<SharedString>) -> Div {
         h_flex()
-            .gap_2()
+            .h_8()
+            .gap_1p5()
+            .justify_center()
             .child(
-                Icon::new(IconName::ArrowCircle)
+                Icon::new(IconName::LoadCircle)
                     .size(IconSize::XSmall)
-                    .color(Color::Info)
-                    .with_rotate_animation(2)
-                    .into_any_element(),
+                    .color(Color::Muted)
+                    .with_rotate_animation(3),
+            )
+            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+    }
+
+    fn render_auth_required(&self, server_id: &ContextServerId, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .h_8()
+            .min_w_0()
+            .w_full()
+            .gap_2()
+            .justify_center()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new("Authenticate to connect this server")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
             .child(
-                Label::new("Waiting for Context Server")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                Button::new("authenticate-server", "Authenticate")
+                    .style(ButtonStyle::Outlined)
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let server_id = server_id.clone();
+                        cx.listener(move |this, _event, _window, cx| {
+                            this.authenticate(server_id.clone(), cx);
+                        })
+                    }),
             )
     }
 
     fn render_modal_error(error: SharedString) -> Div {
         h_flex()
-            .gap_2()
+            .h_8()
+            .gap_1p5()
+            .justify_center()
             .child(
                 Icon::new(IconName::Warning)
-                    .size(IconSize::XSmall)
+                    .size(IconSize::Small)
                     .color(Color::Warning),
             )
             .child(
@@ -828,7 +965,7 @@ impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .elevation_3(cx)
-            .w(rems(34.))
+            .w(rems(40.))
             .key_context("ConfigureContextServerModal")
             .on_action(
                 cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
@@ -855,11 +992,18 @@ impl Render for ConfigureContextServerModal {
                                         .overflow_y_scroll()
                                         .track_scroll(&self.scroll_handle)
                                         .child(self.render_modal_description(window, cx))
+                                        .children(self.render_tab_bar(cx))
                                         .child(self.render_modal_content(cx))
                                         .child(match &self.state {
                                             State::Idle => div(),
                                             State::Waiting => {
-                                                Self::render_waiting_for_context_server()
+                                                self.render_loading("Connecting Server…")
+                                            }
+                                            State::AuthRequired { server_id } => {
+                                                self.render_auth_required(&server_id.clone(), cx)
+                                            }
+                                            State::Authenticating { .. } => {
+                                                self.render_loading("Authenticating…")
                                             }
                                             State::Error(error) => {
                                                 Self::render_modal_error(error.clone())
@@ -878,7 +1022,7 @@ fn wait_for_context_server(
     context_server_store: &Entity<ContextServerStore>,
     context_server_id: ContextServerId,
     cx: &mut App,
-) -> Task<Result<(), Arc<str>>> {
+) -> Task<Result<ContextServerStatus, Arc<str>>> {
     use std::time::Duration;
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -888,31 +1032,29 @@ fn wait_for_context_server(
 
     let context_server_id_for_timeout = context_server_id.clone();
     let subscription = cx.subscribe(context_server_store, move |_, event, _cx| {
-        let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
+        let ServerStatusChangedEvent { server_id, status } = event;
+
+        if server_id != &context_server_id {
+            return;
+        }
 
         match status {
-            ContextServerStatus::Running => {
-                if server_id == &context_server_id
-                    && let Some(tx) = tx.lock().unwrap().take()
-                {
-                    let _ = tx.send(Ok(()));
+            ContextServerStatus::Running | ContextServerStatus::AuthRequired => {
+                if let Some(tx) = tx.lock().take() {
+                    let _ = tx.send(Ok(status.clone()));
                 }
             }
             ContextServerStatus::Stopped => {
-                if server_id == &context_server_id
-                    && let Some(tx) = tx.lock().unwrap().take()
-                {
+                if let Some(tx) = tx.lock().take() {
                     let _ = tx.send(Err("Context server stopped running".into()));
                 }
             }
             ContextServerStatus::Error(error) => {
-                if server_id == &context_server_id
-                    && let Some(tx) = tx.lock().unwrap().take()
-                {
+                if let Some(tx) = tx.lock().take() {
                     let _ = tx.send(Err(error.clone()));
                 }
             }
-            _ => {}
+            ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}
         }
     });
 

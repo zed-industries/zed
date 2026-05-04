@@ -4,13 +4,14 @@ use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
-    DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode,
-    MinimapThumb, MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine,
-    ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    CodeLens, CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
+    DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback,
+    GoToDefinitionScrollStrategy, HideMouseMode, MinimapThumb, MinimapThumbBorder,
+    MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap,
+    SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
-use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
+use ui::scrollbars::ShowScrollbar;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
@@ -24,6 +25,8 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: DelayMs,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: DelayMs,
+    pub hover_popover_sticky: bool,
+    pub hover_popover_hiding_delay: DelayMs,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -33,6 +36,7 @@ pub struct EditorSettings {
     pub autoscroll_on_clicks: bool,
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
+    pub mouse_wheel_zoom: bool,
     pub fast_scroll_sensitivity: f32,
     pub sticky_scroll: StickyScroll,
     pub relative_line_numbers: RelativeLineNumbers,
@@ -49,17 +53,20 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
+    pub go_to_definition_scroll_strategy: GoToDefinitionScrollStrategy,
     pub jupyter: Jupyter,
     pub hide_mouse: Option<HideMouseMode>,
     pub snippet_sort_order: SnippetSortOrder,
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: DragAndDropSelection,
+    pub code_lens: CodeLens,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
     pub completion_detail_alignment: CompletionDetailAlignment,
     pub diff_view_style: DiffViewStyle,
+    pub minimum_split_diff_width: f32,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -129,6 +136,7 @@ pub struct Gutter {
     pub line_numbers: bool,
     pub runnables: bool,
     pub breakpoints: bool,
+    pub bookmarks: bool,
     pub folds: bool,
 }
 
@@ -183,12 +191,6 @@ impl EditorSettings {
     }
 }
 
-impl ScrollbarVisibility for EditorSettings {
-    fn visibility(&self, _cx: &App) -> ShowScrollbar {
-        self.scrollbar.show
-    }
-}
-
 impl Settings for EditorSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let editor = content.editor.clone();
@@ -209,6 +211,8 @@ impl Settings for EditorSettings {
             lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap(),
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
             hover_popover_delay: editor.hover_popover_delay.unwrap(),
+            hover_popover_sticky: editor.hover_popover_sticky.unwrap(),
+            hover_popover_hiding_delay: editor.hover_popover_hiding_delay.unwrap(),
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
@@ -217,7 +221,7 @@ impl Settings for EditorSettings {
                 code_actions: toolbar.code_actions.unwrap(),
             },
             scrollbar: Scrollbar {
-                show: scrollbar.show.map(Into::into).unwrap(),
+                show: scrollbar.show.map(ui_scrollbar_settings_from_raw).unwrap(),
                 git_diff: scrollbar.git_diff.unwrap()
                     && content
                         .git
@@ -248,6 +252,7 @@ impl Settings for EditorSettings {
                 min_line_number_digits: gutter.min_line_number_digits.unwrap(),
                 line_numbers: gutter.line_numbers.unwrap(),
                 runnables: gutter.runnables.unwrap(),
+                bookmarks: gutter.bookmarks.unwrap(),
                 breakpoints: gutter.breakpoints.unwrap(),
                 folds: gutter.folds.unwrap(),
             },
@@ -256,6 +261,7 @@ impl Settings for EditorSettings {
             autoscroll_on_clicks: editor.autoscroll_on_clicks.unwrap(),
             horizontal_scroll_margin: editor.horizontal_scroll_margin.unwrap(),
             scroll_sensitivity: editor.scroll_sensitivity.unwrap(),
+            mouse_wheel_zoom: editor.mouse_wheel_zoom.unwrap(),
             fast_scroll_sensitivity: editor.fast_scroll_sensitivity.unwrap(),
             sticky_scroll: StickyScroll {
                 enabled: sticky_scroll.enabled.unwrap(),
@@ -281,6 +287,7 @@ impl Settings for EditorSettings {
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
+            go_to_definition_scroll_strategy: editor.go_to_definition_scroll_strategy.unwrap(),
             jupyter: Jupyter {
                 enabled: editor.jupyter.unwrap().enabled.unwrap(),
             },
@@ -292,11 +299,36 @@ impl Settings for EditorSettings {
                 enabled: drag_and_drop_selection.enabled.unwrap(),
                 delay: drag_and_drop_selection.delay.unwrap(),
             },
+            code_lens: editor.code_lens.unwrap(),
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
-            completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
+            completion_menu_scrollbar: editor
+                .completion_menu_scrollbar
+                .map(ui_scrollbar_settings_from_raw)
+                .unwrap(),
             completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
+            minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
         }
+    }
+}
+
+#[derive(Default)]
+pub struct EditorSettingsScrollbarProxy;
+
+impl ui::scrollbars::ScrollbarVisibility for EditorSettingsScrollbarProxy {
+    fn visibility(&self, cx: &App) -> ShowScrollbar {
+        EditorSettings::get_global(cx).scrollbar.show
+    }
+}
+
+pub fn ui_scrollbar_settings_from_raw(
+    value: settings::ShowScrollbar,
+) -> ui::scrollbars::ShowScrollbar {
+    match value {
+        settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
+        settings::ShowScrollbar::System => ShowScrollbar::System,
+        settings::ShowScrollbar::Always => ShowScrollbar::Always,
+        settings::ShowScrollbar::Never => ShowScrollbar::Never,
     }
 }
