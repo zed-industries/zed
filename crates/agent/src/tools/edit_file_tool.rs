@@ -1,13 +1,14 @@
 mod reindent;
 mod streaming_fuzzy_matcher;
+mod streaming_parser;
 
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
-use super::tool_edit_parser::{EditEvent, ToolEditParser, WriteEvent};
 use crate::ToolInputPayload;
 use crate::tools::edit_file_tool::{
     reindent::{Reindenter, compute_indent_delta},
     streaming_fuzzy_matcher::StreamingFuzzyMatcher,
+    streaming_parser::{EditEvent, StreamingParser, WriteEvent},
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput};
 use acp_thread::Diff;
@@ -598,7 +599,7 @@ pub struct EditSession {
     buffer: Entity<Buffer>,
     old_text: Arc<String>,
     diff: Entity<Diff>,
-    parser: ToolEditParser,
+    parser: StreamingParser,
     pipeline: Pipeline,
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
 }
@@ -941,7 +942,7 @@ impl EditSession {
             buffer,
             old_text,
             diff,
-            parser: ToolEditParser::default(),
+            parser: StreamingParser::default(),
             pipeline: Pipeline::new(mode, file_changed_since_last_read),
             _finalize_diff_guard: finalize_diff_guard,
         })

@@ -18,7 +18,6 @@ mod restore_file_from_disk_tool;
 mod save_file_tool;
 mod spawn_agent_tool;
 mod terminal_tool;
-mod tool_edit_parser;
 mod tool_permissions;
 mod update_plan_tool;
 mod web_search_tool;

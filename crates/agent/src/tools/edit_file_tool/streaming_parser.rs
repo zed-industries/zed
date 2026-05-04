@@ -2,7 +2,7 @@ use smallvec::SmallVec;
 
 use crate::{Edit, PartialEdit};
 
-/// Events emitted by `ToolEditParser` for edit-mode input.
+/// Events emitted by `StreamingParser` for edit-mode input.
 #[derive(Debug, PartialEq, Eq)]
 pub enum EditEvent {
     /// A chunk of `old_text` for an edit operation.
@@ -19,7 +19,7 @@ pub enum EditEvent {
     },
 }
 
-/// Events emitted by `ToolEditParser` for write-mode input.
+/// Events emitted by `StreamingParser` for write-mode input.
 #[derive(Debug, PartialEq, Eq)]
 pub enum WriteEvent {
     /// A chunk of content for write/overwrite mode.
@@ -51,12 +51,12 @@ struct EditStreamState {
 /// next partial confirms or corrects it.  This avoids feeding corrupted bytes
 /// to downstream consumers.
 #[derive(Default, Debug)]
-pub struct ToolEditParser {
+pub struct StreamingParser {
     edit_states: Vec<EditStreamState>,
     content_emitted_len: usize,
 }
 
-impl ToolEditParser {
+impl StreamingParser {
     /// Push a new set of partial edits (from edit mode) and return any events.
     ///
     /// Each call should pass the *entire current* edits array as seen in the
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_single_edit_streamed_incrementally() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // old_text arrives in chunks: "hell" → "hello w" → "hello world"
         let events = parser.push_edits(&[PartialEdit {
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_done_chunks_strip_trailing_newline() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.finalize_edits(&[Edit {
             old_text: "before\n".into(),
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_partial_edit_chunks_hold_back_trailing_newline() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("before\n".into()),
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_multiple_edits_sequential() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // First edit streams in
         let events = parser.push_edits(&[PartialEdit {
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_content_streamed_incrementally() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.push_content("hello");
         assert_eq!(
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn test_finalize_content_with_remaining() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         parser.push_content("partial");
         let events = parser.finalize_content("partial content here");
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_content_trailing_backslash_held_back() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // Partial JSON fixer turns incomplete \n into \\ (literal backslash).
         // The trailing backslash is held back.
@@ -599,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_content_finalize_with_trailing_backslash() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // Stream a partial with a fixer-corrupted trailing backslash.
         // The backslash is held back.
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_no_partials_direct_finalize() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.finalize_edits(&[Edit {
             old_text: "old".into(),
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn test_no_partials_direct_finalize_multiple() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.finalize_edits(&[
             Edit {
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_old_text_no_growth() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("same".into()),
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn test_old_text_none_then_appears() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // Edit exists but old_text is None (field hasn't arrived yet)
         let events = parser.push_edits(&[PartialEdit {
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_empty_old_text_with_new_text() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // old_text is empty, new_text appears immediately
         let events = parser.push_edits(&[PartialEdit {
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn test_three_edits_streamed() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // Stream first edit
         parser.push_edits(&[PartialEdit {
@@ -845,7 +845,7 @@ mod tests {
 
     #[test]
     fn test_finalize_with_unseen_old_text() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // Only saw partial old_text, never saw new_text in partials
         parser.push_edits(&[PartialEdit {
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_finalize_with_partially_seen_new_text() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         parser.push_edits(&[PartialEdit {
             old_text: Some("old".into()),
@@ -899,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_repeated_pushes_with_no_change() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("stable".into()),
@@ -924,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_old_text_trailing_backslash_held_back() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         // Partial-json-fixer produces a literal backslash when the JSON stream
         // cuts in the middle of an escape sequence like \n. The parser holds
@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn test_multiline_old_and_new_text() {
-        let mut parser = ToolEditParser::default();
+        let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("line1\nline2".into()),
