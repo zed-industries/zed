@@ -183,3 +183,76 @@ impl From<CursorShape> for AlacCursorStyle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::UpdateGlobal;
+    use settings::{
+        LocalSettingsKind, LocalSettingsPath, Settings as _, SettingsLocation, SettingsStore,
+        WorktreeId,
+    };
+    use util::rel_path::RelPath;
+
+    #[gpui::test]
+    fn terminal_shell_settings_prefer_project_over_server_over_user(cx: &mut gpui::App) {
+        let mut store = SettingsStore::test(cx);
+        store.register_setting::<TerminalSettings>();
+        cx.set_global(store);
+
+        let worktree_id = WorktreeId::from_usize(1);
+        let project_path = RelPath::empty().into_arc();
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "terminal": { "shell": { "program": "bash" } } }"#, cx)
+                .unwrap();
+            store
+                .set_server_settings(r#"{ "terminal": { "shell": { "program": "nu" } } }"#, cx)
+                .unwrap();
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(project_path.clone()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{ "terminal": { "shell": { "program": "fish" } } }"#),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        assert_eq!(
+            TerminalSettings::get(None, cx).shell,
+            Shell::Program("nu".to_owned())
+        );
+        assert_eq!(
+            TerminalSettings::get(
+                Some(SettingsLocation {
+                    worktree_id,
+                    path: project_path.as_ref(),
+                }),
+                cx,
+            )
+            .shell,
+            Shell::Program("fish".to_owned())
+        );
+    }
+
+    #[gpui::test]
+    fn terminal_shell_settings_fall_back_to_user_without_server_or_project(cx: &mut gpui::App) {
+        let mut store = SettingsStore::test(cx);
+        store.register_setting::<TerminalSettings>();
+        cx.set_global(store);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "terminal": { "shell": { "program": "bash" } } }"#, cx)
+                .unwrap();
+        });
+
+        assert_eq!(
+            TerminalSettings::get(None, cx).shell,
+            Shell::Program("bash".to_owned())
+        );
+    }
+}

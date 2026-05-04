@@ -190,7 +190,7 @@ impl Project {
                                         .unwrap_or_else(get_default_system_shell);
 
                                     create_remote_shell(
-                                        Some((&shell, &args)),
+                                        Some((shell, args)),
                                         env,
                                         path,
                                         remote_client,
@@ -201,7 +201,7 @@ impl Project {
                                     spawn_task
                                         .command
                                         .as_ref()
-                                        .map(|command| (command, &spawn_task.args)),
+                                        .map(|command| (command.clone(), spawn_task.args.clone())),
                                     env,
                                     path,
                                     remote_client,
@@ -358,16 +358,28 @@ impl Project {
         } else {
             self.remote_client.clone()
         };
-        let shell = match &remote_client {
-            Some(remote_client) => remote_client
+        let remote_system_shell = remote_client.as_ref().map(|remote_client| {
+            remote_client
                 .read(cx)
                 .shell()
-                .unwrap_or_else(get_default_system_shell),
-            None => settings.shell.program(),
-        };
+                .unwrap_or_else(get_default_system_shell)
+        });
+        let shell = remote_system_shell
+            .as_deref()
+            .map(|remote_system_shell| {
+                remote_terminal_shell_program(&settings.shell, remote_system_shell)
+            })
+            .unwrap_or_else(|| settings.shell.program());
         let env_shell = match &remote_client {
-            Some(_) => shell.clone(),
+            Some(_) => remote_system_shell
+                .clone()
+                .unwrap_or_else(get_default_system_shell),
             None => get_system_shell(),
+        };
+        let remote_shell_command = if remote_client.is_some() {
+            remote_terminal_shell_command(&settings.shell)
+        } else {
+            None
         };
 
         let path_style = self.path_style(cx);
@@ -405,9 +417,13 @@ impl Project {
                 .update(cx, move |_, cx| {
                     let (shell, env) = {
                         match remote_client {
-                            Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
-                            }
+                            Some(remote_client) => create_remote_shell(
+                                remote_shell_command,
+                                env,
+                                path,
+                                remote_client,
+                                cx,
+                            )?,
                             None => (settings.shell, env),
                         }
                     };
@@ -611,7 +627,7 @@ impl Project {
 }
 
 fn create_remote_shell(
-    spawn_command: Option<(&String, &Vec<String>)>,
+    spawn_command: Option<(String, Vec<String>)>,
     mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
@@ -620,8 +636,8 @@ fn create_remote_shell(
     insert_zed_terminal_env(&mut env, &release_channel::AppVersion::global(cx));
 
     let (program, args) = match spawn_command {
-        Some((program, args)) => (Some(program.clone()), args),
-        None => (None, &Vec::new()),
+        Some((program, args)) => (Some(program), args),
+        None => (None, Vec::new()),
     };
 
     let command = remote_client.read(cx).build_command(
@@ -643,4 +659,310 @@ fn create_remote_shell(
         },
         command.env,
     ))
+}
+
+fn remote_terminal_shell_program(settings_shell: &Shell, remote_system_shell: &str) -> String {
+    match settings_shell {
+        Shell::System => remote_system_shell.to_owned(),
+        Shell::Program(program) => program.clone(),
+        Shell::WithArguments { program, .. } => program.clone(),
+    }
+}
+
+fn remote_terminal_shell_command(settings_shell: &Shell) -> Option<(String, Vec<String>)> {
+    match settings_shell {
+        Shell::System => None,
+        Shell::Program(program) => Some((program.clone(), Vec::new())),
+        Shell::WithArguments { program, args, .. } => Some((program.clone(), args.clone())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use fs::FakeFs;
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use futures::{
+        SinkExt, StreamExt,
+        channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
+    };
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use gpui::UpdateGlobal;
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use remote::{
+        CommandTemplate, ConnectionIdentifier, Interactive, MockConnectionOptions, MockDelegate,
+        RemoteConnection, RemoteConnectionOptions,
+    };
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use rpc::proto::{self, Envelope, EnvelopedMessage};
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use serde_json::json;
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore};
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use std::{fs as std_fs, os::unix::fs::PermissionsExt, time::Duration};
+    #[cfg(all(feature = "test-support", not(windows)))]
+    use util::{paths::PathStyle, paths::RemotePathBuf};
+
+    #[test]
+    fn remote_terminal_shell_command_uses_remote_system_shell_for_system_setting() {
+        assert_eq!(remote_terminal_shell_command(&Shell::System), None);
+        assert_eq!(
+            remote_terminal_shell_program(&Shell::System, "remote-shell"),
+            "remote-shell"
+        );
+    }
+
+    #[test]
+    fn remote_terminal_shell_command_uses_configured_program() {
+        let shell = Shell::Program("nu".to_owned());
+
+        assert_eq!(
+            remote_terminal_shell_command(&shell),
+            Some(("nu".to_owned(), Vec::new()))
+        );
+        assert_eq!(remote_terminal_shell_program(&shell, "sh"), "nu");
+    }
+
+    #[test]
+    fn remote_terminal_shell_command_preserves_configured_arguments() {
+        let shell = Shell::WithArguments {
+            program: "nu".to_owned(),
+            args: vec!["--login".to_owned()],
+            title_override: Some("Custom".to_owned()),
+        };
+
+        assert_eq!(
+            remote_terminal_shell_command(&shell),
+            Some(("nu".to_owned(), vec!["--login".to_owned()]))
+        );
+        assert_eq!(remote_terminal_shell_program(&shell, "sh"), "nu");
+    }
+
+    #[cfg(all(feature = "test-support", not(windows)))]
+    #[gpui::test]
+    async fn remote_terminal_uses_project_resolved_shell(
+        cx: &mut gpui::TestAppContext,
+        _server_cx: &mut gpui::TestAppContext,
+    ) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.register_setting::<TerminalSettings>();
+            cx.set_global(store);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mock_path = temp_dir.path().join("mock");
+        let argv_path = temp_dir.path().join("remote-terminal-argv");
+        std_fs::write(
+            &mock_path,
+            "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\"; done > \"$ZED_REMOTE_TERMINAL_ARGV\"\n",
+        )
+        .unwrap();
+        let mut permissions = std_fs::metadata(&mock_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std_fs::set_permissions(&mock_path, permissions).unwrap();
+
+        let (cancellation_tx, cancellation_rx) = futures::channel::oneshot::channel();
+        let remote_client = cx
+            .update(|cx| {
+                RemoteClient::new(
+                    ConnectionIdentifier::setup(),
+                    Arc::new(TestRemoteConnection {
+                        mock_path: mock_path.clone(),
+                    }),
+                    cancellation_rx,
+                    Arc::new(MockDelegate),
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        drop(cancellation_tx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/root/project"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/root/project")], cx).await;
+        project.update(cx, |project, _| {
+            project.remote_client = Some(remote_client);
+        });
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let argv_path = argv_path.to_string_lossy().to_string();
+        let project_settings = json!({
+            "terminal": {
+                "shell": {
+                    "with_arguments": {
+                        "program": "fish",
+                        "args": ["--login"],
+                        "title_override": null
+                    }
+                },
+                "env": {
+                    "ZED_REMOTE_TERMINAL_ARGV": argv_path
+                }
+            }
+        })
+        .to_string();
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{ "terminal": { "shell": { "program": "bash" } } }"#, cx)
+                    .unwrap();
+                store
+                    .set_server_settings(r#"{ "terminal": { "shell": { "program": "nu" } } }"#, cx)
+                    .unwrap();
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into_arc()),
+                        LocalSettingsKind::Settings,
+                        Some(&project_settings),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        let terminal = project
+            .update(cx, |project, cx| {
+                project.create_terminal_shell(Some(PathBuf::from("/root/project")), cx)
+            })
+            .await
+            .unwrap();
+
+        for _ in 0..50 {
+            if Path::new(&argv_path).exists() {
+                break;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(20))
+                .await;
+        }
+
+        let argv = std_fs::read_to_string(&argv_path).unwrap();
+        assert_eq!(argv, "fish\n--login\n");
+
+        terminal.update(cx, |terminal, _| terminal.kill_active_task());
+    }
+
+    #[cfg(all(feature = "test-support", not(windows)))]
+    struct TestRemoteConnection {
+        mock_path: PathBuf,
+    }
+
+    #[cfg(all(feature = "test-support", not(windows)))]
+    #[async_trait::async_trait(?Send)]
+    impl RemoteConnection for TestRemoteConnection {
+        fn start_proxy(
+            &self,
+            _unique_identifier: String,
+            _reconnect: bool,
+            mut incoming_tx: UnboundedSender<Envelope>,
+            mut outgoing_rx: UnboundedReceiver<Envelope>,
+            mut connection_activity_tx: Sender<()>,
+            _delegate: Arc<dyn remote::RemoteClientDelegate>,
+            cx: &mut gpui::AsyncApp,
+        ) -> Task<Result<i32>> {
+            cx.spawn(async move |_| {
+                incoming_tx
+                    .send(proto::RemoteStarted {}.into_envelope(1, None, None))
+                    .await
+                    .ok();
+
+                while let Some(outgoing) = outgoing_rx.next().await {
+                    connection_activity_tx.try_send(()).ok();
+                    if let Some(proto::envelope::Payload::Ping(_)) = outgoing.payload {
+                        incoming_tx
+                            .send(proto::Ack {}.into_envelope(2, Some(outgoing.id), None))
+                            .await
+                            .ok();
+                    }
+                }
+                Ok(0)
+            })
+        }
+
+        fn upload_directory(
+            &self,
+            _src_path: PathBuf,
+            _dest_path: RemotePathBuf,
+            _cx: &App,
+        ) -> Task<Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        async fn kill(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn has_been_killed(&self) -> bool {
+            false
+        }
+
+        fn build_command(
+            &self,
+            program: Option<String>,
+            args: &[String],
+            env: &HashMap<String, String>,
+            _working_dir: Option<String>,
+            _port_forward: Option<(u16, String, u16)>,
+            _interactive: Interactive,
+        ) -> Result<CommandTemplate> {
+            let shell_program = program.unwrap_or_else(|| "sh".to_string());
+            let mut shell_args = vec![shell_program];
+            shell_args.extend(args.iter().cloned());
+            Ok(CommandTemplate {
+                program: self.mock_path.to_string_lossy().into_owned(),
+                args: shell_args,
+                env: env.clone(),
+            })
+        }
+
+        fn build_forward_ports_command(
+            &self,
+            _forwards: Vec<(u16, String, u16)>,
+        ) -> Result<CommandTemplate> {
+            Ok(CommandTemplate {
+                program: "mock".into(),
+                args: Vec::new(),
+                env: Default::default(),
+            })
+        }
+
+        fn connection_options(&self) -> RemoteConnectionOptions {
+            RemoteConnectionOptions::Mock(MockConnectionOptions { id: 1 })
+        }
+
+        fn path_style(&self) -> PathStyle {
+            PathStyle::local()
+        }
+
+        fn shell(&self) -> String {
+            "sh".to_owned()
+        }
+
+        fn default_system_shell(&self) -> String {
+            "sh".to_owned()
+        }
+
+        fn has_wsl_interop(&self) -> bool {
+            false
+        }
+    }
 }
