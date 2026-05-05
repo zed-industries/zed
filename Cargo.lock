@@ -11872,6 +11872,7 @@ dependencies = [
  "futures 0.3.32",
  "google_ai",
  "http_client",
+ "language_model_core",
  "schemars 1.0.4",
  "serde",
  "serde_json",
