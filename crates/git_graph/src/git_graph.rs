@@ -3155,10 +3155,6 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.is_right_click() {
-            return;
-        }
-
         if let Some(row) = self.row_at_position(event.position().y, window, cx) {
             self.handle_entry_click(row, event, ScrollStrategy::Nearest, None, window, cx);
         }
