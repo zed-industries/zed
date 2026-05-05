@@ -1,16 +1,15 @@
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, StreamingEditFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, WebSearchTool, decide_permission_from_settings,
+    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
+    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
+    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RenameTool,
+    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{
-    FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag, UpdatePlanToolFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag, UpdatePlanToolFeatureFlag};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
@@ -518,12 +517,14 @@ impl AgentMessage {
                 markdown.push_str("**ERROR:**\n");
             }
 
-            match &tool_result.content {
-                LanguageModelToolResultContent::Text(text) => {
-                    writeln!(markdown, "{text}\n").ok();
-                }
-                LanguageModelToolResultContent::Image(_) => {
-                    writeln!(markdown, "<image />\n").ok();
+            for part in &tool_result.content {
+                match part {
+                    LanguageModelToolResultContent::Text(text) => {
+                        writeln!(markdown, "{text}\n").ok();
+                    }
+                    LanguageModelToolResultContent::Image(_) => {
+                        writeln!(markdown, "<image />\n").ok();
+                    }
                 }
             }
 
@@ -588,8 +589,8 @@ impl AgentMessage {
             let mut tool_result = tool_result.clone();
             // Surprisingly, the API fails if we return an empty string here.
             // It thinks we are sending a tool use without a tool result.
-            if tool_result.content.is_empty() {
-                tool_result.content = "<Tool returned an empty string>".into();
+            if tool_result.is_content_empty() {
+                tool_result.content = vec!["<Tool returned an empty string>".into()];
             }
             user_message
                 .content
@@ -1542,14 +1543,7 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
         self.add_tool(EditFileTool::new(
-            self.project.clone(),
-            cx.weak_entity(),
-            language_registry.clone(),
-            Templates::new(),
-        ));
-        self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             self.action_log.clone(),
@@ -1574,6 +1568,22 @@ impl Thread {
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
+
+        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+        if cx.has_flag::<LspToolFeatureFlag>() {
+            let code_action_store: CodeActionStore = cx.new(|_cx| None);
+            self.add_tool(FindReferencesTool::new(self.project.clone()));
+            self.add_tool(GetCodeActionsTool::new(
+                self.project.clone(),
+                code_action_store.clone(),
+            ));
+            self.add_tool(ApplyCodeActionTool::new(
+                self.project.clone(),
+                code_action_store,
+            ));
+            self.add_tool(GoToDefinitionTool::new(self.project.clone()));
+            self.add_tool(RenameTool::new(self.project.clone()));
+        }
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));
@@ -2332,7 +2342,7 @@ impl Thread {
         let Some(tool) = tool else {
             let content = format!("No tool named {} exists", tool_use.name);
             return Some(Task::ready(LanguageModelToolResult {
-                content: LanguageModelToolResultContent::Text(Arc::from(content)),
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
                 tool_use_id: tool_use.id,
                 tool_name: tool_use.name,
                 is_error: true,
@@ -2418,13 +2428,40 @@ impl Thread {
         cx.foreground_executor().spawn(async move {
             let (is_error, output) = match tool_result.await {
                 Ok(mut output) => {
-                    if let LanguageModelToolResultContent::Image(_) = &output.llm_output
-                        && !supports_images
-                    {
-                        output = AgentToolOutput::from_error(
-                            "Attempted to read an image, but this model doesn't support it.",
-                        );
-                        (true, output)
+                    let contains_image = output
+                        .llm_output
+                        .iter()
+                        .any(|part| matches!(part, LanguageModelToolResultContent::Image(_)));
+                    if contains_image && !supports_images {
+                        // Replace each image part with an inline placeholder so
+                        // any accompanying text is still presented to the model.
+                        // If there's nothing else in the output, surface an error
+                        // to match the pre-multi-part behavior for image-only
+                        // tool results.
+                        let placeholder = LanguageModelToolResultContent::Text(Arc::from(
+                            "[Tool responded with an image, but this model doesn't support images]",
+                        ));
+                        let has_non_image = output
+                            .llm_output
+                            .iter()
+                            .any(|part| !matches!(part, LanguageModelToolResultContent::Image(_)));
+                        if has_non_image {
+                            output.llm_output = output
+                                .llm_output
+                                .into_iter()
+                                .map(|part| match part {
+                                    LanguageModelToolResultContent::Image(_) => placeholder.clone(),
+                                    other => other,
+                                })
+                                .collect();
+                            (false, output)
+                        } else {
+                            let output = anyhow::anyhow!(
+                                "Attempted to read an image, but this model doesn't support it.",
+                            )
+                            .into();
+                            (true, output)
+                        }
                     } else {
                         (false, output)
                     }
@@ -2472,7 +2509,7 @@ impl Thread {
         let Some(tool) = tool else {
             let content = format!("No tool named {} exists", tool_use.name);
             return Some(Task::ready(LanguageModelToolResult {
-                content: LanguageModelToolResultContent::Text(Arc::from(content)),
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
                 tool_use_id: tool_use.id,
                 tool_name: tool_use.name,
                 is_error: true,
@@ -2743,7 +2780,9 @@ impl Thread {
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name.clone(),
                         is_error: true,
-                        content: LanguageModelToolResultContent::Text(TOOL_CANCELED_MESSAGE.into()),
+                        content: vec![LanguageModelToolResultContent::Text(
+                            TOOL_CANCELED_MESSAGE.into(),
+                        )],
                         output: None,
                     },
                 );
@@ -2836,31 +2875,14 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool =
-            cx.has_flag::<StreamingEditFileToolFeatureFlag>() && model.supports_streaming_tools();
-
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
-                    EditFileTool::NAME
-                } else {
-                    tool_name.as_ref()
-                };
-
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(profile_tool_name)
+                    && profile.is_tool_enabled(tool_name)
                 {
-                    match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
-                        (StreamingEditFileTool::NAME, true) => {
-                            // Expose streaming tool as "edit_file"
-                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
-                        }
-                        _ => Some((truncate(tool_name), tool.clone())),
-                    }
+                    Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
                 }
@@ -3392,16 +3414,19 @@ where
 pub struct Erased<T>(T);
 
 pub struct AgentToolOutput {
-    pub llm_output: LanguageModelToolResultContent,
+    pub llm_output: Vec<LanguageModelToolResultContent>,
     pub raw_output: serde_json::Value,
 }
 
-impl AgentToolOutput {
-    pub fn from_error(message: impl Into<String>) -> Self {
-        let message = message.into();
-        let llm_output = LanguageModelToolResultContent::Text(Arc::from(message.as_str()));
+impl From<anyhow::Error> for AgentToolOutput {
+    fn from(error: anyhow::Error) -> Self {
+        let llm_output = vec![error.into()];
+        let raw_output = serde_json::to_value(&llm_output).unwrap_or_else(|e| {
+            log::error!("Failed to serialize tool output: {e}");
+            serde_json::Value::Null
+        });
         Self {
-            raw_output: serde_json::Value::String(message),
+            raw_output,
             llm_output,
         }
     }
@@ -3480,12 +3505,13 @@ where
         let task = self.0.clone().run(tool_input, event_stream, cx);
         cx.spawn(async move |_cx| match task.await {
             Ok(output) => {
-                let raw_output = serde_json::to_value(&output).map_err(|e| {
-                    AgentToolOutput::from_error(format!("Failed to serialize tool output: {e}"))
-                })?;
+                let raw_output = serde_json::to_value(&output).unwrap_or_else(|e| {
+                    log::error!("Failed to serialize tool output: {e}");
+                    serde_json::Value::Null
+                });
                 Ok(AgentToolOutput {
-                    llm_output: output.into(),
                     raw_output,
+                    llm_output: vec![output.into()],
                 })
             }
             Err(error_output) => {
@@ -3494,7 +3520,7 @@ where
                     serde_json::Value::Null
                 });
                 Err(AgentToolOutput {
-                    llm_output: error_output.into(),
+                    llm_output: vec![error_output.into()],
                     raw_output,
                 })
             }
@@ -4518,8 +4544,8 @@ mod tests {
         assert_eq!(result.tool_use_id, tool_use_id);
         assert_eq!(result.tool_name, tool_name);
         assert!(matches!(
-            result.content,
-            LanguageModelToolResultContent::Text(_)
+            result.content.as_slice(),
+            [LanguageModelToolResultContent::Text(_)]
         ));
 
         thread.update(cx, |thread, _cx| {

@@ -24,6 +24,7 @@ use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::{mpsc, oneshot},
     future::BoxFuture,
+    stream::BoxStream,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
@@ -1787,6 +1788,34 @@ impl ProtoClient for Client {
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<proto::Envelope>> {
         self.request_dynamic(envelope, request_type).boxed()
+    }
+
+    fn request_stream(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        let client_id = self.id();
+        let response = self.connection_id().map(|connection_id| {
+            self.peer
+                .request_stream_dynamic(connection_id, envelope, request_type)
+        });
+
+        async move {
+            log::debug!(
+                "rpc stream request start. client_id:{}. name:{}",
+                client_id,
+                request_type
+            );
+            let response = response?.await;
+            log::debug!(
+                "rpc stream request opened. client_id:{}. name:{}",
+                client_id,
+                request_type
+            );
+            response
+        }
+        .boxed()
     }
 
     fn send(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
