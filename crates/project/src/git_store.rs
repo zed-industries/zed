@@ -2744,13 +2744,11 @@ impl GitStore {
                 let commits = match chunk_result {
                     Ok(commits) => commits,
                     Err(error) => {
-                        if response_tx
+                        response_tx
                             .send(Err(anyhow!(error.to_string())))
                             .await
-                            .is_err()
-                        {
-                            return;
-                        }
+                            .context("Failed to send error")
+                            .log_err();
                         return;
                     }
                 };
@@ -4516,23 +4514,7 @@ impl Repository {
         });
 
         let (job_sender, state) = (refetch_repo_state)(cx);
-
-        // todo(git_graph_remote): Make this subscription on both remote/local repo
-        cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
-            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
-                if this.scan_id > 2 {
-                    this.initial_graph_data.clear();
-                }
-            }
-            RepositoryEvent::StashEntriesChanged => {
-                if this.scan_id > 2 {
-                    this.initial_graph_data
-                        .retain(|(log_source, _), _| *log_source != LogSource::All);
-                }
-            }
-            _ => {}
-        })
-        .detach();
+        cx.subscribe_self(Self::handle_subscribe_self).detach();
 
         Repository {
             this: cx.weak_entity(),
@@ -4584,6 +4566,8 @@ impl Repository {
         });
 
         let (job_sender, repository_state) = (refetch_repo_state)(cx);
+        cx.subscribe_self(Self::handle_subscribe_self).detach();
+
         Self {
             this: cx.weak_entity(),
             snapshot,
@@ -4601,6 +4585,25 @@ impl Repository {
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
             refetch_repo_state,
+        }
+    }
+
+    fn handle_subscribe_self(&mut self, event: &RepositoryEvent, _: &mut Context<Self>) {
+        // scan id greater than 2 means the initial snapshot was calculated,
+        // otherwise we don't need to refresh the graph state
+        match event {
+            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
+                if self.scan_id > 2 {
+                    self.initial_graph_data.clear();
+                }
+            }
+            RepositoryEvent::StashEntriesChanged => {
+                if self.scan_id > 2 {
+                    self.initial_graph_data
+                        .retain(|(log_source, _), _| *log_source != LogSource::All);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -5378,7 +5381,7 @@ impl Repository {
             .update(cx, |repository, _| repository.id)
             .map_err(|err| SharedString::from(err.to_string()))?;
         let graph_data_key = (log_source.clone(), log_order);
-        let result = remote
+        let mut response = remote
             .client
             .request_stream(proto::GetInitialGraphData {
                 project_id: remote.project_id.to_proto(),
@@ -5388,9 +5391,8 @@ impl Repository {
             })
             .await
             .map_err(|err| SharedString::from(err.to_string()))?;
-        let mut stream = result;
 
-        while let Some(response) = stream.next().await {
+        while let Some(response) = response.next().await {
             let response = response.map_err(|err| SharedString::from(err.to_string()))?;
             let commits = response
                 .commits
