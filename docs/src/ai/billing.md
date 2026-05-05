@@ -64,9 +64,9 @@ If you require historical Stripe invoices, email [billing-support@zed.dev](mailt
 
 <!-- TODO: confirm whether owners/admins can update payment methods, addresses, and tax IDs self-serve at launch; if so, replace the below with instructions -->
 
-Email [billing-support@zed.dev](mailto:billing-support@zed.dev) for help updating payment methods, names, addresses, and tax information.
+From the *Billing* page, owners can update their billing information (name, address, and tax ID) as well as the payment method used for invoices.
 
-Changes to billing information will **only** affect future invoices. We cannot modify historical invoices.
+Changes to billing information will **only** affect future invoices. We cannot modify historical invoices. Email [billing-support@zed.dev](mailto:billing-support@zed.dev) with any questions.
 
 ## Sales tax {#sales-tax}
 
