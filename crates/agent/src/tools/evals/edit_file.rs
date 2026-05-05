@@ -15,9 +15,8 @@ use language::language_settings::FormatOnSave;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    Role, SelectedModel,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, Role, SelectedModel,
 };
 use project::Project;
 use prompt_store::{ProjectContext, WorktreeContext};
@@ -218,12 +217,12 @@ impl EvalAssertion {
 }
 
 #[derive(Clone)]
-struct StreamingEditEvalOutput {
+struct EditEvalOutput {
     sample: EvalSample,
     assertion: EvalAssertionOutcome,
 }
 
-impl Display for StreamingEditEvalOutput {
+impl Display for EditEvalOutput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Score: {:?}", self.assertion.score)?;
         if let Some(message) = self.assertion.message.as_ref() {
@@ -241,7 +240,7 @@ struct EvalAssertionOutcome {
     message: Option<String>,
 }
 
-struct StreamingEditToolTest {
+struct EditToolTest {
     fs: Arc<FakeFs>,
     project: Entity<Project>,
     model: Arc<dyn LanguageModel>,
@@ -249,7 +248,7 @@ struct StreamingEditToolTest {
     model_thinking_effort: Option<String>,
 }
 
-impl StreamingEditToolTest {
+impl EditToolTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
 
@@ -349,29 +348,7 @@ impl StreamingEditToolTest {
         }))
     }
 
-    /// Build the tool definitions for the model, replacing `edit_file` with the
-    /// streaming edit file tool schema. In production the streaming tool is
-    /// exposed under the name `"edit_file"` (see `Thread::enabled_tools`), so
-    /// the model has never seen the name `"streaming_edit_file"`.
-    fn build_tools() -> Vec<LanguageModelRequestTool> {
-        let mut tools: Vec<LanguageModelRequestTool> = crate::built_in_tools()
-            .filter(|tool| tool.name != EditFileTool::NAME)
-            .collect();
-        tools.push(LanguageModelRequestTool {
-            name: EditFileTool::NAME.to_string(),
-            description: EditFileTool::description().to_string(),
-            input_schema: EditFileTool::input_schema(LanguageModelToolSchemaFormat::JsonSchema)
-                .to_value(),
-            use_input_streaming: EditFileTool::supports_input_streaming(),
-        });
-        tools
-    }
-
-    async fn eval(
-        &self,
-        mut eval: EvalInput,
-        cx: &mut TestAppContext,
-    ) -> Result<StreamingEditEvalOutput> {
+    async fn eval(&self, mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EditEvalOutput> {
         eval.conversation
             .last_mut()
             .context("Conversation must not be empty")?
@@ -391,7 +368,7 @@ impl StreamingEditToolTest {
             cx.run_until_parked();
         }
 
-        let tools = Self::build_tools();
+        let tools = crate::built_in_tools().collect::<Vec<_>>();
 
         let system_prompt = {
             let worktrees = vec![WorktreeContext {
@@ -440,7 +417,7 @@ impl StreamingEditToolTest {
         };
 
         // The model will call the tool as "edit_file" (the production-visible
-        // name), but the schema is from StreamingEditFileTool.
+        // name), but the schema is from EditFileTool.
         let tool_input =
             retry_on_rate_limit(async || self.extract_tool_use(request.clone(), cx).await).await?;
 
@@ -505,12 +482,11 @@ impl StreamingEditToolTest {
             .run(&sample, self.judge_model.clone(), cx)
             .await?;
 
-        Ok(StreamingEditEvalOutput { assertion, sample })
+        Ok(EditEvalOutput { assertion, sample })
     }
 
     /// Stream the model completion and extract the first complete tool use
-    /// whose name matches `EditFileTool::NAME` (the production-visible name
-    /// for the streaming edit tool), parsed as `StreamingEditFileToolInput`.
+    /// whose name matches `EditFileTool::NAME`, parsed as `EditFileToolInput`.
     async fn extract_tool_use(
         &self,
         request: LanguageModelRequest,
@@ -538,7 +514,7 @@ impl StreamingEditToolTest {
                         && tool_use.name.as_ref() == EditFileTool::NAME =>
                 {
                     let input: EditFileToolInput = serde_json::from_value(tool_use.input)
-                        .context("Failed to parse tool input as StreamingEditFileToolInput")?;
+                        .context("Failed to parse tool input as EditFileToolInput")?;
                     return Ok(input);
                 }
                 Ok(LanguageModelCompletionEvent::Text(text)) => {
@@ -590,7 +566,7 @@ fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
     let mut cx = TestAppContext::build(dispatcher, None);
     let foreground_executor = cx.foreground_executor().clone();
     let result = foreground_executor.block_test(async {
-        let test = StreamingEditToolTest::new(&mut cx).await;
+        let test = EditToolTest::new(&mut cx).await;
         let result = test.eval(eval, &mut cx).await;
         drop(test);
         cx.run_until_parked();
