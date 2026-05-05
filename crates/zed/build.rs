@@ -244,15 +244,27 @@ fn main() {
 }
 
 /// Validates that the `APP_NAME` file (the single source of truth for directory
-/// names in the `paths` crate) is consistent with this crate's package name.
+/// names in the `paths` crate) is consistent with the primary `[[bin]]` target
+/// name in this crate's Cargo.toml.
 fn validate_app_name() {
     let app_name = include_str!("APP_NAME").trim();
-    let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
+    let cargo_toml = std::fs::read_to_string("Cargo.toml").expect("failed to read Cargo.toml");
+    let bin_name = cargo_toml
+        .lines()
+        .skip_while(|line| !line.starts_with("[[bin]]"))
+        .find_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("name")
+                .and_then(|rest| rest.trim_start().strip_prefix('='))
+                .map(|rest| rest.trim().trim_matches('"').to_string())
+        })
+        .expect("no [[bin]] name found in Cargo.toml");
     assert!(
-        app_name.eq_ignore_ascii_case(&pkg_name),
-        "APP_NAME file contents ({app_name:?}) must match CARGO_PKG_NAME ({pkg_name:?}, \
-         case-insensitive). Forks: update the APP_NAME file when renaming the package."
+        app_name.eq_ignore_ascii_case(&bin_name),
+        "APP_NAME file ({app_name:?}) must match the [[bin]] name in Cargo.toml ({bin_name:?}, \
+         case-insensitive). Forks: update the APP_NAME file when renaming the binary."
     );
+    println!("cargo:rerun-if-changed=Cargo.toml");
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
