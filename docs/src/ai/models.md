@@ -35,11 +35,11 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                        | Anthropic | Output              | $5.00                        | $5.50                   |
 |                        | Anthropic | Input - Cache Write | $1.25                        | $1.375                  |
 |                        | Anthropic | Input - Cache Read  | $0.10                        | $0.11                   |
-| GPT-5.5 pro            | OpenAI    | Input               | $60.00                       | $66.00                  |
-|                        | OpenAI    | Output              | $360.00                      | $396.00                 |
+| GPT-5.5 pro            | OpenAI    | Input               | $30.00                       | $33.00                  |
+|                        | OpenAI    | Output              | $180.00                      | $198.00                 |
 | GPT-5.5                | OpenAI    | Input               | $5.00                        | $5.50                   |
 |                        | OpenAI    | Output              | $30.00                       | $33.00                  |
-|                        | OpenAI    | Cached Input        | $0.05                        | $0.055                  |
+|                        | OpenAI    | Cached Input        | $0.50                        | $0.55                   |
 | GPT-5.4 pro            | OpenAI    | Input               | $30.00                       | $33.00                  |
 |                        | OpenAI    | Output              | $180.00                      | $198.00                 |
 | GPT-5.4                | OpenAI    | Input               | $2.50                        | $2.75                   |
