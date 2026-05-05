@@ -5922,3 +5922,116 @@ pub fn outline(
         border_style,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, Render,
+        TestApp, Window, div
+    };
+    use std::time::Duration;
+
+    actions!(window_test, [TestAction]);
+
+    struct TestView {
+        focus_handle: FocusHandle,
+        action_count: usize,
+    }
+
+    impl TestView {
+        fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+                action_count: 0,
+            }
+        }
+    }
+
+    impl Focusable for TestView {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().key_context("test")
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(|this: &mut TestView, _: &TestAction, _, _| {
+                    this.action_count += 1;
+                }))
+        }
+    }
+
+    #[test]
+    fn test_standalone_modifier_sequences_timeout(){
+        let mut app = TestApp::new();
+        app.update(|cx| {
+            cx.bind_keys(vec![KeyBinding::new(
+                "shift shift",
+                TestAction,
+                Some("test"),
+            )]);
+        });
+        let mut window = app.open_window(TestView::new);
+        window.update(|view, window, cx| {
+            window.focus(&view.focus_handle(cx), cx);
+        });
+        window.simulate_keystroke("shift");
+        window.update(|_, window, _| {
+            let keystroke = window
+                .pending_input_keystrokes()
+                .expect("standalone modifier should start a pending sequence");
+            assert_eq!(
+                keystroke.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+                vec!["shift"]);
+        });
+        // Advance time beyond the key sequence timeout to trigger flush
+        app.advance_clock(Duration::from_secs(2));
+        app.run_until_parked();
+
+        window.update(|view, window, _| {
+            assert!(
+                !window.has_pending_keystrokes(),
+                "pending standalone modifier sequence should be flushed when the timeout fires"
+            );
+            assert_eq!(
+                view.action_count, 0,
+                "a single shift should not dispatch the two-stroke binding"
+            );
+        });
+    }
+
+    #[test]
+    fn test_standalone_modifier_sequence_dispatches_before_timeout() {
+        let mut app = TestApp::new();
+        app.update(|cx| {
+            cx.bind_keys(vec![KeyBinding::new(
+                "shift shift",
+                TestAction,
+                Some("test"),
+            )]);
+        });
+        let mut window = app.open_window(TestView::new);
+        window.update(|view, window, cx| {
+            window.focus(&view.focus_handle(cx), cx);
+        });
+        window.simulate_keystroke("shift");
+        window.update(|_, window, _| {
+            assert!(window.has_pending_keystrokes());
+        });
+        window.simulate_keystroke("shift");
+        window.update(|view, window, _| {
+            assert!(
+                !window.has_pending_keystrokes(),
+                "matched binding should clear pending input"
+            );
+            assert_eq!(
+                view.action_count, 1,
+                "second shift should dispatch the shift-shift binding"
+            );
+        });
+    }
+}
