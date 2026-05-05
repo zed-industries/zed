@@ -2116,7 +2116,13 @@ impl GitGraph {
     ) {
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.schedule_resolved_task(task_source_kind, resolved_task, true, window, cx);
+                workspace.schedule_resolved_task(
+                    task_source_kind,
+                    resolved_task,
+                    false,
+                    window,
+                    cx,
+                );
             })
             .ok();
     }
@@ -2176,7 +2182,7 @@ impl GitGraph {
                 );
 
             if !git_tasks.is_empty() {
-                context_menu = context_menu.separator().header("Custom Git Commands");
+                context_menu = context_menu.separator().header("Git Tasks");
                 for (task_source_kind, resolved_task) in git_tasks {
                     let label = resolved_task.display_label().to_string();
                     context_menu = context_menu.entry(
