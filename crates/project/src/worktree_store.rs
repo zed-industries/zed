@@ -1045,8 +1045,9 @@ impl WorktreeStore {
     /// preserving their relative order. The `active_source` (if provided and
     /// in `sources`) decides whether the group lands before or after the
     /// destination, mirroring the single-source semantics: a source originally
-    /// before destination ends up after it, and vice versa. When no active
-    /// source is supplied, the first source's position is used.
+    /// before destination ends up after it, and vice versa. When no usable
+    /// active source is supplied, the earliest source in the current worktree
+    /// order is used as the direction reference.
     pub fn move_worktrees(
         &mut self,
         sources: &[WorktreeId],
@@ -1135,9 +1136,8 @@ impl WorktreeStore {
     }
 
     /// Removes every source from the worktree list and appends them to the
-    /// end in their original relative order. Intended for "drop on the empty
-    /// area below the panel" gestures, where the user's intent is "send this
-    /// group to the end" rather than reordering relative to a specific row.
+    /// end in their original relative order. Returns early when the sources
+    /// already form a contiguous suffix.
     pub fn move_worktrees_to_end(
         &mut self,
         sources: &[WorktreeId],

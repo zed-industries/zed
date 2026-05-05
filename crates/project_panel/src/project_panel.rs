@@ -5273,6 +5273,7 @@ impl ProjectPanel {
         target_entry: &Entry,
         target_worktree: &Worktree,
         drag_state: &DraggedSelection,
+        is_copy_mode: bool,
         cx: &Context<Self>,
     ) -> Option<ProjectEntryId> {
         // Pure worktree-root drags are only meaningful when dropped on
@@ -5284,6 +5285,11 @@ impl ProjectPanel {
             .items()
             .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx));
         if drag_is_root_only {
+            // Worktree roots can't be copied; in copy mode the drop is a
+            // guaranteed no-op, so don't highlight any target.
+            if is_copy_mode {
+                return None;
+            }
             let root_id = target_worktree.root_entry()?.id;
             // Hovering any worktree that's part of the drag (active or just
             // marked) is a no-op in `move_worktrees`, so don't highlight it.
@@ -5629,6 +5635,7 @@ impl ProjectPanel {
                                 this.marked_entries.push(drag_state.active_selection);
                             }
 
+                            let is_copy_mode = Self::is_copy_modifier_set(&window.modifiers());
                             let Some((entry_id, highlight_entry_id)) = maybe!({
                                 let target_worktree = this
                                     .project
@@ -5641,6 +5648,7 @@ impl ProjectPanel {
                                     target_entry,
                                     target_worktree,
                                     drag_state,
+                                    is_copy_mode,
                                     cx,
                                 )?;
                                 Some((target_entry.id, highlight_entry_id))
@@ -7133,8 +7141,16 @@ impl Render for ProjectPanel {
                                         // last worktree would otherwise hit
                                         // the self-drop guard in
                                         // `move_worktrees` and become a no-op.
-                                        // Send the group to the end instead.
-                                        if this.drag_includes_last_worktree(selections, cx) {
+                                        // Send the group to the end — but
+                                        // only for move gestures; copy mode
+                                        // can't operate on roots and should
+                                        // continue to no-op via `drag_onto`.
+                                        let is_copy_mode = Self::is_copy_modifier_set(
+                                            &window.modifiers(),
+                                        );
+                                        if !is_copy_mode
+                                            && this.drag_includes_last_worktree(selections, cx)
+                                        {
                                             this.reorder_worktree_roots_to_end(selections, cx);
                                         } else if let Some(entry_id) =
                                             this.state.last_worktree_root_id

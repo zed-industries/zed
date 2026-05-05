@@ -9077,7 +9077,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
             }]),
         };
         let result =
-            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(result, None, "Should not highlight parent of dragged item");
 
         // Test 2: Single item drag, don't highlight sibling files
@@ -9085,13 +9085,14 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
             sibling_file,
             worktree,
             &dragged_selection,
+            false,
             cx,
         );
         assert_eq!(result, None, "Should not highlight sibling files");
 
         // Test 3: Single item drag, highlight unrelated directory
         let result =
-            panel.highlight_entry_for_selection_drag(other_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(other_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(other_dir.id),
@@ -9100,7 +9101,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 
         // Test 4: Single item drag, highlight sibling directory
         let result =
-            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(child_dir.id),
@@ -9125,7 +9126,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
             ]),
         };
         let result =
-            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(parent_dir.id),
@@ -9134,7 +9135,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 
         // Test 6: Target is file in different directory, highlight parent
         let result =
-            panel.highlight_entry_for_selection_drag(other_file, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(other_file, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(other_dir.id),
@@ -9143,7 +9144,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 
         // Test 7: Target is directory, always highlight
         let result =
-            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, false, cx);
         assert_eq!(
             result,
             Some(child_dir.id),
@@ -9220,6 +9221,7 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
             src_dir_from_b,
             worktree_b.read(cx),
             &dragged_selection,
+            false,
             cx,
         );
         assert_eq!(
@@ -9233,6 +9235,7 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
             main_rs_from_b,
             worktree_b.read(cx),
             &dragged_selection,
+            false,
             cx,
         );
         assert_eq!(
@@ -9308,30 +9311,93 @@ async fn test_highlight_entry_for_multi_root_drag_excludes_marked_worktrees(
 
         // Hovering r2 (not in the drag): highlight allowed.
         assert_eq!(
-            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, cx),
+            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, false, cx),
             Some(r2_root.id),
             "non-dragged worktree root should highlight"
         );
 
         // Hovering r4 (not in the drag): highlight allowed.
         assert_eq!(
-            panel.highlight_entry_for_selection_drag(r4_root, r4, &drag, cx),
+            panel.highlight_entry_for_selection_drag(r4_root, r4, &drag, false, cx),
             Some(r4_root.id),
             "non-dragged worktree root should highlight"
         );
 
         // Hovering r1 (active source): no-op, no highlight.
         assert_eq!(
-            panel.highlight_entry_for_selection_drag(r1_root, r1, &drag, cx),
+            panel.highlight_entry_for_selection_drag(r1_root, r1, &drag, false, cx),
             None,
             "active source's worktree should not highlight"
         );
 
         // Hovering r3 (marked but not active): no-op, no highlight.
         assert_eq!(
-            panel.highlight_entry_for_selection_drag(r3_root, r3, &drag, cx),
+            panel.highlight_entry_for_selection_drag(r3_root, r3, &drag, false, cx),
             None,
             "marked source's worktree should not highlight"
+        );
+    });
+}
+
+// In copy mode, a pure worktree-root drag is a guaranteed no-op (the copy
+// branch in `drag_onto` filters worktree roots out). The highlight should
+// reflect this by suppressing every target instead of advertising root
+// rows as valid drops.
+#[gpui::test]
+async fn test_highlight_entry_for_root_drag_suppressed_in_copy_mode(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+
+    let project =
+        Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        let worktrees: Vec<_> = panel.project.read(cx).visible_worktrees(cx).collect();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_root = r1.root_entry().unwrap();
+        let r2_root = r2.root_entry().unwrap();
+
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root.id,
+            }]),
+        };
+
+        // Sanity: without the copy modifier, hovering r2's root highlights it.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, false, cx),
+            Some(r2_root.id),
+            "non-copy root drag should highlight a different worktree's root"
+        );
+
+        // With the copy modifier, no target highlights — copy can't act on roots.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, true, cx),
+            None,
+            "copy-mode root drag should suppress highlights on other roots"
+        );
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r1_root, r1, &drag, true, cx),
+            None,
+            "copy-mode root drag should suppress highlights on its own worktree"
         );
     });
 }
