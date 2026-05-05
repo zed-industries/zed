@@ -14,7 +14,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FutureExt as _,
-    ScreenCaptureSource, ScreenCaptureStream, Task, Timeout, WeakEntity,
+    ScreenCaptureSource, ScreenCaptureStream, Task, TaskExt, Timeout, WeakEntity,
 };
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
