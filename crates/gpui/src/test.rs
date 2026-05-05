@@ -71,7 +71,10 @@ pub fn apply_seed_to_proptest_config(
 ///
 /// Doesn't support many features of [`run_test`], since these are provided by
 /// proptest.
-pub fn run_test_once<R>(seed: u64, test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher) -> R>) -> R {
+pub fn run_test_once<R>(
+    seed: u64,
+    test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher) -> R>,
+) -> R {
     let result = panic::catch_unwind(|| {
         let dispatcher = TestDispatcher::new(seed);
         let scheduler = dispatcher.scheduler().clone();
