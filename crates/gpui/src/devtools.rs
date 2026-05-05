@@ -6,7 +6,7 @@ mod state;
 
 use crate::{App, Bounds, EntityId, Pixels, Window, WindowId};
 use parking_lot::RwLock;
-use sources::{PinnedNotifySource, RenderSourceKey, parse_pinned_notify_source};
+use sources::{NotifySourceKey, PinnedNotifySource, RenderSourceKey, parse_pinned_notify_source};
 use state::{FlashState, GpuiDevTools};
 use std::{sync::LazyLock, time::Duration};
 
@@ -27,7 +27,6 @@ const SOURCE_WINDOW: Duration = Duration::from_secs(5);
 const ANIMATION_EXPIRY: Duration = Duration::from_secs(1);
 const TOP_SOURCE_COUNT: usize = 3;
 const HUD_MAX_LINE_CHARS: usize = 68;
-const DEFAULT_PINNED_NOTIFY_SOURCE: &str = "Editor editor.rs:2111";
 
 static GPUI_DEVTOOLS_ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var_os("ZED_GPUI_DEVTOOLS").is_some());
@@ -35,10 +34,10 @@ static GPUI_DEVTOOLS_ENABLED: LazyLock<bool> =
 static GPUI_DEVTOOLS: LazyLock<RwLock<GpuiDevTools>> =
     LazyLock::new(|| RwLock::new(GpuiDevTools::new()));
 
-static PINNED_NOTIFY_SOURCE: LazyLock<Option<PinnedNotifySource>> = LazyLock::new(|| {
-    let source = std::env::var("ZED_GPUI_DEVTOOLS_PIN_NOTIFY")
-        .unwrap_or_else(|_| DEFAULT_PINNED_NOTIFY_SOURCE.to_string());
-    parse_pinned_notify_source(&source)
+static INITIAL_PINNED_NOTIFY_SOURCE: LazyLock<Option<PinnedNotifySource>> = LazyLock::new(|| {
+    std::env::var("ZED_GPUI_DEVTOOLS_PIN_NOTIFY")
+        .ok()
+        .and_then(|source| parse_pinned_notify_source(&source))
 });
 
 pub(crate) fn enabled() -> bool {
@@ -51,11 +50,18 @@ pub(crate) fn record_notify(event: NotifyEvent) {
     }
 
     let mut devtools = GPUI_DEVTOOLS.write();
-    if PINNED_NOTIFY_SOURCE
-        .as_ref()
-        .is_some_and(|pinned_source| pinned_source.matches(&event))
+    let source = NotifySourceKey::from(&event);
+    *devtools
+        .notify_source_total_counts
+        .entry(source)
+        .or_insert(0) += 1;
+    if !devtools.initial_pinned_notify_source_resolved
+        && INITIAL_PINNED_NOTIFY_SOURCE
+            .as_ref()
+            .is_some_and(|pinned_source| pinned_source.matches(&event))
     {
-        devtools.pinned_notify_total_count += 1;
+        devtools.pinned_notify_source = Some(source);
+        devtools.initial_pinned_notify_source_resolved = true;
     }
     devtools.notifications.push(event);
 }

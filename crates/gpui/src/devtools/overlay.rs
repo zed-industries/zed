@@ -1,6 +1,5 @@
 use super::{
-    FLASH_DURATION, FRAME_RATE_WINDOW, GPUI_DEVTOOLS, HUD_MAX_LINE_CHARS, PINNED_NOTIFY_SOURCE,
-    TOP_SOURCE_COUNT,
+    FLASH_DURATION, FRAME_RATE_WINDOW, GPUI_DEVTOOLS, HUD_MAX_LINE_CHARS, TOP_SOURCE_COUNT,
     sources::{
         NotifySourceKey, RenderSourceKey, active_animation_count, file_name, format_age,
         format_duration_ms, format_notify_source, format_render_source, hidden_notify_sources,
@@ -69,21 +68,25 @@ struct FlashOverlay {
 #[derive(Clone, Debug)]
 struct OverlayRow {
     text: String,
-    action: Option<SourceFilterAction>,
+    actions: Vec<SourceFilterAction>,
 }
 
 impl OverlayRow {
     fn plain(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            action: None,
+            actions: Vec::new(),
         }
     }
 
     fn action(text: impl Into<String>, action: SourceFilterAction) -> Self {
+        Self::actions(text, vec![action])
+    }
+
+    fn actions(text: impl Into<String>, actions: Vec<SourceFilterAction>) -> Self {
         Self {
             text: text.into(),
-            action: Some(action),
+            actions,
         }
     }
 
@@ -111,6 +114,8 @@ struct OverlayRowHitbox {
 enum SourceFilterAction {
     HideNotify(NotifySourceKey),
     ShowNotify(NotifySourceKey),
+    PinNotify(NotifySourceKey),
+    UnpinNotify,
     HideRender(RenderSourceKey),
     ShowRender(RenderSourceKey),
 }
@@ -214,20 +219,38 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
         rows.push(OverlayRow::plain("notify --"));
     } else {
         for (index, (source, stats)) in notify_sources.into_iter().enumerate() {
-            rows.push(OverlayRow::action(
-                format_notify_source(index + 1, source, stats),
-                SourceFilterAction::HideNotify(source),
+            let is_pinned = devtools.pinned_notify_source == Some(source);
+            let pin_button = if is_pinned { "u" } else { "p" };
+            let pin_action = if is_pinned {
+                SourceFilterAction::UnpinNotify
+            } else {
+                SourceFilterAction::PinNotify(source)
+            };
+            rows.push(OverlayRow::actions(
+                format!(
+                    "[-] [{}] {}",
+                    pin_button,
+                    format_notify_source(index + 1, source, stats)
+                ),
+                vec![SourceFilterAction::HideNotify(source), pin_action],
             ));
         }
     }
 
-    if let Some(pinned_source) = PINNED_NOTIFY_SOURCE.as_ref() {
-        rows.push(OverlayRow::plain(format!(
-            "pin {} 5s {} total {}",
-            pinned_source.label(),
-            pinned_notify_recent_count(devtools, now, pinned_source),
-            devtools.pinned_notify_total_count
-        )));
+    if let Some(pinned_source) = devtools.pinned_notify_source {
+        rows.push(OverlayRow::action(
+            format!(
+                "[u] pin {} 5s {} total {}",
+                pinned_source.label(),
+                pinned_notify_recent_count(devtools, now, pinned_source),
+                devtools
+                    .notify_source_total_counts
+                    .get(&pinned_source)
+                    .copied()
+                    .unwrap_or(0)
+            ),
+            SourceFilterAction::UnpinNotify,
+        ));
     }
 
     if let Some((label, count)) = top_dirty_path(devtools, window_id, now) {
@@ -246,7 +269,7 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     } else {
         for (index, (source, stats)) in render_summary.top_sources.into_iter().enumerate() {
             rows.push(OverlayRow::action(
-                format_render_source(index + 1, source, stats),
+                format!("[-] {}", format_render_source(index + 1, source, stats)),
                 SourceFilterAction::HideRender(source),
             ));
         }
@@ -262,15 +285,23 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     if !hidden_notify_sources.is_empty() || !hidden_render_sources.is_empty() {
         rows.push(OverlayRow::plain("hidden filters"));
         for (source, count) in hidden_notify_sources {
-            rows.push(OverlayRow::action(
+            let is_pinned = devtools.pinned_notify_source == Some(source);
+            let pin_button = if is_pinned { "u" } else { "p" };
+            let pin_action = if is_pinned {
+                SourceFilterAction::UnpinNotify
+            } else {
+                SourceFilterAction::PinNotify(source)
+            };
+            rows.push(OverlayRow::actions(
                 format!(
-                    "[+] notify {} {}:{} 5s {}",
+                    "[+] [{}] notify {} {}:{} 5s {}",
+                    pin_button,
                     short_type_name(source.entity_type),
                     file_name(source.caller_file),
                     source.caller_line,
                     count
                 ),
-                SourceFilterAction::ShowNotify(source),
+                vec![SourceFilterAction::ShowNotify(source), pin_action],
             ));
         }
         for (source, count) in hidden_render_sources {
@@ -296,19 +327,16 @@ fn prepaint_overlay(
 ) -> PreparedOverlay {
     let hud_bounds = hud_bounds(snapshot.rows.len(), window.viewport_size(), hud_origin);
     let hud_hitbox = window.insert_hitbox(hud_bounds, HitboxBehavior::Normal);
-    let row_hitboxes = snapshot
-        .rows
-        .iter()
-        .enumerate()
-        .filter_map(|(row_index, row)| {
-            let action = row.action?;
+    let mut row_hitboxes = Vec::new();
+    for (row_index, row) in snapshot.rows.iter().enumerate() {
+        for (action_index, action) in row.actions.iter().copied().enumerate() {
             let hitbox = window.insert_hitbox(
-                hud_button_bounds(hud_bounds, row_index),
+                hud_button_bounds(hud_bounds, row_index, action_index),
                 HitboxBehavior::BlockMouse,
             );
-            Some(OverlayRowHitbox { hitbox, action })
-        })
-        .collect();
+            row_hitboxes.push(OverlayRowHitbox { hitbox, action });
+        }
+    }
 
     PreparedOverlay {
         snapshot,
@@ -355,15 +383,22 @@ fn clamp_hud_origin(
     origin.clamp(&min, &max)
 }
 
-fn hud_button_bounds(hud_bounds: Bounds<Pixels>, row_index: usize) -> Bounds<Pixels> {
+fn hud_button_bounds(
+    hud_bounds: Bounds<Pixels>,
+    row_index: usize,
+    action_index: usize,
+) -> Bounds<Pixels> {
     let padding = hud_padding();
     let line_height = hud_line_height();
+    let button_width = px(23.);
+    let button_gap = px(4.);
     Bounds::new(
         point(
-            hud_bounds.origin.x + padding - px(2.),
+            hud_bounds.origin.x + padding - px(2.)
+                + (button_width + button_gap) * (action_index as f32),
             hud_bounds.origin.y + padding + line_height * (row_index as f32) - px(1.),
         ),
-        size(px(23.), line_height),
+        size(button_width, line_height),
     )
 }
 
@@ -558,6 +593,14 @@ fn apply_filter_action(action: SourceFilterAction) {
         }
         SourceFilterAction::ShowNotify(source) => {
             devtools.hidden_notify_sources.remove(&source);
+        }
+        SourceFilterAction::PinNotify(source) => {
+            devtools.pinned_notify_source = Some(source);
+            devtools.initial_pinned_notify_source_resolved = true;
+        }
+        SourceFilterAction::UnpinNotify => {
+            devtools.pinned_notify_source = None;
+            devtools.initial_pinned_notify_source_resolved = true;
         }
         SourceFilterAction::HideRender(source) => {
             devtools.hidden_render_sources.insert(source);

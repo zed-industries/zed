@@ -20,7 +20,9 @@ pub(super) struct GpuiDevTools {
     pub(super) windows: FxHashMap<WindowId, WindowDevToolsState>,
     pub(super) hidden_notify_sources: FxHashSet<NotifySourceKey>,
     pub(super) hidden_render_sources: FxHashSet<RenderSourceKey>,
-    pub(super) pinned_notify_total_count: usize,
+    pub(super) notify_source_total_counts: FxHashMap<NotifySourceKey, usize>,
+    pub(super) pinned_notify_source: Option<NotifySourceKey>,
+    pub(super) initial_pinned_notify_source_resolved: bool,
 }
 
 impl GpuiDevTools {
@@ -34,7 +36,9 @@ impl GpuiDevTools {
             windows: FxHashMap::default(),
             hidden_notify_sources: FxHashSet::default(),
             hidden_render_sources: FxHashSet::default(),
-            pinned_notify_total_count: 0,
+            notify_source_total_counts: FxHashMap::default(),
+            pinned_notify_source: None,
+            initial_pinned_notify_source_resolved: false,
         }
     }
 

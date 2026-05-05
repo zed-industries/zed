@@ -26,15 +26,6 @@ impl PinnedNotifySource {
             && (event.caller_file.ends_with(&self.caller_file)
                 || file_name(event.caller_file) == self.caller_file)
     }
-
-    pub(super) fn label(&self) -> String {
-        format!(
-            "{} {}:{}",
-            self.entity_type,
-            file_name(&self.caller_file),
-            self.caller_line
-        )
-    }
 }
 
 pub(super) fn parse_pinned_notify_source(source: &str) -> Option<PinnedNotifySource> {
@@ -73,6 +64,15 @@ impl NotifySourceKey {
             caller_file: event.caller_file,
             caller_line: event.caller_line,
         }
+    }
+
+    pub(super) fn label(self) -> String {
+        format!(
+            "{} {}:{}",
+            short_type_name(self.entity_type),
+            file_name(self.caller_file),
+            self.caller_line
+        )
     }
 }
 
@@ -163,7 +163,7 @@ pub(super) fn format_notify_source(
     stats: NotifySourceStats,
 ) -> String {
     format!(
-        "[-] notify {} {} {}:{}:{} x{} reg {} live {} id {}",
+        "notify {} {} {}:{}:{} x{} reg {} live {} id {}",
         index,
         short_type_name(source.entity_type),
         file_name(source.caller_file),
@@ -179,13 +179,14 @@ pub(super) fn format_notify_source(
 pub(super) fn pinned_notify_recent_count(
     devtools: &GpuiDevTools,
     now: Instant,
-    pinned_source: &PinnedNotifySource,
+    pinned_source: NotifySourceKey,
 ) -> usize {
     devtools
         .notifications
         .iter()
         .filter(|event| {
-            now.duration_since(event.timestamp) <= SOURCE_WINDOW && pinned_source.matches(event)
+            now.duration_since(event.timestamp) <= SOURCE_WINDOW
+                && NotifySourceKey::from(event) == pinned_source
         })
         .count()
 }
@@ -330,7 +331,7 @@ pub(super) fn format_render_source(
     stats: RenderSourceStats,
 ) -> String {
     let mut label = format!(
-        "[-] render {} {}#{} {} x{}",
+        "render {} {}#{} {} x{}",
         index,
         short_type_name(source.entity_type),
         stats.sample_entity_id.as_u64(),
