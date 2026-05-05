@@ -447,6 +447,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: BranchPickerSettings,
+    /// Custom commands to display in Git-related context menus.
+    pub custom_commands: Vec<settings::GitCustomCommand>,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
@@ -649,6 +651,7 @@ impl Settings for ProjectSettings {
                     show_author_name: branch_picker.show_author_name.unwrap(),
                 }
             },
+            custom_commands: git.custom_commands.clone(),
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
             worktree_directory: git

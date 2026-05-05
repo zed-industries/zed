@@ -492,6 +492,11 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: Option<BranchPickerSettingsContent>,
+    /// Custom commands to display in Git-related context menus.
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub custom_commands: Vec<GitCustomCommand>,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
@@ -611,6 +616,17 @@ pub struct BranchPickerSettingsContent {
     ///
     /// Default: false
     pub show_author_name: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct GitCustomCommand {
+    /// Human-readable name to display in Git-related context menus.
+    pub name: String,
+    /// Command to spawn when the menu entry is selected.
+    pub command: String,
+    /// Arguments to pass to the command.
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(

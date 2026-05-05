@@ -36,6 +36,7 @@ project_panel.workspace = true
 search.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+task.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true

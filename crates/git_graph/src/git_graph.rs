@@ -22,17 +22,19 @@ use language::line_diff;
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use picker::{Picker, PickerDelegate};
 use project::{
-    ProjectPath,
+    ProjectPath, TaskSourceKind,
     git_store::{
         CommitDataState, GitGraphEvent, GitStore, GitStoreEvent, GraphDataResponse, Repository,
         RepositoryEvent, RepositoryId,
     },
+    project_settings::ProjectSettings,
 };
 use project_panel::ProjectPanel;
 use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
 };
+use settings::Settings as _;
 use smallvec::{SmallVec, smallvec};
 use std::{
     cell::Cell,
@@ -41,6 +43,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
+use task::{TaskContext, TaskTemplate};
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
@@ -1095,6 +1098,84 @@ struct GitGraphContextMenu {
     _subscription: Subscription,
 }
 
+#[derive(Clone)]
+struct ResolvedGitCommand {
+    name: String,
+    command: String,
+    args: Vec<String>,
+}
+
+struct GitCommandInterpolationContext {
+    sha: Oid,
+    repo_name: Option<String>,
+    repo_path: Option<String>,
+}
+
+impl GitCommandInterpolationContext {
+    fn variable_value(&self, variable_name: &str) -> Option<String> {
+        match variable_name {
+            "sha" => Some(self.sha.to_string()),
+            "sha:abbr" => Some(self.sha.display_short()),
+            "repo:name" => self.repo_name.clone(),
+            "repo:path" => self.repo_path.clone(),
+            _ => None,
+        }
+    }
+}
+
+fn interpolate_git_command_string(
+    template: &str,
+    context: &GitCommandInterpolationContext,
+) -> String {
+    let mut interpolated = String::new();
+    let mut remainder = template;
+
+    while let Some(start) = remainder.find("${") {
+        interpolated.push_str(&remainder[..start]);
+        let variable_start = start + 2;
+        let Some(variable_end_offset) = remainder[variable_start..].find('}') else {
+            interpolated.push_str(&remainder[start..]);
+            return interpolated;
+        };
+
+        let variable_end = variable_start + variable_end_offset;
+        let variable_name = &remainder[variable_start..variable_end];
+        if let Some(value) = context.variable_value(variable_name) {
+            interpolated.push_str(&value);
+        } else {
+            interpolated.push_str(&remainder[start..=variable_end]);
+        }
+
+        remainder = &remainder[variable_end + 1..];
+    }
+
+    interpolated.push_str(remainder);
+    interpolated
+}
+
+fn interpolate_custom_git_command(
+    custom_command: &settings::GitCustomCommand,
+    context: &GitCommandInterpolationContext,
+) -> Option<ResolvedGitCommand> {
+    let name = interpolate_git_command_string(custom_command.name.trim(), context);
+    let command = interpolate_git_command_string(custom_command.command.trim(), context);
+    let args = custom_command
+        .args
+        .iter()
+        .map(|arg| interpolate_git_command_string(arg, context))
+        .collect::<Vec<_>>();
+
+    if name.trim().is_empty() || command.trim().is_empty() {
+        return None;
+    }
+
+    Some(ResolvedGitCommand {
+        name,
+        command,
+        args,
+    })
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
@@ -2031,6 +2112,41 @@ impl GitGraph {
         self.copy_commit_tag(selected_entry_index, window, cx);
     }
 
+    fn schedule_custom_git_command(
+        &mut self,
+        custom_command: ResolvedGitCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cwd = self
+            .get_repository(cx)
+            .map(|repository| repository.read(cx).work_directory_abs_path.to_path_buf());
+
+        let task_template = TaskTemplate {
+            label: custom_command.name,
+            command: custom_command.command,
+            args: custom_command.args,
+            ..TaskTemplate::default()
+        };
+        let task_context = TaskContext {
+            cwd,
+            ..TaskContext::default()
+        };
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.schedule_task(
+                    TaskSourceKind::UserInput,
+                    &task_template,
+                    &task_context,
+                    true,
+                    window,
+                    cx,
+                );
+            })
+            .ok();
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2050,11 +2166,31 @@ impl GitGraph {
             _ => format!("{copy_tag_label}…").into(),
         };
         let copy_tag_disabled = tag_names.is_empty();
+        let repository_path = self
+            .get_repository(cx)
+            .map(|repository| repository.read(cx).work_directory_abs_path.to_path_buf());
+        let repo_name = repository_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(ToString::to_string);
+        let repo_path = repository_path.map(|path| path.to_string_lossy().into_owned());
+        let interpolation_context = GitCommandInterpolationContext {
+            sha: commit.data.sha,
+            repo_name,
+            repo_path,
+        };
+        let custom_commands = ProjectSettings::get_global(cx)
+            .git
+            .custom_commands
+            .iter()
+            .filter_map(|command| interpolate_custom_git_command(command, &interpolation_context))
+            .collect::<Vec<_>>();
 
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
         let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
-            context_menu
+            let mut context_menu = context_menu
                 .context(focus_handle)
                 .header(format!("Commit {short_sha}"))
                 .entry(
@@ -2078,7 +2214,24 @@ impl GitGraph {
                         .handler(window.handler_for(&git_graph, move |this, window, cx| {
                             this.copy_commit_tag(index, window, cx);
                         })),
-                )
+                );
+
+            if !custom_commands.is_empty() {
+                context_menu = context_menu.separator().header("Custom Git Commands");
+                for custom_command in custom_commands {
+                    let label = custom_command.name.clone();
+                    let custom_command = custom_command.clone();
+                    context_menu = context_menu.entry(
+                        label,
+                        None,
+                        window.handler_for(&git_graph, move |this, window, cx| {
+                            this.schedule_custom_git_command(custom_command.clone(), window, cx);
+                        }),
+                    );
+                }
+            }
+
+            context_menu
         });
         self.set_context_menu(context_menu, position, index, window, cx);
     }
@@ -3902,6 +4055,127 @@ mod tests {
             project_panel::init(cx);
             init(cx);
         });
+    }
+
+    fn git_command_interpolation_context(sha: &str) -> Result<GitCommandInterpolationContext> {
+        Ok(GitCommandInterpolationContext {
+            sha: Oid::try_from(sha)?,
+            repo_name: Some("zed".to_string()),
+            repo_path: Some("/Users/example/zed".to_string()),
+        })
+    }
+
+    #[test]
+    fn test_interpolate_git_command_string_replaces_sha_variables() -> Result<()> {
+        let context =
+            git_command_interpolation_context("1234567890abcdef1234567890abcdef12345678")?;
+
+        assert_eq!(
+            interpolate_git_command_string("git show ${sha}", &context),
+            "git show 1234567890abcdef1234567890abcdef12345678"
+        );
+        assert_eq!(
+            interpolate_git_command_string("Show ${sha:abbr}", &context),
+            "Show 1234567"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_interpolate_git_command_string_replaces_repo_variables() -> Result<()> {
+        let context =
+            git_command_interpolation_context("1234567890abcdef1234567890abcdef12345678")?;
+
+        assert_eq!(
+            interpolate_git_command_string("${repo:name}: ${repo:path}", &context),
+            "zed: /Users/example/zed"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_interpolate_custom_git_command_interpolates_name_command_and_args() -> Result<()> {
+        let context =
+            git_command_interpolation_context("abcdef1234567890abcdef1234567890abcdef12")?;
+        let custom_command = settings::GitCustomCommand {
+            name: "Branches containing commit in ${repo:name}: ${sha:abbr}".to_string(),
+            command: "git".to_string(),
+            args: vec![
+                "branch".to_string(),
+                "-a".to_string(),
+                "--contains".to_string(),
+                "${sha}".to_string(),
+            ],
+        };
+
+        let Some(resolved_command) = interpolate_custom_git_command(&custom_command, &context)
+        else {
+            bail!("expected command to resolve");
+        };
+
+        assert_eq!(
+            resolved_command.name,
+            "Branches containing commit in zed: abcdef1"
+        );
+        assert_eq!(resolved_command.command, "git");
+        assert_eq!(
+            resolved_command.args,
+            vec![
+                "branch".to_string(),
+                "-a".to_string(),
+                "--contains".to_string(),
+                "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_interpolate_git_command_string_preserves_unknown_and_malformed_variables() -> Result<()>
+    {
+        let context =
+            git_command_interpolation_context("1234567890abcdef1234567890abcdef12345678")?;
+
+        assert_eq!(
+            interpolate_git_command_string("git show ${unknown} ${sha", &context),
+            "git show ${unknown} ${sha"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_interpolate_custom_git_command_skips_empty_fields() -> Result<()> {
+        let context =
+            git_command_interpolation_context("1234567890abcdef1234567890abcdef12345678")?;
+
+        assert!(
+            interpolate_custom_git_command(
+                &settings::GitCustomCommand {
+                    name: "".to_string(),
+                    command: "git show ${sha}".to_string(),
+                    args: Vec::new(),
+                },
+                &context,
+            )
+            .is_none()
+        );
+        assert!(
+            interpolate_custom_git_command(
+                &settings::GitCustomCommand {
+                    name: "Show ${sha:abbr}".to_string(),
+                    command: "".to_string(),
+                    args: Vec::new(),
+                },
+                &context,
+            )
+            .is_none()
+        );
+
+        Ok(())
     }
 
     /// Generates a random commit DAG suitable for testing git graph rendering.
