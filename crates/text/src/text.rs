@@ -2851,8 +2851,10 @@ impl FragmentBuilder {
         }
     }
     fn append(&mut self, items: SumTree<Fragment>, cx: &Option<clock::Global>) {
-        self.summary.add_summary(items.summary(), cx);
-        self.fragments.extend(items.iter().cloned());
+        if !items.is_empty() {
+            self.summary.add_summary(items.summary(), cx);
+            self.fragments.extend(items.iter().cloned());
+        }
     }
     fn push(&mut self, fragment: Fragment, cx: &Option<clock::Global>) {
         self.append(SumTree::from_item(fragment, cx), cx);
