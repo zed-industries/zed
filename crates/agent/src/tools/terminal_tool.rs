@@ -34,11 +34,16 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
-/// The terminal emulator is an interactive pty, so commands may block waiting for user input.
-/// Some commands can be configured not to do this, such as `git --no-pager diff` and similar.
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
+///
+/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
+/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    ///
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
