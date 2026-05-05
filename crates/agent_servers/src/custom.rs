@@ -355,21 +355,22 @@ impl AgentServer for CustomAgentServer {
                     extra_env.insert("GEMINI_API_KEY".into(), api_key);
                 }
             }
-            if let Some(new_version_available_tx) = delegate.new_version_available {
-                store.update(cx, |store, _| {
+            let command = store
+                .update(cx, |store, cx| {
                     let agent = store.get_external_agent(&agent_id).with_context(|| {
                         format!("Custom agent server `{}` is not registered", agent_id)
                     })?;
-                    agent.set_new_version_available_tx(new_version_available_tx);
-                    anyhow::Ok(())
-                })??;
-            }
+                    if let Some(new_version_available_tx) = delegate.new_version_available {
+                        agent.set_new_version_available_tx(new_version_available_tx);
+                    }
+                    anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
+                })??
+                .await?;
             let connection = crate::acp::connect(
                 agent_id,
                 project,
+                command,
                 store.clone(),
-                vec![],
-                extra_env,
                 default_mode,
                 default_model,
                 default_config_options,

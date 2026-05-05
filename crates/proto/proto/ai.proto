@@ -7,7 +7,6 @@ message GetAgentServerCommand {
   uint64 project_id = 1;
   string name = 2;
   optional string root_dir = 3;
-  optional bool fallback = 4;
 }
 
 message GetContextServerCommand {

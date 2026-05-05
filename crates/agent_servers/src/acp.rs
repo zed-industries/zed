@@ -225,26 +225,6 @@ fn exited_load_error_with_stderr(status: ExitStatus, debug_log: &AcpDebugLog) ->
     }
 }
 
-fn should_retry_with_fallback_command(error: &anyhow::Error) -> bool {
-    let Some(LoadError::Exited {
-        stderr: Some(stderr),
-        ..
-    }) = error.downcast_ref::<LoadError>()
-    else {
-        return false;
-    };
-
-    is_npm_release_age_resolution_failure(stderr)
-}
-
-fn is_npm_release_age_resolution_failure(stderr: &str) -> bool {
-    let stderr = stderr.to_lowercase();
-    stderr.contains("min-release-age")
-        || stderr.contains("minimum release age")
-        || stderr.contains("with a date before")
-        || (stderr.contains("no matching version found") && stderr.contains("before"))
-}
-
 /// Awaits the response to an ACP request from a GPUI foreground task.
 ///
 /// The ACP SDK offers two ways to consume a [`SentRequest`]:
@@ -571,122 +551,28 @@ impl AgentSessionList for AcpSessionList {
     }
 }
 
-async fn agent_server_command(
-    agent_server_store: WeakEntity<AgentServerStore>,
-    agent_id: AgentId,
-    fallback: bool,
-    extra_args: Vec<String>,
-    extra_env: HashMap<String, String>,
-    cx: &mut AsyncApp,
-) -> Result<Option<AgentServerCommand>> {
-    let command = agent_server_store.update(cx, |store, cx| {
-        let agent = store
-            .get_external_agent(&agent_id)
-            .with_context(|| format!("agent server `{agent_id}` is not registered"))?;
-        if fallback {
-            anyhow::Ok(agent.get_fallback_command(extra_args, extra_env, &mut cx.to_async()))
-        } else {
-            anyhow::Ok(Some(agent.get_command(
-                extra_args,
-                extra_env,
-                &mut cx.to_async(),
-            )))
-        }
-    })??;
-
-    match command {
-        Some(command) => Ok(Some(command.await?)),
-        None => Ok(None),
-    }
-}
-
 pub async fn connect(
     agent_id: AgentId,
     project: Entity<Project>,
+    command: AgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
-    extra_args: Vec<String>,
-    extra_env: HashMap<String, String>,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
-    let command = agent_server_command(
-        agent_server_store.clone(),
-        agent_id.clone(),
-        false,
-        extra_args.clone(),
-        extra_env.clone(),
+    let conn = AcpConnection::stdio(
+        agent_id,
+        project,
+        command.clone(),
+        agent_server_store,
+        default_mode,
+        default_model,
+        default_config_options,
         cx,
     )
-    .await?
-    .context("agent server did not provide a command")?;
-
-    let primary_command = command.clone();
-    let primary_error = match AcpConnection::stdio(
-        agent_id.clone(),
-        project.clone(),
-        command,
-        agent_server_store.clone(),
-        default_mode.clone(),
-        default_model.clone(),
-        default_config_options.clone(),
-        cx,
-    )
-    .await
-    {
-        Ok(conn) => return Ok(Rc::new(conn) as _),
-        Err(error) => error,
-    };
-
-    if should_retry_with_fallback_command(&primary_error) {
-        let fallback_command = match agent_server_command(
-            agent_server_store.clone(),
-            agent_id.clone(),
-            true,
-            extra_args,
-            extra_env,
-            cx,
-        )
-        .await
-        {
-            Ok(Some(command)) => command,
-            Ok(None) => return Err(primary_error),
-            Err(error) => {
-                log::warn!(
-                    "Failed to generate fallback command for agent {}: {error:#}",
-                    agent_id
-                );
-                return Err(primary_error);
-            }
-        };
-
-        if fallback_command == primary_command {
-            return Err(primary_error);
-        }
-
-        log::warn!(
-            "Retrying agent server `{}` with fallback command after startup failed: {primary_error:#}",
-            agent_id
-        );
-        let conn = AcpConnection::stdio(
-            agent_id,
-            project,
-            fallback_command,
-            agent_server_store,
-            default_mode,
-            default_model,
-            default_config_options,
-            cx,
-        )
-        .await
-        .with_context(|| {
-            format!("fallback agent command failed after primary command failed: {primary_error}")
-        })?;
-        return Ok(Rc::new(conn) as _);
-    }
-
-    Err(primary_error)
+    .await?;
+    Ok(Rc::new(conn) as _)
 }
 
 const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1;
@@ -2421,19 +2307,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-
-    #[test]
-    fn detects_npm_release_age_resolution_failures() {
-        assert!(is_npm_release_age_resolution_failure(
-            "npm error notarget No matching version found for @agentclientprotocol/claude-agent-acp@0.32.0 with a date before 4/28/2026, 12:11:38 PM."
-        ));
-        assert!(is_npm_release_age_resolution_failure(
-            "npm error min-release-age prevented selecting a matching version"
-        ));
-        assert!(!is_npm_release_age_resolution_failure(
-            "npm error notarget No matching version found for missing-package@1.2.3."
-        ));
-    }
 
     #[test]
     fn terminal_auth_task_builds_spawn_from_prebuilt_command() {
