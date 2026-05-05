@@ -230,15 +230,16 @@
   //
   // Default: "bar"
   "cursor_shape": "bar",
-  // Determines when the mouse cursor should be hidden in an editor or input box.
+  // Determines when the mouse cursor should be hidden in response to keyboard
+  // input.
   //
   // 1. Never hide the mouse cursor:
   //    "never"
   // 2. Hide only when typing:
   //    "on_typing"
-  // 3. Hide on both typing and cursor movement:
-  //    "on_typing_and_movement"
-  "hide_mouse": "on_typing_and_movement",
+  // 3. Hide on typing and on key bindings that resolve to an action:
+  //    "on_typing_and_action"
+  "hide_mouse": "on_typing_and_action",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,
@@ -355,6 +356,15 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // How to scroll the target into view when navigating to a definition or reference
+  // (e.g. Go to Definition, Go to Type Definition, Find All References).
+  //
+  // 1. Vertically center the target in the viewport: `center` (default)
+  // 2. Scroll the minimum amount needed to make the target visible: `minimum`
+  // 3. Scroll so the target appears near the top of the viewport: `top`
+  // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
+  //    offscreen: `preserve`
+  "go_to_definition_scroll_strategy": "center",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt
@@ -975,6 +985,11 @@
     //
     // Default: true
     "diff_stats": true,
+    // Maximum length of the commit message title before a warning is shown.
+    // Set to 0 to disable.
+    //
+    // Default: 72
+    "commit_title_max_length": 72,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1093,13 +1108,18 @@
           "create_directory": true,
           "delete_path": true,
           "diagnostics": true,
+          "apply_code_action": true,
           "edit_file": true,
           "fetch": true,
+          "find_path": true,
+          "find_references": true,
+          "get_code_actions": true,
+          "go_to_definition": true,
           "list_directory": true,
           "project_notifications": false,
           "move_path": true,
           "now": true,
-          "find_path": true,
+          "rename_symbol": true,
           "read_file": true,
           "restore_file_from_disk": true,
           "save_file": true,
@@ -1123,6 +1143,9 @@
           "project_notifications": false,
           "now": true,
           "find_path": true,
+          "find_references": true,
+          "get_code_actions": true,
+          "go_to_definition": true,
           "read_file": true,
           "open": true,
           "grep": true,
@@ -1138,10 +1161,6 @@
         "tools": {},
       },
     },
-    // Whether to start a new thread in the current local project or in a new Git worktree.
-    //
-    // Default: local_project
-    "new_thread_location": "local_project",
     // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
@@ -2241,7 +2260,16 @@
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "!kanayago", "..."],
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "!kanayago",
+        "!fuzzy-ruby-server",
+        "...",
+      ],
     },
     "Rust": {
       "debuggers": ["CodeLLDB"],
@@ -2337,9 +2365,6 @@
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1",
-    },
-    "vercel": {
-      "api_url": "https://api.v0.dev/v1",
     },
     "vercel_ai_gateway": {
       "api_url": "https://ai-gateway.vercel.sh/v1",
@@ -2518,6 +2543,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "nightly": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Zed Stable.
   // Mostly useful for developers who are managing multiple instances of Zed.
@@ -2528,6 +2558,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Linux.
   "linux": {},
@@ -2647,4 +2682,16 @@
   //
   // Example: {"log": {"client": "warn"}}
   "log": {},
+
+  // Configuration for developer-oriented instrumentation tools that can be
+  // toggled at runtime.
+  "instrumentation": {
+    // Performance profiler, accessed via the `zed: open performance profiler`
+    // action. Collects timing data for foreground and background executor
+    // tasks. Enabling this may lead to increased memory usage, hence it's
+    // disabled by default for regular builds.
+    "performance_profiler": {
+      "enabled": false,
+    },
+  },
 }

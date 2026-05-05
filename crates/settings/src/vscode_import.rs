@@ -192,6 +192,7 @@ impl VsCodeSettings {
                 ..GlobalLspSettingsContent::default()
             }),
             helix_mode: None,
+            hide_mouse: None,
             image_viewer: None,
             journal: None,
             language_models: None,
@@ -222,6 +223,7 @@ impl VsCodeSettings {
             which_key: None,
             modeline_lines: None,
             feature_flags: None,
+            instrumentation: None,
         }
     }
 
@@ -264,8 +266,8 @@ impl VsCodeSettings {
             fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
             sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
+            go_to_definition_scroll_strategy: None,
             gutter: self.gutter_content(),
-            hide_mouse: None,
             horizontal_scroll_margin: None,
             hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
@@ -974,6 +976,8 @@ impl VsCodeSettings {
             buffer_font_features: None,
             agent_ui_font_size: None,
             agent_buffer_font_size: None,
+            markdown_preview_font_family: None,
+            markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
             ui_density: None,

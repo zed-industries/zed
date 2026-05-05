@@ -1942,10 +1942,10 @@ mod tests {
         SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
+    use futures::stream::StreamExt as _;
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use settings::{SearchSettingsContent, SettingsStore};
-    use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
     use util_macros::perf;
 

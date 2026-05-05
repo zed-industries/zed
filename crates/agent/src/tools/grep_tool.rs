@@ -126,7 +126,7 @@ impl AgentTool for GrepTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
 
             let results = cx.update(|cx| {
                 let path_style = project.read(cx).path_style(cx);
@@ -196,7 +196,7 @@ impl AgentTool for GrepTool {
                         has_more_matches = true;
                         break;
                     }
-                    Some(SearchResult::WaitingForScan) => continue,
+                    Some(SearchResult::WaitingForScan | SearchResult::Searching) => continue,
                     None => break,
                 };
                 if ranges.is_empty() {

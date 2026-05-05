@@ -1,5 +1,5 @@
 mod agent_configuration;
-pub(crate) mod agent_connection_store;
+pub mod agent_connection_store;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
@@ -60,6 +60,7 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
+pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
@@ -584,8 +585,7 @@ fn update_command_palette_filter(cx: &mut App) {
                 | EditPredictionProvider::Codestral
                 | EditPredictionProvider::Ollama
                 | EditPredictionProvider::OpenAiCompatibleApi
-                | EditPredictionProvider::Mercury
-                | EditPredictionProvider::Experimental(_) => {
+                | EditPredictionProvider::Mercury => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
                     filter.show_action_types(edit_prediction_actions.iter());
@@ -713,7 +713,6 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            new_thread_location: Default::default(),
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         };

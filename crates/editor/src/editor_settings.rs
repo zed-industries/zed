@@ -5,9 +5,9 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
     CodeLens, CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
-    DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode,
-    MinimapThumb, MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine,
-    ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback,
+    GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
+    ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::ShowScrollbar;
@@ -52,8 +52,8 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
+    pub go_to_definition_scroll_strategy: GoToDefinitionScrollStrategy,
     pub jupyter: Jupyter,
-    pub hide_mouse: Option<HideMouseMode>,
     pub snippet_sort_order: SnippetSortOrder,
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
@@ -285,10 +285,10 @@ impl Settings for EditorSettings {
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
+            go_to_definition_scroll_strategy: editor.go_to_definition_scroll_strategy.unwrap(),
             jupyter: Jupyter {
                 enabled: editor.jupyter.unwrap().enabled.unwrap(),
             },
-            hide_mouse: editor.hide_mouse,
             snippet_sort_order: editor.snippet_sort_order.unwrap(),
             diagnostics_max_severity: editor.diagnostics_max_severity.map(Into::into),
             inline_code_actions: editor.inline_code_actions.unwrap(),

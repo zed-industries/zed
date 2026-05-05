@@ -22,10 +22,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: bar
     pub cursor_shape: Option<CursorShape>,
-    /// Determines when the mouse cursor should be hidden in an editor or input box.
-    ///
-    /// Default: on_typing_and_movement
-    pub hide_mouse: Option<HideMouseMode>,
     /// Determines how snippets are sorted relative to other completion items.
     ///
     /// Default: inline
@@ -191,6 +187,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
+
+    /// How to scroll the target into view when navigating to a definition or reference
+    /// (e.g. Go to Definition, Go to Type Definition, Find All References).
+    ///
+    /// Default: center
+    pub go_to_definition_scroll_strategy: Option<GoToDefinitionScrollStrategy>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
@@ -799,9 +801,9 @@ pub enum GoToDefinitionFallback {
     FindAllReferences,
 }
 
-/// Determines when the mouse cursor should be hidden in an editor or input box.
+/// How to scroll the target into view when navigating to a definition or reference.
 ///
-/// Default: on_typing_and_movement
+/// Default: center
 #[derive(
     Copy,
     Clone,
@@ -817,14 +819,17 @@ pub enum GoToDefinitionFallback {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum HideMouseMode {
-    /// Never hide the mouse cursor
-    Never,
-    /// Hide only when typing
-    OnTyping,
-    /// Hide on both typing and cursor movement
+pub enum GoToDefinitionScrollStrategy {
+    /// Vertically center the target in the viewport.
     #[default]
-    OnTypingAndMovement,
+    Center,
+    /// Scroll the minimum amount needed to make the target visible.
+    Minimum,
+    /// Scroll so the target appears near the top of the viewport.
+    Top,
+    /// Preserve the cursor's vertical position within the viewport, falling
+    /// back to centering when the cursor is offscreen.
+    Preserve,
 }
 
 /// Determines how snippets are sorted relative to other completion items.

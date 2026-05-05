@@ -2,7 +2,9 @@ use std::path::Path;
 
 use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
+use async_channel::Sender;
 use collections::{HashMap, HashSet};
+use futures::FutureExt as _;
 use futures::future::{self, BoxFuture, join_all};
 use git::repository::GitCommitTemplate;
 use git::{
@@ -24,7 +26,6 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use smol::{channel::Sender, future::FutureExt as _};
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
@@ -56,7 +57,7 @@ pub enum FakeCommitDataEntry {
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
-    pub event_emitter: smol::channel::Sender<PathBuf>,
+    pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
@@ -78,7 +79,7 @@ pub struct FakeGitRepositoryState {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
             event_emitter,
             head_contents: Default::default(),
@@ -196,7 +197,7 @@ impl GitRepository for FakeGitRepository {
         _commit: String,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        unimplemented!()
+        async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
     }
 
     fn set_index_text(
@@ -911,25 +912,6 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
-        self.file_history_paginated(path, 0, None)
-    }
-
-    fn file_history_paginated(
-        &self,
-        path: RepoPath,
-        _skip: usize,
-        _limit: Option<usize>,
-    ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
-        async move {
-            Ok(git::repository::FileHistory {
-                entries: Vec::new(),
-                path,
-            })
-        }
-        .boxed()
-    }
-
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
@@ -1453,10 +1435,43 @@ impl GitRepository for FakeGitRepository {
     fn search_commits(
         &self,
         _log_source: LogSource,
-        _search_args: SearchCommitArgs,
-        _request_tx: Sender<Oid>,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
-        async { bail!("search_commits not supported for FakeGitRepository") }.boxed()
+        async move {
+            let query = if search_args.case_sensitive {
+                search_args.query.to_string()
+            } else {
+                search_args.query.to_lowercase()
+            };
+
+            let matching_shas = self.fs.with_git_state(&self.dot_git_path, false, |state| {
+                state
+                    .commit_data
+                    .iter()
+                    .filter_map(|(sha, entry)| {
+                        let FakeCommitDataEntry::Success(commit_data) = entry else {
+                            return None;
+                        };
+                        let message = if search_args.case_sensitive {
+                            commit_data.message.to_string()
+                        } else {
+                            commit_data.message.to_lowercase()
+                        };
+                        message.contains(&query).then_some(*sha)
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+
+            for sha in matching_shas {
+                if request_tx.send(sha).await.is_err() {
+                    break;
+                }
+            }
+
+            Ok(())
+        }
+        .boxed()
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {

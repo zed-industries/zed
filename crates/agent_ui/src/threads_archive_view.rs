@@ -39,8 +39,8 @@ use ui_input::ErasedEditor;
 use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
-    ModalView, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
-    resolve_worktree_workspaces,
+    CloseWindow, ModalView, PathList, RecentWorkspace, SerializedWorkspaceLocation, Workspace,
+    WorkspaceDb, WorkspaceId,
 };
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -261,9 +261,19 @@ impl ThreadsArchiveView {
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+
+        // If we're filtering to archived threads but none remain (e.g. the
+        // user just deleted the last one), fall back to showing all threads
+        // so they aren't stranded with an empty list and a disabled toggle.
+        if self.thread_filter == ThreadFilter::ArchivedOnly
+            && store.archived_entries().next().is_none()
+        {
+            self.thread_filter = ThreadFilter::All;
+        }
+
         let thread_filter = self.thread_filter;
-        let sessions = ThreadMetadataStore::global(cx)
-            .read(cx)
+        let sessions = store
             .entries()
             .filter(|t| match thread_filter {
                 ThreadFilter::All => true,
@@ -828,8 +838,12 @@ impl ThreadsArchiveView {
             AgentSettings::get_global(cx).sidebar_side(),
             settings::SidebarSide::Left
         );
-        let traffic_lights =
-            cfg!(target_os = "macos") && !window.is_fullscreen() && sidebar_on_left;
+        let sidebar_on_right = !sidebar_on_left;
+        let not_fullscreen = !window.is_fullscreen();
+        let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
+        let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
+        let right_window_controls =
+            !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
         let header_height = platform_title_bar_height(window);
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
@@ -838,14 +852,19 @@ impl ThreadsArchiveView {
             .h(header_height)
             .mt_px()
             .pb_px()
+            .when(left_window_controls, |this| {
+                this.children(Self::render_left_window_controls(window, cx))
+            })
             .map(|this| {
                 if traffic_lights {
                     this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
-                } else {
+                } else if !left_window_controls {
                     this.pl_1p5()
+                } else {
+                    this
                 }
             })
-            .pr_1p5()
+            .when(!right_window_controls, |this| this.pr_1p5())
             .gap_1()
             .justify_between()
             .border_b_1()
@@ -880,6 +899,25 @@ impl ThreadsArchiveView {
                         })),
                 )
             })
+            .when(right_window_controls, |this| {
+                this.children(Self::render_right_window_controls(window, cx))
+            })
+    }
+
+    fn render_left_window_controls(window: &Window, cx: &mut App) -> Option<AnyElement> {
+        platform_title_bar::render_left_window_controls(
+            cx.button_layout(),
+            Box::new(CloseWindow),
+            window,
+        )
+    }
+
+    fn render_right_window_controls(window: &Window, cx: &mut App) -> Option<AnyElement> {
+        platform_title_bar::render_right_window_controls(
+            cx.button_layout(),
+            Box::new(CloseWindow),
+            window,
+        )
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1014,9 +1052,7 @@ impl Render for ThreadsArchiveView {
                     .size_full(),
                 )
                 .custom_scrollbars(
-                    Scrollbars::new(ScrollAxes::Vertical)
-                        .tracked_scroll_handle(&self.list_state)
-                        .width_sm(),
+                    Scrollbars::new(ScrollAxes::Vertical).tracked_scroll_handle(&self.list_state),
                     window,
                     cx,
                 )
@@ -1091,7 +1127,6 @@ impl ProjectPickerModal {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let workspaces = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
             this.update_in(cx, move |this, window, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.workspaces = workspaces;
@@ -1146,12 +1181,7 @@ struct ProjectPickerDelegate {
     archive_view: WeakEntity<ThreadsArchiveView>,
     current_workspace_id: Option<WorkspaceId>,
     sibling_workspace_ids: HashSet<WorkspaceId>,
-    workspaces: Vec<(
-        WorkspaceId,
-        SerializedWorkspaceLocation,
-        PathList,
-        DateTime<Utc>,
-    )>,
+    workspaces: Vec<RecentWorkspace>,
     filtered_entries: Vec<ProjectPickerEntry>,
     selected_index: usize,
     focus_handle: FocusHandle,
@@ -1296,9 +1326,10 @@ impl PickerDelegate for ProjectPickerDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, _, _))| self.is_sibling_workspace(*id))
-            .map(|(id, (_, _, paths, _))| {
-                let combined_string = paths
+            .filter(|(_, workspace)| self.is_sibling_workspace(workspace.workspace_id))
+            .map(|(id, workspace)| {
+                let combined_string = workspace
+                    .identity_paths
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
@@ -1307,7 +1338,7 @@ impl PickerDelegate for ProjectPickerDelegate {
             })
             .collect();
 
-        let mut sibling_matches = smol::block_on(fuzzy::match_strings(
+        let mut sibling_matches = gpui::block_on(fuzzy::match_strings(
             &sibling_candidates,
             query,
             smart_case,
@@ -1328,11 +1359,13 @@ impl PickerDelegate for ProjectPickerDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, _, _))| {
-                !self.is_current_workspace(*id) && !self.is_sibling_workspace(*id)
+            .filter(|(_, workspace)| {
+                !self.is_current_workspace(workspace.workspace_id)
+                    && !self.is_sibling_workspace(workspace.workspace_id)
             })
-            .map(|(id, (_, _, paths, _))| {
-                let combined_string = paths
+            .map(|(id, workspace)| {
+                let combined_string = workspace
+                    .identity_paths
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
@@ -1341,7 +1374,7 @@ impl PickerDelegate for ProjectPickerDelegate {
             })
             .collect();
 
-        let mut recent_matches = smol::block_on(fuzzy::match_strings(
+        let mut recent_matches = gpui::block_on(fuzzy::match_strings(
             &recent_candidates,
             query,
             smart_case,
@@ -1370,8 +1403,8 @@ impl PickerDelegate for ProjectPickerDelegate {
             entries.push(ProjectPickerEntry::Header("This Window".into()));
 
             if is_empty_query {
-                for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
-                    if self.is_sibling_workspace(*workspace_id) {
+                for (id, workspace) in self.workspaces.iter().enumerate() {
+                    if self.is_sibling_workspace(workspace.workspace_id) {
                         entries.push(ProjectPickerEntry::Workspace(StringMatch {
                             candidate_id: id,
                             score: 0.0,
@@ -1397,9 +1430,9 @@ impl PickerDelegate for ProjectPickerDelegate {
             entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
 
             if is_empty_query {
-                for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
-                    if !self.is_current_workspace(*workspace_id)
-                        && !self.is_sibling_workspace(*workspace_id)
+                for (id, workspace) in self.workspaces.iter().enumerate() {
+                    if !self.is_current_workspace(workspace.workspace_id)
+                        && !self.is_sibling_workspace(workspace.workspace_id)
                     {
                         entries.push(ProjectPickerEntry::Workspace(StringMatch {
                             candidate_id: id,
@@ -1432,11 +1465,11 @@ impl PickerDelegate for ProjectPickerDelegate {
             Some(ProjectPickerEntry::Workspace(hit)) => hit.candidate_id,
             _ => return,
         };
-        let Some((_workspace_id, _location, paths, _)) = self.workspaces.get(candidate_id) else {
+        let Some(workspace) = self.workspaces.get(candidate_id) else {
             return;
         };
 
-        self.update_working_directories_and_unarchive(paths.clone(), window, cx);
+        self.update_working_directories_and_unarchive(workspace.paths.clone(), window, cx);
         cx.emit(DismissEvent);
     }
 
@@ -1468,9 +1501,11 @@ impl PickerDelegate for ProjectPickerDelegate {
                     .into_any_element(),
             ),
             ProjectPickerEntry::Workspace(hit) => {
-                let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
+                let workspace = self.workspaces.get(hit.candidate_id)?;
+                let location = &workspace.location;
 
-                let ordered_paths: Vec<_> = paths
+                let ordered_paths: Vec<_> = workspace
+                    .identity_paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
                     .collect();
@@ -1478,7 +1513,8 @@ impl PickerDelegate for ProjectPickerDelegate {
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
 
                 let mut path_start_offset = 0;
-                let match_labels: Vec<_> = paths
+                let match_labels: Vec<_> = workspace
+                    .identity_paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {

@@ -289,6 +289,11 @@ impl RelatedExcerptStore {
                                 .ok()?;
                             let type_definitions = project
                                 .update(cx, |project, cx| {
+                                    // tombi LSP for toml will open a scratch buffer with the JSON schema of
+                                    // the toml file when a goto type definition is requested
+                                    if is_tombi_lsp_in_toml(project, &buffer, cx) {
+                                        return Task::ready(Ok(None));
+                                    }
                                     project.type_definitions(&buffer, identifier.range.start, cx)
                                 })
                                 .ok()?;
@@ -722,4 +727,24 @@ fn is_tsx_tag(buffer: &BufferSnapshot, node: &tree_sitter::Node) -> bool {
         return false;
     }
     true
+}
+
+fn is_tombi_lsp_in_toml(
+    project: &Project,
+    buffer: &Entity<Buffer>,
+    cx: &mut Context<Project>,
+) -> bool {
+    buffer.update(cx, |buffer, cx| {
+        if !buffer.language().is_some_and(|lang| lang.name() == "TOML") {
+            return false;
+        }
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            for (_, lsp) in lsp_store.running_language_servers_for_local_buffer(buffer, cx) {
+                if "tombi".eq_ignore_ascii_case(lsp.name().as_ref()) {
+                    return true;
+                }
+            }
+            false
+        })
+    })
 }

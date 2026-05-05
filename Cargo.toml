@@ -213,7 +213,6 @@ members = [
     "crates/ui_prompt",
     "crates/util",
     "crates/util_macros",
-    "crates/vercel",
     "crates/vim",
     "crates/vim_mode_setting",
     "crates/watch",
@@ -226,6 +225,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/windows_resources",
     "crates/zed_credentials_provider",
     "crates/zed_env_vars",
     "crates/zeta_prompt",
@@ -469,7 +469,6 @@ ui_macros = { path = "crates/ui_macros" }
 ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
-vercel = { path = "crates/vercel" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
 which_key = { path = "crates/which_key" }
@@ -514,13 +513,15 @@ async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "2.1"
-async-lock = "2.1"
+async-io = "2.6.0"
+async-lock = "3.4.2"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.1"
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
+async-process = "2.5.0"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.8", features = [
@@ -552,7 +553,7 @@ core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
-crash-handler = "0.6"
+crash-handler = "0.7"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
@@ -619,7 +620,6 @@ markup5ever_rcdom = "0.3.0"
 metal = "0.33"
 minidumper = "0.9"
 moka = { version = "0.12.10", features = ["sync"] }
-naga = { version = "29.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
@@ -913,6 +913,7 @@ wasmtime = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 wasmtime-environ = { opt-level = 3 }
 wasmtime-internal-cranelift = { opt-level = 3 }
+minidumper = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }

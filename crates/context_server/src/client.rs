@@ -1,13 +1,13 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
+use futures_lite::future::yield_now;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::barrier;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, value::RawValue};
 use slotmap::SlotMap;
-use smol::channel;
 use std::{
     fmt,
     path::PathBuf,
@@ -49,7 +49,7 @@ pub enum RequestId {
 pub(crate) struct Client {
     server_id: ContextServerId,
     next_id: AtomicI32,
-    outbound_tx: channel::Sender<String>,
+    outbound_tx: async_channel::Sender<String>,
     name: Arc<str>,
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -197,7 +197,7 @@ impl Client {
         request_timeout: Option<Duration>,
         cx: AsyncApp,
     ) -> Result<Self> {
-        let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
 
         let subscription_set = Arc::new(Mutex::new(NotificationSubscriptionSet::default()));
@@ -304,7 +304,7 @@ impl Client {
             }
         }
 
-        smol::future::yield_now().await;
+        yield_now().await;
 
         Ok(())
     }
@@ -324,7 +324,7 @@ impl Client {
     /// writes them to the server's stdin, and manages the lifecycle of response handlers.
     async fn handle_output(
         transport: Arc<dyn Transport>,
-        outbound_rx: channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
@@ -472,6 +472,13 @@ impl Client {
         .unwrap();
         self.outbound_tx.try_send(notification)?;
         Ok(())
+    }
+
+    /// Notify the underlying transport of the negotiated MCP protocol version
+    /// so it can stamp subsequent requests (e.g. HTTP's `MCP-Protocol-Version`
+    /// header required from 2025-06-18 onward).
+    pub(crate) fn set_protocol_version(&self, version: &str) {
+        self.transport.set_protocol_version(version);
     }
 
     #[must_use]
