@@ -200,27 +200,30 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
             return Ok(());
         }
 
-        let recent_workspaces = workspace_db.recent_project_workspaces(fs.as_ref()).await?;
+        let recent_workspaces = workspace_db
+            .recent_project_workspaces_ungrouped(fs.as_ref())
+            .await?;
 
         let mut local_path_lists = HashSet::<PathList>::default();
         let mut remote_path_lists = HashMap::<PathList, RemoteConnectionOptions>::default();
 
         recent_workspaces
             .iter()
-            .filter(|(_, location, path_list, _)| {
-                !path_list.is_empty() && matches!(location, &SerializedWorkspaceLocation::Local)
+            .filter(|workspace| {
+                !workspace.paths.is_empty()
+                    && matches!(workspace.location, SerializedWorkspaceLocation::Local)
             })
-            .for_each(|(_, _, path_list, _)| {
-                local_path_lists.insert(path_list.clone());
+            .for_each(|workspace| {
+                local_path_lists.insert(workspace.paths.clone());
             });
 
-        for (_, location, path_list, _) in recent_workspaces {
-            match location {
+        for workspace in recent_workspaces {
+            match workspace.location {
                 SerializedWorkspaceLocation::Remote(remote_connection)
-                    if !local_path_lists.contains(&path_list) =>
+                    if !local_path_lists.contains(&workspace.paths) =>
                 {
                     remote_path_lists
-                        .entry(path_list)
+                        .entry(workspace.paths)
                         .or_insert(remote_connection);
                 }
                 _ => {}
