@@ -152,4 +152,5 @@ tools! {
     TerminalTool,
     UpdatePlanTool,
     WebSearchTool,
+    WriteFileTool,
 }
