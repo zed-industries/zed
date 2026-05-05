@@ -1,11 +1,11 @@
-use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx::Context};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
-    steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
+    steps::{self, FluentBuilder, NamedJob, TokenPermissions, dependant_job, named, release_job},
     vars::{self, JobOutput, StepOutput, assets},
 };
 
@@ -471,10 +471,14 @@ fn create_draft_release() -> NamedJob {
         )
     }
 
-    fn create_release() -> Step<Run> {
+    fn create_release(token: StepOutput) -> Step<Run> {
         named::bash("script/create-draft-release target/release-notes.md")
-            .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
+            .add_env(("GITHUB_TOKEN", token.to_string()))
     }
+
+    let (authenticate_step, token) = steps::authenticate_as_zippy()
+        .with_permissions([(TokenPermissions::Contents, Level::Write)])
+        .into();
 
     named::job(
         release_job(&[])
@@ -483,6 +487,7 @@ fn create_draft_release() -> NamedJob {
             // is able to diff between the current and previous tag.
             //
             // 25 was chosen arbitrarily.
+            .add_step(authenticate_step)
             .add_step(
                 steps::checkout_repo()
                     .with_custom_fetch_depth(25)
@@ -491,7 +496,7 @@ fn create_draft_release() -> NamedJob {
             .add_step(steps::script("script/determine-release-channel"))
             .add_step(steps::script("mkdir -p target/"))
             .add_step(generate_release_notes())
-            .add_step(create_release()),
+            .add_step(create_release(token)),
     )
 }
 

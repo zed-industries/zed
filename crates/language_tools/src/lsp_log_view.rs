@@ -28,7 +28,7 @@ use workspace::{
 
 use crate::get_or_create_tool;
 
-pub fn open_server_trace(
+pub fn open(
     log_store: &Entity<LogStore>,
     workspace: WeakEntity<Workspace>,
     server: LanguageServerSelector,
@@ -67,7 +67,7 @@ pub fn open_server_trace(
                             }
                         };
                         if let Some(server_id) = server_id {
-                            log_view.show_rpc_trace_for_server(server_id, window, cx);
+                            log_view.show_logs_for_server(server_id, window, cx);
                         }
                     });
                 })

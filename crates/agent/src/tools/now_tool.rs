@@ -55,10 +55,7 @@ impl AgentTool for NowTool {
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         cx.spawn(async move |_cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let now = match input.timezone {
                 Timezone::Utc => Utc::now().to_rfc3339(),
                 Timezone::Local => Local::now().to_rfc3339(),
