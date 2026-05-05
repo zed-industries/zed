@@ -21,7 +21,9 @@ pub struct Chip {
     border_color: Option<Hsla>,
     height: Option<Pixels>,
     truncate: bool,
+    leading_icon: Option<Icon>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    weight: Option<gpui::FontWeight>,
 }
 
 impl Chip {
@@ -38,6 +40,8 @@ impl Chip {
             height: None,
             truncate: false,
             tooltip: None,
+            leading_icon: None,
+            weight: None,
         }
     }
 
@@ -89,8 +93,18 @@ impl Chip {
         self
     }
 
+    pub fn leading_icon(mut self, icon: Icon) -> Self {
+        self.leading_icon = Some(icon);
+        self
+    }
+
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
+        self
+    }
+
+    pub fn weight(mut self, weight: gpui::FontWeight) -> Self {
+        self.weight = Some(weight);
         self
     }
 }
@@ -107,13 +121,26 @@ impl RenderOnce for Chip {
             .when_some(self.height, |this, h| this.h(h))
             .when(self.truncate, |this| this.min_w_0())
             .when(!self.truncate, |this| this.flex_none())
-            .gap_0p5()
-            .px_1()
+            .px_0()
+            .py_0()
             .border_1()
             .rounded_sm()
             .border_color(border_color)
             .bg(bg_color)
             .overflow_hidden()
+            .when_some(self.leading_icon, |this, icon| {
+                this.child(
+                    h_flex()
+                        .h_full()
+                        .rounded_l_sm()
+                        .px_1()
+                        .border_r_1()
+                        .border_color(border_color)
+                        .justify_center()
+                        .items_center()
+                        .child(icon.size(IconSize::Small).color(self.label_color)),
+                )
+            })
             .when_some(self.icon, |this, icon| {
                 this.child(
                     Icon::new(icon)
@@ -121,13 +148,17 @@ impl RenderOnce for Chip {
                         .color(self.icon_color),
                 )
             })
-            .child(
-                Label::new(self.label.clone())
+            .child(h_flex().px_1().child({
+                let mut label = Label::new(self.label.clone())
                     .size(self.label_size)
                     .color(self.label_color)
                     .buffer_font(cx)
-                    .truncate(),
-            )
+                    .truncate();
+                if let Some(weight) = self.weight {
+                    label = label.weight(weight);
+                }
+                label
+            }))
             .id(self.label.clone())
             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
     }
