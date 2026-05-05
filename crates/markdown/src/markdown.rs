@@ -658,8 +658,22 @@ impl Markdown {
 
         let mut escaper = MarkdownEscaper::new();
         let mut output = String::with_capacity(output_len);
-        for c in s.chars() {
-            escaper.next(c as u8).write_to(c, &mut output);
+        let mut byte_idx = 0;
+
+        while byte_idx < s.len() {
+            let byte = s.as_bytes()[byte_idx];
+            let action = escaper.next(byte);
+
+            if byte.is_ascii() {
+                action.write_to(byte as char, &mut output);
+                byte_idx += 1;
+            } else {
+                // Multi-byte UTF-8 characters never trigger escaping actions,
+                // so just decode and pass them through.
+                let c = s[byte_idx..].chars().next().unwrap();
+                output.push(c);
+                byte_idx += c.len_utf8();
+            }
         }
         output.into()
     }
@@ -3729,6 +3743,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_escape_non_ascii() {
+        // Cyrillic characters should not have backslashes added before them,
+        // but ASCII punctuation should still be escaped.
+        assert_eq!(
+            Markdown::escape("Привет, мир"),
+            r"Привет\, мир"
+        );
+        // Test with markdown special characters mixed in
+        assert_eq!(
+            Markdown::escape("Привет, *мир*"),
+            r"Привет\, \*мир\*"
+        );
+        // Test with the exact example from the issue (single quotes are also ASCII punctuation)
+        assert_eq!(
+            Markdown::escape("Отсутствует пробел справа от ','"),
+            r"Отсутствует пробел справа от \'\,\'"
+        );
+        // Test more non-ASCII scripts
+        assert_eq!(
+            Markdown::escape("こんにちは *world*"),
+            r"こんにちは \*world\*"
+        );
+        assert_eq!(
+            Markdown::escape("العربيّة [link]"),
+            r"العربيّة \[link\]"
+        );
+        assert_eq!(
+            Markdown::escape("Ελληνικά _text_"),
+            r"Ελληνικά \_text\_"
+        );
+        assert_eq!(
+            Markdown::escape("עברית `code`"),
+            r"עברית \`code\`"
+        );
+        // Non-ASCII followed by ASCII punctuation
+        assert_eq!(Markdown::escape("Test: тест"), r"Test\: тест");
+    }
+
     fn has_code_block(markdown: &str) -> bool {
         let parsed_data = parse_markdown_with_options(markdown, false, false);
         parsed_data
@@ -3761,8 +3814,18 @@ mod tests {
 
             let mut escaper = MarkdownEscaper::new();
             let mut output = String::new();
-            for c in input.chars() {
-                escaper.next(c as u8).write_to(c, &mut output);
+            let mut byte_idx = 0;
+            while byte_idx < input.len() {
+                let byte = input.as_bytes()[byte_idx];
+                let action = escaper.next(byte);
+                if byte.is_ascii() {
+                    action.write_to(byte as char, &mut output);
+                    byte_idx += 1;
+                } else {
+                    let c = input[byte_idx..].chars().next().unwrap();
+                    output.push(c);
+                    byte_idx += c.len_utf8();
+                }
             }
 
             assert_eq!(precomputed, output.len(), "length mismatch for {:?}", input);
