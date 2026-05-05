@@ -28120,12 +28120,37 @@ impl EditorSnapshot {
         let buffer_start = DisplayPoint::new(display_rows.start, 0).to_point(self);
         let buffer_end = DisplayPoint::new(display_rows.end, 0).to_point(self);
 
-        self.buffer_snapshot()
-            .diff_hunks_in_range(buffer_start..buffer_end)
+        let buffer_snapshot = self.buffer_snapshot();
+
+        // Build sub-ranges that exclude folded buffer content. Without this, when a large
+        // folded file is visible, buffer_start..buffer_end spans its entire content and
+        // diff_hunks_in_range iterates thousands of hunks only to discard them all,
+        // causing significant lag on every render frame.
+        let mut folded_ranges: Vec<Range<Point>> = folded_buffers
+            .iter()
+            .filter_map(|&buffer_id| buffer_snapshot.range_for_buffer(buffer_id))
+            .filter(|range| range.start < buffer_end && range.end > buffer_start)
+            .collect();
+        folded_ranges.sort_unstable_by_key(|range| range.start);
+
+        let mut ranges_to_query: Vec<Range<Point>> = Vec::new();
+        let mut current_start = buffer_start;
+        for folded_range in folded_ranges {
+            let skip_start = folded_range.start.max(buffer_start);
+            if current_start < skip_start {
+                ranges_to_query.push(current_start..skip_start);
+            }
+            current_start = current_start.max(folded_range.end);
+        }
+        if current_start < buffer_end {
+            ranges_to_query.push(current_start..buffer_end);
+        }
+
+        ranges_to_query
+            .into_iter()
+            .flat_map(move |range| buffer_snapshot.diff_hunks_in_range(range))
             .filter_map(|hunk| {
-                if folded_buffers.contains(&hunk.buffer_id)
-                    || (hunk.row_range.is_empty() && self.buffer.all_diff_hunks_expanded())
-                {
+                if hunk.row_range.is_empty() && self.buffer.all_diff_hunks_expanded() {
                     return None;
                 }
 
