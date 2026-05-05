@@ -11,9 +11,10 @@ use git::{
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
 use gpui::{
-    Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength, DragMoveEvent,
-    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, PathBuilder, Pixels,
-    Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
+    Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
+    DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollStrategy,
+    ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
 };
@@ -278,6 +279,8 @@ impl SplitState {
 actions!(
     git_graph,
     [
+        /// Copies the SHA of the selected commit to the clipboard.
+        CopyCommitSha,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
         /// Focuses the search field.
@@ -981,13 +984,20 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
     })
 }
 
+struct GitGraphContextMenu {
+    menu: Entity<ContextMenu>,
+    position: Point<Pixels>,
+    entry_idx: usize,
+    _subscription: Subscription,
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
     graph_data: GraphData,
     git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
-    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<GitGraphContextMenu>,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
     selected_entry_idx: Option<usize>,
@@ -1010,6 +1020,7 @@ impl GitGraph {
         self.search_state.matches.clear();
         self.search_state.selected_index = None;
         self.search_state.state.next_state();
+        self.context_menu = None;
         cx.emit(ItemEvent::Edit);
         cx.notify();
     }
@@ -1328,6 +1339,10 @@ impl GitGraph {
         git_store.repositories().get(&self.repo_id).cloned()
     }
 
+    fn has_context_menu(&self) -> bool {
+        self.context_menu.is_some()
+    }
+
     /// Checks whether a ref name from git's `%D` decoration
     ///  format refers to the currently checked-out branch.
     fn is_head_ref(ref_name: &str, head_branch_name: &Option<SharedString>) -> bool {
@@ -1374,6 +1389,7 @@ impl GitGraph {
         });
 
         let row_height = Self::row_height(window, cx);
+        let has_context_menu = self.has_context_menu();
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1481,7 +1497,9 @@ impl GitGraph {
                     div()
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
-                        .tooltip(Tooltip::text(subject))
+                        .when(!has_context_menu, |this| {
+                            this.tooltip(Tooltip::text(subject))
+                        })
                         .child(
                             h_flex()
                                 .gap_2()
@@ -1849,6 +1867,96 @@ impl GitGraph {
             window,
             cx,
         );
+    }
+
+    fn copy_commit_sha(&mut self, entry_index: usize, cx: &mut Context<Self>) {
+        let Some(commit) = self.graph_data.commits.get(entry_index) else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(commit.data.sha.to_string()));
+    }
+
+    fn copy_selected_commit_sha(
+        &mut self,
+        _: &CopyCommitSha,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_entry_index) = self.selected_entry_idx else {
+            return;
+        };
+        self.copy_commit_sha(selected_entry_index, cx);
+    }
+
+    fn deploy_entry_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = self.graph_data.commits.get(index) else {
+            return;
+        };
+        let short_sha = commit.data.sha.display_short();
+
+        let focus_handle = self.focus_handle.clone();
+        let git_graph = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
+            context_menu
+                .context(focus_handle)
+                .header(format!("Commit {short_sha}"))
+                .entry(
+                    "View Commit",
+                    Some(OpenCommitView.boxed_clone()),
+                    window.handler_for(&git_graph, move |this, window, cx| {
+                        this.open_commit_view(index, window, cx);
+                    }),
+                )
+                .entry(
+                    "Copy SHA",
+                    Some(CopyCommitSha.boxed_clone()),
+                    window.handler_for(&git_graph, move |this, _window, cx| {
+                        this.copy_commit_sha(index, cx);
+                    }),
+                )
+        });
+        self.set_context_menu(context_menu, position, index, window, cx);
+    }
+
+    fn set_context_menu(
+        &mut self,
+        context_menu: Entity<ContextMenu>,
+        position: Point<Pixels>,
+        entry_idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&context_menu.focus_handle(cx), cx);
+
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu
+                        .menu
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                }) {
+                    cx.focus_self(window);
+                }
+                this.context_menu.take();
+                cx.notify();
+            },
+        );
+        self.context_menu = Some(GitGraphContextMenu {
+            menu: context_menu,
+            position,
+            entry_idx,
+            _subscription: subscription,
+        });
+        cx.notify();
     }
 
     fn get_remote(
@@ -2434,6 +2542,7 @@ impl GitGraph {
 
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
+        let context_menu_entry_idx = self.context_menu.as_ref().map(|menu| menu.entry_idx);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 
@@ -2456,8 +2565,10 @@ impl GitGraph {
                         let absolute_row_idx = first_visible_row + visible_row_idx;
                         let is_hovered = hovered_entry_idx == Some(absolute_row_idx);
                         let is_selected = selected_entry_idx == Some(absolute_row_idx);
+                        let is_context_menu_target =
+                            context_menu_entry_idx == Some(absolute_row_idx);
 
-                        if is_hovered || is_selected {
+                        if is_hovered || is_selected || is_context_menu_target {
                             let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
                                 - vertical_scroll_offset;
 
@@ -2469,7 +2580,11 @@ impl GitGraph {
                                 },
                             );
 
-                            let bg_color = if is_selected { selected_bg } else { hover_bg };
+                            let bg_color = if is_selected || is_context_menu_target {
+                                selected_bg
+                            } else {
+                                hover_bg
+                            };
                             window.paint_quad(gpui::fill(row_bounds, bg_color));
                         }
                     }
@@ -2697,6 +2812,31 @@ impl GitGraph {
         }
     }
 
+    fn handle_entry_click(
+        &mut self,
+        entry_idx: usize,
+        event: &ClickEvent,
+        scroll_strategy: ScrollStrategy,
+        focus_handle: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Right-clicks open the context menu, not the details panel.
+        if event.is_right_click() {
+            return;
+        }
+
+        if let Some(focus_handle) = focus_handle {
+            focus_handle.focus(window, cx);
+        }
+
+        self.select_entry(entry_idx, scroll_strategy, cx);
+
+        if event.click_count() >= 2 {
+            self.open_commit_view(entry_idx, window, cx);
+        }
+    }
+
     fn handle_graph_click(
         &mut self,
         event: &ClickEvent,
@@ -2704,11 +2844,32 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         if let Some(row) = self.row_at_position(event.position().y, window, cx) {
-            self.select_entry(row, ScrollStrategy::Nearest, cx);
-            if event.click_count() >= 2 {
-                self.open_commit_view(row, window, cx);
-            }
+            self.handle_entry_click(row, event, ScrollStrategy::Nearest, None, window, cx);
         }
+    }
+
+    fn handle_entry_secondary_mouse_down(
+        &mut self,
+        entry_idx: usize,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.deploy_entry_context_menu(event.position, entry_idx, window, cx);
+        cx.stop_propagation();
+    }
+
+    fn handle_graph_secondary_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.row_at_position(event.position.y, window, cx) else {
+            return;
+        };
+
+        self.handle_entry_secondary_mouse_down(row, event, window, cx);
     }
 
     fn handle_graph_scroll(
@@ -2905,6 +3066,8 @@ impl Render for GitGraph {
                             let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
+                            let context_menu_entry_idx =
+                                self.context_menu.as_ref().map(|menu| menu.entry_idx);
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
                             let table_focus_handle =
@@ -2923,6 +3086,10 @@ impl Render for GitGraph {
                                 .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
                                 .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
                                 .on_click(cx.listener(Self::handle_graph_click))
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(Self::handle_graph_secondary_mouse_down),
+                                )
                                 .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
                                     if !is_hovered && this.hovered_entry_idx.is_some() {
                                         this.hovered_entry_idx = None;
@@ -2938,11 +3105,14 @@ impl Render for GitGraph {
                                 .map_row(move |(index, row), window, cx| {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
+                                    let is_context_menu_target =
+                                        context_menu_entry_idx == Some(index);
                                     let table_focus_handle = table_focus_handle.clone();
                                     let is_focused = focus_handle.is_focused(window)
                                         || table_focus_handle.is_focused(window);
                                     let weak = weak_self.clone();
                                     let weak_for_hover = weak.clone();
+                                    let weak_for_context_menu = weak.clone();
 
                                     let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
                                     let selected_bg = if is_focused {
@@ -2953,8 +3123,13 @@ impl Render for GitGraph {
 
                                     row.h(row_height)
                                         .cursor_pointer()
-                                        .when(is_selected, |row| row.bg(selected_bg))
-                                        .when(is_hovered && !is_selected, |row| row.bg(hover_bg))
+                                        .when(is_selected || is_context_menu_target, |row| {
+                                            row.bg(selected_bg)
+                                        })
+                                        .when(
+                                            is_hovered && !is_selected && !is_context_menu_target,
+                                            |row| row.bg(hover_bg),
+                                        )
                                         .on_hover(move |&is_hovered, _, cx| {
                                             weak_for_hover
                                                 .update(cx, |this, cx| {
@@ -2972,20 +3147,30 @@ impl Render for GitGraph {
                                                 .ok();
                                         })
                                         .on_click(move |event, window, cx| {
-                                            let click_count = event.click_count();
-                                            table_focus_handle.focus(window, cx);
                                             weak.update(cx, |this, cx| {
-                                                this.select_entry(
+                                                this.handle_entry_click(
                                                     index,
+                                                    event,
                                                     ScrollStrategy::Center,
+                                                    Some(&table_focus_handle),
+                                                    window,
                                                     cx,
                                                 );
-                                                if click_count >= 2 {
-                                                    this.open_commit_view(index, window, cx);
-                                                }
                                             })
                                             .ok();
                                         })
+                                        .on_mouse_down(
+                                            MouseButton::Right,
+                                            move |event: &MouseDownEvent, window, cx| {
+                                                weak_for_context_menu
+                                                    .update(cx, |this, cx| {
+                                                        this.handle_entry_secondary_mouse_down(
+                                                            index, event, window, cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            },
+                                        )
                                         .into_any_element()
                                 })
                                 .uniform_list(
@@ -3057,6 +3242,7 @@ impl Render for GitGraph {
             .on_action(cx.listener(|this, _: &OpenCommitView, window, cx| {
                 this.open_selected_commit_view(window, cx);
             }))
+            .on_action(cx.listener(Self::copy_selected_commit_sha))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.search_state
@@ -3091,12 +3277,12 @@ impl Render for GitGraph {
                     .child(self.render_search_bar(cx))
                     .child(div().flex_1().child(content)),
             )
-            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+            .children(self.context_menu.as_ref().map(|context_menu| {
                 deferred(
                     anchored()
-                        .position(*position)
+                        .position(context_menu.position)
                         .anchor(Anchor::TopLeft)
-                        .child(menu.clone()),
+                        .child(context_menu.menu.clone()),
                 )
                 .with_priority(1)
             }))
