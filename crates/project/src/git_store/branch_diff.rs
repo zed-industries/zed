@@ -24,12 +24,18 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DiffBase {
     Head,
+    Index,
+    Staged,
     Merge { base_ref: SharedString },
 }
 
 impl DiffBase {
     pub fn is_merge_base(&self) -> bool {
         matches!(self, DiffBase::Merge { .. })
+    }
+
+    pub fn is_project_diff(&self) -> bool {
+        matches!(self, DiffBase::Head | DiffBase::Index)
     }
 }
 
@@ -108,6 +114,19 @@ impl BranchDiff {
 
     pub fn diff_base(&self) -> &DiffBase {
         &self.diff_base
+    }
+
+    pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
+        if self.diff_base == diff_base {
+            return;
+        }
+
+        self.diff_base = diff_base;
+        self.tree_diff = None;
+        self.base_commit = None;
+        self.head_commit = None;
+        cx.emit(BranchDiffEvent::FileListChanged);
+        *self.update_needed.borrow_mut() = ();
     }
 
     pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
@@ -297,8 +316,13 @@ impl BranchDiff {
                     .as_ref()
                     .and_then(|t| t.entries.get(&item.repo_path))
                     .cloned();
-                let Some(status) = self.merge_statuses(Some(item.status), branch_diff.as_ref())
-                else {
+                let Some(status) = (match self.diff_base {
+                    DiffBase::Head | DiffBase::Merge { .. } => {
+                        self.merge_statuses(Some(item.status), branch_diff.as_ref())
+                    }
+                    DiffBase::Index => item.status.staging().has_unstaged().then_some(item.status),
+                    DiffBase::Staged => item.status.staging().has_staged().then_some(item.status),
+                }) else {
                     continue;
                 };
                 if !status.has_changes() {
@@ -310,7 +334,13 @@ impl BranchDiff {
                 else {
                     continue;
                 };
-                let task = Self::load_buffer(branch_diff, project_path, repo.clone(), cx);
+                let task = Self::load_buffer(
+                    self.diff_base.clone(),
+                    branch_diff,
+                    project_path,
+                    repo.clone(),
+                    cx,
+                );
 
                 output.push(DiffBuffer {
                     repo_path: item.repo_path.clone(),
@@ -330,8 +360,13 @@ impl BranchDiff {
                 let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx) else {
                     continue;
                 };
-                let task =
-                    Self::load_buffer(Some(branch_diff.clone()), project_path, repo.clone(), cx);
+                let task = Self::load_buffer(
+                    self.diff_base.clone(),
+                    Some(branch_diff.clone()),
+                    project_path,
+                    repo.clone(),
+                    cx,
+                );
 
                 let file_status = diff_status_to_file_status(branch_diff);
 
@@ -347,6 +382,7 @@ impl BranchDiff {
 
     #[instrument(skip_all)]
     fn load_buffer(
+        diff_base: DiffBase,
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,
@@ -357,25 +393,56 @@ impl BranchDiff {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let changes = if let Some(entry) = branch_diff {
-                let oid = match entry {
-                    git::status::TreeDiffStatus::Added { .. } => None,
-                    git::status::TreeDiffStatus::Modified { old, .. }
-                    | git::status::TreeDiffStatus::Deleted { old } => Some(old),
-                };
-                project
-                    .update(cx, |project, cx| {
-                        project.git_store().update(cx, |git_store, cx| {
-                            git_store.open_diff_since(oid, buffer.clone(), repo, cx)
-                        })
-                    })?
-                    .await?
-            } else {
-                project
-                    .update(cx, |project, cx| {
-                        project.open_uncommitted_diff(buffer.clone(), cx)
-                    })?
-                    .await?
+            let (buffer, changes) = match diff_base {
+                DiffBase::Head => {
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.open_uncommitted_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    (buffer, diff)
+                }
+                DiffBase::Index => {
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.open_unstaged_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    (buffer, diff)
+                }
+                DiffBase::Staged => {
+                    let unstaged_diff = project
+                        .update(cx, |project, cx| {
+                            project.open_unstaged_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.open_staged_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    let index_buffer =
+                        unstaged_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+                    (index_buffer, diff)
+                }
+                DiffBase::Merge { .. } => {
+                    let Some(entry) = branch_diff else {
+                        unreachable!("merge diffs should always have a tree diff entry")
+                    };
+                    let oid = match entry {
+                        git::status::TreeDiffStatus::Added { .. } => None,
+                        git::status::TreeDiffStatus::Modified { old, .. }
+                        | git::status::TreeDiffStatus::Deleted { old } => Some(old),
+                    };
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.git_store().update(cx, |git_store, cx| {
+                                git_store.open_diff_since(oid, buffer.clone(), repo, cx)
+                            })
+                        })?
+                        .await?;
+                    (buffer, diff)
+                }
             };
             Ok((buffer, changes))
         });

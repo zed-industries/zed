@@ -9234,6 +9234,140 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = r#"
+        fn main() {
+            println!("hello world");
+        }
+    "#
+    .unindent();
+    let staged_contents = r#"
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+    let file_contents = r#"
+        // print goodbye
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+           "src": {
+               "main.rs": file_contents,
+           }
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", committed_contents.clone())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", staged_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let staged_diff = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let index_buffer = unstaged_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+    assert_eq!(
+        index_buffer.update(cx, |buffer, _| buffer.text()),
+        staged_contents,
+    );
+
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = index_buffer.read(cx).snapshot();
+        assert_hunks(
+            staged_diff
+                .snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "    println!(\"hello world\");\n",
+                "    println!(\"goodbye world\");\n",
+                DiffHunkStatus::modified_none(),
+            )],
+        );
+    });
+
+    let updated_committed_contents = r#"
+        fn main() {
+        }
+    "#
+    .unindent();
+    let updated_staged_contents = r#"
+        // print goodbye
+        fn main() {
+        }
+    "#
+    .unindent();
+
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", updated_committed_contents.clone())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", updated_staged_contents.clone())],
+    );
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        index_buffer.update(cx, |buffer, _| buffer.text()),
+        updated_staged_contents,
+    );
+
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = index_buffer.read(cx).snapshot();
+        assert_hunks(
+            staged_diff
+                .snapshot(cx)
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[(0..1, "", "// print goodbye\n", DiffHunkStatus::added_none())],
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
     init_test(cx);

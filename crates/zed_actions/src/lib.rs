@@ -314,6 +314,10 @@ pub mod git {
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
+            /// Shows uncommitted changes in the project diff.
+            ViewUncommittedChanges,
+            /// Shows unstaged changes in the project diff.
+            ViewUnstagedChanges,
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.

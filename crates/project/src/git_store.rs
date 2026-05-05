@@ -118,6 +118,7 @@ struct SharedDiffs {
 struct BufferGitState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    staged_diff: Option<WeakEntity<BufferDiff>>,
     oid_diffs: HashMap<Option<git::Oid>, WeakEntity<BufferDiff>>,
     conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
@@ -161,6 +162,7 @@ enum DiffBasesChange {
 enum DiffKind {
     Unstaged,
     Uncommitted,
+    Staged,
     SinceOid(Option<git::Oid>),
 }
 
@@ -994,6 +996,107 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        if let Some(diff_state) = self.diffs.get(&buffer_id)
+            && let Some(staged_diff) = diff_state
+                .read(cx)
+                .staged_diff
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+            {
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(staged_diff)
+                });
+            }
+            return Task::ready(Ok(staged_diff));
+        }
+
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
+        };
+
+        let task = self
+            .loading_diffs
+            .entry((buffer_id, DiffKind::Staged))
+            .or_insert_with(|| {
+                let committed_text = repo.update(cx, |repo, cx| {
+                    repo.load_committed_text(buffer_id, repo_path, cx)
+                });
+                cx.spawn(async move |this, cx| {
+                    let result: Result<Entity<BufferDiff>> = async {
+                        let unstaged_diff = this
+                            .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
+                            .await?;
+                        let diff_bases_change = committed_text.await?;
+                        this.update(cx, |this, cx| {
+                            let buffer_snapshot = buffer.read(cx).text_snapshot();
+                            let index_buffer = unstaged_diff.read(cx).base_text_buffer().clone();
+                            let index_snapshot = index_buffer.read(cx).snapshot();
+                            let file = buffer.read(cx).file().cloned();
+                            let language = buffer.read(cx).language().cloned();
+                            let language_registry = buffer.read(cx).language_registry();
+
+                            if let Some(file) = file {
+                                index_buffer.update(cx, |index_buffer, cx| {
+                                    index_buffer.file_updated(file, cx);
+                                });
+                            }
+
+                            let git_store = cx.weak_entity();
+                            let diff_state = this
+                                .diffs
+                                .entry(buffer_id)
+                                .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+
+                            let diff = cx.new(|cx| BufferDiff::new(&index_snapshot, cx));
+                            cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
+
+                            diff_state.update(cx, |diff_state, cx| {
+                                diff_state.language_changed = true;
+                                diff_state.language = language;
+                                diff_state.language_registry = language_registry;
+                                diff_state.staged_diff = Some(diff.downgrade());
+                                diff_state.diff_bases_changed(
+                                    buffer_snapshot,
+                                    Some(diff_bases_change),
+                                    cx,
+                                );
+                            });
+
+                            this.loading_diffs.remove(&(buffer_id, DiffKind::Staged));
+                            diff
+                        })
+                    }
+                    .await;
+
+                    if result.is_err() {
+                        this.update(cx, |this, _| {
+                            this.loading_diffs.remove(&(buffer_id, DiffKind::Staged));
+                        })
+                        .ok();
+                    }
+
+                    result.map_err(Arc::new)
+                })
+                .shared()
+            })
+            .clone();
+
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
@@ -1104,6 +1207,9 @@ impl GitStore {
 
                         diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
                         diff_state.uncommitted_diff = Some(diff.downgrade())
+                    }
+                    DiffKind::Staged => {
+                        unreachable!("open_diff_internal is not used for staged diffs")
                     }
                     DiffKind::SinceOid(_) => {
                         unreachable!("open_diff_internal is not used for OID diffs")
@@ -3576,6 +3682,7 @@ impl BufferGitState {
         Self {
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
+            staged_diff: Default::default(),
             oid_diffs: Default::default(),
             recalculate_diff_task: Default::default(),
             language: Default::default(),
@@ -3660,6 +3767,10 @@ impl BufferGitState {
 
     fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {
         self.uncommitted_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn staged_diff(&self) -> Option<Entity<BufferDiff>> {
+        self.staged_diff.as_ref().and_then(|set| set.upgrade())
     }
 
     fn oid_diff(&self, oid: Option<git::Oid>) -> Option<Entity<BufferDiff>> {
@@ -3764,6 +3875,7 @@ impl BufferGitState {
         let language_registry = self.language_registry.clone();
         let unstaged_diff = self.unstaged_diff();
         let uncommitted_diff = self.uncommitted_diff();
+        let staged_diff = self.staged_diff();
         let head = self.head_text.clone();
         let index = self.index_text.clone();
         let index_changed = self.index_changed;
@@ -3829,7 +3941,7 @@ impl BufferGitState {
                         cx.update(|cx| {
                             uncommitted_diff.read(cx).update_diff(
                                 buffer.clone(),
-                                head,
+                                head.clone(),
                                 head_changed.then_some(true),
                                 language.clone(),
                                 cx,
@@ -3900,6 +4012,37 @@ impl BufferGitState {
                             true,
                             cx,
                         )
+                    })
+                    .await;
+            }
+
+            yield_now().await;
+
+            if let Some(staged_diff) = staged_diff.as_ref()
+                && let Some(unstaged_diff) = unstaged_diff.as_ref()
+            {
+                let index_buffer =
+                    unstaged_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+                let index_buffer_snapshot =
+                    index_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                let new_staged_diff = cx
+                    .update(|cx| {
+                        staged_diff.read(cx).update_diff(
+                            index_buffer_snapshot.text.clone(),
+                            head.clone(),
+                            head_changed.then_some(true),
+                            language.clone(),
+                            cx,
+                        )
+                    })
+                    .await;
+
+                staged_diff
+                    .update(cx, |diff, cx| {
+                        if language_changed {
+                            diff.language_changed(language.clone(), language_registry.clone(), cx);
+                        }
+                        diff.set_snapshot(new_staged_diff, &index_buffer_snapshot, cx)
                     })
                     .await;
             }
@@ -4545,12 +4688,17 @@ impl Repository {
                                         .uncommitted_diff
                                         .as_ref()
                                         .is_some_and(|set| set.is_upgradable());
+                                    let has_staged_diff = diff_state
+                                        .staged_diff
+                                        .as_ref()
+                                        .is_some_and(|set| set.is_upgradable());
 
                                     Some((
                                         buffer,
                                         repo_path,
                                         has_unstaged_diff.then(|| diff_state.index_text.clone()),
-                                        has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                                        (has_uncommitted_diff || has_staged_diff)
+                                            .then(|| diff_state.head_text.clone()),
                                     ))
                                 })
                             })
