@@ -323,15 +323,12 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(_)
-            | EditPredictionProvider::Zed
-            | EditPredictionProvider::Mercury) => {
+            provider @ (EditPredictionProvider::Zed | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
                 let language = self.language.clone();
                 let project = self.project.clone();
                 let provider_name: &'static str = match provider {
-                    EditPredictionProvider::Experimental(name) => name,
                     EditPredictionProvider::Zed => "zed",
                     _ => "unknown",
                 };
@@ -428,10 +425,8 @@ impl Render for EditPredictionButton {
                     None
                 };
 
-                let zed_cloud_needs_sign_in = matches!(
-                    provider,
-                    EditPredictionProvider::Zed | EditPredictionProvider::Experimental(_)
-                ) && user.is_none();
+                let zed_cloud_needs_sign_in =
+                    matches!(provider, EditPredictionProvider::Zed) && user.is_none();
                 let provider_unavailable =
                     missing_token || mercury_has_error || zed_cloud_needs_sign_in;
 

@@ -1,12 +1,13 @@
 mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
+use crate::entities::User;
 use crate::{
     AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId, User,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId,
         UserId,
     },
     executor::Executor,
@@ -945,10 +946,6 @@ impl Server {
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
-                }
-
-                if should_auto_subscribe_to_channels(&zed_version) {
-                    subscribe_user_to_channels(user.id, session).await?;
                 }
 
                 if let Some(incoming_call) =
@@ -2748,10 +2745,6 @@ async fn remove_contact(
     Ok(())
 }
 
-fn should_auto_subscribe_to_channels(version: &ZedVersion) -> bool {
-    version.0.minor < 139
-}
-
 async fn subscribe_to_channels(
     _: proto::SubscribeToChannels,
     session: MessageContext,
@@ -3167,9 +3160,18 @@ async fn get_channel_members(
     } else {
         request.limit
     };
+
+    let channel = db.get_channel(channel_id, session.user_id()).await?;
+
     let (members, users) = db
-        .get_channel_participant_details(channel_id, &request.query, limit, session.user_id())
+        .get_channel_participant_details(&channel, &request.query, limit)
         .await?;
+    let members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect();
+    let users = users.into_iter().map(proto::User::from).collect();
+
     response.send(proto::GetChannelMembersResponse { members, users })?;
     Ok(())
 }
