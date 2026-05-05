@@ -51,8 +51,15 @@ concurrency:
   group: triage-sync-${{ github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
+# Default to no permissions for any job in this workflow. The single job below
+# explicitly opts back in to `contents: read` for the sparse checkout. If a
+# future job is added without its own `permissions:` block, it will inherit
+# this empty default rather than the repo-wide token defaults.
+permissions: {}
+
 jobs:
   sync:
+    name: Sync triage project
     # Run only on the canonical repo (not forks); skip PR comments since this
     # workflow is for issues only.
     if: |
