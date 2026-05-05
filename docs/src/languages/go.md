@@ -248,7 +248,7 @@ In such case Zed won't spawn a new instance of Delve, as it opts to use an exist
           "templ": "html"
         },
         "experimental": {
-          "classRegex": ["class=\"([^\"]*)\"", "className=\"([^\"]*)\""]
+          "classRegex": ["class=\"([^\"]*)\""]
         }
       }
     }
@@ -256,4 +256,4 @@ In such case Zed won't spawn a new instance of Delve, as it opts to use an exist
 }
 ```
 
-With these settings you'll get Tailwind completions inside `class="..."` (and `className="..."`) attributes in `.templ` files.
+With these settings you'll get Tailwind completions inside `class="..."` attributes in `.templ` files.
