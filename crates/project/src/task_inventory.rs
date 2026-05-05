@@ -21,8 +21,8 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskShowIn,
-    TaskTemplate, TaskTemplates, TaskVariables, VariableName,
+    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
+    TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
@@ -644,17 +644,17 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
-    /// Returns all file-based task templates (worktree and global) shown in the provided surface.
-    pub fn templates_shown_in(
+    /// Returns all file-based task templates (worktree and global) with the provided tag.
+    pub fn templates_with_tag(
         &self,
-        show_in: TaskShowIn,
+        tag: &str,
         worktree: Option<WorktreeId>,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         worktree
             .into_iter()
             .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
             .chain(self.global_templates_from_settings())
-            .filter(|(_, template)| template.show_in.contains(&show_in))
+            .filter(|(_, template)| template.tags.iter().any(|template_tag| template_tag == tag))
             .collect()
     }
 

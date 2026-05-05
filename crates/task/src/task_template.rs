@@ -63,9 +63,6 @@ pub struct TaskTemplate {
     #[serde(default, deserialize_with = "non_empty_string_vec")]
     #[schemars(length(min = 1))]
     pub tags: Vec<String>,
-    /// Additional UI surfaces where this task should be displayed.
-    #[serde(default)]
-    pub show_in: Vec<TaskShowIn>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
     pub shell: Shell,
@@ -98,14 +95,6 @@ pub enum DebugArgsRequest {
 pub enum TaskHook {
     #[serde(alias = "create_git_worktree")]
     CreateWorktree,
-}
-
-/// UI surfaces where a task can opt in to being displayed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskShowIn {
-    /// Show the task in the Git graph commit context menu.
-    GitGraphContextMenu,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -1115,19 +1104,6 @@ mod tests {
             ..TaskTemplate::default()
         };
         assert!(task.unknown_variables().is_empty());
-    }
-
-    #[test]
-    fn test_show_in_deserialization() {
-        let task: TaskTemplate = serde_json::from_value(serde_json::json!({
-            "label": "Show commit",
-            "command": "git",
-            "args": ["show", "$ZED_GIT_SHA"],
-            "show_in": ["git_graph_context_menu"]
-        }))
-        .unwrap();
-
-        assert_eq!(task.show_in, vec![TaskShowIn::GitGraphContextMenu]);
     }
 
     #[test]

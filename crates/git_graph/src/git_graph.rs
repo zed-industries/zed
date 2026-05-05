@@ -42,7 +42,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
-use task::{ResolvedTask, TaskContext, TaskShowIn, TaskVariables, VariableName};
+use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
@@ -65,6 +65,7 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+const CUSTOM_GIT_COMMAND_TASK_TAG: &str = "custom-git-command";
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
@@ -2096,7 +2097,7 @@ impl GitGraph {
 
         task_inventory
             .read(cx)
-            .templates_shown_in(TaskShowIn::GitGraphContextMenu, worktree_id)
+            .templates_with_tag(CUSTOM_GIT_COMMAND_TASK_TAG, worktree_id)
             .into_iter()
             .filter_map(|(task_source_kind, task_template)| {
                 let id_base = task_source_kind.to_id_base();
@@ -2182,7 +2183,7 @@ impl GitGraph {
                 );
 
             if !git_tasks.is_empty() {
-                context_menu = context_menu.separator().header("Git Tasks");
+                context_menu = context_menu.separator().header("Custom Git Commands");
                 for (task_source_kind, resolved_task) in git_tasks {
                     let label = resolved_task.display_label().to_string();
                     context_menu = context_menu.entry(

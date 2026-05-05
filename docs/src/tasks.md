@@ -56,10 +56,8 @@ Zed supports ways to spawn (and rerun) commands using its integrated [terminal](
     // * `current` — save currently active buffer only
     // * `none` — don't save any buffers
     "save": "none"
-    // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
+    // Represents the tags for inline runnable indicators, spawning multiple tasks at once, or contextual task integrations.
     // "tags": []
-    // Additional UI surfaces where this task should be displayed.
-    // "show_in": []
   }
 ]
 ```
@@ -263,7 +261,7 @@ Tasks that define `hooks` are still available from the task modal like any other
 
 ## Git graph context menu tasks
 
-Tasks can appear in the Git graph commit context menu by adding `"git_graph_context_menu"` to the `show_in` field. These tasks are resolved with the selected commit and repository as the task context, and run from the selected repository root by default.
+Tasks can appear in the Git graph commit context menu by adding the `custom-git-command` tag. These tasks are resolved with the selected commit and repository as the task context, and run from the selected repository root by default.
 
 ```json [tasks]
 [
@@ -271,13 +269,13 @@ Tasks can appear in the Git graph commit context menu by adding `"git_graph_cont
     "label": "Show $ZED_GIT_SHA_SHORT",
     "command": "git",
     "args": ["show", "$ZED_GIT_SHA"],
-    "show_in": ["git_graph_context_menu"]
+    "tags": ["custom-git-command"]
   },
   {
     "label": "Branches containing $ZED_GIT_SHA_SHORT",
     "command": "git",
     "args": ["branch", "-a", "--contains", "$ZED_GIT_SHA"],
-    "show_in": ["git_graph_context_menu"]
+    "tags": ["custom-git-command"]
   }
 ]
 ```
