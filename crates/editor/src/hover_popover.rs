@@ -1,6 +1,6 @@
 use crate::{
-    ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
+    Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
+    GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     editor_settings::EditorSettingsScrollbarProxy,
     hover_links::{InlayHighlight, RangeInEditor},
@@ -319,12 +319,8 @@ fn show_hover(
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
-    let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
-    let active_group_id = if let ActiveDiagnostic::Group(group) = &editor.active_diagnostics {
-        Some(group.group_id)
-    } else {
-        None
-    };
+    let all_diagnostics_active = editor.all_diagnostics_active();
+    let active_group_id = editor.active_diagnostic_group_id();
 
     let renderer = GlobalDiagnosticRenderer::global(cx);
     let task = cx.spawn_in(window, async move |this, cx| {
