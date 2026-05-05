@@ -58,14 +58,11 @@ mod signature_help;
 pub mod test;
 
 #[path = "editor/diagnostics.rs"]
-mod diagnostics_impl;
+mod diagnostics;
 
 pub(crate) use actions::*;
-use diagnostics_impl::InlineDiagnostic;
-pub(crate) use diagnostics_impl::{ActiveDiagnostic, GlobalDiagnosticRenderer};
-pub use diagnostics_impl::{
-    ActiveDiagnosticGroup, DiagnosticRenderer, diagnostic_style, set_diagnostic_renderer,
-};
+use diagnostics::{ActiveDiagnostic, GlobalDiagnosticRenderer, InlineDiagnostic};
+pub use diagnostics::{DiagnosticRenderer, set_diagnostic_renderer};
 pub use display_map::{
     ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder, HighlightKey,
     NavigationOverlayKey, SemanticTokenHighlight,
@@ -4649,7 +4646,7 @@ impl Editor {
             dismissed = true;
         }
 
-        if self.mode.is_full() && matches!(self.active_diagnostics, ActiveDiagnostic::Group(_)) {
+        if self.mode.is_full() && self.has_active_diagnostic_group() {
             self.dismiss_diagnostics(cx);
             dismissed = true;
         }

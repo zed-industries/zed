@@ -29,7 +29,11 @@ pub trait DiagnosticRenderer {
     );
 }
 
-pub(crate) struct GlobalDiagnosticRenderer(pub Arc<dyn DiagnosticRenderer>);
+pub fn set_diagnostic_renderer(renderer: impl DiagnosticRenderer + 'static, cx: &mut App) {
+    cx.set_global(GlobalDiagnosticRenderer(Arc::new(renderer)));
+}
+
+pub(super) struct GlobalDiagnosticRenderer(Arc<dyn DiagnosticRenderer>);
 
 impl GlobalDiagnosticRenderer {
     pub(super) fn global(cx: &App) -> Option<Arc<dyn DiagnosticRenderer>> {
@@ -38,10 +42,6 @@ impl GlobalDiagnosticRenderer {
 }
 
 impl gpui::Global for GlobalDiagnosticRenderer {}
-
-pub fn set_diagnostic_renderer(renderer: impl DiagnosticRenderer + 'static, cx: &mut App) {
-    cx.set_global(GlobalDiagnosticRenderer(Arc::new(renderer)));
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct InlineDiagnostic {
@@ -53,15 +53,15 @@ pub(super) struct InlineDiagnostic {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct ActiveDiagnosticGroup {
-    pub active_range: Range<Anchor>,
-    pub active_message: String,
-    pub group_id: usize,
-    pub blocks: HashSet<CustomBlockId>,
+pub(super) struct ActiveDiagnosticGroup {
+    active_range: Range<Anchor>,
+    active_message: String,
+    group_id: usize,
+    blocks: HashSet<CustomBlockId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ActiveDiagnostic {
+pub(super) enum ActiveDiagnostic {
     None,
     All,
     Group(ActiveDiagnosticGroup),
@@ -185,33 +185,10 @@ impl Editor {
         self.refresh_edit_prediction(false, true, window, cx);
     }
 
-    pub(super) fn refresh_active_diagnostics(&mut self, cx: &mut Context<Editor>) {
-        if !self.diagnostics_enabled() {
-            return;
-        }
-
-        if let ActiveDiagnostic::Group(active_diagnostics) = &mut self.active_diagnostics {
-            let buffer = self.buffer.read(cx).snapshot(cx);
-            let primary_range_start = active_diagnostics.active_range.start.to_offset(&buffer);
-            let primary_range_end = active_diagnostics.active_range.end.to_offset(&buffer);
-            let is_valid = buffer
-                .diagnostics_in_range::<MultiBufferOffset>(primary_range_start..primary_range_end)
-                .any(|entry| {
-                    entry.diagnostic.is_primary
-                        && !entry.range.is_empty()
-                        && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.active_message
-                });
-
-            if !is_valid {
-                self.dismiss_diagnostics(cx);
-            }
-        }
-    }
-
-    pub fn active_diagnostic_group(&self) -> Option<&ActiveDiagnosticGroup> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn active_diagnostic_message(&self) -> Option<&str> {
         match &self.active_diagnostics {
-            ActiveDiagnostic::Group(group) => Some(group),
+            ActiveDiagnostic::Group(group) => Some(group.active_message.as_str()),
             _ => None,
         }
     }
@@ -222,67 +199,6 @@ impl Editor {
         }
         self.dismiss_diagnostics(cx);
         self.active_diagnostics = ActiveDiagnostic::All;
-    }
-
-    pub(super) fn activate_diagnostics(
-        &mut self,
-        buffer_id: BufferId,
-        diagnostic: DiagnosticEntryRef<'_, MultiBufferOffset>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.diagnostics_enabled() || matches!(self.active_diagnostics, ActiveDiagnostic::All) {
-            return;
-        }
-        self.dismiss_diagnostics(cx);
-        let snapshot = self.snapshot(window, cx);
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
-            return;
-        };
-
-        let diagnostic_group = buffer
-            .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
-            .collect::<Vec<_>>();
-
-        let language_registry = self
-            .project()
-            .map(|project| project.read(cx).languages().clone());
-
-        let blocks = renderer.render_group(
-            diagnostic_group,
-            buffer_id,
-            snapshot,
-            cx.weak_entity(),
-            language_registry,
-            cx,
-        );
-
-        let blocks = self.display_map.update(cx, |display_map, cx| {
-            display_map.insert_blocks(blocks, cx).into_iter().collect()
-        });
-        self.active_diagnostics = ActiveDiagnostic::Group(ActiveDiagnosticGroup {
-            active_range: buffer.anchor_before(diagnostic.range.start)
-                ..buffer.anchor_after(diagnostic.range.end),
-            active_message: diagnostic.diagnostic.message.clone(),
-            group_id: diagnostic.diagnostic.group_id,
-            blocks,
-        });
-        cx.notify();
-    }
-
-    pub(super) fn dismiss_diagnostics(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.active_diagnostics, ActiveDiagnostic::All) {
-            return;
-        };
-
-        let prev = mem::replace(&mut self.active_diagnostics, ActiveDiagnostic::None);
-        if let ActiveDiagnostic::Group(group) = prev {
-            self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(group.blocks, cx);
-            });
-            cx.notify();
-        }
     }
 
     /// Disable inline diagnostics rendering for this editor.
@@ -356,6 +272,106 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    pub(super) fn all_diagnostics_active(&self) -> bool {
+        self.active_diagnostics == ActiveDiagnostic::All
+    }
+
+    pub(super) fn active_diagnostic_group_id(&self) -> Option<usize> {
+        match &self.active_diagnostics {
+            ActiveDiagnostic::Group(group) => Some(group.group_id),
+            _ => None,
+        }
+    }
+
+    pub(super) fn has_active_diagnostic_group(&self) -> bool {
+        matches!(self.active_diagnostics, ActiveDiagnostic::Group(_))
+    }
+
+    pub(super) fn refresh_active_diagnostics(&mut self, cx: &mut Context<Editor>) {
+        if !self.diagnostics_enabled() {
+            return;
+        }
+
+        if let ActiveDiagnostic::Group(active_diagnostics) = &mut self.active_diagnostics {
+            let buffer = self.buffer.read(cx).snapshot(cx);
+            let primary_range_start = active_diagnostics.active_range.start.to_offset(&buffer);
+            let primary_range_end = active_diagnostics.active_range.end.to_offset(&buffer);
+            let is_valid = buffer
+                .diagnostics_in_range::<MultiBufferOffset>(primary_range_start..primary_range_end)
+                .any(|entry| {
+                    entry.diagnostic.is_primary
+                        && !entry.range.is_empty()
+                        && entry.range.start == primary_range_start
+                        && entry.diagnostic.message == active_diagnostics.active_message
+                });
+
+            if !is_valid {
+                self.dismiss_diagnostics(cx);
+            }
+        }
+    }
+
+    pub(super) fn activate_diagnostics(
+        &mut self,
+        buffer_id: BufferId,
+        diagnostic: DiagnosticEntryRef<'_, MultiBufferOffset>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.diagnostics_enabled() || matches!(self.active_diagnostics, ActiveDiagnostic::All) {
+            return;
+        }
+        self.dismiss_diagnostics(cx);
+        let snapshot = self.snapshot(window, cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
+            return;
+        };
+
+        let diagnostic_group = buffer
+            .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
+            .collect::<Vec<_>>();
+
+        let language_registry = self
+            .project()
+            .map(|project| project.read(cx).languages().clone());
+
+        let blocks = renderer.render_group(
+            diagnostic_group,
+            buffer_id,
+            snapshot,
+            cx.weak_entity(),
+            language_registry,
+            cx,
+        );
+
+        let blocks = self.display_map.update(cx, |display_map, cx| {
+            display_map.insert_blocks(blocks, cx).into_iter().collect()
+        });
+        self.active_diagnostics = ActiveDiagnostic::Group(ActiveDiagnosticGroup {
+            active_range: buffer.anchor_before(diagnostic.range.start)
+                ..buffer.anchor_after(diagnostic.range.end),
+            active_message: diagnostic.diagnostic.message.clone(),
+            group_id: diagnostic.diagnostic.group_id,
+            blocks,
+        });
+        cx.notify();
+    }
+
+    pub(super) fn dismiss_diagnostics(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.active_diagnostics, ActiveDiagnostic::All) {
+            return;
+        };
+
+        let prev = mem::replace(&mut self.active_diagnostics, ActiveDiagnostic::None);
+        if let ActiveDiagnostic::Group(group) = prev {
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.remove_blocks(group.blocks, cx);
+            });
+            cx.notify();
+        }
     }
 
     pub(super) fn refresh_inline_diagnostics(
@@ -499,15 +515,5 @@ impl Editor {
         self.refresh_inline_diagnostics(true, window, cx);
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
-    }
-}
-
-pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
-    match severity {
-        lsp::DiagnosticSeverity::ERROR => colors.error,
-        lsp::DiagnosticSeverity::WARNING => colors.warning,
-        lsp::DiagnosticSeverity::INFORMATION => colors.info,
-        lsp::DiagnosticSeverity::HINT => colors.hint,
-        _ => colors.ignored,
     }
 }
