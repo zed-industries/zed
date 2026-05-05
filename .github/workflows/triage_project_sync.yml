@@ -129,27 +129,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
-          DRY_RUN_FLAG: ${{ inputs.dry_run && '--dry-run' || '' }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          python script/triage_project_sync.py --issue "$ISSUE_NUMBER" $DRY_RUN_FLAG
+          if [ "$DRY_RUN" = "true" ]; then
+            python script/triage_project_sync.py --issue "$ISSUE_NUMBER" --dry-run
+          else
+            python script/triage_project_sync.py --issue "$ISSUE_NUMBER"
+          fi
 
       - name: Sync (manual dispatch — all)
         if: github.event_name == 'workflow_dispatch' && inputs.issue_number == ''
         env:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
-          DRY_RUN_FLAG: ${{ inputs.dry_run && '--dry-run' || '' }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          python script/triage_project_sync.py --all $DRY_RUN_FLAG
+          if [ "$DRY_RUN" = "true" ]; then
+            python script/triage_project_sync.py --all --dry-run
+          else
+            python script/triage_project_sync.py --all
+          fi
 
       - name: Write summary
         if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           {
             echo "## Triage sync summary"
             echo ""
-            echo "- Event: \`${{ github.event_name }}\`"
-            if [ -n "${{ github.event.issue.number }}" ]; then
-              echo "- Issue: #${{ github.event.issue.number }}"
+            echo "- Event: \`$EVENT_NAME\`"
+            if [ -n "$ISSUE_NUMBER" ]; then
+              echo "- Issue: #$ISSUE_NUMBER"
             fi
             echo "- Project: [#84 Zed weekly triage](https://github.com/orgs/zed-industries/projects/84)"
           } >> "$GITHUB_STEP_SUMMARY"
