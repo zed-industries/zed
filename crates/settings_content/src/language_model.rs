@@ -16,6 +16,7 @@ pub struct AllLanguageModelSettingsContent {
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
+    pub near_ai: Option<NearAiSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub opencode: Option<OpenCodeSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
@@ -238,6 +239,24 @@ pub struct MistralAvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub supports_thinking: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct NearAiSettingsContent {
+    pub api_url: Option<String>,
+    pub auto_discover: Option<bool>,
+    pub available_models: Option<Vec<NearAiAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct NearAiAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
 }
 
 #[with_fallible_options]

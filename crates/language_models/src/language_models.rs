@@ -23,6 +23,7 @@ use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 pub use crate::provider::mistral::MistralLanguageModelProvider;
+use crate::provider::near_ai::NearAiLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
@@ -287,6 +288,14 @@ fn register_language_model_providers(
             credentials_provider.clone(),
             cx,
         ),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(NearAiLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(

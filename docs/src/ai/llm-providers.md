@@ -28,6 +28,7 @@ Zed supports these providers with your own API keys:
 - [Google AI](#google-ai)
 - [LM Studio](#lmstudio)
 - [Mistral](#mistral)
+- [NEAR AI](#near-ai)
 - [Ollama](#ollama)
 - [OpenAI](#openai)
 - [OpenAI API Compatible](#openai-api-compatible)
@@ -388,6 +389,91 @@ If you wish to use alternate models or customize their parameters, you can do so
 ```
 
 Custom models will be listed in the model dropdown in the Agent Panel.
+
+### NEAR AI {#near-ai}
+
+NEAR AI Cloud provides access to a variety of AI models through an OpenAI-compatible API. You can use the gateway endpoint or connect directly to specific models.
+
+1. Visit [NEAR AI Cloud](https://cloud.near.ai/) and create an account
+2. Generate an API key from the [NEAR AI Cloud Dashboard](https://cloud.near.ai/dashboard)
+3. Open the settings view (`agent: open settings`) and go to the NEAR AI section
+4. Enter your NEAR AI API key and press enter
+
+The NEAR AI API key will be saved in your keychain.
+
+Zed will also use the `NEAR_AI_API_KEY` environment variable if it's defined.
+
+#### Model Autodiscovery
+
+Zed automatically discovers available models from NEAR AI Cloud by fetching the model list from the API. You can turn this off by setting the `auto_discover` field in the NEAR AI settings. If you do this, you should manually specify which models are available.
+
+```json [settings]
+{
+  "language_models": {
+    "near_ai": {
+      "api_url": "https://cloud-api.near.ai/v1",
+      "auto_discover": false,
+      "available_models": [
+        {
+          "name": "deepseek-ai/DeepSeek-V3.1",
+          "display_name": "DeepSeek V3.1",
+          "max_tokens": 128000,
+          "supports_tools": true,
+          "supports_images": false
+        }
+      ]
+    }
+  }
+}
+```
+
+#### Custom Models {#near-ai-custom-models}
+
+If you wish to use specific models or customize their parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
+
+```json [settings]
+{
+  "language_models": {
+    "near_ai": {
+      "api_url": "https://cloud-api.near.ai/v1",
+      "available_models": [
+        {
+          "name": "deepseek-ai/DeepSeek-V3.1",
+          "display_name": "DeepSeek V3.1",
+          "max_tokens": 128000,
+          "supports_tools": true,
+          "supports_images": false
+        },
+        {
+          "name": "qwen35-122b",
+          "display_name": "Qwen 3.5 122B",
+          "max_tokens": 128000,
+          "supports_tools": true,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the Agent Panel.
+
+#### Direct Completions
+
+NEAR AI Cloud also supports direct completions endpoints that connect straight to a model's TEE for lower latency. You can configure a custom API URL to use direct completions:
+
+```json [settings]
+{
+  "language_models": {
+    "near_ai": {
+      "api_url": "https://qwen35-122b.completions.near.ai/v1"
+    }
+  }
+}
+```
+
+See the [NEAR AI Cloud documentation](https://docs.near.ai/cloud/guides/openai-compatibility/) for all available direct completion endpoints.
 
 ### Ollama {#ollama}
 
