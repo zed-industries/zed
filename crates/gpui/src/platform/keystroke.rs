@@ -291,8 +291,9 @@ impl Keystroke {
 
     /// Returns whether the key itself is a modifier
     pub fn is_modifier_key(&self) -> bool {
-         matches!(self.key.as_str(),
-             "shift" | "control" | "alt" | "platform" | "function"
+        matches!(
+            self.key.as_str(),
+            "shift" | "control" | "alt" | "platform" | "function"
         )
     }
 }
