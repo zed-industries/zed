@@ -49,18 +49,6 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 ///    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
-    /// A one-line, user-friendly markdown description of the edit. This will be shown in the UI.
-    ///
-    /// Be terse, but also descriptive in what you want to achieve with this edit. Avoid generic instructions.
-    ///
-    /// NEVER mention the file path in this description.
-    ///
-    /// <example>Fix API endpoint URLs</example>
-    /// <example>Update copyright year in `page_footer`</example>
-    ///
-    /// Make sure to include this field before all the others in the input object so that we can display it immediately.
-    pub display_description: String,
-
     /// The full path of the file to create or modify in the project.
     ///
     /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
@@ -131,8 +119,6 @@ pub struct Edit {
 
 #[derive(Clone, Default, Debug, Deserialize)]
 struct EditFileToolPartialInput {
-    #[serde(default)]
-    display_description: Option<String>,
     #[serde(default)]
     path: Option<String>,
     #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
@@ -278,14 +264,12 @@ impl EditFileTool {
     fn authorize(
         &self,
         path: &PathBuf,
-        description: &str,
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
         super::tool_permissions::authorize_file_edit(
             EditFileTool::NAME,
             path,
-            description,
             &self.thread,
             event_stream,
             cx,
@@ -360,14 +344,12 @@ impl EditFileTool {
                                         && path_complete
                                         && let EditFileToolPartialInput {
                                             path: Some(path),
-                                            display_description: Some(display_description),
                                             mode: Some(mode),
                                             ..
                                         } = &parsed
                                     {
                                         match EditSession::new(
                                             PathBuf::from(path),
-                                            display_description,
                                             *mode,
                                             self,
                                             event_stream,
@@ -400,7 +382,6 @@ impl EditFileTool {
                                 } else {
                                     match EditSession::new(
                                         full_input.path.clone(),
-                                        &full_input.display_description,
                                         full_input.mode,
                                         self,
                                         event_stream,
@@ -504,12 +485,6 @@ impl AgentTool for EditFileTool {
                             })
                             .unwrap_or_else(|| path.to_string())
                             .into();
-                    }
-
-                    let description = input.display_description.unwrap_or_default();
-                    let description = description.trim();
-                    if !description.is_empty() {
-                        return description.to_string().into();
                     }
                 }
 
@@ -881,7 +856,6 @@ impl EditPipeline {
 impl EditSession {
     async fn new(
         path: PathBuf,
-        display_description: &str,
         mode: EditFileMode,
         tool: &EditFileTool,
         event_stream: &ToolCallEventStream,
@@ -901,7 +875,7 @@ impl EditSession {
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
         );
 
-        cx.update(|cx| tool.authorize(&path, &display_description, event_stream, cx))
+        cx.update(|cx| tool.authorize(&path, event_stream, cx))
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1296,7 +1270,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Create new file".into(),
                         path: "root/dir/new_file.txt".into(),
                         mode: EditFileMode::Write,
                         content: Some("Hello, World!".into()),
@@ -1323,7 +1296,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Overwrite file".into(),
                         path: "root/file.txt".into(),
                         mode: EditFileMode::Write,
                         content: Some("new content".into()),
@@ -1353,7 +1325,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit lines".into(),
                         path: "root/file.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -1385,7 +1356,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit multiple lines".into(),
                         path: "root/file.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -1426,7 +1396,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit adjacent lines".into(),
                         path: "root/file.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -1467,7 +1436,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit multiple lines in ascending order".into(),
                         path: "root/file.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -1504,7 +1472,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Some edit".into(),
                         path: "root/nonexistent_file.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -1540,7 +1507,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit file".into(),
                         path: "root/file.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -1573,18 +1539,16 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Send partials simulating LLM streaming: description first, then path, then mode
-        sender.send_partial(json!({"display_description": "Edit lines"}));
+        sender.send_partial(json!({}));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt"
         }));
         cx.run_until_parked();
 
         // Path is NOT yet complete because mode hasn't appeared — no buffer open yet
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit"
         }));
@@ -1592,7 +1556,6 @@ mod tests {
 
         // Now send the final complete input
         sender.send_full(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
@@ -1615,14 +1578,12 @@ mod tests {
 
         // Send partial with path but NO mode — path should NOT be treated as complete
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file"
         }));
         cx.run_until_parked();
 
         // Now the path grows and mode appears
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write"
         }));
@@ -1630,7 +1591,6 @@ mod tests {
 
         // Send final
         sender.send_full(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
             "content": "new content"
@@ -1653,7 +1613,7 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Send a partial
-        sender.send_partial(json!({"display_description": "Edit"}));
+        sender.send_partial(json!({}));
         cx.run_until_parked();
 
         // Cancel during streaming
@@ -1686,24 +1646,21 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Simulate fine-grained streaming of the JSON
-        sender.send_partial(json!({"display_description": "Edit multiple"}));
+        sender.send_partial(json!({}));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "line 1"}]
@@ -1711,7 +1668,6 @@ mod tests {
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -1723,7 +1679,6 @@ mod tests {
 
         // Send final complete input
         sender.send_full(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -1750,18 +1705,16 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Stream partials for create mode
-        sender.send_partial(json!({"display_description": "Create new file"}));
+        sender.send_partial(json!({}));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
             "content": "Hello, "
@@ -1770,7 +1723,6 @@ mod tests {
 
         // Final with full content
         sender.send_full(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
             "content": "Hello, World!"
@@ -1793,7 +1745,6 @@ mod tests {
 
         // Send final immediately with no partials (simulates non-streaming path)
         sender.send_full(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
@@ -1818,11 +1769,10 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Stream description, path, mode
-        sender.send_partial(json!({"display_description": "Edit multiple lines"}));
+        sender.send_partial(json!({}));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit"
         }));
@@ -1830,7 +1780,6 @@ mod tests {
 
         // First edit starts streaming (old_text only, still in progress)
         sender.send_partial(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "line 1"}]
@@ -1857,7 +1806,6 @@ mod tests {
         // Second edit appears — this proves the first edit is complete, so it
         // should be applied immediately during streaming
         sender.send_partial(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -1884,7 +1832,6 @@ mod tests {
 
         // Send final complete input
         sender.send_full(json!({
-            "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -1917,7 +1864,6 @@ mod tests {
 
         // Setup: description + path + mode
         sender.send_partial(json!({
-            "display_description": "Edit three lines",
             "path": "root/file.txt",
             "mode": "edit"
         }));
@@ -1925,7 +1871,6 @@ mod tests {
 
         // Edit 1 in progress
         sender.send_partial(json!({
-            "display_description": "Edit three lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "aaa", "new_text": "AAA"}]
@@ -1934,7 +1879,6 @@ mod tests {
 
         // Edit 2 appears — edit 1 is now complete and should be applied
         sender.send_partial(json!({
-            "display_description": "Edit three lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -1957,7 +1901,6 @@ mod tests {
 
         // Edit 3 appears — edit 2 is now complete and should be applied
         sender.send_partial(json!({
-            "display_description": "Edit three lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -1980,7 +1923,6 @@ mod tests {
 
         // Send final
         sender.send_full(json!({
-            "display_description": "Edit three lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -2007,7 +1949,6 @@ mod tests {
 
         // Setup
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit"
         }));
@@ -2015,7 +1956,6 @@ mod tests {
 
         // Edit 1 (valid) in progress — not yet complete (no second edit)
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -2027,7 +1967,6 @@ mod tests {
         // Edit 2 appears (will fail to match) — this makes edit 1 complete.
         // Edit 1 should be applied. Edit 2 is still in-progress (last edit).
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -2054,7 +1993,6 @@ mod tests {
         // Edit 3 appears — this makes edit 2 "complete", triggering its
         // resolution which should fail (old_text doesn't exist in the file).
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -2101,14 +2039,12 @@ mod tests {
 
         // Setup + single edit that stays in-progress (no second edit to prove completion)
         sender.send_partial(json!({
-            "display_description": "Single edit",
             "path": "root/file.txt",
             "mode": "edit",
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Single edit",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "hello world", "new_text": "goodbye world"}]
@@ -2133,7 +2069,6 @@ mod tests {
 
         // Send final — the edit is applied during finalization
         sender.send_full(json!({
-            "display_description": "Single edit",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "hello world", "new_text": "goodbye world"}]
@@ -2156,20 +2091,16 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Send progressively more complete partial snapshots, as the LLM would
-        sender.send_partial(json!({
-            "display_description": "Edit lines"
-        }));
+        sender.send_partial(json!({}));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
@@ -2178,7 +2109,6 @@ mod tests {
 
         // Send the final complete input
         sender.send_full(json!({
-            "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
@@ -2201,9 +2131,7 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Send a partial then drop the sender without sending final
-        sender.send_partial(json!({
-            "display_description": "Edit file"
-        }));
+        sender.send_partial(json!({}));
         cx.run_until_parked();
 
         drop(sender);
@@ -2227,15 +2155,13 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Buffer several partials before sending the final
-        sender.send_partial(json!({"display_description": "Create"}));
-        sender.send_partial(json!({"display_description": "Create", "path": "root/dir/new.txt"}));
+        sender.send_partial(json!({}));
+        sender.send_partial(json!({"path": "root/dir/new.txt"}));
         sender.send_partial(json!({
-            "display_description": "Create",
             "path": "root/dir/new.txt",
             "mode": "write"
         }));
         sender.send_full(json!({
-            "display_description": "Create",
             "path": "root/dir/new.txt",
             "mode": "write",
             "content": "streamed content"
@@ -2419,14 +2345,12 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "display_description": "Create main function",
             "path": "root/src/main.rs",
             "mode": "write"
         }));
         cx.run_until_parked();
 
         sender.send_full(json!({
-            "display_description": "Create main function",
             "path": "root/src/main.rs",
             "mode": "write",
             "content": UNFORMATTED_CONTENT
@@ -2477,14 +2401,12 @@ mod tests {
         let task = cx.update(|cx| tool2.run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "display_description": "Update main function",
             "path": "root/src/main.rs",
             "mode": "write"
         }));
         cx.run_until_parked();
 
         sender.send_full(json!({
-            "display_description": "Update main function",
             "path": "root/src/main.rs",
             "mode": "write",
             "content": UNFORMATTED_CONTENT
@@ -2540,7 +2462,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Create main function".into(),
                         path: "root/src/main.rs".into(),
                         mode: EditFileMode::Write,
                         content: Some(CONTENT_WITH_TRAILING_WHITESPACE.into()),
@@ -2588,7 +2509,6 @@ mod tests {
             .update(|cx| {
                 tool2.run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Update main function".into(),
                         path: "root/src/main.rs".into(),
                         mode: EditFileMode::Write,
                         content: Some(CONTENT_WITH_TRAILING_WHITESPACE.into()),
@@ -2617,52 +2537,40 @@ mod tests {
 
         // Test 1: Path with .zed component should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            tool.authorize(
-                &PathBuf::from(".zed/settings.json"),
-                "test 1",
-                &stream_tx,
-                cx,
-            )
-        });
+        let _auth =
+            cx.update(|cx| tool.authorize(&PathBuf::from(".zed/settings.json"), &stream_tx, cx));
 
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
             event.tool_call.fields.title,
-            Some("test 1 (local settings)".into())
+            Some("Edit `.zed/settings.json` (local settings)".into())
         );
 
         // Test 2: Path outside project should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth =
-            cx.update(|cx| tool.authorize(&PathBuf::from("/etc/hosts"), "test 2", &stream_tx, cx));
+        let _auth = cx.update(|cx| tool.authorize(&PathBuf::from("/etc/hosts"), &stream_tx, cx));
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.fields.title, Some("test 2".into()));
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("Edit `/etc/hosts`".into())
+        );
 
         // Test 3: Relative path without .zed should not require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| {
-            tool.authorize(&PathBuf::from("root/src/main.rs"), "test 3", &stream_tx, cx)
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx))
+            .await
+            .unwrap();
         assert!(stream_rx.try_recv().is_err());
 
         // Test 4: Path with .zed in the middle should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            tool.authorize(
-                &PathBuf::from("root/.zed/tasks.json"),
-                "test 4",
-                &stream_tx,
-                cx,
-            )
-        });
+        let _auth =
+            cx.update(|cx| tool.authorize(&PathBuf::from("root/.zed/tasks.json"), &stream_tx, cx));
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
             event.tool_call.fields.title,
-            Some("test 4 (local settings)".into())
+            Some("Edit `root/.zed/tasks.json` (local settings)".into())
         );
 
         // Test 5: When global default is allow, sensitive and outside-project
@@ -2675,39 +2583,26 @@ mod tests {
 
         // 5.1: .zed/settings.json is a sensitive path — still prompts
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            tool.authorize(
-                &PathBuf::from(".zed/settings.json"),
-                "test 5.1",
-                &stream_tx,
-                cx,
-            )
-        });
+        let _auth =
+            cx.update(|cx| tool.authorize(&PathBuf::from(".zed/settings.json"), &stream_tx, cx));
         let event = stream_rx.expect_authorization().await;
         assert_eq!(
             event.tool_call.fields.title,
-            Some("test 5.1 (local settings)".into())
+            Some("Edit `.zed/settings.json` (local settings)".into())
         );
 
         // 5.2: /etc/hosts is outside the project, but Allow auto-approves
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| tool.authorize(&PathBuf::from("/etc/hosts"), "test 5.2", &stream_tx, cx))
+        cx.update(|cx| tool.authorize(&PathBuf::from("/etc/hosts"), &stream_tx, cx))
             .await
             .unwrap();
         assert!(stream_rx.try_recv().is_err());
 
         // 5.3: Normal in-project path with allow — no confirmation needed
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| {
-            tool.authorize(
-                &PathBuf::from("root/src/main.rs"),
-                "test 5.3",
-                &stream_tx,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
+        cx.update(|cx| tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx))
+            .await
+            .unwrap();
         assert!(stream_rx.try_recv().is_err());
 
         // 5.4: With Confirm default, non-project paths still prompt
@@ -2718,11 +2613,13 @@ mod tests {
         });
 
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx
-            .update(|cx| tool.authorize(&PathBuf::from("/etc/hosts"), "test 5.4", &stream_tx, cx));
+        let _auth = cx.update(|cx| tool.authorize(&PathBuf::from("/etc/hosts"), &stream_tx, cx));
 
         let event = stream_rx.expect_authorization().await;
-        assert_eq!(event.tool_call.fields.title, Some("test 5.4".into()));
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("Edit `/etc/hosts`".into())
+        );
     }
 
     #[gpui::test]
@@ -2744,14 +2641,8 @@ mod tests {
         });
 
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let authorize_task = cx.update(|cx| {
-            tool.authorize(
-                &PathBuf::from("link/new.txt"),
-                "create through symlink",
-                &stream_tx,
-                cx,
-            )
-        });
+        let authorize_task =
+            cx.update(|cx| tool.authorize(&PathBuf::from("link/new.txt"), &stream_tx, cx));
 
         let event = stream_rx.expect_authorization().await;
         assert!(
@@ -2808,7 +2699,6 @@ mod tests {
         let _authorize_task = cx.update(|cx| {
             tool.authorize(
                 &PathBuf::from("link_to_external/config.txt"),
-                "edit through symlink",
                 &stream_tx,
                 cx,
             )
@@ -2854,7 +2744,6 @@ mod tests {
         let authorize_task = cx.update(|cx| {
             tool.authorize(
                 &PathBuf::from("link_to_external/config.txt"),
-                "edit through symlink",
                 &stream_tx,
                 cx,
             )
@@ -2911,7 +2800,6 @@ mod tests {
             .update(|cx| {
                 tool.authorize(
                     &PathBuf::from("link_to_external/config.txt"),
-                    "edit through symlink",
                     &stream_tx,
                     cx,
                 )
@@ -2956,8 +2844,7 @@ mod tests {
 
         for (path, should_confirm, description) in test_cases {
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-            let auth =
-                cx.update(|cx| tool.authorize(&PathBuf::from(path), "Edit file", &stream_tx, cx));
+            let auth = cx.update(|cx| tool.authorize(&PathBuf::from(path), &stream_tx, cx));
 
             if should_confirm {
                 stream_rx.expect_authorization().await;
@@ -3033,8 +2920,7 @@ mod tests {
 
         for (path, should_confirm, description) in test_cases {
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-            let auth =
-                cx.update(|cx| tool.authorize(&PathBuf::from(path), "Edit file", &stream_tx, cx));
+            let auth = cx.update(|cx| tool.authorize(&PathBuf::from(path), &stream_tx, cx));
 
             if should_confirm {
                 stream_rx.expect_authorization().await;
@@ -3092,8 +2978,7 @@ mod tests {
 
         for (path, should_confirm, description) in test_cases {
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-            let auth =
-                cx.update(|cx| tool.authorize(&PathBuf::from(path), "Edit file", &stream_tx, cx));
+            let auth = cx.update(|cx| tool.authorize(&PathBuf::from(path), &stream_tx, cx));
 
             cx.run_until_parked();
 
@@ -3134,41 +3019,23 @@ mod tests {
             // Test .zed path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let _auth = cx.update(|cx| {
-                tool.authorize(
-                    &PathBuf::from("project/.zed/settings.json"),
-                    "Edit settings",
-                    &stream_tx,
-                    cx,
-                )
+                tool.authorize(&PathBuf::from("project/.zed/settings.json"), &stream_tx, cx)
             });
 
             stream_rx.expect_authorization().await;
 
             // Test outside path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-            let _auth = cx.update(|cx| {
-                tool.authorize(
-                    &PathBuf::from("/outside/file.txt"),
-                    "Edit file",
-                    &stream_tx,
-                    cx,
-                )
-            });
+            let _auth =
+                cx.update(|cx| tool.authorize(&PathBuf::from("/outside/file.txt"), &stream_tx, cx));
 
             stream_rx.expect_authorization().await;
 
             // Test normal path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-            cx.update(|cx| {
-                tool.authorize(
-                    &PathBuf::from("project/normal.txt"),
-                    "Edit file",
-                    &stream_tx,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+            cx.update(|cx| tool.authorize(&PathBuf::from("project/normal.txt"), &stream_tx, cx))
+                .await
+                .unwrap();
             assert!(stream_rx.try_recv().is_err());
         }
     }
@@ -3186,7 +3053,6 @@ mod tests {
                 tool.initial_title(
                     Err(json!({
                         "path": "src/main.rs",
-                        "display_description": "",
                     })),
                     cx
                 ),
@@ -3196,27 +3062,6 @@ mod tests {
                 tool.initial_title(
                     Err(json!({
                         "path": "",
-                        "display_description": "Fix error handling",
-                    })),
-                    cx
-                ),
-                "Fix error handling"
-            );
-            assert_eq!(
-                tool.initial_title(
-                    Err(json!({
-                        "path": "src/main.rs",
-                        "display_description": "Fix error handling",
-                    })),
-                    cx
-                ),
-                "src/main.rs"
-            );
-            assert_eq!(
-                tool.initial_title(
-                    Err(json!({
-                        "path": "",
-                        "display_description": "",
                     })),
                     cx
                 ),
@@ -3244,7 +3089,6 @@ mod tests {
             let edit = cx.update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit file".into(),
                         path: path!("/main.rs").into(),
                         mode: EditFileMode::Write,
                         content: Some("new content".into()),
@@ -3274,7 +3118,6 @@ mod tests {
             let edit = cx.update(|cx| {
                 tool.run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit file".into(),
                         path: path!("/main.rs").into(),
                         mode: EditFileMode::Write,
                         content: Some("dropped content".into()),
@@ -3323,7 +3166,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "First edit".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -3348,7 +3190,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Second edit".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -3426,7 +3267,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit after external change".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -3511,7 +3351,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit after external change".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -3596,7 +3435,6 @@ mod tests {
             .update(|cx| {
                 tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
-                        display_description: "Edit with dirty buffer".into(),
                         path: "root/test.txt".into(),
                         mode: EditFileMode::Edit,
                         content: None,
@@ -3652,7 +3490,6 @@ mod tests {
 
         // Setup: resolve the buffer
         sender.send_partial(json!({
-            "display_description": "Overlapping edits",
             "path": "root/file.txt",
             "mode": "edit"
         }));
@@ -3664,7 +3501,6 @@ mod tests {
         // in the modified buffer and replaces it with "ZZZ".
         // Edit 3 exists only to mark edit 2 as "complete" during streaming.
         sender.send_partial(json!({
-            "display_description": "Overlapping edits",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -3677,7 +3513,6 @@ mod tests {
 
         // Send the final input with all three edits.
         sender.send_full(json!({
-            "display_description": "Overlapping edits",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [
@@ -3703,7 +3538,6 @@ mod tests {
 
         // Transition to BufferResolved
         sender.send_partial(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write"
         }));
@@ -3711,7 +3545,6 @@ mod tests {
 
         // Stream content incrementally
         sender.send_partial(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
             "content": "line 1\n"
@@ -3729,7 +3562,6 @@ mod tests {
 
         // Stream more content
         sender.send_partial(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
             "content": "line 1\nline 2\n"
@@ -3739,7 +3571,6 @@ mod tests {
 
         // Stream final chunk
         sender.send_partial(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
             "content": "line 1\nline 2\nline 3\n"
@@ -3752,7 +3583,6 @@ mod tests {
 
         // Send final input
         sender.send_full(json!({
-            "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
             "content": "line 1\nline 2\nline 3\n"
@@ -3778,13 +3608,11 @@ mod tests {
 
         // Transition to BufferResolved
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write"
         }));
@@ -3802,7 +3630,6 @@ mod tests {
 
         // Stream first content chunk
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
             "content": "new line 1\n"
@@ -3816,7 +3643,6 @@ mod tests {
 
         // Send final input
         sender.send_full(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
             "content": "new line 1\nnew line 2\n"
@@ -3849,7 +3675,6 @@ mod tests {
 
         // Transition to BufferResolved
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write"
         }));
@@ -3868,7 +3693,6 @@ mod tests {
 
         // First content partial replaces old content
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
             "content": "new line 1\n"
@@ -3878,7 +3702,6 @@ mod tests {
 
         // Subsequent content partials append
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
             "content": "new line 1\nnew line 2\n"
@@ -3891,7 +3714,6 @@ mod tests {
 
         // Send final input with complete content
         sender.send_full(json!({
-            "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
             "content": "new line 1\nnew line 2\nnew line 3\n"
@@ -3917,7 +3739,6 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "edit"
         }));
@@ -3929,7 +3750,6 @@ mod tests {
         //   partial 1: old_text = "hello\\" (fixer closes incomplete \n as \\)
         //   partial 2: old_text = "hello\nworld" (fixer corrected the escape)
         sender.send_partial(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "hello\\"}]
@@ -3938,7 +3758,6 @@ mod tests {
 
         // Now the fixer corrects it to the real newline.
         sender.send_partial(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "hello\nworld"}]
@@ -3947,7 +3766,6 @@ mod tests {
 
         // Send final.
         sender.send_full(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": [{"old_text": "hello\nworld", "new_text": "HELLO\nWORLD"}]
@@ -3969,14 +3787,12 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "edit"
         }));
         cx.run_until_parked();
 
         sender.send_full(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "edit",
             "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
@@ -4005,7 +3821,6 @@ mod tests {
         let task = cx.update(|cx| {
             tool.clone().run(
                 ToolInput::resolved(EditFileToolInput {
-                    display_description: "Edit lines".to_string(),
                     path: "root/file.txt".into(),
                     mode: EditFileMode::Edit,
                     content: None,
@@ -4049,7 +3864,6 @@ mod tests {
         let task = cx.update(|cx| {
             tool.clone().run(
                 ToolInput::resolved(EditFileToolInput {
-                    display_description: "Overwrite file".to_string(),
                     path: "root/file.txt".into(),
                     mode: EditFileMode::Write,
                     content: Some("completely new content".into()),
@@ -4084,20 +3898,17 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "mode": "write"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "mode": "write",
             "content": "new_content"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "mode": "write",
             "content": "new_content",
             "path": "root"
@@ -4106,7 +3917,6 @@ mod tests {
 
         // Send final.
         sender.send_full(json!({
-            "display_description": "Overwrite file",
             "mode": "write",
             "content": "new_content",
             "path": "root/file.txt"
@@ -4130,27 +3940,23 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "mode": "edit"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "mode": "edit",
             "edits": [{"old_text": "old_content"}]
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "mode": "edit",
             "edits": [{"old_text": "old_content", "new_text": "new_content"}]
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "display_description": "Overwrite file",
             "mode": "edit",
             "edits": [{"old_text": "old_content", "new_text": "new_content"}],
             "path": "root"
@@ -4159,7 +3965,6 @@ mod tests {
 
         // Send final.
         sender.send_full(json!({
-            "display_description": "Overwrite file",
             "mode": "edit",
             "edits": [{"old_text": "old_content", "new_text": "new_content"}],
             "path": "root/file.txt"
@@ -4200,7 +4005,6 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         sender.send_full(json!({
-            "display_description": "Remove extra blank lines",
             "path": "root/file.rs",
             "mode": "edit",
             "edits": [{"old_text": old_text, "new_text": new_text}]
@@ -4241,7 +4045,6 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         sender.send_full(json!({
-            "display_description": "description",
             "path": "root/file.rs",
             "mode": "edit",
             "edits": [{"old_text": old_text, "new_text": new_text}]
@@ -4278,7 +4081,6 @@ mod tests {
         let task = cx.update(|cx| {
             tool.clone().run(
                 ToolInput::resolved(EditFileToolInput {
-                    display_description: "Create new file".into(),
                     path: "root/dir/new_file.txt".into(),
                     mode: EditFileMode::Write,
                     content: Some("Hello, World!".into()),
@@ -4318,7 +4120,6 @@ mod tests {
     #[test]
     fn test_input_deserializes_double_encoded_fields() {
         let input = serde_json::from_value::<EditFileToolInput>(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "\"edit\"",
             "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
@@ -4332,7 +4133,6 @@ mod tests {
         assert_eq!(edits[0].new_text, "HELLO\nWORLD");
 
         let input = serde_json::from_value::<EditFileToolInput>(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "\"edit\""
         }))
@@ -4340,7 +4140,6 @@ mod tests {
         assert!(input.edits.is_none());
 
         let input = serde_json::from_value::<EditFileToolInput>(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "\"edit\"",
             "edits": null
@@ -4349,7 +4148,6 @@ mod tests {
         assert!(input.edits.is_none());
 
         let input = serde_json::from_value::<EditFileToolPartialInput>(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "\"edit\"",
             "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
@@ -4363,7 +4161,6 @@ mod tests {
         assert_eq!(edits[0].new_text.as_deref(), Some("HELLO\nWORLD"));
 
         let input = serde_json::from_value::<EditFileToolPartialInput>(json!({
-            "display_description": "Edit",
             "path": "root/file.txt"
         }))
         .expect("input should deserialize");
@@ -4371,7 +4168,6 @@ mod tests {
         assert!(input.edits.is_none());
 
         let input = serde_json::from_value::<EditFileToolPartialInput>(json!({
-            "display_description": "Edit",
             "path": "root/file.txt",
             "mode": null,
             "edits": null
