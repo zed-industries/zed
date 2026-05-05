@@ -294,7 +294,7 @@ impl TestServer {
                         cx.background_spawn(server.handle_connection(
                             server_conn,
                             client_name,
-                            Principal::User(user),
+                            Principal::User(user.into()),
                             ZedVersion(semver::Version::new(1, 0, 0)),
                             Some("test".to_string()),
                             None,

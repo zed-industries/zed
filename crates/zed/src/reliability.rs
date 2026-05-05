@@ -266,6 +266,10 @@ async fn upload_minidump(
     minidump: Vec<u8>,
     metadata: &crashes::CrashInfo,
 ) -> Result<()> {
+    if metadata.init.commit_sha == "no sha" {
+        log::warn!("No commit sha set, skipping minidump upload");
+        return Ok(());
+    }
     let mut form = Form::new()
         .part(
             "upload_file_minidump",

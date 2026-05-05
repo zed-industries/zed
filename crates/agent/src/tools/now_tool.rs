@@ -12,10 +12,8 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 #[serde(rename_all = "snake_case")]
 #[schemars(inline)]
 pub enum Timezone {
-    /// Use UTC for the datetime.
     #[serde(alias = "UTC", alias = "Utc")]
     Utc,
-    /// Use local time for the datetime.
     #[serde(alias = "LOCAL", alias = "Local")]
     Local,
 }
@@ -24,7 +22,7 @@ pub enum Timezone {
 /// Only use this tool when the user specifically asks for it or the current task would benefit from knowing the current datetime.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct NowToolInput {
-    /// The timezone to use for the datetime.
+    /// The timezone to use for the datetime. Use `utc` for UTC, or `local` for the system's local time.
     timezone: Timezone,
 }
 
@@ -55,10 +53,7 @@ impl AgentTool for NowTool {
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         cx.spawn(async move |_cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let now = match input.timezone {
                 Timezone::Utc => Utc::now().to_rfc3339(),
                 Timezone::Local => Local::now().to_rfc3339(),

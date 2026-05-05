@@ -48,8 +48,7 @@ use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
 use settings::{
-    NewThreadLocation, NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide,
-    ThinkingBlockDisplay,
+    NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -862,10 +861,7 @@ impl ConversationView {
             SidebarSide::Left => "left",
             SidebarSide::Right => "right",
         };
-        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
-            NewThreadLocation::LocalProject => "current_worktree",
-            NewThreadLocation::NewWorktree => "new_worktree",
-        };
+        let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_result.await {
@@ -2163,11 +2159,17 @@ impl ConversationView {
                 msg.into(),
                 Some(self.create_copy_button(msg.to_string()).into_any_element()),
             ),
-            LoadError::Exited { status } => (
-                "Failed to Launch",
-                format!("Server exited with status {status}").into(),
-                None,
-            ),
+            LoadError::Exited { status, stderr } => {
+                let mut message = format!("Server exited with status {status}");
+                if let Some(stderr) = stderr {
+                    message.push_str("\n");
+                    message.push_str(stderr);
+                };
+                let action_slot = stderr
+                    .is_some()
+                    .then(|| self.create_copy_button(message.clone()).into_any_element());
+                ("Failed to Launch", message.into(), action_slot)
+            }
             LoadError::Other(msg) => (
                 "Failed to Launch",
                 msg.into(),

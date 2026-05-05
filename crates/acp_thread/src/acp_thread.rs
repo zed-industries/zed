@@ -1177,6 +1177,7 @@ pub enum LoadError {
     FailedToInstall(SharedString),
     Exited {
         status: ExitStatus,
+        stderr: Option<SharedString>,
     },
     Other(SharedString),
 }
@@ -1195,7 +1196,7 @@ impl Display for LoadError {
                 )
             }
             LoadError::FailedToInstall(msg) => write!(f, "Failed to install: {msg}"),
-            LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
+            LoadError::Exited { status, .. } => write!(f, "Server exited with status {status}"),
             LoadError::Other(msg) => write!(f, "{msg}"),
         }
     }
