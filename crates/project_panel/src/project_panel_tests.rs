@@ -4111,6 +4111,107 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_drag_worktree_root_reorders_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "worktrees should start in insertion order"
+    );
+
+    // Drag worktree root1 onto worktree root2: [r1, r2, r3] -> [r2, r1, r3].
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let source = worktrees[0].read(cx);
+        let target = worktrees[1].read(cx);
+        let source_entry = SelectedEntry {
+            worktree_id: source.id(),
+            entry_id: source.root_entry().unwrap().id,
+        };
+        let target_entry_id = target.root_entry().unwrap().id;
+        let drag = DraggedSelection {
+            active_selection: source_entry,
+            marked_selections: Arc::new([source_entry]),
+        };
+        panel.drag_onto(&drag, target_entry_id, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root2",
+            "      b.txt",
+            "v root1",
+            "      a.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "dragging root1 onto root2 should swap their positions"
+    );
+
+    // Drag worktree root3 onto worktree root2 (now first): [r2, r1, r3] -> [r3, r2, r1].
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let source = worktrees[2].read(cx);
+        let target = worktrees[0].read(cx);
+        let source_entry = SelectedEntry {
+            worktree_id: source.id(),
+            entry_id: source.root_entry().unwrap().id,
+        };
+        let target_entry_id = target.root_entry().unwrap().id;
+        let drag = DraggedSelection {
+            active_selection: source_entry,
+            marked_selections: Arc::new([source_entry]),
+        };
+        panel.drag_onto(&drag, target_entry_id, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root3",
+            "      c.txt",
+            "v root2",
+            "      b.txt",
+            "v root1",
+            "      a.txt",
+        ],
+        "dragging the last root onto the first should move it to the front"
+    );
+}
+
+#[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     let fs = FakeFs::new(cx.executor());

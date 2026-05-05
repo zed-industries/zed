@@ -3690,7 +3690,13 @@ impl ProjectPanel {
     }
 
     fn disjoint_effective_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
-        self.disjoint_entries(self.effective_entries(), cx)
+        let project = self.project.read(cx);
+        let entries = self
+            .effective_entries()
+            .into_iter()
+            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+            .collect();
+        self.disjoint_entries(entries, cx)
     }
 
     fn disjoint_entries(
@@ -3704,13 +3710,13 @@ impl ProjectPanel {
         }
 
         let project = self.project.read(cx);
-        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> = entries
-            .into_iter()
-            .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
-            .fold(HashMap::default(), |mut map, entry| {
-                map.entry(entry.worktree_id).or_default().push(entry);
-                map
-            });
+        let entries_by_worktree: HashMap<WorktreeId, Vec<SelectedEntry>> =
+            entries
+                .into_iter()
+                .fold(HashMap::default(), |mut map, entry| {
+                    map.entry(entry.worktree_id).or_default().push(entry);
+                    map
+                });
 
         for (worktree_id, worktree_entries) in entries_by_worktree {
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
