@@ -94,10 +94,7 @@ pub struct EditFileToolInput {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EditFileMode {
-    /// Overwrite the file with new content (replacing any existing content).
-    /// If the file does not exist, it will be created.
     Write,
-    /// Make granular edits to an existing file
     Edit,
 }
 
