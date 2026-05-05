@@ -1,7 +1,7 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
     EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
-    ZedUpdateRequiredError,
+    ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     prediction::EditPredictionResult,
 };
@@ -25,8 +25,7 @@ use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 use std::{env, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
     ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
-    parsed_output_from_editable_region, prompt_input_contains_special_tokens,
-    stop_tokens_for_format,
+    prompt_input_contains_special_tokens, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -70,10 +69,7 @@ pub fn request_prediction_with_zeta(
     let preferred_experiment = store.preferred_experiment().map(|s| s.to_owned());
     let open_ai_compatible_api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
 
-    let excerpt_path: Arc<Path> = snapshot
-        .file()
-        .map(|file| -> Arc<Path> { file.full_path(cx).into() })
-        .unwrap_or_else(|| Arc::from(Path::new("untitled")));
+    let excerpt_path = buffer_path_with_id_fallback(snapshot.file(), &snapshot.text, cx);
 
     let repo_url = if can_collect_data {
         let buffer_id = buffer.read(cx).remote_id();
@@ -283,12 +279,12 @@ pub fn request_prediction_with_zeta(
                     .await?;
 
                     let request_id = EditPredictionId(response.request_id.into());
-                    let output_text = Some(response.output).filter(|s| !s.is_empty());
                     let model_version = response.model_version;
-                    let parsed_output = parsed_output_from_editable_region(
-                        response.editable_range,
-                        output_text.unwrap_or_default(),
-                    );
+                    let parsed_output = ParsedOutput {
+                        new_editable_region: response.output,
+                        range_in_excerpt: response.editable_range,
+                        cursor_offset_in_new_editable_region: response.cursor_offset,
+                    };
 
                     Some((request_id, Some(parsed_output), model_version, usage))
                 })

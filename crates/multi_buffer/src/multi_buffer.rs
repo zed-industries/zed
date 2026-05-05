@@ -3575,10 +3575,7 @@ impl MultiBufferSnapshot {
                     continue 'anchors;
                 };
                 cursor.seek_forward(path, Bias::Left);
-                'excerpts: loop {
-                    let Some(excerpt) = cursor.item() else {
-                        break;
-                    };
+                'excerpts: while let Some(excerpt) = cursor.item() {
                     if excerpt.path_key != *path {
                         break;
                     }
