@@ -76,7 +76,7 @@ impl CommandAssertion {
             let cmd = input.command.as_str();
             let words: Vec<&str> = cmd.split_whitespace().collect();
 
-            if !words.iter().any(|word| *word == "git") {
+            if !words.contains(&"git") {
                 return EvalAssertionOutcome {
                     score: 0,
                     message: Some(format!("Expected a `git` command, got: {cmd}")),
@@ -99,7 +99,7 @@ impl CommandAssertion {
             let has_editor_guard = EDITOR_GUARDS.iter().any(|guard| cmd.contains(guard));
 
             for subcmd in PAGER_SUBCMDS {
-                if words.iter().any(|word| *word == *subcmd) && !has_pager_guard {
+                if words.contains(subcmd) && !has_pager_guard {
                     return EvalAssertionOutcome {
                         score: 0,
                         message: Some(format!(
@@ -111,7 +111,7 @@ impl CommandAssertion {
             }
 
             for subcmd in EDITOR_SUBCMDS {
-                if words.iter().any(|word| *word == *subcmd) && !has_editor_guard {
+                if words.contains(subcmd) && !has_editor_guard {
                     return EvalAssertionOutcome {
                         score: 0,
                         message: Some(format!(
