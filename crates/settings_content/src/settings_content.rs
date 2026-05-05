@@ -82,6 +82,35 @@ pub enum ParseStatus {
     Failed { error: String },
 }
 
+/// Determines when the mouse cursor should be hidden in response to keyboard
+/// input.
+///
+/// Default: on_typing_and_action
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum HideMouseMode {
+    /// Never hide the mouse cursor
+    Never,
+    /// Hide only when typing
+    OnTyping,
+    /// Hide on typing and on key bindings that resolve to an action
+    #[default]
+    OnTypingAndAction,
+}
+
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
@@ -155,6 +184,13 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub helix_mode: Option<bool>,
+
+    /// Determines when the mouse cursor should be hidden in response to
+    /// keyboard input. Applies globally across all input surfaces (editors,
+    /// terminals, palettes, etc.).
+    ///
+    /// Default: on_typing_and_action
+    pub hide_mouse: Option<HideMouseMode>,
 
     pub journal: Option<JournalSettingsContent>,
 
