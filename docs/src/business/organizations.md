@@ -15,11 +15,11 @@ Your personal organization always stays active. Joining a Zed Business organizat
 
 In the Zed editor, an organization menu in the title bar shows your current organization by name. Click it to see all your organizations and switch between them.
 
-<!-- TODO: confirm how organization switching works in dashboard.zed.dev before launch -->
-
 ## Multiple Organizations
 
 A Zed account can belong to more than one organization at the same time. If you're invited to a second organization while already a member of one, you simply join both. Each organization has its own subscription, billing, and admin controls.
+
+To switch organizations in the dashboard, use the org switcher in the top-left corner. In the Zed editor, click the organization name in the title bar to see all your organizations and move between them.
 
 ## Creating an organization
 
@@ -57,7 +57,5 @@ Owners and admins can manage members from the Members page in the dashboard.
 Removing a member ends their access to the organization's subscription and admin-managed settings. Their personal Zed account and any other organization memberships are unaffected.
 
 ## Organization Dashboard
-
-<!-- TODO: add screenshot of org dashboard before launch -->
 
 The dashboard shows your members, roles, and billing. Owners and admins have full access; members have no dashboard access.
