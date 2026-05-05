@@ -84,6 +84,10 @@ impl McpServer {
         })
     }
 
+    fn tool_for_listing(tool: &Tool) -> Tool {
+        tool.clone()
+    }
+
     pub fn add_tool<T: McpServerTool + Clone + 'static>(&mut self, tool: T) {
         let mut settings = schemars::generate::SchemaSettings::draft07();
         settings.inline_subschemas = true;
@@ -248,7 +252,11 @@ impl McpServer {
         outgoing_tx: &UnboundedSender<String>,
     ) {
         let response = ListToolsResponse {
-            tools: tools.borrow().values().map(|t| t.tool.clone()).collect(),
+            tools: tools
+                .borrow()
+                .values()
+                .map(|t| Self::tool_for_listing(&t.tool))
+                .collect(),
             next_cursor: None,
             meta: None,
         };
@@ -435,4 +443,32 @@ struct RawRequest {
     method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     params: Option<Box<serde_json::value::RawValue>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_for_listing_preserves_output_schema() {
+        let tool = Tool {
+            name: "example".into(),
+            title: Some("Example".into()),
+            description: Some("Example tool".into()),
+            input_schema: json!({"type": "object"}),
+            output_schema: Some(json!({"type": "object", "properties": {"value": {"type": "string"}}})),
+            annotations: None,
+        };
+
+        let response = ListToolsResponse {
+            tools: vec![McpServer::tool_for_listing(&tool)],
+            next_cursor: None,
+            meta: None,
+        };
+        let serialized = serde_json::to_value(response).unwrap();
+
+        assert!(serialized["tools"][0]["outputSchema"].is_object());
+        assert_eq!(serialized["tools"][0]["name"], tool.name);
+        assert_eq!(serialized["tools"][0]["inputSchema"], tool.input_schema);
+    }
 }
