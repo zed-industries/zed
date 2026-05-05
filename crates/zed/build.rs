@@ -2,6 +2,8 @@
 use std::process::Command;
 
 fn main() {
+    validate_app_name();
+
     #[cfg(target_os = "linux")]
     {
         // Add rpaths for libraries that webrtc-sys dlopens at runtime.
@@ -40,6 +42,7 @@ fn main() {
     }
 
     // Populate git sha environment variable if git is available
+    println!("cargo:rerun-if-changed=APP_NAME");
     println!("cargo:rerun-if-changed=../../.git/logs/HEAD");
     println!(
         "cargo:rustc-env=TARGET={}",
@@ -238,6 +241,18 @@ fn main() {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     prepare_app_icon_x11();
+}
+
+/// Validates that the `APP_NAME` file (the single source of truth for directory
+/// names in the `paths` crate) is consistent with this crate's package name.
+fn validate_app_name() {
+    let app_name = include_str!("APP_NAME").trim();
+    let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
+    assert!(
+        app_name.eq_ignore_ascii_case(&pkg_name),
+        "APP_NAME file contents ({app_name:?}) must match CARGO_PKG_NAME ({pkg_name:?}, \
+         case-insensitive). Forks: update the APP_NAME file when renaming the package."
+    );
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]

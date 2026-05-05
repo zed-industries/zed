@@ -14,10 +14,11 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// The application name, used to derive platform-specific data, config, cache,
 /// and state directory paths.
 ///
-/// This must match the `[[bin]] name` in the `zed` crate's Cargo.toml
-/// (lowercased, as is convention for binary targets). Forks should change this
-/// constant to avoid colliding with Zed's user data.
-pub const APP_NAME: &str = "Zed";
+/// Read from the `APP_NAME` file in the `zed` crate, which is the single source
+/// of truth. The `zed` crate's `build.rs` validates at build time that this
+/// matches the `[package] name` in its `Cargo.toml` (case-insensitively).
+/// Forks should change the `APP_NAME` file to avoid colliding with Zed's user data.
+pub const APP_NAME: &str = include_str!("../../zed/APP_NAME").trim_ascii();
 
 /// Returns the lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
