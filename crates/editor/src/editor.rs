@@ -13451,12 +13451,14 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         use base64::Engine as _;
-        self.manipulate_text(window, cx, |text| {
-            match base64::engine::general_purpose::STANDARD.decode(text) {
+        self.manipulate_text(
+            window,
+            cx,
+            |text| match base64::engine::general_purpose::STANDARD.decode(text) {
                 Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|_| text.to_string()),
                 Err(_) => text.to_string(),
-            }
-        })
+            },
+        )
     }
 
     fn manipulate_text<Fn>(&mut self, window: &mut Window, cx: &mut Context<Self>, mut callback: Fn)
