@@ -11,10 +11,16 @@ use util::{ResultExt, paths::SanitizedPath};
 
 use crate::{PathEvent, PathEventKind, Watcher};
 
+/// Controls how file system changes are detected.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum WatcherMode {
+    /// Use the platform's native file system notification mechanism.
     #[default]
     Native,
+    /// Periodically scan watched paths for changes.
+    ///
+    /// This mode is less efficient than [`WatcherMode::Native`], but may be necessary on some platforms.
+    /// See https://github.com/zed-industries/zed/issues/51340 for more details on why we use Poll.
     Poll,
 }
 
