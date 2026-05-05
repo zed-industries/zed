@@ -63,6 +63,9 @@ pub struct TaskTemplate {
     #[serde(default, deserialize_with = "non_empty_string_vec")]
     #[schemars(length(min = 1))]
     pub tags: Vec<String>,
+    /// Additional UI surfaces where this task should be displayed.
+    #[serde(default)]
+    pub show_in: Vec<TaskShowIn>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
     pub shell: Shell,
@@ -89,12 +92,20 @@ pub enum DebugArgsRequest {
     Attach(AttachRequest),
 }
 
-/// What to do with the terminal pane and tab, after the command was started.
+/// Events that can trigger a task.
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskHook {
     #[serde(alias = "create_git_worktree")]
     CreateWorktree,
+}
+
+/// UI surfaces where a task can opt in to being displayed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskShowIn {
+    /// Show the task in the Git graph commit context menu.
+    GitGraphContextMenu,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -511,7 +522,10 @@ fn substitute_all_template_variables_in_map(
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, path::Path};
+    use std::{
+        borrow::Cow,
+        path::{Path, PathBuf},
+    };
 
     use crate::{TaskVariables, VariableName};
 
@@ -1101,5 +1115,62 @@ mod tests {
             ..TaskTemplate::default()
         };
         assert!(task.unknown_variables().is_empty());
+    }
+
+    #[test]
+    fn test_show_in_deserialization() {
+        let task: TaskTemplate = serde_json::from_value(serde_json::json!({
+            "label": "Show commit",
+            "command": "git",
+            "args": ["show", "$ZED_GIT_SHA"],
+            "show_in": ["git_graph_context_menu"]
+        }))
+        .unwrap();
+
+        assert_eq!(task.show_in, vec![TaskShowIn::GitGraphContextMenu]);
+    }
+
+    #[test]
+    fn test_git_variables_resolution() {
+        let task = TaskTemplate {
+            label: "Show $ZED_GIT_SHA_SHORT in $ZED_GIT_REPO_NAME".to_string(),
+            command: "git".to_string(),
+            args: vec!["show".to_string(), "$ZED_GIT_SHA".to_string()],
+            cwd: Some("$ZED_GIT_REPO_PATH".to_string()),
+            ..TaskTemplate::default()
+        };
+        let context = TaskContext {
+            task_variables: TaskVariables::from_iter([
+                (
+                    VariableName::GitSha,
+                    "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+                ),
+                (VariableName::GitShaShort, "abcdef1".to_string()),
+                (VariableName::GitRepoName, "zed".to_string()),
+                (VariableName::GitRepoPath, "/Users/example/zed".to_string()),
+            ]),
+            ..TaskContext::default()
+        };
+
+        let task = task.resolve_task(TEST_ID_BASE, &context).unwrap();
+        assert_eq!(task.resolved_label, "Show abcdef1 in zed");
+        assert_eq!(task.resolved.command, Some("git".to_string()));
+        assert_eq!(
+            task.resolved.args,
+            vec![
+                "show".to_string(),
+                "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            ]
+        );
+        assert_eq!(task.resolved.cwd, Some(PathBuf::from("/Users/example/zed")));
+        assert_substituted_variables(
+            &task,
+            vec![
+                VariableName::GitSha,
+                VariableName::GitShaShort,
+                VariableName::GitRepoName,
+                VariableName::GitRepoPath,
+            ],
+        );
     }
 }

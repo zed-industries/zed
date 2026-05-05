@@ -58,6 +58,8 @@ Zed supports ways to spawn (and rerun) commands using its integrated [terminal](
     "save": "none"
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
+    // Additional UI surfaces where this task should be displayed.
+    // "show_in": []
   }
 ]
 ```
@@ -97,6 +99,10 @@ These variables allow you to pull information from the current editor and use it
 - `ZED_LANGUAGE`: language of the currently opened buffer (e.g. `Rust`, `Python`, `Shell Script`)
 - `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
 - `ZED_MAIN_GIT_WORKTREE`: absolute path to the main git worktree's working directory. For normal checkouts this equals `ZED_WORKTREE_ROOT`; for linked git worktrees this is the original repository's working directory.
+- `ZED_GIT_SHA`: full SHA of the Git commit associated with the task context.
+- `ZED_GIT_SHA_SHORT`: short SHA of the Git commit associated with the task context.
+- `ZED_GIT_REPO_NAME`: name of the Git repository associated with the task context.
+- `ZED_GIT_REPO_PATH`: absolute path of the Git repository associated with the task context.
 - `ZED_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $ZED_FILE source file.
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
@@ -254,6 +260,29 @@ Hook tasks are resolved from the same global and worktree-local `tasks.json` fil
 ```
 
 Tasks that define `hooks` are still available from the task modal like any other task, so the same template can be reused for manual runs.
+
+## Git graph context menu tasks
+
+Tasks can appear in the Git graph commit context menu by adding `"git_graph_context_menu"` to the `show_in` field. These tasks are resolved with the selected commit and repository as the task context, and run from the selected repository root by default.
+
+```json [tasks]
+[
+  {
+    "label": "Show $ZED_GIT_SHA_SHORT",
+    "command": "git",
+    "args": ["show", "$ZED_GIT_SHA"],
+    "show_in": ["git_graph_context_menu"]
+  },
+  {
+    "label": "Branches containing $ZED_GIT_SHA_SHORT",
+    "command": "git",
+    "args": ["branch", "-a", "--contains", "$ZED_GIT_SHA"],
+    "show_in": ["git_graph_context_menu"]
+  }
+]
+```
+
+Git graph context menu tasks can use the Git variables listed above, including `ZED_GIT_SHA`, `ZED_GIT_SHA_SHORT`, `ZED_GIT_REPO_NAME`, and `ZED_GIT_REPO_PATH`.
 
 ## VS Code Task Format
 

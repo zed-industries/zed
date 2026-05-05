@@ -1909,6 +1909,17 @@ impl GitStore {
         &self.repositories
     }
 
+    pub fn worktree_ids_for_repository(
+        &self,
+        repository_id: RepositoryId,
+    ) -> impl Iterator<Item = WorktreeId> + '_ {
+        self.worktree_ids
+            .get(&repository_id)
+            .into_iter()
+            .flatten()
+            .copied()
+    }
+
     /// Returns the main repository working directory for the given worktree.
     /// For normal checkouts this equals the worktree's own path. For linked
     /// worktrees it points back to the main worktree, if one exists. Linked
