@@ -62,28 +62,69 @@ impl CommandAssertion {
         }
     }
 
-    /// Passes when `command` contains every substring in `required`.
-    fn command_contains_all(description: &'static str, required: &'static [&'static str]) -> Self {
-        Self::new(description, move |input| {
-            let missing: Vec<&str> = required
-                .iter()
-                .copied()
-                .filter(|needle| !input.command.contains(needle))
-                .collect();
-            if missing.is_empty() {
-                EvalAssertionOutcome {
-                    score: 100,
-                    message: None,
-                }
-            } else {
-                EvalAssertionOutcome {
+    /// Passes when the command is a git command and every git subcommand that
+    /// could block on a pty (pager or editor) is guarded with the appropriate
+    /// environment variable or flag.
+    ///
+    /// This is intentionally permissive about *which* git subcommand the model
+    /// chooses — for an indirect prompt like "combine my last 3 commits", the
+    /// model is free to first investigate with `git log` or jump straight to
+    /// `git rebase -i`. Either is fine, as long as whatever it picks won't
+    /// hang on a pager or editor.
+    fn git_pty_safe(description: &'static str) -> Self {
+        Self::new(description, |input| {
+            let cmd = input.command.as_str();
+            let words: Vec<&str> = cmd.split_whitespace().collect();
+
+            if !words.iter().any(|word| *word == "git") {
+                return EvalAssertionOutcome {
                     score: 0,
-                    message: Some(format!(
-                        "Command missing required substrings {missing:?}.\n\
-                         Actual command: {command}",
-                        command = input.command,
-                    )),
+                    message: Some(format!("Expected a `git` command, got: {cmd}")),
+                };
+            }
+
+            // Subcommands that pipe their output through a pager by default,
+            // and so will hang on `less` unless one of these escape hatches is
+            // present somewhere in the command:
+            const PAGER_SUBCMDS: &[&str] = &["log", "diff", "show", "blame"];
+            const PAGER_GUARDS: &[&str] = &["--no-pager", "GIT_PAGER=cat", "PAGER=cat"];
+
+            // Subcommands that may invoke an interactive editor and so will
+            // hang unless one of these escape hatches is present:
+            const EDITOR_SUBCMDS: &[&str] = &["rebase", "commit", "merge", "tag"];
+            const EDITOR_GUARDS: &[&str] =
+                &["GIT_EDITOR=true", "GIT_EDITOR=:", "EDITOR=true", "EDITOR=:"];
+
+            let has_pager_guard = PAGER_GUARDS.iter().any(|guard| cmd.contains(guard));
+            let has_editor_guard = EDITOR_GUARDS.iter().any(|guard| cmd.contains(guard));
+
+            for subcmd in PAGER_SUBCMDS {
+                if words.iter().any(|word| *word == *subcmd) && !has_pager_guard {
+                    return EvalAssertionOutcome {
+                        score: 0,
+                        message: Some(format!(
+                            "`git {subcmd}` is missing a pager guard \
+                             (one of {PAGER_GUARDS:?}). Command: {cmd}"
+                        )),
+                    };
                 }
+            }
+
+            for subcmd in EDITOR_SUBCMDS {
+                if words.iter().any(|word| *word == *subcmd) && !has_editor_guard {
+                    return EvalAssertionOutcome {
+                        score: 0,
+                        message: Some(format!(
+                            "`git {subcmd}` is missing an editor guard \
+                             (one of {EDITOR_GUARDS:?}). Command: {cmd}"
+                        )),
+                    };
+                }
+            }
+
+            EvalAssertionOutcome {
+                score: 100,
+                message: None,
             }
         })
     }
@@ -444,9 +485,8 @@ fn eval_git_log_uses_no_pager() {
                     on the current branch (subject lines only is fine).
                 "})],
             )],
-            CommandAssertion::command_contains_all(
-                "command runs `git log` with `--no-pager`",
-                &["git", "log", "--no-pager"],
+            CommandAssertion::git_pty_safe(
+                "`git log`-style prompt produces a pty-safe git command",
             ),
         ))
     });
@@ -464,10 +504,7 @@ fn eval_git_rebase_sets_git_editor() {
                     `origin/main`.
                 "})],
             )],
-            CommandAssertion::command_contains_all(
-                "command runs `git rebase` with `GIT_EDITOR=true`",
-                &["git", "rebase", "GIT_EDITOR=true"],
-            ),
+            CommandAssertion::git_pty_safe("`git rebase` prompt produces a pty-safe git command"),
         ))
     });
 }
@@ -485,10 +522,7 @@ fn eval_git_rebase_implied_sets_git_editor() {
                     that with the terminal tool.
                 "})],
             )],
-            CommandAssertion::command_contains_all(
-                "implied `git rebase` includes `GIT_EDITOR=true`",
-                &["git", "rebase", "GIT_EDITOR=true"],
-            ),
+            CommandAssertion::git_pty_safe("indirect prompt produces a pty-safe git command"),
         ))
     });
 }
