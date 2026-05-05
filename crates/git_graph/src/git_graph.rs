@@ -640,7 +640,7 @@ impl GraphData {
             let commit_lane = self
                 .parent_to_lanes
                 .get(&commit.sha)
-                .and_then(|lanes| lanes.first().copied());
+                .and_then(|lanes| lanes.iter().min().copied());
 
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
 
