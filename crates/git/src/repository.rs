@@ -60,26 +60,6 @@ pub const GRAPH_CHUNK_SIZE: usize = 1000;
 /// Default value for the `git.worktree_directory` setting.
 pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
 
-/// Determine the original (main) repository's working directory.
-///
-/// For linked worktrees, `common_dir` differs from `repository_dir` and
-/// points to the main repo's `.git` directory, so we can derive the main
-/// repo's working directory from it. For normal repos and submodules,
-/// `common_dir` equals `repository_dir`, and the original repo is simply
-/// `work_directory` itself.
-pub fn original_repo_path(
-    work_directory: &Path,
-    common_dir: &Path,
-    repository_dir: &Path,
-) -> PathBuf {
-    if common_dir != repository_dir {
-        original_repo_path_from_common_dir(common_dir)
-            .unwrap_or_else(|| work_directory.to_path_buf())
-    } else {
-        work_directory.to_path_buf()
-    }
-}
-
 /// Given the git common directory (from `commondir()`), derive the original
 /// repository's working directory.
 ///
@@ -349,9 +329,11 @@ impl Worktree {
     }
 }
 
-pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
+pub fn parse_worktrees_from_str<T: AsRef<str>>(
+    raw_worktrees: T,
+    main_worktree_path: Option<&Path>,
+) -> Vec<Worktree> {
     let mut worktrees = Vec::new();
-    let mut is_first = true;
     let normalized = raw_worktrees.as_ref().replace("\r\n", "\n");
     let entries = normalized.split("\n\n");
     for entry in entries {
@@ -379,14 +361,16 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
         }
 
         if let (Some(path), Some(sha)) = (path, sha) {
+            let path = PathBuf::from(path);
+            let is_main =
+                main_worktree_path.is_some_and(|main_worktree_path| path == main_worktree_path);
             worktrees.push(Worktree {
-                path: PathBuf::from(path),
+                path,
                 ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
-                is_main: is_first,
+                is_main,
                 is_bare,
             });
-            is_first = false;
         }
     }
 
@@ -717,7 +701,7 @@ pub enum LogSource {
     All,
     Branch(SharedString),
     Sha(Oid),
-    File(RepoPath),
+    Path(RepoPath),
 }
 
 impl LogSource {
@@ -728,7 +712,7 @@ impl LogSource {
             LogSource::Sha(oid) => {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
-            LogSource::File(_) => Ok("--follow"),
+            LogSource::Path(_) => Ok("--follow"),
         }
     }
 }
@@ -1831,6 +1815,11 @@ impl GitRepository for RealGitRepository {
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let git_binary = self.git_binary();
+        let main_worktree_path = {
+            let repo = self.repository.lock();
+            let common_dir = repo.commondir().to_path_buf();
+            original_repo_path_from_common_dir(&common_dir)
+        };
         self.executor
             .spawn(async move {
                 let git = git_binary?;
@@ -1840,7 +1829,10 @@ impl GitRepository for RealGitRepository {
                     .await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    Ok(parse_worktrees_from_str(&stdout))
+                    Ok(parse_worktrees_from_str(
+                        &stdout,
+                        main_worktree_path.as_deref(),
+                    ))
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
@@ -2942,8 +2934,8 @@ impl GitRepository for RealGitRepository {
                 log_source.get_arg()?,
             ];
 
-            if let LogSource::File(file_path) = &log_source {
-                git_log_command.extend(["--", file_path.as_unix_str()]);
+            if let LogSource::Path(path) = &log_source {
+                git_log_command.extend(["--", path.as_unix_str()]);
             }
 
             let mut command = git.build_command(&git_log_command);
@@ -3028,8 +3020,8 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
-            if let LogSource::File(file_path) = &log_source {
-                args.extend(["--", file_path.as_unix_str()]);
+            if let LogSource::Path(path) = &log_source {
+                args.extend(["--", path.as_unix_str()]);
             }
 
             let mut command = git.build_command(&args);
@@ -4146,12 +4138,12 @@ mod tests {
     #[test]
     fn test_parse_worktrees_from_str() {
         // Empty input
-        let result = parse_worktrees_from_str("");
+        let result = parse_worktrees_from_str("", None);
         assert!(result.is_empty());
 
         // Single worktree (main)
         let input = "worktree /home/user/project\nHEAD abc123def\nbranch refs/heads/main\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123def");
@@ -4160,23 +4152,23 @@ mod tests {
         assert!(!result[0].is_bare);
 
         // Multiple worktrees
-        let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
-                      worktree /home/user/project-wt\nHEAD def456\nbranch refs/heads/feature\n\n";
-        let result = parse_worktrees_from_str(input);
+        let input = "worktree /home/user/project-wt\nHEAD def456\nbranch refs/heads/feature\n\n\
+                      worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n";
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
-        assert!(result[0].is_main);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project-wt"));
+        assert_eq!(result[0].ref_name, Some("refs/heads/feature".into()));
+        assert!(!result[0].is_main);
         assert!(!result[0].is_bare);
-        assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
-        assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
-        assert!(!result[1].is_main);
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
+        assert!(result[1].is_main);
         assert!(!result[1].is_bare);
 
         // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/detached\nHEAD def456\ndetached\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
@@ -4187,14 +4179,14 @@ mod tests {
         assert!(!result[1].is_main);
         assert!(!result[1].is_bare);
 
-        // Bare repo entry (included with ref_name: None)
+        // Bare repo entry with no main worktree.
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
                       worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, None);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
         assert_eq!(result[0].ref_name, None);
-        assert!(result[0].is_main);
+        assert!(!result[0].is_main);
         assert!(result[0].is_bare);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
@@ -4205,7 +4197,7 @@ mod tests {
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/locked-wt\nHEAD def456\nbranch refs/heads/locked-branch\nlocked\n\n\
                       worktree /home/user/prunable-wt\nHEAD 789aaa\nbranch refs/heads/prunable-branch\nprunable\n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
@@ -4223,7 +4215,7 @@ mod tests {
         // Leading/trailing whitespace on lines should be tolerated
         let input =
             "  worktree /home/user/project  \n  HEAD abc123  \n  branch refs/heads/main  \n\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
@@ -4232,7 +4224,7 @@ mod tests {
 
         // Windows-style line endings should be handled
         let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
-        let result = parse_worktrees_from_str(input);
+        let result = parse_worktrees_from_str(input, Some(Path::new("/home/user/project")));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");

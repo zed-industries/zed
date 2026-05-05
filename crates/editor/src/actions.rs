@@ -460,6 +460,10 @@ actions!(
         ConvertToRot13,
         /// Applies ROT47 cipher to selected text.
         ConvertToRot47,
+        /// Base64-encodes the selected text or word under cursor.
+        ConvertToBase64,
+        /// Base64-decodes the selected text or word under cursor.
+        ConvertFromBase64,
         /// Copies selected text to the clipboard.
         Copy,
         /// Copies selected text to the clipboard with leading/trailing whitespace trimmed.

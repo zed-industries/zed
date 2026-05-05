@@ -558,9 +558,9 @@ pub fn most_restrictive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AgentTool;
     use crate::pattern_extraction::extract_terminal_pattern;
-    use crate::tools::{DeletePathTool, EditFileTool, FetchTool, TerminalTool};
+    use crate::tools::{DeletePathTool, FetchTool, TerminalTool};
+    use crate::{AgentTool, EditFileTool};
     use agent_settings::{AgentProfileId, CompiledRegex, InvalidRegexPattern, ToolRules};
     use gpui::px;
     use settings::{DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone};
@@ -597,7 +597,6 @@ mod tests {
             tool_permissions,
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            new_thread_location: Default::default(),
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         }

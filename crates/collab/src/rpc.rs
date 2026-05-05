@@ -1,12 +1,13 @@
 mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
+use crate::entities::User;
 use crate::{
     AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId, User,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId,
         UserId,
     },
     executor::Executor,
@@ -3159,9 +3160,18 @@ async fn get_channel_members(
     } else {
         request.limit
     };
+
+    let channel = db.get_channel(channel_id, session.user_id()).await?;
+
     let (members, users) = db
-        .get_channel_participant_details(channel_id, &request.query, limit, session.user_id())
+        .get_channel_participant_details(&channel, &request.query, limit)
         .await?;
+    let members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect();
+    let users = users.into_iter().map(proto::User::from).collect();
+
     response.send(proto::GetChannelMembersResponse { members, users })?;
     Ok(())
 }

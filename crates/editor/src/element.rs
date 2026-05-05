@@ -560,6 +560,8 @@ impl EditorElement {
             register_action(editor, window, Editor::toggle_case);
             register_action(editor, window, Editor::convert_to_rot13);
             register_action(editor, window, Editor::convert_to_rot47);
+            register_action(editor, window, Editor::convert_to_base64);
+            register_action(editor, window, Editor::convert_from_base64);
             register_action(editor, window, Editor::delete_to_previous_word_start);
             register_action(editor, window, Editor::delete_to_previous_subword_start);
             register_action(editor, window, Editor::delete_to_next_word_end);
@@ -1267,7 +1269,6 @@ impl EditorElement {
         let text_hovered = text_hitbox.is_hovered(window);
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.show_mouse_cursor(cx);
 
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.nearest_valid;
@@ -6612,9 +6613,7 @@ impl EditorElement {
             }),
             |window| {
                 let editor = self.editor.read(cx);
-                if editor.mouse_cursor_hidden {
-                    window.set_window_cursor_style(CursorStyle::None);
-                } else if let SelectionDragState::ReadyToDrag {
+                if let SelectionDragState::ReadyToDrag {
                     mouse_down_time, ..
                 } = &editor.selection_drag_state
                 {
@@ -8741,6 +8740,7 @@ pub(crate) fn render_buffer_header(
 
     let file = buffer.file().cloned();
     let editor = editor.clone();
+    let buffer_snapshot = buffer.clone();
 
     right_click_menu("buffer-header-context-menu")
         .trigger(move |_, _, _| header)
@@ -8748,6 +8748,7 @@ pub(crate) fn render_buffer_header(
             let menu_context = focus_handle.clone();
             let editor = editor.clone();
             let file = file.clone();
+            let buffer_snapshot = buffer_snapshot.clone();
             ContextMenu::build(window, cx, move |mut menu, window, cx| {
                 if let Some(file) = file
                     && let Some(project) = editor.read(cx).project()
@@ -8833,6 +8834,19 @@ pub(crate) fn render_buffer_header(
                             )
                         });
                 }
+
+                menu = editor.update(cx, |editor, cx| {
+                    let mut menu = menu;
+                    for addon in editor.addons.values() {
+                        menu = addon.extend_buffer_header_context_menu(
+                            menu,
+                            &buffer_snapshot,
+                            window,
+                            cx,
+                        );
+                    }
+                    menu
+                });
 
                 menu.context(menu_context)
             })

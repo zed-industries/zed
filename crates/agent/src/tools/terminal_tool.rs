@@ -89,10 +89,7 @@ impl AgentTool for TerminalTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
 
             let (working_dir, authorize) = cx.update(|cx| {
                 let working_dir =
