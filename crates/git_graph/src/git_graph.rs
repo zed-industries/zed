@@ -1927,9 +1927,11 @@ impl GitGraph {
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
         entry_idx: usize,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.focus(&context_menu.focus_handle(cx), cx);
+
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
