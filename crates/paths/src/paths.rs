@@ -6,7 +6,7 @@ use std::sync::{LazyLock, OnceLock};
 
 use util::paths::SanitizedPath;
 pub use util::paths::home_dir;
-use util::rel_path::RelPath;
+use util::rel_path::{RelPath, RelPathBuf};
 
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
@@ -45,19 +45,29 @@ static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// On Windows, this is `%APPDATA%\Zed`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+fn remote_server_dir_name(app_name: &str, suffix: &str) -> String {
+    format!(".{}{}", app_name.to_lowercase(), suffix)
+}
+
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
-    static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
-    *CACHED
+    static CACHED: LazyLock<RelPathBuf> = LazyLock::new(|| {
+        RelPath::unix(&remote_server_dir_name(APP_NAME, "_server"))
+            .expect("remote server directory name must be a valid relative path")
+            .to_rel_path_buf()
+    });
+    CACHED.as_rel_path()
 }
 
 // Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
-    static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
-    *CACHED
+    static CACHED: LazyLock<RelPathBuf> = LazyLock::new(|| {
+        RelPath::unix(&remote_server_dir_name(APP_NAME, "_wsl_server"))
+            .expect("remote WSL server directory name must be a valid relative path")
+            .to_rel_path_buf()
+    });
+    CACHED.as_rel_path()
 }
 
 /// Sets a custom directory for all user data, overriding the default data directory.
@@ -588,4 +598,31 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
     GLOBAL_GITIGNORE_PATH
         .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_server_dir_names_preserve_upstream_names() {
+        assert_eq!(remote_server_dir_relative().as_unix_str(), ".zed_server");
+        assert_eq!(
+            remote_wsl_server_dir_relative().as_unix_str(),
+            ".zed_wsl_server"
+        );
+    }
+
+    #[test]
+    fn remote_server_dir_names_are_derived_from_app_name() {
+        assert_eq!(remote_server_dir_name("Zed", "_server"), ".zed_server");
+        assert_eq!(
+            remote_server_dir_name("ZedFork", "_server"),
+            ".zedfork_server"
+        );
+        assert_eq!(
+            remote_server_dir_name("ZedFork", "_wsl_server"),
+            ".zedfork_wsl_server"
+        );
+    }
 }
