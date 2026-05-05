@@ -8225,12 +8225,20 @@ fn deserialize_blame_buffer_response(
 }
 
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
+    let base_source = match log_source {
+        LogSource::Filtered { source, .. } => source.as_ref(),
+        source => source,
+    };
+
     proto::GitLogSource {
-        source: Some(match log_source {
+        source: Some(match base_source {
             LogSource::All => proto::git_log_source::Source::All(proto::GitLogSourceAll {}),
             LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
             LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
             LogSource::Path(path) => proto::git_log_source::Source::Path(path.to_proto()),
+            LogSource::Filtered { .. } => {
+                proto::git_log_source::Source::All(proto::GitLogSourceAll {})
+            }
         }),
     }
 }

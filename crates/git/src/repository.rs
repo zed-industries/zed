@@ -702,18 +702,100 @@ pub enum LogSource {
     Branch(SharedString),
     Sha(Oid),
     Path(RepoPath),
+    Filtered {
+        source: Box<LogSource>,
+        options: GraphLogOptions,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GraphLogOptions {
+    pub show_stashes: bool,
+    pub show_tags: bool,
+    pub include_reflog_commits: bool,
+    pub first_parent_only: bool,
 }
 
 impl LogSource {
-    fn get_arg(&self) -> Result<&str> {
-        match self {
-            LogSource::All => Ok("--all"),
-            LogSource::Branch(branch) => Ok(branch.as_str()),
-            LogSource::Sha(oid) => {
-                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
+    pub fn with_graph_options(self, options: GraphLogOptions) -> Self {
+        let base_source = match self {
+            LogSource::Filtered { source, .. } => *source,
+            source => source,
+        };
+
+        if options == GraphLogOptions::default() {
+            base_source
+        } else {
+            LogSource::Filtered {
+                source: Box::new(base_source),
+                options,
             }
-            LogSource::Path(_) => Ok("--follow"),
         }
+    }
+
+    pub fn graph_options(&self) -> GraphLogOptions {
+        match self {
+            LogSource::Filtered { options, .. } => *options,
+            _ => GraphLogOptions::default(),
+        }
+    }
+
+    fn get_args(&self) -> Result<Vec<String>> {
+        match self {
+            LogSource::All => Ok(vec!["--all".to_string()]),
+            LogSource::Branch(branch) => Ok(vec![branch.to_string()]),
+            LogSource::Sha(oid) => Ok(vec![
+                str::from_utf8(oid.as_bytes())
+                    .context("Failed to build str from sha")?
+                    .to_string(),
+            ]),
+            LogSource::Path(path) => Ok(vec![
+                "--follow".to_string(),
+                "--".to_string(),
+                path.as_unix_str().to_string(),
+            ]),
+            LogSource::Filtered { source, options } => {
+                let mut args = options.get_args();
+                args.extend(source.get_args()?);
+                Ok(args)
+            }
+        }
+    }
+}
+
+impl Default for GraphLogOptions {
+    fn default() -> Self {
+        Self {
+            show_stashes: true,
+            show_tags: true,
+            include_reflog_commits: false,
+            first_parent_only: false,
+        }
+    }
+}
+
+impl GraphLogOptions {
+    fn get_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+
+        if !self.show_stashes {
+            args.push("--exclude=refs/stash".to_string());
+        }
+
+        if !self.show_tags {
+            args.push("--exclude=refs/tags".to_string());
+            args.push("--exclude=refs/tags/*".to_string());
+        }
+
+        if self.include_reflog_commits {
+            args.push("--reflog".to_string());
+        }
+
+        if self.first_parent_only {
+            args.push("--first-parent".to_string());
+        }
+
+        args
     }
 }
 
@@ -2928,17 +3010,15 @@ impl GitRepository for RealGitRepository {
             let git = git_binary?;
 
             let mut git_log_command = vec![
-                "log",
-                GRAPH_COMMIT_FORMAT,
-                log_order.as_arg(),
-                log_source.get_arg()?,
+                "log".to_string(),
+                GRAPH_COMMIT_FORMAT.to_string(),
+                log_order.as_arg().to_string(),
             ];
+            git_log_command.extend(log_source.get_args()?);
+            let git_log_command_ref: Vec<_> =
+                git_log_command.iter().map(|arg| arg.as_str()).collect();
 
-            if let LogSource::Path(path) = &log_source {
-                git_log_command.extend(["--", path.as_unix_str()]);
-            }
-
-            let mut command = git.build_command(&git_log_command);
+            let mut command = git.build_command(&git_log_command_ref);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
 
@@ -3009,22 +3089,21 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git_binary?;
 
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+            let mut args = vec!["log".to_string(), SEARCH_COMMIT_FORMAT.to_string()];
+            args.extend(log_source.get_args()?);
 
-            args.push("--fixed-strings");
+            args.push("--fixed-strings".to_string());
 
             if !search_args.case_sensitive {
-                args.push("--regexp-ignore-case");
+                args.push("--regexp-ignore-case".to_string());
             }
 
-            args.push("--grep");
-            args.push(search_args.query.as_str());
+            args.push("--grep".to_string());
+            args.push(search_args.query.to_string());
 
-            if let LogSource::Path(path) = &log_source {
-                args.extend(["--", path.as_unix_str()]);
-            }
+            let args_ref: Vec<_> = args.iter().map(|arg| arg.as_str()).collect();
 
-            let mut command = git.build_command(&args);
+            let mut command = git.build_command(&args_ref);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
 
@@ -4230,6 +4309,42 @@ mod tests {
         assert_eq!(result[0].sha.as_ref(), "abc123");
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert!(result[0].is_main);
+    }
+
+    #[test]
+    fn test_graph_log_options_build_args() {
+        let options = GraphLogOptions {
+            show_stashes: false,
+            show_tags: false,
+            include_reflog_commits: true,
+            first_parent_only: true,
+        };
+
+        assert_eq!(
+            options.get_args(),
+            vec![
+                "--exclude=refs/stash",
+                "--exclude=refs/tags",
+                "--exclude=refs/tags/*",
+                "--reflog",
+                "--first-parent",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_filtered_log_source_prepends_graph_args_to_source() {
+        let source = LogSource::All.with_graph_options(GraphLogOptions {
+            show_stashes: false,
+            show_tags: true,
+            include_reflog_commits: true,
+            first_parent_only: false,
+        });
+
+        assert_eq!(
+            source.get_args().unwrap(),
+            vec!["--exclude=refs/stash", "--reflog", "--all"]
+        );
     }
 
     #[gpui::test]
