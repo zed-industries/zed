@@ -63,6 +63,8 @@ pub(crate) struct WindowsPlatformState {
     jump_list: RefCell<JumpList>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
+    /// Shared with each window so `WM_SETCURSOR` can read it directly.
+    pub(crate) cursor_visible: Arc<AtomicBool>,
     directx_devices: RefCell<Option<DirectXDevices>>,
 }
 
@@ -87,6 +89,7 @@ impl WindowsPlatformState {
             callbacks,
             jump_list: RefCell::new(jump_list),
             current_cursor: Cell::new(current_cursor),
+            cursor_visible: Arc::new(AtomicBool::new(true)),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
@@ -219,6 +222,7 @@ impl WindowsPlatform {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
             current_cursor: self.inner.state.current_cursor.get(),
+            cursor_visible: self.inner.state.cursor_visible.clone(),
             drop_target_helper: self.drop_target_helper.clone().unwrap(),
             validation_number: self.inner.validation_number,
             main_receiver: self.inner.main_receiver.clone(),
@@ -682,6 +686,31 @@ impl Platform for WindowsPlatform {
         }
     }
 
+    fn hide_cursor_until_mouse_moves(&self) {
+        if !self
+            .inner
+            .state
+            .cursor_visible
+            .swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+
+        for handle in self.raw_window_handles.read().iter() {
+            let Some(window) = window_from_hwnd(handle.as_raw()) else {
+                continue;
+            };
+            if window.state.hovered.get() {
+                unsafe { SetCursor(None) };
+                break;
+            }
+        }
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.inner.state.cursor_visible.load(Ordering::Relaxed)
+    }
+
     fn should_auto_hide_scrollbars(&self) -> bool {
         should_auto_hide_scrollbars().log_err().unwrap_or(false)
     }
@@ -1015,6 +1044,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) icon: HICON,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) current_cursor: Option<HCURSOR>,
+    pub(crate) cursor_visible: Arc<AtomicBool>,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,

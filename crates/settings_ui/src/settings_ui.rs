@@ -1727,6 +1727,35 @@ impl SettingsWindow {
         self.reset_list_state();
     }
 
+    fn toggle_and_focus_navbar_entry(
+        &mut self,
+        nav_entry_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_navbar_entry(nav_entry_index);
+        window.focus(&self.navbar_entries[nav_entry_index].focus_handle, cx);
+        cx.notify();
+    }
+
+    fn toggle_navbar_entry_on_double_click(
+        &mut self,
+        nav_entry_index: usize,
+        event: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(entry) = self.navbar_entries.get(nav_entry_index) else {
+            return false;
+        };
+        if !entry.is_root || event.click_count() != 2 {
+            return false;
+        }
+
+        self.toggle_and_focus_navbar_entry(nav_entry_index, window, cx);
+        true
+    }
+
     fn build_navbar(&mut self, cx: &App) {
         let mut navbar_entries = Vec::new();
 
@@ -2740,13 +2769,11 @@ impl SettingsWindow {
                                             item.expanded(entry.expanded || this.has_query)
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
-                                                        this.toggle_navbar_entry(entry_index);
-                                                        window.focus(
-                                                            &this.navbar_entries[entry_index]
-                                                                .focus_handle,
+                                                        this.toggle_and_focus_navbar_entry(
+                                                            entry_index,
+                                                            window,
                                                             cx,
                                                         );
-                                                        cx.notify();
                                                     },
                                                 ))
                                         })
@@ -2755,7 +2782,17 @@ impl SettingsWindow {
                                             let subcategory =
                                                 (!entry.is_root).then_some(entry.title);
 
-                                            cx.listener(move |this, _, window, cx| {
+                                            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                                                if this.toggle_navbar_entry_on_double_click(
+                                                        entry_index,
+                                                        event,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                {
+                                                    return;
+                                                }
+
                                                 telemetry::event!(
                                                     "Settings Navigation Clicked",
                                                     category = category,
@@ -4749,6 +4786,91 @@ pub mod test {
         > Appearance & Behavior
         "
     );
+
+    #[gpui::test]
+    fn navbar_double_click_toggle(cx: &mut gpui::TestAppContext) {
+        let (settings_window, cx) = cx.add_window_view(|window, cx| {
+            register_settings(cx);
+            let mut settings_window = parse(
+                r"
+                > General*
+                - General
+                - Privacy
+                v Project
+                - Project Settings
+                ",
+                window,
+                cx,
+            );
+            settings_window.build_content_handles(window, cx);
+            settings_window
+        });
+
+        settings_window.update_in(cx, |settings_window, window, cx| {
+            let general_idx = settings_window
+                .navbar_entries
+                .iter()
+                .position(|entry| entry.title == "General" && entry.is_root)
+                .expect("General root entry should exist");
+            let privacy_idx = settings_window
+                .navbar_entries
+                .iter()
+                .position(|entry| entry.title == "Privacy" && !entry.is_root)
+                .expect("Privacy nested entry should exist");
+
+            let click_event = |click_count| {
+                gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
+                    down: gpui::MouseDownEvent {
+                        button: gpui::MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    },
+                    up: gpui::MouseUpEvent {
+                        button: gpui::MouseButton::Left,
+                        click_count,
+                        ..Default::default()
+                    },
+                })
+            };
+
+            assert!(
+                !settings_window.toggle_navbar_entry_on_double_click(
+                    general_idx,
+                    &click_event(1),
+                    window,
+                    cx,
+                ),
+                "single-clicks should use the normal navigation path"
+            );
+            assert!(!settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(settings_window.toggle_navbar_entry_on_double_click(
+                general_idx,
+                &click_event(2),
+                window,
+                cx,
+            ));
+            assert!(settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(
+                !settings_window.toggle_navbar_entry_on_double_click(
+                    general_idx,
+                    &click_event(3),
+                    window,
+                    cx,
+                ),
+                "triple-clicks should not toggle the entry again"
+            );
+            assert!(settings_window.navbar_entries[general_idx].expanded);
+
+            assert!(!settings_window.toggle_navbar_entry_on_double_click(
+                privacy_idx,
+                &click_event(2),
+                window,
+                cx,
+            ));
+        });
+    }
 
     #[gpui::test]
     async fn test_settings_window_shows_worktrees_from_multiple_workspaces(

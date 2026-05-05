@@ -5467,6 +5467,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "assets",
+ "base64 0.22.1",
  "breadcrumbs",
  "buffer_diff",
  "client",
