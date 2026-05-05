@@ -6776,7 +6776,7 @@ impl Workspace {
             window: &mut Window,
             cx: &mut App,
         ) -> SerializedPane {
-            let (items, active, pinned_count) = {
+            let (items, active, pinned_count, zoomed) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
@@ -6794,10 +6794,11 @@ impl Workspace {
                         .collect::<Vec<_>>(),
                     pane.has_focus(window, cx),
                     pane.pinned_count(),
+                    pane.is_zoomed(),
                 )
             };
 
-            SerializedPane::new(items, active, pinned_count)
+            SerializedPane::new(items, active, pinned_count, zoomed)
         }
 
         fn build_serialized_pane_group(
@@ -7006,13 +7007,13 @@ impl Workspace {
             let mut center_items = None;
 
             // Traverse the splits tree and add to things
-            if let Some((group, active_pane, items)) = serialized_workspace
+            if let Some((group, active_pane, zoomed_pane, items)) = serialized_workspace
                 .center_group
                 .deserialize(&project, serialized_workspace.id, workspace.clone(), cx)
                 .await
             {
                 center_items = Some(items);
-                center_group = Some((group, active_pane))
+                center_group = Some((group, active_pane, zoomed_pane))
             }
 
             let mut items_by_project_path = HashMap::default();
@@ -7044,7 +7045,7 @@ impl Workspace {
 
             // Remove old panes from workspace panes list
             workspace.update_in(cx, |workspace, window, cx| {
-                if let Some((center_group, active_pane)) = center_group {
+                if let Some((center_group, active_pane, zoomed_pane)) = center_group {
                     workspace.remove_panes(workspace.center.root.clone(), window, cx);
 
                     // Swap workspace center group
@@ -7052,7 +7053,16 @@ impl Workspace {
                     workspace.center.set_is_center(true);
                     workspace.center.mark_positions(cx);
 
-                    if let Some(active_pane) = active_pane {
+                    if let Some(zoomed_pane) = zoomed_pane.as_ref() {
+                        workspace.zoomed = Some(zoomed_pane.downgrade().into());
+                        workspace.zoomed_position = None;
+                    } else {
+                        workspace.zoomed = None;
+                        workspace.zoomed_position = None;
+                    }
+                    cx.emit(Event::ZoomChanged);
+
+                    if let Some(active_pane) = active_pane.or(zoomed_pane) {
                         workspace.set_active_pane(&active_pane, window, cx);
                         cx.focus_self(window);
                     } else {

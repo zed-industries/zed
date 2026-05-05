@@ -240,6 +240,7 @@ impl Default for SerializedPaneGroup {
             children: vec![SerializedItem::default()],
             active: false,
             pinned_count: 0,
+            zoomed: false,
         })
     }
 }
@@ -255,6 +256,7 @@ impl SerializedPaneGroup {
     ) -> Option<(
         Member,
         Option<Entity<Pane>>,
+        Option<Entity<Pane>>,
         Vec<Option<Box<dyn ItemHandle>>>,
     )> {
         match self {
@@ -264,16 +266,18 @@ impl SerializedPaneGroup {
                 flexes,
             } => {
                 let mut current_active_pane = None;
+                let mut current_zoomed_pane = None;
                 let mut members = Vec::new();
                 let mut items = Vec::new();
                 for child in children {
-                    if let Some((new_member, active_pane, new_items)) = child
+                    if let Some((new_member, active_pane, zoomed_pane, new_items)) = child
                         .deserialize(project, workspace_id, workspace.clone(), cx)
                         .await
                     {
                         members.push(new_member);
                         items.extend(new_items);
                         current_active_pane = current_active_pane.or(active_pane);
+                        current_zoomed_pane = current_zoomed_pane.or(zoomed_pane);
                     }
                 }
 
@@ -282,12 +286,18 @@ impl SerializedPaneGroup {
                 }
 
                 if members.len() == 1 {
-                    return Some((members.remove(0), current_active_pane, items));
+                    return Some((
+                        members.remove(0),
+                        current_active_pane,
+                        current_zoomed_pane,
+                        items,
+                    ));
                 }
 
                 Some((
                     Member::Axis(PaneAxis::load(axis.0, members, flexes)),
                     current_active_pane,
+                    current_zoomed_pane,
                     items,
                 ))
             }
@@ -297,6 +307,7 @@ impl SerializedPaneGroup {
                         workspace.add_pane(window, cx).downgrade()
                     })
                     .log_err()?;
+                let zoomed = serialized_pane.zoomed;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
@@ -311,7 +322,8 @@ impl SerializedPaneGroup {
                     let pane = pane.upgrade()?;
                     Some((
                         Member::Pane(pane.clone()),
-                        active.then_some(pane),
+                        active.then_some(pane.clone()),
+                        zoomed.then_some(pane),
                         new_items,
                     ))
                 } else {
@@ -333,14 +345,21 @@ pub struct SerializedPane {
     pub(crate) active: bool,
     pub(crate) children: Vec<SerializedItem>,
     pub(crate) pinned_count: usize,
+    pub(crate) zoomed: bool,
 }
 
 impl SerializedPane {
-    pub fn new(children: Vec<SerializedItem>, active: bool, pinned_count: usize) -> Self {
+    pub fn new(
+        children: Vec<SerializedItem>,
+        active: bool,
+        pinned_count: usize,
+        zoomed: bool,
+    ) -> Self {
         SerializedPane {
             children,
             active,
             pinned_count,
+            zoomed,
         }
     }
 
@@ -403,6 +422,10 @@ impl SerializedPane {
         }
         pane.update(cx, |pane, _| {
             pane.set_pinned_count(self.pinned_count.min(items.len()));
+        })?;
+
+        pane.update(cx, |pane, cx| {
+            pane.set_zoomed(self.zoomed, cx);
         })?;
 
         anyhow::Ok(items)
