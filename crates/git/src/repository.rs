@@ -74,6 +74,7 @@ pub fn original_repo_path(
 ) -> PathBuf {
     if common_dir != repository_dir {
         original_repo_path_from_common_dir(common_dir)
+            .or_else(|| original_repo_path_from_bare_common_dir(common_dir, repository_dir))
             .unwrap_or_else(|| work_directory.to_path_buf())
     } else {
         work_directory.to_path_buf()
@@ -95,6 +96,17 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
     } else {
         None
     }
+}
+
+fn original_repo_path_from_bare_common_dir(
+    common_dir: &Path,
+    repository_dir: &Path,
+) -> Option<PathBuf> {
+    if !repository_dir.starts_with(common_dir.join("worktrees")) {
+        return None;
+    }
+
+    common_dir.parent().map(|path| path.to_path_buf())
 }
 
 /// Commit data needed for the git graph visualization.
@@ -4521,6 +4533,45 @@ mod tests {
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/.git")),
             Some(PathBuf::from("/"))
+        );
+    }
+
+    #[test]
+    fn test_original_repo_path() {
+        assert_eq!(
+            original_repo_path(
+                Path::new("/tmp/monty"),
+                Path::new("/tmp/monty/.git"),
+                Path::new("/tmp/monty/.git"),
+            ),
+            PathBuf::from("/tmp/monty")
+        );
+
+        assert_eq!(
+            original_repo_path(
+                Path::new("/tmp/monty/feature-a"),
+                Path::new("/tmp/monty/.git"),
+                Path::new("/tmp/monty/.git/worktrees/feature-a"),
+            ),
+            PathBuf::from("/tmp/monty")
+        );
+
+        assert_eq!(
+            original_repo_path(
+                Path::new("/tmp/monty/feature-a"),
+                Path::new("/tmp/monty/.bare"),
+                Path::new("/tmp/monty/.bare/worktrees/feature-a"),
+            ),
+            PathBuf::from("/tmp/monty")
+        );
+
+        assert_eq!(
+            original_repo_path(
+                Path::new("/tmp/monty/.bare"),
+                Path::new("/tmp/monty/.bare"),
+                Path::new("/tmp/monty/.bare"),
+            ),
+            PathBuf::from("/tmp/monty/.bare")
         );
     }
 
