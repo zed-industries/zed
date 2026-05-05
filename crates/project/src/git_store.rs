@@ -6539,8 +6539,8 @@ impl Repository {
             worktree_directory_setting,
             self.path_style,
         )?;
-        let directory = join_path_for_style(&directory, branch_name, self.path_style)?;
-        join_path_for_style(&directory, project_name, self.path_style)
+        let directory = self.path_style.join_path(&directory, branch_name)?;
+        self.path_style.join_path(&directory, project_name)
     }
 
     pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
@@ -7883,7 +7883,7 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = join_path_for_style(repository_anchor_path, trimmed, path_style)?;
+    let joined = path_style.join_path(repository_anchor_path, trimmed)?;
     let resolved = if path_style.is_posix() {
         joined
     } else {
@@ -7895,7 +7895,7 @@ pub fn worktrees_directory_for_repo(
         .file_name()
         .and_then(|name| name.to_str())
     {
-        join_path_for_style(&resolved, repo_dir_name, path_style)?
+        path_style.join_path(&resolved, repo_dir_name)?
     } else {
         resolved
     };
@@ -7913,47 +7913,6 @@ pub fn worktrees_directory_for_repo(
     }
 
     Ok(resolved)
-}
-
-fn join_path_for_style(left: &Path, right: &str, path_style: PathStyle) -> Result<PathBuf> {
-    let left = left
-        .to_str()
-        .ok_or_else(|| anyhow!("Path contains invalid UTF-8"))?;
-    let joined = path_style
-        .join(left, right)
-        .ok_or_else(|| anyhow!("Path must be relative: {right:?}"))?;
-    if path_style.is_windows() {
-        return Ok(util::normalize_path(Path::new(&joined)));
-    }
-
-    let mut components = Vec::new();
-    let is_absolute = joined.starts_with('/');
-
-    for component in joined.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                if components
-                    .last()
-                    .is_some_and(|component| *component != "..")
-                {
-                    components.pop();
-                } else if !is_absolute {
-                    components.push(component);
-                }
-            }
-            component => components.push(component),
-        }
-    }
-
-    let normalized = components.join("/");
-    if is_absolute && normalized.is_empty() {
-        Ok(PathBuf::from("/"))
-    } else if is_absolute {
-        Ok(PathBuf::from(format!("/{normalized}")))
-    } else {
-        Ok(PathBuf::from(normalized))
-    }
 }
 
 async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path, base_path: &Path) {
@@ -8351,31 +8310,14 @@ mod tests {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
         let directory =
             worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Posix).unwrap();
-        let directory = join_path_for_style(&directory, "nimble-sky", PathStyle::Posix).unwrap();
-        let path = join_path_for_style(&directory, "lsp-tests", PathStyle::Posix).unwrap();
+        let directory = PathStyle::Posix
+            .join_path(&directory, "nimble-sky")
+            .unwrap();
+        let path = PathStyle::Posix.join_path(&directory, "lsp-tests").unwrap();
 
         assert_eq!(
             path,
             PathBuf::from("/home/user/dev/worktrees/lsp-tests/nimble-sky/lsp-tests")
-        );
-    }
-
-    #[test]
-    fn test_join_path_for_style_uses_remote_separator() {
-        let posix_path =
-            join_path_for_style(Path::new("/home/user/dev"), "worktrees", PathStyle::Posix)
-                .unwrap();
-        let windows_path = join_path_for_style(
-            Path::new("C:\\Users\\user\\dev"),
-            "worktrees",
-            PathStyle::Windows,
-        )
-        .unwrap();
-
-        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
-        assert_eq!(
-            windows_path.to_string_lossy(),
-            "C:\\Users\\user\\dev\\worktrees"
         );
     }
 
