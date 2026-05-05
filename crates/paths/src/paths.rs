@@ -33,16 +33,16 @@ static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// The resolved data directory, combining custom override or platform defaults.
 /// This is set once and cached for subsequent calls.
-/// On macOS, this is `~/Library/Application Support/{APP_NAME}`.
-/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/{app_name}`.
-/// On Windows, this is `%LOCALAPPDATA%\{APP_NAME}`.
+/// On macOS, this is `~/Library/Application Support/Zed`.
+/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/zed`.
+/// On Windows, this is `%LOCALAPPDATA%\Zed`.
 static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// The resolved config directory, combining custom override or platform defaults.
 /// This is set once and cached for subsequent calls.
-/// On macOS, this is `~/.config/{app_name}`.
-/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/{app_name}`.
-/// On Windows, this is `%APPDATA%\{APP_NAME}`.
+/// On macOS, this is `~/.config/zed`.
+/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/zed`.
+/// On Windows, this is `%APPDATA%\Zed`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the zed_server directory on the ssh host.
