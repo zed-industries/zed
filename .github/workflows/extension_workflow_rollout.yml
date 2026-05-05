@@ -172,10 +172,9 @@ jobs:
       run: |
         echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     - id: create-pr
-      name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request
+      name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
-        path: extension
         title: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
           This PR updates the CI workflow files from the main Zed repository
@@ -190,6 +189,8 @@ jobs:
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
+        assignees: ${{ inputs.filter-repos != '' && github.actor || '' }}
+        path: extension
     - name: extension_workflow_rollout::rollout_workflows_to_extension::enable_auto_merge
       run: |
         if [ -n "$PR_NUMBER" ]; then

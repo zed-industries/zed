@@ -79,9 +79,20 @@ impl MarkdownElement {
 
         match element {
             ParsedHtmlElement::Paragraph(paragraph) => {
-                self.push_markdown_paragraph(builder, &source_range, markdown_end);
-                self.render_html_paragraph(paragraph, source_allocator, builder, cx, markdown_end);
-                builder.pop_div();
+                self.push_markdown_paragraph(
+                    builder,
+                    &source_range,
+                    markdown_end,
+                    paragraph.text_align,
+                );
+                self.render_html_paragraph(
+                    &paragraph.contents,
+                    source_allocator,
+                    builder,
+                    cx,
+                    markdown_end,
+                );
+                self.pop_markdown_paragraph(builder);
             }
             ParsedHtmlElement::Heading(heading) => {
                 self.push_markdown_heading(
@@ -89,6 +100,7 @@ impl MarkdownElement {
                     heading.level,
                     &heading.source_range,
                     markdown_end,
+                    heading.text_align,
                 );
                 self.render_html_paragraph(
                     &heading.contents,
@@ -103,7 +115,12 @@ impl MarkdownElement {
                 self.render_html_list(list, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::BlockQuote(block_quote) => {
-                self.push_markdown_block_quote(builder, &block_quote.source_range, markdown_end);
+                self.push_markdown_block_quote(
+                    builder,
+                    None,
+                    &block_quote.source_range,
+                    markdown_end,
+                );
                 self.render_html_elements(
                     &block_quote.children,
                     source_allocator,

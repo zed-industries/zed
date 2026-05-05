@@ -30,7 +30,18 @@ use crate::{
     transport::parse_platform,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
@@ -750,7 +761,8 @@ impl RemoteConnection for DockerExecConnection {
             const TILDE_PREFIX: &'static str = "~/";
             if working_dir.starts_with(TILDE_PREFIX) {
                 let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                parsed_working_dir = Some(format!("$HOME/{working_dir}"));
+                parsed_working_dir =
+                    Some(format!("{}/{}", self.remote_dir_for_server, working_dir));
             } else {
                 parsed_working_dir = Some(working_dir);
             }

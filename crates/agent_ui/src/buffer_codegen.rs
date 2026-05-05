@@ -3,6 +3,7 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
+use futures::FutureExt;
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
     channel::mpsc,
@@ -28,7 +29,6 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use smol::future::FutureExt;
 use std::{
     cmp,
     future::Future,

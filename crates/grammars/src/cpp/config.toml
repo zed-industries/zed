@@ -18,4 +18,5 @@ brackets = [
     { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
 debuggers = ["CodeLLDB", "GDB"]
+block_comment = { start = "/*", prefix = "", end = "*/", tab_size = 1 }
 documentation_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }

@@ -1,3 +1,4 @@
+mod llm_token;
 mod websocket;
 
 use std::sync::Arc;
@@ -17,6 +18,8 @@ use thiserror::Error;
 use yawc::WebSocket;
 
 use crate::websocket::Connection;
+
+pub use llm_token::LlmApiToken;
 
 struct Credentials {
     user_id: u32,
@@ -71,15 +74,20 @@ impl CloudApiClient {
 
     pub async fn get_authenticated_user(
         &self,
+        system_id: Option<String>,
     ) -> Result<GetAuthenticatedUserResponse, ClientApiError> {
-        let request = self.build_request(
-            Request::builder().method(Method::GET).uri(
+        let request_builder = Request::builder()
+            .method(Method::GET)
+            .uri(
                 self.http_client
                     .build_zed_cloud_url("/client/users/me")?
                     .as_ref(),
-            ),
-            AsyncBody::default(),
-        )?;
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        let request = self.build_request(request_builder, AsyncBody::default())?;
 
         let mut response = self.http_client.send(request).await?;
 

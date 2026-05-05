@@ -22,7 +22,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -372,14 +372,6 @@ impl LanguageModel for OpenRouterLanguageModel {
         self.model.supports_images.unwrap_or(false)
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_open_router_tokens(request, self.model.clone(), cx)
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -473,18 +465,22 @@ pub fn into_open_router(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            vec![open_router::MessagePart::Text {
-                                text: text.to_string(),
-                            }]
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            vec![open_router::MessagePart::Image {
-                                image_url: image.to_base64_url(),
-                            }]
-                        }
-                    };
+                    let content: Vec<open_router::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                open_router::MessagePart::Text {
+                                    text: text.to_string(),
+                                }
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                open_router::MessagePart::Image {
+                                    image_url: image.to_base64_url(),
+                                }
+                            }
+                        })
+                        .collect();
 
                     messages.push(open_router::RequestMessage::Tool {
                         content: content.into(),
@@ -739,32 +735,6 @@ struct RawToolCall {
     name: String,
     arguments: String,
     thought_signature: Option<String>,
-}
-
-pub fn count_open_router_tokens(
-    request: LanguageModelRequest,
-    _model: open_router::Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {

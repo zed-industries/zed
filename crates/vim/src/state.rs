@@ -17,7 +17,7 @@ use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
 
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
@@ -112,6 +112,8 @@ pub enum Operator {
         /// Represents whether the opening bracket was used for the target
         /// object.
         opening: bool,
+        /// Computed anchors for the opening and closing bracket characters,
+        bracket_anchors: Vec<Option<(Anchor, Anchor)>>,
     },
     DeleteSurrounds,
     Mark,
@@ -138,6 +140,7 @@ pub enum Operator {
     RecordRegister,
     ReplayRegister,
     ToggleComments,
+    ToggleBlockComments,
     ReplaceWithRegister,
     Exchange,
     HelixMatch,
@@ -152,6 +155,23 @@ pub enum Operator {
         replaced_char: Option<char>,
     },
     HelixSurroundDelete,
+    HelixJump {
+        behaviour: HelixJumpBehaviour,
+        first_char: Option<char>,
+        labels: Vec<HelixJumpLabel>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HelixJumpLabel {
+    pub label: [char; 2],
+    pub range: Range<Anchor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelixJumpBehaviour {
+    Move,
+    Extend,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1078,9 +1098,11 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::ToggleBlockComments => "gb",
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixJump { .. } => "gw",
             Operator::HelixSurroundAdd => "helix_ms",
             Operator::HelixSurroundReplace { .. } => "helix_mr",
             Operator::HelixSurroundDelete => "helix_md",
@@ -1108,6 +1130,7 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixJump { .. } => "gw".to_string(),
             Operator::HelixSurroundAdd => "ms".to_string(),
             Operator::HelixSurroundReplace {
                 replaced_char: None,
@@ -1138,7 +1161,8 @@ impl Operator {
             | Operator::ChangeSurrounds {
                 target: Some(_), ..
             }
-            | Operator::DeleteSurrounds => true,
+            | Operator::DeleteSurrounds
+            | Operator::HelixJump { .. } => true,
             Operator::Change
             | Operator::Delete
             | Operator::Yank
@@ -1157,6 +1181,7 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
@@ -1180,6 +1205,7 @@ impl Operator {
             | Operator::Rot13
             | Operator::Rot47
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap
             | Operator::ShellCommand
@@ -1207,7 +1233,8 @@ impl Operator {
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister
-            | Operator::HelixMatch => false,
+            | Operator::HelixMatch
+            | Operator::HelixJump { .. } => false,
         }
     }
 }
@@ -1384,7 +1411,7 @@ impl RegistersView {
                 })
             }
         });
-        matches.sort_by(|a, b| a.name.cmp(&b.name));
+        matches.sort_by_key(|m| m.name);
         let delegate = RegistersViewDelegate {
             selected_index: 0,
             matches,
@@ -1504,7 +1531,10 @@ impl PickerDelegate for MarksViewDelegate {
                                     position.row,
                                     snapshot.line_len(MultiBufferRow(position.row)),
                                 ),
-                            true,
+                            LanguageAwareStyling {
+                                tree_sitter: true,
+                                diagnostics: true,
+                            },
                         );
                         matches.push(MarksMatch {
                             name: name.clone(),
@@ -1530,7 +1560,10 @@ impl PickerDelegate for MarksViewDelegate {
                             let chunks = snapshot.chunks(
                                 Point::new(position.row, 0)
                                     ..Point::new(position.row, snapshot.line_len(position.row)),
-                                true,
+                                LanguageAwareStyling {
+                                    tree_sitter: true,
+                                    diagnostics: true,
+                                },
                             );
 
                             matches.push(MarksMatch {

@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::atomic::Ordering};
 
 use ::util::ResultExt;
 use anyhow::Context as _;
@@ -297,6 +297,7 @@ impl WindowsWindowInner {
 
     fn handle_mouse_move_msg(&self, handle: HWND, lparam: LPARAM, wparam: WPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE);
+        self.restore_cursor_after_hide();
 
         let Some(mut func) = self.state.callbacks.input.take() else {
             return Some(1);
@@ -330,6 +331,9 @@ impl WindowsWindowInner {
 
     fn handle_mouse_leave_msg(&self) -> Option<isize> {
         self.state.hovered.set(false);
+        // The next window's `WM_SETCURSOR` picks its own cursor, so we just clear
+        // the flag for tight `is_cursor_visible()` semantics.
+        self.state.cursor_visible.store(true, Ordering::Relaxed);
         if let Some(mut callback) = self.state.callbacks.hovered_status_change.take() {
             callback(false);
             self.state
@@ -725,6 +729,29 @@ impl WindowsWindowInner {
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
         let this = self.clone();
+
+        if !activated {
+            this.state.cursor_visible.store(true, Ordering::Relaxed);
+        }
+
+        // When the window is activated (gains focus), reset the modifier tracking state.
+        // This fixes the issue where Alt-Tab away and back leaves stale modifier state
+        // (especially the Alt key) because Windows doesn't always send key-up events to
+        // windows that have lost focus.
+        if activated {
+            this.state.last_reported_modifiers.set(None);
+            this.state.last_reported_capslock.set(None);
+
+            if let Some(mut func) = this.state.callbacks.input.take() {
+                let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers: current_modifiers(),
+                    capslock: current_capslock(),
+                });
+                func(input);
+                this.state.callbacks.input.set(Some(func));
+            }
+        }
+
         self.executor
             .spawn(async move {
                 if let Some(mut func) = this.state.callbacks.active_status_change.take() {
@@ -896,6 +923,7 @@ impl WindowsWindowInner {
 
     fn handle_nc_mouse_move_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
         self.start_tracking_mouse(handle, TME_LEAVE | TME_NONCLIENT);
+        self.restore_cursor_after_hide();
 
         let mut func = self.state.callbacks.input.take()?;
         let scale_factor = self.state.scale_factor.get();
@@ -1059,8 +1087,13 @@ impl WindowsWindowInner {
         {
             return None;
         }
+        let cursor = if self.state.cursor_visible.load(Ordering::Relaxed) {
+            self.state.current_cursor.get()
+        } else {
+            None
+        };
         unsafe {
-            SetCursor(self.state.current_cursor.get());
+            SetCursor(cursor);
         };
         Some(0)
     }
@@ -1210,6 +1243,15 @@ impl WindowsWindowInner {
                 char::from_u32(code_point as u32)
                     .filter(|c| !c.is_control())
                     .map(|c| c.to_string())
+            }
+        }
+    }
+
+    /// Clear the hidden flag and restore the cursor immediately
+    fn restore_cursor_after_hide(&self) {
+        if !self.state.cursor_visible.swap(true, Ordering::Relaxed) {
+            unsafe {
+                SetCursor(self.state.current_cursor.get());
             }
         }
     }

@@ -1,5 +1,4 @@
 use crate::{
-    ThreadHistory,
     context::load_context,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
@@ -66,7 +65,6 @@ impl TerminalInlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -92,7 +90,6 @@ impl TerminalInlineAssistant {
                 self.fs.clone(),
                 thread_store.clone(),
                 prompt_store.clone(),
-                history,
                 project.clone(),
                 workspace.clone(),
                 window,

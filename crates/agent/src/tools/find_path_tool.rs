@@ -1,5 +1,5 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
@@ -128,7 +128,7 @@ impl AgentTool for FindPathTool {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| FindPathToolOutput::Error {
-                error: format!("Failed to receive tool input: {e}"),
+                error: e.to_string(),
             })?;
 
             let search_paths_task = cx.update(|cx| search_paths(&input.glob, project, cx));
