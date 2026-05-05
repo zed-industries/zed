@@ -66,6 +66,7 @@ pub struct Picker<D: PickerDelegate> {
     width: Option<Length>,
     widest_item: Option<usize>,
     max_height: Option<Length>,
+    visible_range: Range<usize>,
     /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
     /// Whether the `Picker` is rendered as a self-contained modal.
@@ -343,6 +344,7 @@ impl<D: PickerDelegate> Picker<D> {
             max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
+            visible_range: 0..0,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
         };
@@ -543,6 +545,60 @@ impl<D: PickerDelegate> Picker<D> {
             self.set_selected_index(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
+    }
+
+    fn select_prev_page(
+        &mut self,
+        _: &menu::SelectPrevPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.delegate.match_count();
+        if count == 0 {
+            return;
+        }
+
+        let current_index = self.delegate.selected_index();
+        let page_start = self.visible_range.start;
+
+        if current_index > (page_start + 1) {
+            // First press: jump to the first visible item on the current page.
+            self.set_selected_index(page_start, Some(Direction::Up), true, window, cx);
+        } else {
+            // Already at the top of the page: scroll up a full page.
+            let page_size = self.visible_range.len().max(1);
+            let target = current_index.saturating_sub(page_size);
+            self.scroll_item_index_to_top(target);
+            self.set_selected_index(target, Some(Direction::Up), true, window, cx);
+        }
+        cx.notify();
+    }
+
+    fn select_next_page(
+        &mut self,
+        _: &menu::SelectNextPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.delegate.match_count();
+        if count == 0 {
+            return;
+        }
+
+        let current_index = self.delegate.selected_index();
+        let page_end = self.visible_range.end.saturating_sub(1).min(count - 1);
+
+        if current_index < page_end {
+            // First press: jump to the last visible item on the current page.
+            self.set_selected_index(page_end, Some(Direction::Down), true, window, cx);
+        } else {
+            // Already at the bottom of the page: scroll down a full page.
+            let page_size = self.visible_range.len().max(1);
+            let target = (current_index + page_size).min(count - 1);
+            self.scroll_item_index_to_top(target);
+            self.set_selected_index(target, Some(Direction::Down), true, window, cx);
+        }
+        cx.notify();
     }
 
     pub fn cycle_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -752,6 +808,18 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    fn scroll_item_index_to_top(&mut self, ix: usize) {
+        match &mut self.element_container {
+            ElementContainer::List(state) => state.scroll_to(gpui::ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.0),
+            }),
+            ElementContainer::UniformList(scroll_handle) => {
+                scroll_handle.scroll_to_item(ix, ScrollStrategy::Top)
+            }
+        }
+    }
+
     fn render_element(
         &self,
         window: &mut Window,
@@ -828,6 +896,7 @@ impl<D: PickerDelegate> Picker<D> {
                 "candidates",
                 self.delegate.match_count(),
                 cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
+                    picker.visible_range = visible_range.clone();
                     visible_range
                         .map(|ix| picker.render_element(window, cx, ix))
                         .collect()
@@ -861,6 +930,182 @@ impl<D: PickerDelegate> Picker<D> {
             ElementContainer::UniformList(scroll_handle) => {
                 scroll_handle.logical_scroll_top_index()
             }
+        }
+    }
+}
+
+impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
+impl<D: PickerDelegate> ModalView for Picker<D> {}
+
+impl<D: PickerDelegate> Render for Picker<D> {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let window_size = window.viewport_size();
+        let rem_size = window.rem_size();
+        let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
+
+        let aside = self.delegate.documentation_aside(window, cx);
+
+        let editor_position = self.delegate.editor_position();
+        let picker_bounds = self.picker_bounds.clone();
+        let menu = v_flex()
+            .key_context("Picker")
+            .size_full()
+            .when_some(self.width, |el, width| el.w(width))
+            .overflow_hidden()
+            .child(
+                canvas(
+                    move |bounds, _window, _cx| {
+                        picker_bounds.set(Some(bounds));
+                    },
+                    |_bounds, _state, _window, _cx| {},
+                )
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0(),
+            )
+            // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
+            // as a part of a modal rather than the entire modal.
+            //
+            // We should revisit how the `Picker` is styled to make it more composable.
+            .when(self.is_modal, |this| this.elevation_3(cx))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::editor_move_down))
+            .on_action(cx.listener(Self::editor_move_up))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::select_prev_page))
+            .on_action(cx.listener(Self::select_next_page))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::secondary_confirm))
+            .on_action(cx.listener(Self::confirm_completion))
+            .on_action(cx.listener(Self::confirm_input))
+            .children(match &self.head {
+                Head::Editor(editor) => {
+                    if editor_position == PickerEditorPosition::Start {
+                        Some(self.delegate.render_editor(&editor.clone(), window, cx))
+                    } else {
+                        None
+                    }
+                }
+                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
+            })
+            .when(self.delegate.match_count() > 0, |el| {
+                el.child(
+                    v_flex()
+                        .id("element-container")
+                        .relative()
+                        .flex_grow()
+                        .when_some(self.max_height, |div, max_h| div.max_h(max_h))
+                        .overflow_hidden()
+                        .children(self.delegate.render_header(window, cx))
+                        .child(self.render_element_container(cx))
+                        .when(self.show_scrollbar, |this| {
+                            let base_scrollbar_config = Scrollbars::new(ScrollAxes::Vertical);
+
+                            this.map(|this| match &self.element_container {
+                                ElementContainer::List(state) => this.custom_scrollbars(
+                                    base_scrollbar_config.tracked_scroll_handle(state),
+                                    window,
+                                    cx,
+                                ),
+                                ElementContainer::UniformList(state) => this.custom_scrollbars(
+                                    base_scrollbar_config.tracked_scroll_handle(state),
+                                    window,
+                                    cx,
+                                ),
+                            })
+                        }),
+                )
+            })
+            .when(self.delegate.match_count() == 0, |el| {
+                el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
+                    el.child(
+                        v_flex()
+                            .flex_grow()
+                            .py(DynamicSpacing::Base04.rems(cx))
+                            .child(
+                                ListItem::new("empty_state")
+                                    .inset(true)
+                                    .spacing(ListItemSpacing::Sparse)
+                                    .disabled(true)
+                                    .child(Label::new(text).color(Color::Muted)),
+                            ),
+                    )
+                })
+            })
+            .children(self.delegate.render_footer(window, cx))
+            .children(match &self.head {
+                Head::Editor(editor) => {
+                    if editor_position == PickerEditorPosition::End {
+                        Some(self.delegate.render_editor(&editor.clone(), window, cx))
+                    } else {
+                        None
+                    }
+                }
+                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
+            });
+
+        let Some(aside) = aside else {
+            return menu;
+        };
+
+        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+            WithRemSize::new(ui_font_size)
+                .occlude()
+                .elevation_2(cx)
+                .w_full()
+                .p_2()
+                .overflow_hidden()
+                .when(is_wide_window, |this| this.max_w_96())
+                .when(!is_wide_window, |this| this.max_w_48())
+                .child((aside.render)(cx))
+        };
+
+        if is_wide_window {
+            let aside_index = self.delegate.documentation_aside_index();
+            let picker_bounds = self.picker_bounds.get();
+            let item_bounds =
+                aside_index.and_then(|ix| self.item_bounds.borrow().get(&ix).copied());
+
+            let item_position = match (picker_bounds, item_bounds) {
+                (Some(picker_bounds), Some(item_bounds)) => {
+                    let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
+                    let height = item_bounds.size.height;
+                    Some((relative_top, height))
+                }
+                _ => None,
+            };
+
+            div()
+                .relative()
+                .child(menu)
+                // Only render the aside once we have bounds to avoid flicker
+                .when_some(item_position, |this, (top, height)| {
+                    this.child(
+                        h_flex()
+                            .absolute()
+                            .when(aside.side == DocumentationSide::Left, |el| {
+                                el.right_full().mr_1()
+                            })
+                            .when(aside.side == DocumentationSide::Right, |el| {
+                                el.left_full().ml_1()
+                            })
+                            .top(top)
+                            .h(height)
+                            .child(render_aside(aside, cx)),
+                    )
+                })
+        } else {
+            v_flex()
+                .w_full()
+                .gap_1()
+                .justify_end()
+                .child(render_aside(aside, cx))
+                .child(menu)
         }
     }
 }
@@ -1032,178 +1277,56 @@ mod tests {
             );
         });
     }
-}
 
-impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
-impl<D: PickerDelegate> ModalView for Picker<D> {}
+    #[gpui::test]
+    async fn test_next_page_jumps_to_page_end(cx: &mut TestAppContext) {
+        init_test(cx);
 
-impl<D: PickerDelegate> Render for Picker<D> {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-        let window_size = window.viewport_size();
-        let rem_size = window.rem_size();
-        let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true; 20]), window, cx)
+        });
 
-        let aside = self.delegate.documentation_aside(window, cx);
+        picker.update_in(cx, |picker, window, cx| {
+            picker.visible_range = 0..17;
+            picker.select_next_page(&menu::SelectNextPage, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 16);
+        });
 
-        let editor_position = self.delegate.editor_position();
-        let picker_bounds = self.picker_bounds.clone();
-        let menu = v_flex()
-            .key_context("Picker")
-            .size_full()
-            .when_some(self.width, |el, width| el.w(width))
-            .overflow_hidden()
-            .child(
-                canvas(
-                    move |bounds, _window, _cx| {
-                        picker_bounds.set(Some(bounds));
-                    },
-                    |_bounds, _state, _window, _cx| {},
-                )
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0(),
-            )
-            // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
-            // as a part of a modal rather than the entire modal.
-            //
-            // We should revisit how the `Picker` is styled to make it more composable.
-            .when(self.is_modal, |this| this.elevation_3(cx))
-            .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_previous))
-            .on_action(cx.listener(Self::editor_move_down))
-            .on_action(cx.listener(Self::editor_move_up))
-            .on_action(cx.listener(Self::select_first))
-            .on_action(cx.listener(Self::select_last))
-            .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::secondary_confirm))
-            .on_action(cx.listener(Self::confirm_completion))
-            .on_action(cx.listener(Self::confirm_input))
-            .children(match &self.head {
-                Head::Editor(editor) => {
-                    if editor_position == PickerEditorPosition::Start {
-                        Some(self.delegate.render_editor(&editor.clone(), window, cx))
-                    } else {
-                        None
-                    }
-                }
-                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
-            })
-            .when(self.delegate.match_count() > 0, |el| {
-                el.child(
-                    v_flex()
-                        .id("element-container")
-                        .relative()
-                        .flex_grow()
-                        .when_some(self.max_height, |div, max_h| div.max_h(max_h))
-                        .overflow_hidden()
-                        .children(self.delegate.render_header(window, cx))
-                        .child(self.render_element_container(cx))
-                        .when(self.show_scrollbar, |this| {
-                            let base_scrollbar_config = Scrollbars::new(ScrollAxes::Vertical);
+        picker.update_in(cx, |picker, window, cx| {
+            picker.visible_range = 0..17;
+            picker.select_next_page(&menu::SelectNextPage, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 19);
+        });
+    }
 
-                            this.map(|this| match &self.element_container {
-                                ElementContainer::List(state) => this.custom_scrollbars(
-                                    base_scrollbar_config.tracked_scroll_handle(state),
-                                    window,
-                                    cx,
-                                ),
-                                ElementContainer::UniformList(state) => this.custom_scrollbars(
-                                    base_scrollbar_config.tracked_scroll_handle(state),
-                                    window,
-                                    cx,
-                                ),
-                            })
-                        }),
-                )
-            })
-            .when(self.delegate.match_count() == 0, |el| {
-                el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
-                    el.child(
-                        v_flex()
-                            .flex_grow()
-                            .py(DynamicSpacing::Base04.rems(cx))
-                            .child(
-                                ListItem::new("empty_state")
-                                    .inset(true)
-                                    .spacing(ListItemSpacing::Sparse)
-                                    .disabled(true)
-                                    .child(Label::new(text).color(Color::Muted)),
-                            ),
-                    )
-                })
-            })
-            .children(self.delegate.render_footer(window, cx))
-            .children(match &self.head {
-                Head::Editor(editor) => {
-                    if editor_position == PickerEditorPosition::End {
-                        Some(self.delegate.render_editor(&editor.clone(), window, cx))
-                    } else {
-                        None
-                    }
-                }
-                Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
-            });
+    #[gpui::test]
+    async fn test_prev_page_jumps_to_page_start(cx: &mut TestAppContext) {
+        init_test(cx);
 
-        let Some(aside) = aside else {
-            return menu;
-        };
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true; 30]), window, cx)
+        });
 
-        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
-            WithRemSize::new(ui_font_size)
-                .occlude()
-                .elevation_2(cx)
-                .w_full()
-                .p_2()
-                .overflow_hidden()
-                .when(is_wide_window, |this| this.max_w_96())
-                .when(!is_wide_window, |this| this.max_w_48())
-                .child((aside.render)(cx))
-        };
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(29, Some(Direction::Up), false, window, cx);
+            picker.visible_range = 20..30;
+            picker.select_prev_page(&menu::SelectPrevPage, window, cx);
+        });
 
-        if is_wide_window {
-            let aside_index = self.delegate.documentation_aside_index();
-            let picker_bounds = self.picker_bounds.get();
-            let item_bounds =
-                aside_index.and_then(|ix| self.item_bounds.borrow().get(&ix).copied());
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 20);
+        });
 
-            let item_position = match (picker_bounds, item_bounds) {
-                (Some(picker_bounds), Some(item_bounds)) => {
-                    let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
-                    let height = item_bounds.size.height;
-                    Some((relative_top, height))
-                }
-                _ => None,
-            };
-
-            div()
-                .relative()
-                .child(menu)
-                // Only render the aside once we have bounds to avoid flicker
-                .when_some(item_position, |this, (top, height)| {
-                    this.child(
-                        h_flex()
-                            .absolute()
-                            .when(aside.side == DocumentationSide::Left, |el| {
-                                el.right_full().mr_1()
-                            })
-                            .when(aside.side == DocumentationSide::Right, |el| {
-                                el.left_full().ml_1()
-                            })
-                            .top(top)
-                            .h(height)
-                            .child(render_aside(aside, cx)),
-                    )
-                })
-        } else {
-            v_flex()
-                .w_full()
-                .gap_1()
-                .justify_end()
-                .child(render_aside(aside, cx))
-                .child(menu)
-        }
+        picker.update_in(cx, |picker, window, cx| {
+            picker.visible_range = 20..30;
+            picker.select_prev_page(&menu::SelectPrevPage, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 10);
+        });
     }
 }
