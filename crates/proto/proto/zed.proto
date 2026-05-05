@@ -482,7 +482,11 @@ message Envelope {
     GetCommitData get_commit_data = 447;
     GetCommitDataResponse get_commit_data_response = 448;
     SearchCommits search_commits = 449;
-    SearchCommitsResponse search_commits_response = 450; // current max
+    SearchCommitsResponse search_commits_response = 450;
+    PortCollectionInitial port_collection_initial = 451;
+    PortCollectionDelta port_collection_delta = 452;
+    PortCollectionBookmark port_collection_bookmark = 453;
+    PortResyncRequired port_resync_required = 454;
   }
 
   reserved 87 to 88;
@@ -576,4 +580,40 @@ message SpawnKernelResponse {
 message KillKernel {
   string kernel_id = 1;
   uint64 project_id = 2;
+}
+
+message PortResource {
+  string id = 1;
+  uint64 version = 2;
+  string proto = 3;
+  string bind_addr = 4;
+  uint32 port = 5;
+  uint32 uid = 6;
+  uint64 inode = 7;
+  string process = 8;
+  string exposure = 9;
+}
+
+message PortCollectionInitial {
+  uint64 project_id = 1;
+  repeated PortResource resources = 2;
+  uint64 version = 3;
+}
+
+message PortCollectionDelta {
+  uint64 project_id = 1;
+  repeated PortResource upserted = 2;
+  repeated string removed = 3;
+  uint64 version = 4;
+}
+
+message PortCollectionBookmark {
+  uint64 project_id = 1;
+  uint64 version = 2;
+}
+
+message PortResyncRequired {
+  uint64 project_id = 1;
+  string reason = 2;
+  optional uint64 latest_version = 3;
 }

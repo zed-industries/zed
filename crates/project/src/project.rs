@@ -16,6 +16,7 @@ pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
 pub mod search;
+pub mod port_store;
 pub mod task_inventory;
 pub mod task_store;
 pub mod telemetry_snapshot;
@@ -40,6 +41,7 @@ use crate::{
     bookmark_store::BookmarkStore,
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
+    port_store::PortStore,
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeIdCounter,
@@ -228,6 +230,7 @@ pub struct Project {
     // todo lw explain the client_state x remote_client matrix, its super confusing
     client_state: ProjectClientState,
     git_store: Entity<GitStore>,
+    port_store: Entity<PortStore>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
@@ -1143,6 +1146,7 @@ impl Project {
         BufferStore::init(&client);
         LspStore::init(&client);
         GitStore::init(&client);
+        PortStore::init(&client);
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
@@ -1253,6 +1257,8 @@ impl Project {
                 )
             });
 
+            let port_store = cx.new(|_| PortStore::new());
+
             let task_store = cx.new(|cx| {
                 TaskStore::local(
                     buffer_store.downgrade(),
@@ -1318,6 +1324,7 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 git_store,
+                port_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
@@ -1498,6 +1505,8 @@ impl Project {
                 )
             });
 
+            let port_store = cx.new(|_| PortStore::new());
+
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
                     buffer_store.downgrade(),
@@ -1547,6 +1556,7 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 git_store,
+                port_store,
                 agent_server_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
@@ -1605,6 +1615,7 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.breakpoint_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.port_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
 
             remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
@@ -1630,6 +1641,7 @@ impl Project {
             DapStore::init(&remote_proto, cx);
             BreakpointStore::init(&remote_proto);
             GitStore::init(&remote_proto);
+            PortStore::init(&remote_proto);
             AgentServerStore::init_remote(&remote_proto);
 
             this
@@ -1769,6 +1781,8 @@ impl Project {
             )
         });
 
+        let port_store = cx.new(|_| PortStore::new());
+
         let task_store = cx.new(|cx| {
             if run_tasks {
                 TaskStore::remote(
@@ -1865,6 +1879,7 @@ impl Project {
                 breakpoint_store: breakpoint_store.clone(),
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
+                port_store: port_store.clone(),
                 agent_server_store,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),

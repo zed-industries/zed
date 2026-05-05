@@ -1,4 +1,11 @@
 mod headless_project;
+mod port_observer;
+
+#[cfg(target_os = "linux")]
+mod port_observer_linux;
+
+#[cfg(target_os = "macos")]
+mod port_observer_macos;
 
 #[cfg(test)]
 mod remote_editing_tests;

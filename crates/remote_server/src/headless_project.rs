@@ -1,3 +1,4 @@
+use crate::port_observer::spawn_port_observer;
 use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashMap;
@@ -69,6 +70,8 @@ pub struct HeadlessProject {
     // Used mostly to keep alive the toolchain store for RPC handlers.
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
+    // Keeps the port observer alive for the lifetime of the project.
+    pub _port_observer_task: gpui::Task<()>,
     pub kernels: HashMap<String, Child>,
 }
 
@@ -338,6 +341,12 @@ impl HeadlessProject {
         AgentServerStore::init_headless(&session);
         ContextServerStore::init_headless(&session);
 
+        let port_observer_task = spawn_port_observer(
+            session.clone(),
+            REMOTE_SERVER_PROJECT_ID,
+            &cx.background_executor(),
+        );
+
         HeadlessProject {
             next_entry_id: Default::default(),
             session,
@@ -357,6 +366,7 @@ impl HeadlessProject {
             environment,
             profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
+            _port_observer_task: port_observer_task,
             kernels: Default::default(),
         }
     }

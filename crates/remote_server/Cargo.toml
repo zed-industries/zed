@@ -81,6 +81,14 @@ fork.workspace = true
 libc.workspace = true
 minidumper.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+netlink-sys = { version = "0.8", features = ["smol_socket"] }
+netlink-packet-sock-diag = "0.4"
+netlink-packet-core = "0.7"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libproc = "0.14"
+
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 gpui = { workspace = true, features = ["windows-manifest"] }

@@ -92,6 +92,7 @@ task.workspace = true
 tempfile.workspace = true
 terminal.workspace = true
 text.workspace = true
+thiserror.workspace = true
 toml.workspace = true
 url.workspace = true
 percent-encoding.workspace = true
@@ -121,6 +122,7 @@ lsp = { workspace = true, features = ["test-support"] }
 prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = {workspace = true, features = ["test-support"]}
+proptest.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 snippet_provider = { workspace = true, features = ["test-support"] }

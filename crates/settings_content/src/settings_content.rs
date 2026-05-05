@@ -263,6 +263,23 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    /// Configuration for automatic port forwarding when connected to a remote host.
+    pub port_forwarding: Option<PortForwardingSettingsContent>,
+}
+
+/// configuration for automatic port forwarding when connected to a remote host.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PortForwardingSettingsContent {
+    /// automatically forward ports that are detected as listening on the remote host.
+    ///
+    /// Default: true
+    pub auto_forward_ports: Option<bool>,
+    /// ports to exclude from automatic forwarding.
+    ///
+    /// Default: []
+    pub auto_forward_ports_exclude: Option<Vec<u16>>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect

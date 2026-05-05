@@ -360,6 +360,10 @@ messages!(
     (GetCommitDataResponse, Background),
     (SearchCommits, Background),
     (SearchCommitsResponse, Background),
+    (PortCollectionInitial, Background),
+    (PortCollectionDelta, Background),
+    (PortCollectionBookmark, Background),
+    (PortResyncRequired, Background),
     (GitWorktreesResponse, Background),
     (GitCreateWorktree, Background),
     (GitRemoveWorktree, Background),
@@ -781,7 +785,11 @@ entity_messages!(
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
     DownloadFileByPath,
-    GetRemoteProfilingData
+    GetRemoteProfilingData,
+    PortCollectionInitial,
+    PortCollectionDelta,
+    PortCollectionBookmark,
+    PortResyncRequired
 );
 
 entity_messages!(
