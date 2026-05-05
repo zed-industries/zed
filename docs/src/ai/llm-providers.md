@@ -663,6 +663,7 @@ The Zed agent comes pre-configured with OpenCode models. If you wish to use newe
           "max_output_tokens": 98765,
           "protocol": "openai_chat",
           "reasoning_effort_levels": ["low", "medium", "high"],
+          "interleaved_reasoning": false,
           "subscription": "go",
           "custom_model_api_url": "https://example.com/zen"
         }
@@ -680,6 +681,7 @@ The available configuration options for custom models are:
 - `max_output_tokens` (optional): maximum tokens the model can generate, for example `64000`
 - `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
 - `reasoning_effort_levels` (optional): list of supported reasoning effort levels, for example `["low", "medium", "high"]`. The latest value in the list is used as the default
+- `interleaved_reasoning` (optional, default `false`): if thinking tokens are sent as a dedicated `reasoning_content` field (`true`) or inline in message text (`false`). Applies only when using the `openai_chat` protocol
 - `subscription` (optional): `"zen"`, `"go"`, or `"free"` (defaults to `"zen"`)
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
 

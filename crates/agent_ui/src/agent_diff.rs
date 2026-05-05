@@ -173,19 +173,17 @@ impl AgentDiffPane {
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
-            let (was_empty, is_excerpt_newly_added) =
-                self.multibuffer.update(cx, |multibuffer, cx| {
-                    let was_empty = multibuffer.is_empty();
-                    let is_excerpt_newly_added = multibuffer.update_excerpts_for_path(
-                        path_key.clone(),
-                        buffer.clone(),
-                        diff_hunk_ranges,
-                        multibuffer_context_lines(cx),
-                        cx,
-                    );
-                    multibuffer.add_diff(diff_handle.clone(), cx);
-                    (was_empty, is_excerpt_newly_added)
-                });
+            let was_empty = self.multibuffer.read(cx).is_empty();
+            let is_excerpt_newly_added = self.editor.update(cx, |editor, cx| {
+                editor.update_excerpts_for_path(
+                    path_key.clone(),
+                    buffer.clone(),
+                    diff_hunk_ranges,
+                    multibuffer_context_lines(cx),
+                    diff_handle.clone(),
+                    cx,
+                )
+            });
 
             let rhs_editor = self.editor.read(cx).rhs_editor().clone();
             rhs_editor.update(cx, |editor, cx| {
@@ -216,9 +214,9 @@ impl AgentDiffPane {
             });
         }
 
-        self.multibuffer.update(cx, |multibuffer, cx| {
+        self.editor.update(cx, |editor, cx| {
             for buffer_id in buffers_to_delete {
-                multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
+                editor.remove_excerpts_for_buffer(buffer_id, cx);
             }
         });
 

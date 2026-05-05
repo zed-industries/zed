@@ -190,8 +190,9 @@ impl Render for TitleBar {
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
             repository = self.get_repository_for_worktree(&worktree, cx);
-            let worktree = worktree.read(cx);
+            let worktree_abs_path = worktree.read(cx).abs_path();
             project_name = worktree
+                .read(cx)
                 .root_name()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string()));
@@ -210,14 +211,28 @@ impl Render for TitleBar {
                             .then_some(project_name.clone())
                             .flatten()
                     });
+
                 let identity = repo_identity_path(&repo.common_dir_abs_path);
+
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
                     identity.file_stem()
                 } else {
                     identity.file_name()
                 };
-                if let Some(name) = display_name.and_then(|n| n.to_str()) {
-                    project_name = Some(name.into());
+
+                if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
+                    let name = if let Ok(relative) =
+                        worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                    {
+                        if relative.as_os_str().is_empty() {
+                            repo_name.to_string()
+                        } else {
+                            format!("{}/{}", repo_name, relative.display())
+                        }
+                    } else {
+                        repo_name.to_string()
+                    };
+                    project_name = Some(SharedString::from(name));
                 }
             }
         }

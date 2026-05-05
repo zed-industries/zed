@@ -1,14 +1,15 @@
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, StreamingEditFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, WebSearchTool, decide_permission_from_settings,
+    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
+    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
+    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RenameTool,
+    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, UpdatePlanToolFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag, UpdatePlanToolFeatureFlag};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
@@ -1542,14 +1543,7 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
         self.add_tool(EditFileTool::new(
-            self.project.clone(),
-            cx.weak_entity(),
-            language_registry.clone(),
-            Templates::new(),
-        ));
-        self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             self.action_log.clone(),
@@ -1574,6 +1568,22 @@ impl Thread {
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
+
+        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+        if cx.has_flag::<LspToolFeatureFlag>() {
+            let code_action_store: CodeActionStore = cx.new(|_cx| None);
+            self.add_tool(FindReferencesTool::new(self.project.clone()));
+            self.add_tool(GetCodeActionsTool::new(
+                self.project.clone(),
+                code_action_store.clone(),
+            ));
+            self.add_tool(ApplyCodeActionTool::new(
+                self.project.clone(),
+                code_action_store,
+            ));
+            self.add_tool(GoToDefinitionTool::new(self.project.clone()));
+            self.add_tool(RenameTool::new(self.project.clone()));
+        }
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));
@@ -2865,30 +2875,14 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool = model.supports_streaming_tools();
-
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
-                    EditFileTool::NAME
-                } else {
-                    tool_name.as_ref()
-                };
-
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(profile_tool_name)
+                    && profile.is_tool_enabled(tool_name)
                 {
-                    match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
-                        (StreamingEditFileTool::NAME, true) => {
-                            // Expose streaming tool as "edit_file"
-                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
-                        }
-                        _ => Some((truncate(tool_name), tool.clone())),
-                    }
+                    Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
                 }

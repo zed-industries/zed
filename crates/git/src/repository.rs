@@ -60,26 +60,6 @@ pub const GRAPH_CHUNK_SIZE: usize = 1000;
 /// Default value for the `git.worktree_directory` setting.
 pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
 
-/// Determine the original (main) repository's working directory.
-///
-/// For linked worktrees, `common_dir` differs from `repository_dir` and
-/// points to the main repo's `.git` directory, so we can derive the main
-/// repo's working directory from it. For normal repos and submodules,
-/// `common_dir` equals `repository_dir`, and the original repo is simply
-/// `work_directory` itself.
-pub fn original_repo_path(
-    work_directory: &Path,
-    common_dir: &Path,
-    repository_dir: &Path,
-) -> PathBuf {
-    if common_dir != repository_dir {
-        original_repo_path_from_common_dir(common_dir)
-            .unwrap_or_else(|| work_directory.to_path_buf())
-    } else {
-        work_directory.to_path_buf()
-    }
-}
-
 /// Given the git common directory (from `commondir()`), derive the original
 /// repository's working directory.
 ///
@@ -721,7 +701,7 @@ pub enum LogSource {
     All,
     Branch(SharedString),
     Sha(Oid),
-    File(RepoPath),
+    Path(RepoPath),
 }
 
 impl LogSource {
@@ -732,7 +712,7 @@ impl LogSource {
             LogSource::Sha(oid) => {
                 str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
             }
-            LogSource::File(_) => Ok("--follow"),
+            LogSource::Path(_) => Ok("--follow"),
         }
     }
 }
@@ -2954,8 +2934,8 @@ impl GitRepository for RealGitRepository {
                 log_source.get_arg()?,
             ];
 
-            if let LogSource::File(file_path) = &log_source {
-                git_log_command.extend(["--", file_path.as_unix_str()]);
+            if let LogSource::Path(path) = &log_source {
+                git_log_command.extend(["--", path.as_unix_str()]);
             }
 
             let mut command = git.build_command(&git_log_command);
@@ -3040,8 +3020,8 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
-            if let LogSource::File(file_path) = &log_source {
-                args.extend(["--", file_path.as_unix_str()]);
+            if let LogSource::Path(path) = &log_source {
+                args.extend(["--", path.as_unix_str()]);
             }
 
             let mut command = git.build_command(&args);

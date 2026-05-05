@@ -278,6 +278,7 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
                 protocol,
                 reasoning_effort_levels: model.reasoning_effort_levels.clone(),
                 custom_model_api_url: model.custom_model_api_url.clone(),
+                interleaved_reasoning: model.interleaved_reasoning,
             };
             let key = format!("{}/{}", subscription.id_prefix(), model.name);
             models.insert(key, (custom_model, subscription));
@@ -664,7 +665,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     false,
                     self.model.max_output_tokens(),
                     reasoning_effort,
-                    false,
+                    self.model.interleaved_reasoning(),
                 );
                 let stream = self.stream_openai_chat(openai_request, http_client, cx);
                 async move {

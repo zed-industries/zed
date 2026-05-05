@@ -4148,6 +4148,12 @@ impl SymbolLocation {
     }
 }
 
+fn should_log_lsp_request_failure(message: &str) -> bool {
+    // content modified is a weird failure mode of rust-analyzer
+    // where requests are denied before its loaded a project
+    message.ends_with("content modified") || message.ends_with("server cancelled the request")
+}
+
 impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_lsp_query);
@@ -5249,8 +5255,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
+                if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
                 return Task::ready(Err(anyhow!(message)));
@@ -5311,8 +5316,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
+                if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
                 anyhow::anyhow!(message)
@@ -7561,8 +7565,15 @@ impl LspStore {
     ) -> Task<anyhow::Result<()>> {
         let diagnostics = self.pull_diagnostics(buffer, cx);
         cx.spawn(async move |lsp_store, cx| {
-            let Some(diagnostics) = diagnostics.await.context("pulling diagnostics")? else {
-                return Ok(());
+            let diagnostics = match diagnostics.await {
+                Ok(Some(diagnostics)) => diagnostics,
+                Ok(None) => return Ok(()),
+                Err(error) if should_log_lsp_request_failure(&format!("{error:#}")) => {
+                    return Err(error).context("pulling diagnostics");
+                }
+                // This is a weird way to suppress diagnostic failures on server side cancellation,
+                // we should actually retry the request here?
+                Err(_) => return Ok(()),
             };
             lsp_store.update(cx, |lsp_store, cx| {
                 if lsp_store.as_local().is_none() {

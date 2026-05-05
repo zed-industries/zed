@@ -1667,6 +1667,35 @@ mod resolve_worktree_tests {
     }
 
     #[gpui::test]
+    async fn test_resolve_git_worktree_bare_repo_identity_path(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/monty/.bare",
+            json!({
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/monty/feature-a",
+            json!({
+                ".git": "gitdir: /monty/.bare/worktrees/feature-a",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result =
+            resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/monty/feature-a")).await;
+        assert_eq!(result, Some(PathBuf::from("/monty")));
+    }
+
+    #[gpui::test]
     async fn test_resolve_git_worktree_no_git_returns_none(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(

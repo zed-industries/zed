@@ -53,7 +53,7 @@ There are several third-party Zed packages for various Linux distributions and p
 - Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
 - ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 - AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
-- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed) (WARNING: [Sandboxing causes problems](https://github.com/flathub/dev.zed.Zed/pull/275))
+- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed)
 
 See [Repology](https://repology.org/project/zed-editor/versions) for a list of Zed packages in various repositories.
 

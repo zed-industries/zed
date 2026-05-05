@@ -1670,16 +1670,13 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            inner.renderer.recover(&raw_window).unwrap_or_else(|err| {
-                panic!(
-                    "GPU device lost and recovery failed. \
-                        This may happen after system suspend/resume. \
-                        Please restart the application.\n\nError: {err}"
-                )
-            });
+            match inner.renderer.recover(&raw_window) {
+                Ok(()) => {}
+                Err(err) => {
+                    log::warn!("GPU recovery failed, will retry on next frame: {err}");
+                }
+            }
 
-            // The current scene references atlas textures that were cleared during recovery.
-            // Skip this frame and let the next frame rebuild the scene with fresh textures.
             inner.force_render_after_recovery = true;
             return;
         }
