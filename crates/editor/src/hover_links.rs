@@ -816,7 +816,7 @@ fn surrounding_filename(
             found_start = true;
             break;
         }
-        if (ch == '"' || ch == '\'') && !inside_quotes {
+        if (ch == '"' || ch == '\'' || ch == '`') && !inside_quotes {
             found_start = true;
             inside_quotes = true;
             break;
@@ -849,7 +849,7 @@ fn surrounding_filename(
             found_end = true;
             break;
         }
-        if ch == '"' || ch == '\'' {
+        if ch == '"' || ch == '\'' || ch == '`' {
             // If we're inside quotes, we stop when we come across the next quote
             if inside_quotes {
                 found_end = true;
