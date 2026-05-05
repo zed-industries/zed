@@ -116,18 +116,16 @@ impl AgentTool for ApplyCodeActionTool {
 
             let transaction = apply_task
                 .await
-                .map_err(|e| format!("Failed to apply code action '{}': {e}", title))?;
+                .map_err(|e| format!("Failed to apply code action '{title}': {e}"))?;
 
             if transaction.0.is_empty() {
                 return Ok(format!(
-                    "Code action '{}' was applied but made no changes.",
-                    title
+                    "Code action '{title}' was applied but made no changes.",
                 ));
             }
 
             let mut output = format!(
-                "Applied code action '{}'. Modified {} file(s):\n",
-                title,
+                "Applied code action '{title}'. Modified {} file(s):\n",
                 transaction.0.len()
             );
 
