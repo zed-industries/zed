@@ -328,6 +328,17 @@ impl Worktree {
     }
 }
 
+/// Returns true if `path` is `base` or any descendant of it. Used in
+/// `worktrees()` to detect `git worktree list --porcelain` output that points
+/// at the queried repo's own common-dir — git's bookkeeping convention for a
+/// submodule's main checkout, not a real working tree. Layout-independent:
+/// covers `<super>/.git/modules/<sub>`, `<super>/.bare/modules/<sub>`, and
+/// any future layout where a submodule's gitdir lives inside the
+/// superproject's git directory.
+fn path_equals_or_under(path: &Path, base: &Path) -> bool {
+    path == base || path.starts_with(base)
+}
+
 pub fn parse_worktrees_from_str<T: AsRef<str>>(
     raw_worktrees: T,
     main_worktree_path: Option<&Path>,
@@ -1835,10 +1846,10 @@ impl GitRepository for RealGitRepository {
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let git = self.git_binary();
-        let main_worktree_path = {
+        let (main_worktree_path, common_dir) = {
             let repo = self.repository.lock();
             let common_dir = repo.commondir().to_path_buf();
-            original_repo_path_from_common_dir(&common_dir)
+            (original_repo_path_from_common_dir(&common_dir), common_dir)
         };
         self.executor
             .spawn(async move {
@@ -1846,16 +1857,69 @@ impl GitRepository for RealGitRepository {
                     .build_command(&["worktree", "list", "--porcelain"])
                     .output()
                     .await?;
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    Ok(parse_worktrees_from_str(
-                        &stdout,
-                        main_worktree_path.as_deref(),
-                    ))
-                } else {
+                if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
                 }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut worktrees =
+                    parse_worktrees_from_str(&stdout, main_worktree_path.as_deref());
+
+                // `git worktree list --porcelain` invoked from inside a
+                // submodule's main checkout reports the submodule's gitdir
+                // (the repo's common-dir, e.g. `<super>/.git/modules/<sub>`)
+                // as the worktree path — git's bookkeeping convention, not a
+                // real working tree. Detect this case by comparing against the
+                // common-dir (layout-independent: also covers `--separate-git-dir`
+                // and `.bare/modules/<sub>` setups), then normalize via
+                // `git rev-parse --show-toplevel`, which returns the actual
+                // working tree even when invoked from inside a gitdir. Without
+                // this, downstream consumers (worktree picker via
+                // `SwitchWorktree` / `OpenWorktreeInNewWindow`, file finder)
+                // would switch the workspace into the gitdir.
+                for wt in &mut worktrees {
+                    if wt.is_bare || !path_equals_or_under(&wt.path, &common_dir) {
+                        continue;
+                    }
+                    let original_path = wt.path.clone();
+                    let path_str = wt.path.to_string_lossy().to_string();
+                    match git
+                        .build_command(&["-C", &path_str, "rev-parse", "--show-toplevel"])
+                        .output()
+                        .await
+                    {
+                        Ok(out) if out.status.success() => {
+                            let toplevel = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            if !toplevel.is_empty() {
+                                wt.path = PathBuf::from(toplevel);
+                                // The pre-normalization path WAS the common-dir,
+                                // so this is the main checkout of the repo we
+                                // queried. parse_worktrees_from_str couldn't
+                                // mark it (`original_repo_path_from_common_dir`
+                                // returns None for submodule-shaped common-dirs).
+                                if original_path == common_dir {
+                                    wt.is_main = true;
+                                }
+                            }
+                        }
+                        Ok(out) => {
+                            log::warn!(
+                                "git worktree list reported {:?} as a worktree, but \
+                                 `git rev-parse --show-toplevel` failed there: {}",
+                                original_path,
+                                String::from_utf8_lossy(&out.stderr).trim()
+                            );
+                        }
+                        Err(err) => {
+                            log::warn!(
+                                "git worktree list reported {:?} as a worktree, but \
+                                 spawning `git rev-parse --show-toplevel` failed: {err}",
+                                original_path,
+                            );
+                        }
+                    }
+                }
+                Ok(worktrees)
             })
             .boxed()
     }
@@ -4244,6 +4308,37 @@ mod tests {
         assert!(result[0].is_main);
     }
 
+    #[test]
+    fn test_path_equals_or_under() {
+        let base = Path::new("/super/.git/modules/erp");
+
+        // Equal: a submodule's main checkout is reported by `git worktree list`
+        // as the gitdir itself.
+        assert!(path_equals_or_under(
+            Path::new("/super/.git/modules/erp"),
+            base
+        ));
+        // Descendants — covers any nested git internals.
+        assert!(path_equals_or_under(
+            Path::new("/super/.git/modules/erp/worktrees/feat"),
+            base
+        ));
+
+        // Sibling / unrelated paths must NOT match.
+        assert!(!path_equals_or_under(Path::new("/super/erp"), base));
+        assert!(!path_equals_or_under(Path::new("/super"), base));
+        assert!(!path_equals_or_under(Path::new("/elsewhere"), base));
+        assert!(!path_equals_or_under(Path::new("/super/.git"), base));
+
+        // Layout-independent: works for `.bare/modules/<sub>` too.
+        let bare_base = Path::new("/super/.bare/modules/erp");
+        assert!(path_equals_or_under(
+            Path::new("/super/.bare/modules/erp"),
+            bare_base
+        ));
+        assert!(!path_equals_or_under(Path::new("/super/erp"), bare_base));
+    }
+
     #[gpui::test]
     async fn test_create_and_list_worktrees(cx: &mut TestAppContext) {
         disable_git_global_config();
@@ -4315,6 +4410,152 @@ mod tests {
         assert_eq!(
             new_worktree.path.canonicalize().unwrap(),
             worktree_path.canonicalize().unwrap(),
+        );
+    }
+
+    /// Regression test: `git worktree list --porcelain` invoked from inside a
+    /// submodule's main checkout reports the submodule's gitdir
+    /// (`<super>/.git/modules/<sub>`) as the worktree path — git's bookkeeping
+    /// convention, not an actual working tree. Without normalization that
+    /// gitdir flows into `Worktree.path` and downstream consumers (worktree
+    /// picker via `SwitchWorktree { path }`, file finder) treat it as a
+    /// project path, switching the user's workspace into the gitdir.
+    #[gpui::test]
+    async fn test_list_worktrees_normalizes_submodule_gitdir(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let remote_dir = temp_dir.path().join("remote");
+        let super_dir = temp_dir.path().join("super");
+
+        async fn run_git(executor: &BackgroundExecutor, dir: &Path, args: &[&str]) {
+            // Use GitBinary so security flags are applied, per the
+            // disallowed-methods clippy lint on raw process::Command::output.
+            let git = GitBinary::new(
+                PathBuf::from("git"),
+                dir.to_path_buf(),
+                dir.join(".git"),
+                executor.clone(),
+                true,
+            );
+            let out = git.build_command(args).output().await.unwrap();
+            if !out.status.success() {
+                panic!(
+                    "git {args:?} (cwd {dir:?}) failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
+
+        // 1. Build a "remote" repo with one commit (acts as the submodule source).
+        fs::create_dir_all(&remote_dir).unwrap();
+        git2::Repository::init(&remote_dir).unwrap();
+        run_git(
+            &cx.executor(),
+            &remote_dir,
+            &["config", "user.email", "test@test"],
+        )
+        .await;
+        run_git(
+            &cx.executor(),
+            &remote_dir,
+            &["config", "user.name", "Test"],
+        )
+        .await;
+        run_git(
+            &cx.executor(),
+            &remote_dir,
+            &["config", "commit.gpgsign", "false"],
+        )
+        .await;
+        smol::fs::write(remote_dir.join("README.md"), "sub")
+            .await
+            .unwrap();
+        run_git(&cx.executor(), &remote_dir, &["add", "."]).await;
+        run_git(&cx.executor(), &remote_dir, &["commit", "-m", "init"]).await;
+
+        // 2. Build the superproject and add the remote as submodule "erp".
+        fs::create_dir_all(&super_dir).unwrap();
+        git2::Repository::init(&super_dir).unwrap();
+        run_git(
+            &cx.executor(),
+            &super_dir,
+            &["config", "user.email", "test@test"],
+        )
+        .await;
+        run_git(&cx.executor(), &super_dir, &["config", "user.name", "Test"]).await;
+        run_git(
+            &cx.executor(),
+            &super_dir,
+            &["config", "commit.gpgsign", "false"],
+        )
+        .await;
+        smol::fs::write(super_dir.join("README.md"), "super")
+            .await
+            .unwrap();
+        run_git(&cx.executor(), &super_dir, &["add", "."]).await;
+        run_git(&cx.executor(), &super_dir, &["commit", "-m", "init"]).await;
+        run_git(
+            &cx.executor(),
+            &super_dir,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                remote_dir.to_str().unwrap(),
+                "erp",
+            ],
+        )
+        .await;
+        run_git(
+            &cx.executor(),
+            &super_dir,
+            &["commit", "-m", "add submodule"],
+        )
+        .await;
+
+        // 3. Open a RealGitRepository at the submodule's working tree.
+        let submodule = super_dir.join("erp");
+        let repo = RealGitRepository::new(
+            &submodule.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // 4. List worktrees. Without the fix this returns the submodule gitdir.
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 1, "expected exactly one worktree entry");
+
+        let got = worktrees[0].path.canonicalize().unwrap();
+        let expected_worktree = submodule.canonicalize().unwrap();
+        let bad_gitdir = super_dir
+            .join(".git")
+            .join("modules")
+            .join("erp")
+            .canonicalize()
+            .unwrap();
+
+        assert_eq!(
+            got, expected_worktree,
+            "worktree path must be the submodule's working tree, not its gitdir"
+        );
+        assert_ne!(
+            got, bad_gitdir,
+            "worktree path must NOT be <super>/.git/modules/erp (Zed would open the gitdir as a workspace)"
+        );
+
+        // After normalization the submodule's main checkout must be marked as
+        // such. parse_worktrees_from_str cannot do this on its own because
+        // `original_repo_path_from_common_dir` returns None for a common-dir
+        // shaped like `<gitdir>/modules/<sub>`. The worktree picker UI relies
+        // on this flag (e.g. delete-worktree gating, main-worktree display).
+        assert!(
+            worktrees[0].is_main,
+            "the submodule's main checkout must have is_main = true after normalization"
         );
     }
 
