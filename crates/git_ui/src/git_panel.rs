@@ -4525,7 +4525,7 @@ impl GitPanel {
                             .when(self.commit_editor_expanded, |this| {
                                 this.flex_1().min_h_0().pb(footer_size)
                             })
-                            .pr_6()
+                            .pr_2p5()
                             .on_action(|&zed_actions::editor::MoveUp, _, cx| {
                                 cx.stop_propagation();
                             })
@@ -4535,7 +4535,7 @@ impl GitPanel {
                             .child(EditorElement::new(&self.commit_editor, panel_editor_style)),
                     )
                     .child(
-                        h_flex()
+                        v_flex()
                             .absolute()
                             .top_2()
                             .right_2()
