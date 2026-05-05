@@ -3718,11 +3718,14 @@ impl ProjectPanel {
         for (worktree_id, worktree_entries) in entries_by_worktree {
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
                 let worktree = worktree.read(cx);
+                // Skip the worktree root: its empty path would consume every
+                // other selected entry in the same worktree as "nested inside
+                // a selected directory" and silently drop them.
                 let dir_paths = worktree_entries
                     .iter()
                     .filter_map(|entry| {
                         worktree.entry_for_id(entry.entry_id).and_then(|entry| {
-                            if entry.is_dir() {
+                            if entry.is_dir() && !entry.path.is_empty() {
                                 Some(entry.path.as_ref())
                             } else {
                                 None
@@ -5223,14 +5226,15 @@ impl ProjectPanel {
         drag_state: &DraggedSelection,
         cx: &Context<Self>,
     ) -> Option<ProjectEntryId> {
-        // Worktree-root drags are only meaningful when dropped on another
-        // worktree's root, so suppress highlights elsewhere — including over
-        // the source worktree itself, where the drop would be a no-op.
-        if self
-            .project
-            .read(cx)
-            .entry_is_worktree_root(drag_state.active_selection.entry_id, cx)
-        {
+        // Pure worktree-root drags are only meaningful when dropped on
+        // another worktree's root; suppress highlights elsewhere. Mixed drags
+        // (e.g. a root with a marked file) fall through so the file portion
+        // can still receive feedback on directory targets.
+        let project = self.project.read(cx);
+        let drag_is_root_only = drag_state
+            .items()
+            .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx));
+        if drag_is_root_only {
             let root_id = target_worktree.root_entry()?.id;
             if target_entry.id == root_id
                 && target_worktree.id() != drag_state.active_selection.worktree_id

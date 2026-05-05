@@ -1057,6 +1057,12 @@ impl WorktreeStore {
         if sources.is_empty() {
             return Ok(());
         }
+        // Self-drop of any selection member is a no-op: the user dropping a
+        // multi-selection onto one of its own roots has no well-defined
+        // intent.
+        if sources.contains(&destination) {
+            return Ok(());
+        }
 
         let destination_index = self
             .worktrees
@@ -1067,13 +1073,23 @@ impl WorktreeStore {
             })
             .with_context(|| format!("Missing worktree for id {destination}"))?;
 
+        for &source in sources {
+            if !self
+                .worktrees
+                .iter()
+                .any(|wt| wt.upgrade().is_some_and(|wt| wt.read(cx).id() == source))
+            {
+                anyhow::bail!("Missing worktree for id {source}");
+            }
+        }
+
         let source_indices: Vec<usize> = self
             .worktrees
             .iter()
             .enumerate()
             .filter_map(|(i, wt)| {
                 let id = wt.upgrade()?.read(cx).id();
-                (sources.contains(&id) && id != destination).then_some(i)
+                sources.contains(&id).then_some(i)
             })
             .collect();
 
@@ -1114,6 +1130,7 @@ impl WorktreeStore {
 
         cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
         cx.notify();
+        self.send_project_updates(cx);
         Ok(())
     }
 

@@ -8947,6 +8947,40 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_move_worktree_with_invalid_source_errors(cx: &mut gpui::TestAppContext) {
+    use worktree::WorktreeId;
+
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": "",
+            "b.rs": "",
+        }),
+    )
+    .await;
+
+    let project =
+        Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let valid_id = project.visible_worktrees(cx).next().unwrap().read(cx).id();
+        let invalid_id = WorktreeId::from_usize(99_999);
+
+        assert!(
+            project.move_worktree(invalid_id, valid_id, cx).is_err(),
+            "moving an unknown source worktree should error"
+        );
+        assert!(
+            project.move_worktree(valid_id, invalid_id, cx).is_err(),
+            "moving onto an unknown destination should error"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

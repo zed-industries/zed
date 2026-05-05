@@ -4416,6 +4416,144 @@ async fn test_drag_worktree_root_onto_nested_entry_is_rejected(
     );
 }
 
+// Dropping a multi-root selection onto one of its own members has no
+// well-defined intent, so it should leave the order untouched rather than
+// reorder the remaining roots around the destination.
+#[gpui::test]
+async fn test_drag_multiple_marked_worktree_roots_onto_self_is_no_op(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let r2_entry = SelectedEntry {
+            worktree_id: r2.id(),
+            entry_id: r2.root_entry().unwrap().id,
+        };
+        let drag = DraggedSelection {
+            active_selection: r1_entry,
+            marked_selections: Arc::new([r1_entry, r2_entry]),
+        };
+        // Drop the [r1, r2] selection onto r2, one of its own members.
+        panel.drag_onto(&drag, r2_entry.entry_id, false, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root1",
+            "      a.txt",
+            "v root2",
+            "      b.txt",
+            "v root3",
+            "      c.txt",
+        ],
+        "self-drop of a multi-root selection should leave the order untouched"
+    );
+}
+
+// When a worktree root and one of its descendants are both marked, the
+// descendant must survive `disjoint_entries`. The root's empty path would
+// otherwise classify every other entry in the same worktree as nested
+// inside a "selected directory" and silently drop it before the move/copy
+// branches see it.
+#[gpui::test]
+async fn test_drag_marked_root_with_nested_file_keeps_both(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "sub": { "a.txt": "" } }))
+        .await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/root1".as_ref(), "/root2".as_ref(), "/root3".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let (r1_id, r2_id, r3_id) = panel.update_in(cx, |panel, _, cx| {
+        let worktrees = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        (
+            worktrees[0].read(cx).id(),
+            worktrees[1].read(cx).id(),
+            worktrees[2].read(cx).id(),
+        )
+    });
+
+    select_path_with_mark(&panel, "root1", cx);
+    select_path_with_mark(&panel, "root1/sub/a.txt", cx);
+
+    drag_selection_to(&panel, "root3", false, cx);
+
+    // root1 reorders past root3 (active is the file in root1, so direction
+    // follows root1's position via the source-side fallback in the active
+    // filter).
+    let order = panel.update_in(cx, |panel, _, cx| {
+        panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(order, vec![r2_id, r3_id, r1_id]);
+
+    // The marked file moves to root3 instead of being silently dropped.
+    assert!(
+        find_project_entry(&panel, "root3/a.txt", cx).is_some(),
+        "a.txt should land in root3"
+    );
+    assert_eq!(
+        find_project_entry(&panel, "root1/sub/a.txt", cx),
+        None,
+        "a.txt should be removed from root1/sub"
+    );
+}
+
 // Mixed selection: marked worktree root + non-root entry, with the non-root
 // as the active drag. The root reorders, the file moves, both in one gesture.
 //
