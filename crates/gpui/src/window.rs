@@ -4523,9 +4523,10 @@ impl Window {
                     accepts
                 });
 
+            let standalone_modifier =
+                matches!(currently_pending.keystrokes.as_slice(), [keystroke] if keystroke.is_modifier_key());
             currently_pending.needs_timeout |=
-                match_result.pending_has_binding || text_input_requires_timeout;
-
+                match_result.pending_has_binding || text_input_requires_timeout || standalone_modifier;
             if currently_pending.needs_timeout {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
                     cx.background_executor.timer(Duration::from_secs(1)).await;
