@@ -2,6 +2,7 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
+use super::deserialize_maybe_stringified;
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use crate::ToolInputPayload;
@@ -24,10 +25,7 @@ use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
 use schemars::JsonSchema;
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{DeserializeOwned, Error as _},
-};
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -132,26 +130,6 @@ pub struct PartialEdit {
     pub old_text: Option<String>,
     #[serde(default)]
     pub new_text: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ValueOrJsonString<T> {
-    Value(T),
-    String(String),
-}
-
-fn deserialize_maybe_stringified<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-where
-    T: DeserializeOwned,
-    D: Deserializer<'de>,
-{
-    match ValueOrJsonString::<T>::deserialize(deserializer)? {
-        ValueOrJsonString::Value(value) => Ok(value),
-        ValueOrJsonString::String(string) => serde_json::from_str::<T>(&string).map_err(|error| {
-            D::Error::custom(format!("failed to parse stringified value: {error}"))
-        }),
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
