@@ -107,8 +107,8 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Claude Sonnet 4.5           | Anthropic | 200k                      |
 | Claude Sonnet 4.6           | Anthropic | 1M                        |
 | Claude Haiku 4.5            | Anthropic | 200k                      |
-| GPT-5.5 pro                 | OpenAI    | 1M                        |
-| GPT-5.5                     | OpenAI    | 1M                        |
+| GPT-5.5 pro                 | OpenAI    | 400k                      |
+| GPT-5.5                     | OpenAI    | 400k                      |
 | GPT-5.4 pro                 | OpenAI    | 400k                      |
 | GPT-5.4                     | OpenAI    | 400k                      |
 | GPT-5.3-Codex               | OpenAI    | 400k                      |
