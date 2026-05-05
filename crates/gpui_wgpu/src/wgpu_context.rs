@@ -265,10 +265,7 @@ impl WgpuContext {
                 _ => 1,
             };
 
-            let is_software_renderer =
-                info.device_type == wgpu::DeviceType::Cpu || is_software_renderer_name(&info.name);
-
-            let type_priority: u8 = if is_software_renderer {
+            let type_priority: u8 = if info.device_type == wgpu::DeviceType::Cpu {
                 4
             } else {
                 match info.device_type {
