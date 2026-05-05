@@ -4579,6 +4579,20 @@ impl Project {
         })
     }
 
+    /// Moves multiple worktrees as a group to `destination`'s position,
+    /// preserving their relative order.
+    pub fn move_worktrees(
+        &mut self,
+        sources: &[WorktreeId],
+        destination: WorktreeId,
+        active_source: Option<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.move_worktrees(sources, destination, active_source, cx)
+        })
+    }
+
     /// Attempts to convert the input path to a WSL path if this is a wsl remote project and the input path is a host windows path.
     pub fn try_windows_path_to_wsl(
         &self,

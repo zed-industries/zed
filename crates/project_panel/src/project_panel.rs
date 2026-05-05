@@ -3588,44 +3588,41 @@ impl ProjectPanel {
         }
     }
 
-    fn move_entry(
+    fn reorder_worktree_roots(
         &mut self,
-        entry_to_move: ProjectEntryId,
+        source_entries: &[ProjectEntryId],
         destination: ProjectEntryId,
-        destination_is_file: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<CreatedEntry>>> {
-        if self
-            .project
-            .read(cx)
-            .entry_is_worktree_root(entry_to_move, cx)
-        {
-            self.move_worktree_root(entry_to_move, destination, cx);
-            None
-        } else {
-            self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
-        }
-    }
-
-    fn move_worktree_root(
-        &mut self,
-        entry_to_move: ProjectEntryId,
-        destination: ProjectEntryId,
+        active_entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
         self.project.update(cx, |project, cx| {
-            let Some(worktree_to_move) = project.worktree_for_entry(entry_to_move, cx) else {
+            // Reorder only fires on explicit drops onto a worktree root.
+            if !project.entry_is_worktree_root(destination, cx) {
                 return;
-            };
+            }
             let Some(destination_worktree) = project.worktree_for_entry(destination, cx) else {
                 return;
             };
-
-            let worktree_id = worktree_to_move.read(cx).id();
             let destination_id = destination_worktree.read(cx).id();
 
+            let source_ids: Vec<WorktreeId> = source_entries
+                .iter()
+                .filter_map(|entry_id| {
+                    project
+                        .worktree_for_entry(*entry_id, cx)
+                        .map(|wt| wt.read(cx).id())
+                })
+                .collect();
+            if source_ids.is_empty() {
+                return;
+            }
+
+            let active_source = project
+                .worktree_for_entry(active_entry_id, cx)
+                .map(|wt| wt.read(cx).id());
+
             project
-                .move_worktree(worktree_id, destination_id, cx)
+                .move_worktrees(&source_ids, destination_id, active_source, cx)
                 .log_err();
         });
     }
@@ -4459,6 +4456,18 @@ impl ProjectPanel {
         let entries = self.disjoint_entries(resolved_selections, cx);
 
         if Self::is_copy_modifier_set(&window.modifiers()) {
+            // Worktree roots can't be copied — leaving them in would make
+            // `create_paste_path` return None and `?` would abort the whole copy.
+            let entries: BTreeSet<SelectedEntry> = {
+                let project = self.project.read(cx);
+                entries
+                    .into_iter()
+                    .filter(|entry| !project.entry_is_worktree_root(entry.entry_id, cx))
+                    .collect()
+            };
+            if entries.is_empty() {
+                return;
+            }
             let _ = maybe!({
                 let project = self.project.read(cx);
                 let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
@@ -4519,6 +4528,27 @@ impl ProjectPanel {
         } else {
             let update_marks = !self.marked_entries.is_empty();
             let active_selection = selections.active_selection;
+            let active_entry_id = self.resolve_entry(active_selection.entry_id);
+
+            // Reorder marked worktree roots together so their relative order is
+            // preserved; non-roots fall through to the normal per-entry move flow.
+            let (root_entry_ids, entries) = {
+                let project = self.project.read(cx);
+                let mut roots = Vec::new();
+                let mut non_roots = BTreeSet::new();
+                for entry in entries {
+                    if project.entry_is_worktree_root(entry.entry_id, cx) {
+                        roots.push(entry.entry_id);
+                    } else {
+                        non_roots.insert(entry);
+                    }
+                }
+                (roots, non_roots)
+            };
+
+            if !root_entry_ids.is_empty() {
+                self.reorder_worktree_roots(&root_entry_ids, target_entry_id, active_entry_id, cx);
+            }
 
             // For folded selections, track the leaf suffix relative to the resolved
             // entry so we can refresh it after the move completes.
@@ -4575,7 +4605,9 @@ impl ProjectPanel {
             // results with folded selections that need refreshing.
             let mut move_tasks: Vec<(ProjectEntryId, Task<Result<CreatedEntry>>)> = Vec::new();
             for entry in entries {
-                if let Some(task) = self.move_entry(entry.entry_id, target_entry_id, is_file, cx) {
+                if let Some(task) =
+                    self.move_worktree_entry(entry.entry_id, target_entry_id, is_file, cx)
+                {
                     move_tasks.push((entry.entry_id, task));
                 }
             }
@@ -5191,6 +5223,23 @@ impl ProjectPanel {
         drag_state: &DraggedSelection,
         cx: &Context<Self>,
     ) -> Option<ProjectEntryId> {
+        // Worktree-root drags are only meaningful when dropped on another
+        // worktree's root, so suppress highlights elsewhere — including over
+        // the source worktree itself, where the drop would be a no-op.
+        if self
+            .project
+            .read(cx)
+            .entry_is_worktree_root(drag_state.active_selection.entry_id, cx)
+        {
+            let root_id = target_worktree.root_entry()?.id;
+            if target_entry.id == root_id
+                && target_worktree.id() != drag_state.active_selection.worktree_id
+            {
+                return Some(root_id);
+            }
+            return None;
+        }
+
         let target_parent_path = target_entry.path.parent();
 
         // In case of single item drag, we do not highlight existing
