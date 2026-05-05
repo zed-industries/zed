@@ -47,7 +47,7 @@ use ui::{
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, PathList,
-    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
+    RecentWorkspace, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
@@ -102,13 +102,13 @@ pub async fn get_recent_projects(
 
     let filtered: Vec<_> = workspaces
         .into_iter()
-        .filter(|(id, _, _, _)| Some(*id) != current_workspace_id)
-        .filter(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local))
+        .filter(|workspace| Some(workspace.workspace_id) != current_workspace_id)
+        .filter(|workspace| matches!(workspace.location, SerializedWorkspaceLocation::Local))
         .collect();
 
     let mut all_paths: Vec<PathBuf> = filtered
         .iter()
-        .flat_map(|(_, _, path_list, _)| path_list.paths().iter().cloned())
+        .flat_map(|workspace| workspace.identity_paths.paths().iter().cloned())
         .collect();
     all_paths.sort();
     all_paths.dedup();
@@ -121,9 +121,9 @@ pub async fn get_recent_projects(
 
     let entries: Vec<RecentProjectEntry> = filtered
         .into_iter()
-        .map(|(workspace_id, _, path_list, timestamp)| {
-            let paths: Vec<PathBuf> = path_list.paths().to_vec();
-            let ordered_paths: Vec<&PathBuf> = path_list.ordered_paths().collect();
+        .map(|workspace| {
+            let paths: Vec<PathBuf> = workspace.paths.paths().to_vec();
+            let ordered_paths: Vec<&PathBuf> = workspace.identity_paths.ordered_paths().collect();
 
             let name = ordered_paths
                 .iter()
@@ -145,8 +145,8 @@ pub async fn get_recent_projects(
                 name: SharedString::from(name),
                 full_path: SharedString::from(full_path),
                 paths,
-                workspace_id,
-                timestamp,
+                workspace_id: workspace.workspace_id,
+                timestamp: workspace.timestamp,
             }
         })
         .collect();
@@ -614,7 +614,6 @@ impl RecentProjects {
                 .await
                 .log_err()
                 .unwrap_or_default();
-            let workspaces = workspace::resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
             this.update_in(cx, move |this, window, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
@@ -773,11 +772,9 @@ impl RecentProjects {
             if let Some(ProjectPickerEntry::RecentProject(hit)) =
                 picker.delegate.filtered_entries.get(ix)
             {
-                if let Some((_, location, paths, _)) =
-                    picker.delegate.workspaces.get(hit.candidate_id)
-                {
-                    if matches!(location, SerializedWorkspaceLocation::Local) {
-                        let paths_to_add = paths.paths().to_vec();
+                if let Some(workspace) = picker.delegate.workspaces.get(hit.candidate_id) {
+                    if matches!(workspace.location, SerializedWorkspaceLocation::Local) {
+                        let paths_to_add = workspace.paths.paths().to_vec();
                         picker
                             .delegate
                             .add_paths_to_project(paths_to_add, window, cx);
@@ -812,12 +809,7 @@ pub struct RecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
     open_folders: Vec<OpenFolderEntry>,
     window_project_groups: Vec<ProjectGroupKey>,
-    workspaces: Vec<(
-        WorkspaceId,
-        SerializedWorkspaceLocation,
-        PathList,
-        DateTime<Utc>,
-    )>,
+    workspaces: Vec<RecentWorkspace>,
     filtered_entries: Vec<ProjectPickerEntry>,
     selected_index: usize,
     render_paths: bool,
@@ -860,20 +852,12 @@ impl RecentProjectsDelegate {
         }
     }
 
-    pub fn set_workspaces(
-        &mut self,
-        workspaces: Vec<(
-            WorkspaceId,
-            SerializedWorkspaceLocation,
-            PathList,
-            DateTime<Utc>,
-        )>,
-    ) {
+    pub fn set_workspaces(&mut self, workspaces: Vec<RecentWorkspace>) {
         self.workspaces = workspaces;
         let has_non_local_recent = !self
             .workspaces
             .iter()
-            .all(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local));
+            .all(|workspace| matches!(workspace.location, SerializedWorkspaceLocation::Local));
         self.has_any_non_local_projects =
             self.project_connection_options.is_some() || has_non_local_recent;
     }
@@ -987,9 +971,10 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, paths, _))| self.is_valid_recent_candidate(*id, paths, cx))
-            .map(|(id, (_, _, paths, _))| {
-                let combined_string = paths
+            .filter(|(_, workspace)| self.is_valid_recent_candidate(workspace, cx))
+            .map(|(id, workspace)| {
+                let combined_string = workspace
+                    .identity_paths
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
@@ -1063,8 +1048,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
 
             if is_empty_query {
-                for (id, (workspace_id, _, paths, _)) in self.workspaces.iter().enumerate() {
-                    if self.is_valid_recent_candidate(*workspace_id, paths, cx) {
+                for (id, workspace) in self.workspaces.iter().enumerate() {
+                    if self.is_valid_recent_candidate(workspace, cx) {
                         entries.push(ProjectPickerEntry::RecentProject(StringMatch {
                             candidate_id: id,
                             score: 0.0,
@@ -1149,20 +1134,15 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let Some(workspace) = self.workspace.upgrade() else {
                     return;
                 };
-                let Some((
-                    candidate_workspace_id,
-                    candidate_workspace_location,
-                    candidate_workspace_paths,
-                    _,
-                )) = self.workspaces.get(selected_match.candidate_id)
+                let Some(candidate_workspace) = self.workspaces.get(selected_match.candidate_id)
                 else {
                     return;
                 };
 
                 let replace_current_window = self.create_new_window == secondary;
-                let candidate_workspace_id = *candidate_workspace_id;
-                let candidate_workspace_location = candidate_workspace_location.clone();
-                let candidate_workspace_paths = candidate_workspace_paths.clone();
+                let candidate_workspace_id = candidate_workspace.workspace_id;
+                let candidate_workspace_location = candidate_workspace.location.clone();
+                let candidate_workspace_paths = candidate_workspace.paths.clone();
 
                 workspace.update(cx, |workspace, cx| {
                     if workspace.database_id() == Some(candidate_workspace_id) {
@@ -1497,10 +1477,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                 )
             }
             ProjectPickerEntry::RecentProject(hit) => {
-                let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
+                let workspace = self.workspaces.get(hit.candidate_id)?;
+                let location = &workspace.location;
+                let raw_paths = &workspace.paths;
+                let identity_paths = &workspace.identity_paths;
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
-                let paths_to_add = paths.paths().to_vec();
-                let ordered_paths: Vec<_> = paths
+                let paths_to_add = raw_paths.paths().to_vec();
+                let ordered_paths: Vec<_> = identity_paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
                     .collect();
@@ -1517,7 +1500,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 };
 
                 let mut path_start_offset = 0;
-                let (match_labels, paths): (Vec<_>, Vec<_>) = paths
+                let (match_labels, paths): (Vec<_>, Vec<_>) = identity_paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
@@ -1891,8 +1874,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 Some(ProjectPickerEntry::RecentProject(hit)) => self
                                     .workspaces
                                     .get(hit.candidate_id)
-                                    .map(|(_, loc, ..)| {
-                                        matches!(loc, SerializedWorkspaceLocation::Local)
+                                    .map(|workspace| {
+                                        matches!(
+                                            workspace.location,
+                                            SerializedWorkspaceLocation::Local
+                                        )
                                     })
                                     .unwrap_or(false),
                                 _ => false,
@@ -2129,22 +2115,23 @@ impl RecentProjectsDelegate {
         if let Some(ProjectPickerEntry::RecentProject(selected_match)) =
             self.filtered_entries.get(ix)
         {
-            let (workspace_id, _, _, _) = &self.workspaces[selected_match.candidate_id];
-            let workspace_id = *workspace_id;
+            let recent_workspace = self.workspaces[selected_match.candidate_id].clone();
             let fs = self
                 .workspace
                 .upgrade()
                 .map(|ws| ws.read(cx).app_state().fs.clone());
             let db = WorkspaceDb::global(cx);
             cx.spawn_in(window, async move |this, cx| {
-                db.delete_workspace_by_id(workspace_id).await.log_err();
                 let Some(fs) = fs else { return };
+                let deleted_workspace_ids = db
+                    .delete_recent_workspace_group(&recent_workspace)
+                    .await
+                    .log_err()
+                    .unwrap_or_default();
                 let workspaces = db
                     .recent_project_workspaces(fs.as_ref())
                     .await
                     .unwrap_or_default();
-                let workspaces =
-                    workspace::resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
                 this.update_in(cx, move |picker, window, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker
@@ -2155,8 +2142,11 @@ impl RecentProjectsDelegate {
                     // After deleting a project, we want to update the history manager to reflect the change.
                     // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
                     if let Some(history_manager) = HistoryManager::global(cx) {
-                        history_manager
-                            .update(cx, |this, cx| this.delete_history(workspace_id, cx));
+                        history_manager.update(cx, |this, cx| {
+                            for workspace_id in &deleted_workspace_ids {
+                                this.delete_history(*workspace_id, cx);
+                            }
+                        });
                     }
                 })
                 .ok();
@@ -2209,10 +2199,10 @@ impl RecentProjectsDelegate {
         false
     }
 
-    fn is_in_current_window_groups(&self, paths: &PathList) -> bool {
+    fn is_in_current_window_groups(&self, workspace: &RecentWorkspace) -> bool {
         self.window_project_groups
             .iter()
-            .any(|key| key.path_list() == paths)
+            .any(|key| key.matches(&workspace.project_group_key()))
     }
 
     fn is_open_folder(&self, paths: &PathList) -> bool {
@@ -2233,13 +2223,12 @@ impl RecentProjectsDelegate {
 
     fn is_valid_recent_candidate(
         &self,
-        workspace_id: WorkspaceId,
-        paths: &PathList,
+        workspace: &RecentWorkspace,
         cx: &mut Context<Picker<Self>>,
     ) -> bool {
-        !self.is_current_workspace(workspace_id, cx)
-            && !self.is_in_current_window_groups(paths)
-            && !self.is_open_folder(paths)
+        !self.is_current_workspace(workspace.workspace_id, cx)
+            && !self.is_in_current_window_groups(workspace)
+            && !self.is_open_folder(&workspace.paths)
     }
 }
 
