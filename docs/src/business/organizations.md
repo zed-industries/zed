@@ -23,9 +23,9 @@ A Zed account can belong to more than one organization at the same time. If you'
 
 ## Creating an organization
 
-<!-- TODO: document exact creation flow from dashboard before launch -->
+To create an organization, go to [dashboard.zed.dev/create-organization](https://dashboard.zed.dev/create-organization). The person who creates the organization becomes its owner.
 
-Organizations are created from the Zed dashboard at [dashboard.zed.dev](https://dashboard.zed.dev). The person who creates the organization becomes its owner.
+If you don't have a payment method on file, you'll be taken through a checkout flow. If one is already on file, that step is skipped. After that, you'll land on an invite page to add your first members.
 
 ## Inviting members
 
