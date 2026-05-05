@@ -1,3 +1,8 @@
+---
+title: Language Support
+description: "Overview of programming language support in Zed, including built-in and extension-based languages."
+---
+
 # Language Support in Zed
 
 Zed supports hundreds of programming languages and text formats.
@@ -61,6 +66,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
 - [Shell Script](./languages/sh.md)
+- [Standard ML](./languages/sml.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [Tailwind CSS](./languages/tailwindcss.md) \*

@@ -1,10 +1,20 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, App, Context, Entity, EntityId, EventEmitter, KeyContext, ParentElement as _, Render,
-    Styled, Window,
+    AnyView, App, Context, Div, Entity, EntityId, EventEmitter, Global, KeyContext,
+    ParentElement as _, Render, Styled, Window,
 };
+use language::LanguageRegistry;
+use std::sync::Arc;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
+
+pub struct PaneSearchBarCallbacks {
+    pub setup_search_bar:
+        fn(Option<Arc<LanguageRegistry>>, &Entity<Toolbar>, &mut Window, &mut App),
+    pub wrap_div_with_search_actions: fn(Div, Entity<crate::Pane>) -> Div,
+}
+
+impl Global for PaneSearchBarCallbacks {}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ToolbarItemEvent {

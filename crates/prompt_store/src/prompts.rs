@@ -27,9 +27,9 @@ pub const RULES_FILE_NAMES: &[&str] = &[
     ".windsurfrules",
     ".clinerules",
     ".github/copilot-instructions.md",
-    "CLAUDE.md",
     "AGENT.md",
     "AGENTS.md",
+    "CLAUDE.md",
     "GEMINI.md",
 ];
 

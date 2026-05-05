@@ -1,3 +1,4 @@
+mod llm_token;
 mod websocket;
 
 use std::sync::Arc;
@@ -9,15 +10,28 @@ use futures::AsyncReadExt as _;
 use gpui::{App, Task};
 use gpui_tokio::Tokio;
 use http_client::http::request;
-use http_client::{AsyncBody, HttpClientWithUrl, HttpRequestExt, Method, Request, StatusCode};
+use http_client::{
+    AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, StatusCode,
+};
 use parking_lot::RwLock;
+use thiserror::Error;
 use yawc::WebSocket;
 
 use crate::websocket::Connection;
 
+pub use llm_token::LlmApiToken;
+
 struct Credentials {
     user_id: u32,
     access_token: String,
+}
+
+#[derive(Debug, Error)]
+pub enum ClientApiError {
+    #[error("Unauthorized")]
+    Unauthorized,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 pub struct CloudApiClient {
@@ -58,32 +72,51 @@ impl CloudApiClient {
         build_request(req, body, credentials)
     }
 
-    pub async fn get_authenticated_user(&self) -> Result<GetAuthenticatedUserResponse> {
-        let request = self.build_request(
-            Request::builder().method(Method::GET).uri(
+    pub async fn get_authenticated_user(
+        &self,
+        system_id: Option<String>,
+    ) -> Result<GetAuthenticatedUserResponse, ClientApiError> {
+        let request_builder = Request::builder()
+            .method(Method::GET)
+            .uri(
                 self.http_client
                     .build_zed_cloud_url("/client/users/me")?
                     .as_ref(),
-            ),
-            AsyncBody::default(),
-        )?;
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
+
+        let request = self.build_request(request_builder, AsyncBody::default())?;
 
         let mut response = self.http_client.send(request).await?;
 
         if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
+            if response.status() == StatusCode::UNAUTHORIZED {
+                return Err(ClientApiError::Unauthorized);
+            }
 
-            anyhow::bail!(
+            let mut body = String::new();
+            response
+                .body_mut()
+                .read_to_string(&mut body)
+                .await
+                .context("failed to read response body")?;
+
+            return Err(ClientApiError::Other(anyhow::anyhow!(
                 "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
                 response.status()
-            )
+            )));
         }
 
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .context("failed to read response body")?;
 
-        Ok(serde_json::from_str(&body)?)
+        Ok(serde_json::from_str(&body).context("failed to parse response body")?)
     }
 
     pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
@@ -118,7 +151,8 @@ impl CloudApiClient {
     pub async fn create_llm_token(
         &self,
         system_id: Option<String>,
-    ) -> Result<CreateLlmTokenResponse> {
+        organization_id: Option<OrganizationId>,
+    ) -> Result<CreateLlmTokenResponse, ClientApiError> {
         let request_builder = Request::builder()
             .method(Method::POST)
             .uri(
@@ -130,24 +164,39 @@ impl CloudApiClient {
                 builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
             });
 
-        let request = self.build_request(request_builder, AsyncBody::default())?;
+        let request = self.build_request(
+            request_builder,
+            Json(CreateLlmTokenBody { organization_id }),
+        )?;
 
         let mut response = self.http_client.send(request).await?;
 
         if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
+            if response.status() == StatusCode::UNAUTHORIZED {
+                return Err(ClientApiError::Unauthorized);
+            }
 
-            anyhow::bail!(
+            let mut body = String::new();
+            response
+                .body_mut()
+                .read_to_string(&mut body)
+                .await
+                .context("failed to read response body")?;
+
+            return Err(ClientApiError::Other(anyhow::anyhow!(
                 "Failed to create LLM token.\nStatus: {:?}\nBody: {body}",
                 response.status()
-            )
+            )));
         }
 
         let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .context("failed to read response body")?;
 
-        Ok(serde_json::from_str(&body)?)
+        Ok(serde_json::from_str(&body).context("failed to parse response body")?)
     }
 
     pub async fn validate_credentials(&self, user_id: u32, access_token: &str) -> Result<bool> {
@@ -180,6 +229,87 @@ impl CloudApiClient {
                 ))
             }
         }
+    }
+
+    pub async fn submit_agent_feedback(&self, body: SubmitAgentThreadFeedbackBody) -> Result<()> {
+        let request = self.build_request(
+            Request::builder().method(Method::POST).uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/feedback/agent_thread")?
+                    .as_ref(),
+            ),
+            AsyncBody::from(serde_json::to_string(&body)?),
+        )?;
+
+        let mut response = self.http_client.send(request).await?;
+
+        if !response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+
+            anyhow::bail!(
+                "Failed to submit agent feedback.\nStatus: {:?}\nBody: {body}",
+                response.status()
+            )
+        }
+
+        Ok(())
+    }
+
+    pub async fn submit_agent_feedback_comments(
+        &self,
+        body: SubmitAgentThreadFeedbackCommentsBody,
+    ) -> Result<()> {
+        let request = self.build_request(
+            Request::builder().method(Method::POST).uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/feedback/agent_thread_comments")?
+                    .as_ref(),
+            ),
+            AsyncBody::from(serde_json::to_string(&body)?),
+        )?;
+
+        let mut response = self.http_client.send(request).await?;
+
+        if !response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+
+            anyhow::bail!(
+                "Failed to submit agent feedback comments.\nStatus: {:?}\nBody: {body}",
+                response.status()
+            )
+        }
+
+        Ok(())
+    }
+
+    pub async fn submit_edit_prediction_feedback(
+        &self,
+        body: SubmitEditPredictionFeedbackBody,
+    ) -> Result<()> {
+        let request = self.build_request(
+            Request::builder().method(Method::POST).uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/feedback/edit_prediction")?
+                    .as_ref(),
+            ),
+            AsyncBody::from(serde_json::to_string(&body)?),
+        )?;
+
+        let mut response = self.http_client.send(request).await?;
+
+        if !response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+
+            anyhow::bail!(
+                "Failed to submit edit prediction feedback.\nStatus: {:?}\nBody: {body}",
+                response.status()
+            )
+        }
+
+        Ok(())
     }
 }
 

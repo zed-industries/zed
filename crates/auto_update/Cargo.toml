@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 client.workspace = true
 db.workspace = true
+futures-lite.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 log.workspace = true

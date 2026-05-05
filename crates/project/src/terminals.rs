@@ -2,12 +2,12 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
+use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
 use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
-use smol::channel::bounded;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -17,7 +17,9 @@ use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
-use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
+use util::{
+    command::new_std_command, get_default_system_shell, get_system_shell, maybe, rel_path::RelPath,
+};
 
 use crate::{Project, ProjectPath};
 
@@ -26,6 +28,20 @@ pub struct Terminals {
 }
 
 impl Project {
+    pub fn active_entry_directory(&self, cx: &App) -> Option<PathBuf> {
+        let entry_id = self.active_entry()?;
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let entry = worktree.entry_for_id(entry_id)?;
+
+        let absolute_path = worktree.absolutize(entry.path.as_ref());
+        if entry.is_dir() {
+            Some(absolute_path)
+        } else {
+            absolute_path.parent().map(|p| p.to_path_buf())
+        }
+    }
+
     pub fn active_project_directory(&self, cx: &App) -> Option<Arc<Path>> {
         self.active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
@@ -89,10 +105,10 @@ impl Project {
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
-            None => settings.shell.program(),
+            None => get_system_shell(),
         };
-        let is_windows = self.path_style(cx).is_windows();
-        let shell_kind = ShellKind::new(&shell, is_windows);
+        let path_style = self.path_style(cx);
+        let shell_kind = ShellKind::new(&shell, path_style.is_windows());
 
         // Prepare a task for resolving the environment
         let env_task =
@@ -129,9 +145,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
-                    );
+                    let future =
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
+                    return Some(future.await);
                 }
                 None
             })
@@ -167,7 +183,7 @@ impl Project {
                                     let to_run = format_to_run();
 
                                     let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
+                                    let args = shell_kind.args_for_shell(true, arg);
                                     let shell = remote_client
                                         .read(cx)
                                         .shell()
@@ -199,15 +215,8 @@ impl Project {
                                         activation_script.join(&format!("{separator} "));
                                     let to_run = format_to_run();
 
-                                    let mut arg =
-                                        format!("{activation_script}{separator} {to_run}");
-                                    if shell_kind == ShellKind::Cmd {
-                                        // We need to put the entire command in quotes since otherwise CMD tries to execute them
-                                        // as separate commands rather than chaining one after another.
-                                        arg = format!("\"{arg}\"");
-                                    }
-
-                                    let args = shell_kind.args_for_shell(false, arg);
+                                    let arg = format!("{activation_script}{separator} {to_run}");
+                                    let args = shell_kind.args_for_shell(true, arg);
 
                                     (
                                         Shell::WithArguments {
@@ -248,6 +257,7 @@ impl Project {
                         Some(completion_tx),
                         cx,
                         activation_script,
+                        path_style,
                     ))
                 })??
                 .await?;
@@ -355,16 +365,20 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
         };
+        let env_shell = match &remote_client {
+            Some(_) => shell.clone(),
+            None => get_system_shell(),
+        };
 
-        let is_windows = self.path_style(cx).is_windows();
+        let path_style = self.path_style(cx);
 
         // Prepare a task for resolving the environment
         let env_task =
-            self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
+            self.resolve_directory_environment(&env_shell, path.clone(), remote_client.clone(), cx);
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell, is_windows);
+            let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -378,9 +392,9 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister()?;
-                    return Some(
-                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx)),
-                    );
+                    let future =
+                        cx.update(|cx| lister.activation_script(&toolchain, shell_kind, cx));
+                    return Some(future.await);
                 }
                 None
             })
@@ -412,6 +426,7 @@ impl Project {
                         None,
                         cx,
                         activation_script,
+                        path_style,
                     ))
                 })??
                 .await?;
@@ -517,7 +532,7 @@ impl Project {
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell())
             .map(Shell::Program)
-            .unwrap_or_else(|| settings.shell.clone());
+            .unwrap_or(Shell::System);
         let is_windows = self.path_style(cx).is_windows();
         let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());

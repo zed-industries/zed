@@ -1,18 +1,22 @@
-use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use anyhow::{Context as _, Result, anyhow};
-use cloud_api_client::{AuthenticatedUser, GetAuthenticatedUserResponse, PlanInfo};
-use cloud_llm_client::{CurrentUsage, PlanV1, UsageData, UsageLimit};
+use cloud_api_client::{
+    AuthenticatedUser, GetAuthenticatedUserResponse, KnownOrUnknown, Plan, PlanInfo,
+};
+use cloud_llm_client::{CurrentUsage, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
-use gpui::{AppContext as _, Entity, TestAppContext};
+use gpui::{AppContext as _, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
 use parking_lot::Mutex;
 use rpc::{ConnectionId, Peer, Receipt, TypedEnvelope, proto};
-use std::sync::Arc;
+
+use crate::{Client, Connection, Credentials, EstablishConnectionError};
 
 pub struct FakeServer {
     peer: Arc<Peer>,
     state: Arc<Mutex<FakeServerState>>,
-    user_id: u64,
 }
 
 #[derive(Default)]
@@ -33,7 +37,6 @@ impl FakeServer {
         let server = Self {
             peer: Peer::new(0),
             state: Default::default(),
-            user_id: client_user_id,
         };
 
         client.http_client().as_fake().replace_handler({
@@ -208,23 +211,6 @@ impl FakeServer {
     fn connection_id(&self) -> ConnectionId {
         self.state.lock().connection_id.expect("not connected")
     }
-
-    pub async fn build_user_store(
-        &self,
-        client: Arc<Client>,
-        cx: &mut TestAppContext,
-    ) -> Entity<UserStore> {
-        let user_store = cx.new(|cx| UserStore::new(client, cx));
-        assert_eq!(
-            self.receive::<proto::GetUsers>()
-                .await
-                .unwrap()
-                .payload
-                .user_ids,
-            &[self.user_id]
-        );
-        user_store
-    }
 }
 
 impl Drop for FakeServer {
@@ -263,22 +249,20 @@ pub fn make_get_authenticated_user_response(
             accepted_tos_at: None,
         },
         feature_flags: vec![],
+        organizations: vec![],
+        default_organization_id: None,
+        plans_by_organization: BTreeMap::new(),
+        configuration_by_organization: BTreeMap::new(),
         plan: PlanInfo {
-            plan: PlanV1::ZedPro,
-            plan_v2: None,
+            plan: KnownOrUnknown::Known(Plan::ZedPro),
             subscription_period: None,
             usage: CurrentUsage {
-                model_requests: UsageData {
-                    used: 0,
-                    limit: UsageLimit::Limited(500),
-                },
                 edit_predictions: UsageData {
                     used: 250,
                     limit: UsageLimit::Unlimited,
                 },
             },
             trial_started_at: None,
-            is_usage_based_billing_enabled: false,
             is_account_too_young: false,
             has_overdue_invoices: false,
         },

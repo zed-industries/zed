@@ -1,6 +1,6 @@
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_skills::Skill;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use futures::StreamExt;
 use gpui::{App, Entity, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Maximum size for directory listing (100KB)
 const MAX_DIRECTORY_LISTING_SIZE: usize = 100 * 1024;
@@ -22,33 +22,49 @@ pub struct SkillToolInput {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SkillToolOutput {
-    /// Whether the skill is global or project-local
-    pub source: String,
-    /// For project-local skills, which worktree it belongs to
-    pub worktree: Option<String>,
-    /// The full content of SKILL.md
-    pub content: String,
-    /// List of all files in the skill's directory (capped at 100KB total listing)
-    pub files: Vec<String>,
+#[serde(untagged)]
+pub enum SkillToolOutput {
+    Found {
+        /// Whether the skill is global or project-local
+        source: String,
+        /// For project-local skills, which worktree it belongs to
+        worktree: Option<String>,
+        /// The full content of SKILL.md
+        content: String,
+        /// List of all files in the skill's directory (capped at 100KB total listing)
+        files: Vec<String>,
+    },
+    Error {
+        error: String,
+    },
 }
 
 impl From<SkillToolOutput> for LanguageModelToolResultContent {
     fn from(output: SkillToolOutput) -> Self {
-        let mut result = String::new();
-        result.push_str(&format!("Source: {}\n", output.source));
-        if let Some(worktree) = &output.worktree {
-            result.push_str(&format!("Worktree: {}\n", worktree));
-        }
-        result.push_str("\n## Skill Content\n\n");
-        result.push_str(&output.content);
-        if !output.files.is_empty() {
-            result.push_str("\n\n## Files in skill directory\n\n");
-            for file in &output.files {
-                result.push_str(&format!("- {}\n", file));
+        match output {
+            SkillToolOutput::Found {
+                source,
+                worktree,
+                content,
+                files,
+            } => {
+                let mut result = String::new();
+                result.push_str(&format!("Source: {source}\n"));
+                if let Some(worktree) = &worktree {
+                    result.push_str(&format!("Worktree: {worktree}\n"));
+                }
+                result.push_str("\n## Skill Content\n\n");
+                result.push_str(&content);
+                if !files.is_empty() {
+                    result.push_str("\n\n## Files in skill directory\n\n");
+                    for file in &files {
+                        result.push_str(&format!("- {file}\n"));
+                    }
+                }
+                LanguageModelToolResultContent::Text(result.into())
             }
+            SkillToolOutput::Error { error } => LanguageModelToolResultContent::Text(error.into()),
         }
-        LanguageModelToolResultContent::Text(result.into())
     }
 }
 
@@ -71,9 +87,7 @@ impl AgentTool for SkillTool {
     type Input = SkillToolInput;
     type Output = SkillToolOutput;
 
-    fn name() -> &'static str {
-        "skill"
-    }
+    const NAME: &'static str = "skill";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
@@ -93,39 +107,54 @@ impl AgentTool for SkillTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<SkillToolOutput>> {
-        let Some(skill) = self.find_skill(&input.name) else {
-            return Task::ready(Err(anyhow!(
-                "Skill '{}' not found. Available skills: {}",
-                input.name,
-                self.skills
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
-        };
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |cx| {
+            let input = input.recv().await.map_err(|e| SkillToolOutput::Error {
+                error: e.to_string(),
+            })?;
 
-        let source = match &skill.source {
-            agent_skills::SkillSource::Global => "global".to_string(),
-            agent_skills::SkillSource::ProjectLocal { .. } => "project-local".to_string(),
-        };
+            let (source, worktree, content, directory_path) = {
+                let Some(skill) = self.find_skill(&input.name) else {
+                    return Err(SkillToolOutput::Error {
+                        error: format!(
+                            "Skill '{}' not found. Available skills: {}",
+                            input.name,
+                            self.skills
+                                .iter()
+                                .map(|s| s.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    });
+                };
 
-        let worktree = match &skill.source {
-            agent_skills::SkillSource::Global => None,
-            agent_skills::SkillSource::ProjectLocal { worktree_id } => {
-                Some(format!("worktree-{}", worktree_id.to_usize()))
-            }
-        };
+                let source = match &skill.source {
+                    agent_skills::SkillSource::Global => "global".to_string(),
+                    agent_skills::SkillSource::ProjectLocal { .. } => "project-local".to_string(),
+                };
 
-        let content = skill.content.clone();
-        let directory_path = skill.directory_path.clone();
-        let fs = self.project.read(cx).fs().clone();
+                let worktree = match &skill.source {
+                    agent_skills::SkillSource::Global => None,
+                    agent_skills::SkillSource::ProjectLocal { worktree_id } => {
+                        Some(format!("worktree-{}", worktree_id.to_usize()))
+                    }
+                };
 
-        cx.spawn(async move |_cx| {
+                (
+                    source,
+                    worktree,
+                    skill.content.clone(),
+                    skill.directory_path.clone(),
+                )
+            };
+
+            let fs = self
+                .project
+                .read_with(cx, |project, _cx| project.fs().clone());
+
             let mut files = Vec::new();
             let mut total_size = 0;
 
@@ -151,7 +180,7 @@ impl AgentTool for SkillTool {
 
             files.sort();
 
-            Ok(SkillToolOutput {
+            Ok(SkillToolOutput::Found {
                 source,
                 worktree,
                 content,
@@ -180,12 +209,10 @@ mod tests {
     }
 
     fn create_test_skill(name: &str, description: &str, content: &str) -> Skill {
-        let skill_content = format!(
-            "---\nname: {}\ndescription: {}\n---\n\n{}",
-            name, description, content
-        );
+        let skill_content =
+            format!("---\nname: {name}\ndescription: {description}\n---\n\n{content}");
         parse_skill(
-            Path::new(&format!("/skills/{}/SKILL.md", name)),
+            Path::new(&format!("/skills/{name}/SKILL.md")),
             &skill_content,
             SkillSource::Global,
         )
@@ -216,18 +243,31 @@ mod tests {
 
         let tool = Arc::new(SkillTool::new(skills, project));
 
-        let input = SkillToolInput {
-            name: "test-skill".to_string(),
-        };
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({
+            "name": "test-skill"
+        }));
 
-        let (event_stream, _rx) = crate::ToolCallEventStream::test();
-        let result = cx.update(|cx| tool.run(input, event_stream, cx));
-        let output = result.await.unwrap();
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
 
-        assert_eq!(output.source, "global");
-        assert!(output.worktree.is_none());
-        assert!(output.content.contains("# Instructions"));
-        assert!(output.content.contains("Do the thing."));
+        match output {
+            SkillToolOutput::Found {
+                source,
+                worktree,
+                content,
+                ..
+            } => {
+                assert_eq!(source, "global");
+                assert!(worktree.is_none());
+                assert!(content.contains("# Instructions"));
+                assert!(content.contains("Do the thing."));
+            }
+            SkillToolOutput::Error { error } => {
+                panic!("expected Found, got Error: {error}");
+            }
+        }
     }
 
     #[gpui::test]
@@ -259,34 +299,36 @@ mod tests {
         let tool = Arc::new(SkillTool::new(skills, project));
 
         // Test global skill
-        let (event_stream, _rx) = crate::ToolCallEventStream::test();
-        let result = cx.update(|cx| {
-            tool.clone().run(
-                SkillToolInput {
-                    name: "global-skill".to_string(),
-                },
-                event_stream,
-                cx,
-            )
-        });
-        let output = result.await.unwrap();
-        assert_eq!(output.source, "global");
-        assert!(output.worktree.is_none());
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({"name": "global-skill"}));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+        let output = task.await.unwrap();
+        match output {
+            SkillToolOutput::Found {
+                source, worktree, ..
+            } => {
+                assert_eq!(source, "global");
+                assert!(worktree.is_none());
+            }
+            SkillToolOutput::Error { error } => panic!("expected Found, got: {error}"),
+        }
 
         // Test project-local skill
-        let (event_stream, _rx) = crate::ToolCallEventStream::test();
-        let result = cx.update(|cx| {
-            tool.run(
-                SkillToolInput {
-                    name: "project-skill".to_string(),
-                },
-                event_stream,
-                cx,
-            )
-        });
-        let output = result.await.unwrap();
-        assert_eq!(output.source, "project-local");
-        assert!(output.worktree.is_some());
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({"name": "project-skill"}));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
+        match output {
+            SkillToolOutput::Found {
+                source, worktree, ..
+            } => {
+                assert_eq!(source, "project-local");
+                assert!(worktree.is_some());
+            }
+            SkillToolOutput::Error { error } => panic!("expected Found, got: {error}"),
+        }
     }
 
     #[gpui::test]
@@ -303,18 +345,16 @@ mod tests {
 
         let tool = Arc::new(SkillTool::new(skills, project));
 
-        let (event_stream, _rx) = crate::ToolCallEventStream::test();
-        let result = cx.update(|cx| {
-            tool.run(
-                SkillToolInput {
-                    name: "nonexistent-skill".to_string(),
-                },
-                event_stream,
-                cx,
-            )
-        });
-        let err = result.await.unwrap_err();
-        assert!(err.to_string().contains("not found"));
-        assert!(err.to_string().contains("existing-skill"));
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({"name": "nonexistent-skill"}));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let result = task.await;
+        let err = match result {
+            Err(SkillToolOutput::Error { error }) => error,
+            other => panic!("expected Error variant, got: {other:?}"),
+        };
+        assert!(err.contains("not found"));
+        assert!(err.contains("existing-skill"));
     }
 }

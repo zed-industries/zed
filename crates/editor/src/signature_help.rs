@@ -6,12 +6,14 @@ use gpui::{
     TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
-use markdown::{Markdown, MarkdownElement};
+
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
 use std::ops::Range;
+use std::time::Duration;
 use text::Rope;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder, IconButton,
     IconButtonShape, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
@@ -166,9 +168,26 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_signature_help_impl(false, window, cx);
+    }
+
+    pub(super) fn show_signature_help_auto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_signature_help_impl(true, window, cx);
+    }
+
+    fn show_signature_help_impl(
+        &mut self,
+        use_delay: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending_rename.is_some() || self.has_visible_completions_menu() {
             return;
         }
+
+        // If there's an already running signature
+        // help task, this will drop it.
+        self.signature_help_state.task = None;
 
         let position = self.selections.newest_anchor().head();
         let Some((buffer, buffer_position)) =
@@ -179,14 +198,27 @@ impl Editor {
         let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
             return;
         };
-        let task = lsp_store.update(cx, |lsp_store, cx| {
+        let lsp_task = lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.signature_help(&buffer, buffer_position, cx)
         });
         let language = self.language_at(position, cx);
 
+        let signature_help_delay_ms = if use_delay {
+            EditorSettings::get_global(cx).hover_popover_delay.0
+        } else {
+            0
+        };
+
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
-                let signature_help = task.await;
+                if signature_help_delay_ms > 0 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(signature_help_delay_ms))
+                        .await;
+                }
+
+                let signature_help = lsp_task.await;
+
                 editor
                     .update(cx, |editor, cx| {
                         let Some(mut signature_help) =
@@ -205,7 +237,7 @@ impl Editor {
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()
                                     .flat_map(|(range, highlight_id)| {
-                                        Some((range, highlight_id.style(cx.theme().syntax())?))
+                                        Some((range, *cx.theme().syntax().get(highlight_id)?))
                                     });
                                 signature.highlights =
                                     combine_highlights(signature.highlights.clone(), highlights)
@@ -217,6 +249,7 @@ impl Editor {
                             color: cx.theme().colors().text,
                             font_family: settings.buffer_font.family.clone(),
                             font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_features: settings.buffer_font.features.clone(),
                             font_size: settings.buffer_font_size(cx).into(),
                             font_weight: settings.buffer_font.weight,
                             line_height: relative(settings.buffer_line_height.value()),
@@ -375,9 +408,8 @@ impl SignatureHelpPopover {
                                         hover_markdown_style(window, cx),
                                     )
                                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
+                                        copy_button_visibility: CopyButtonVisibility::Hidden,
                                         border: false,
-                                        copy_button_on_hover: false,
                                     })
                                     .on_url_click(open_markdown_url),
                                 )
@@ -388,9 +420,8 @@ impl SignatureHelpPopover {
                             .child(
                                 MarkdownElement::new(description, hover_markdown_style(window, cx))
                                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
+                                        copy_button_visibility: CopyButtonVisibility::Hidden,
                                         border: false,
-                                        copy_button_on_hover: false,
                                     })
                                     .on_url_click(open_markdown_url),
                             )

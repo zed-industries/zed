@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use futures::FutureExt;
+use gpui_util::Deferred;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
@@ -12,7 +13,6 @@ use std::{
     ops,
     sync::Arc,
 };
-use util::Deferred;
 
 use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
@@ -278,7 +278,7 @@ impl<'a, T: 'static> Context<'a, T> {
     ) -> Deferred<impl FnOnce()> {
         let this = self.weak_entity();
         let mut cx = self.to_async();
-        util::defer(move || {
+        gpui_util::defer(move || {
             this.update(&mut cx, f).ok();
         })
     }
@@ -307,9 +307,13 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &Window,
         f: impl FnOnce(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) {
-        let view = self.entity();
-        window.defer(self, move |window, cx| {
-            view.update(cx, |view, cx| f(view, window, cx))
+        let view = self.weak_entity();
+        let entity_id = self.entity_id();
+        self.ensure_window(entity_id, window.handle.id);
+        self.app.defer(move |cx| {
+            cx.with_window(entity_id, |window, cx| {
+                view.update(cx, |view, cx| f(view, window, cx)).ok();
+            });
         });
     }
 
@@ -326,25 +330,21 @@ impl<'a, T: 'static> Context<'a, T> {
     {
         let observed_id = observed.entity_id();
         let observed = observed.downgrade();
-        let window_handle = window.handle;
         let observer = self.weak_entity();
+        let observer_id = self.entity_id();
+        self.ensure_window(observer_id, window.handle.id);
         self.new_observer(
             observed_id,
             Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, window, cx| {
-                        if let Some((observer, observed)) =
-                            observer.upgrade().zip(observed.upgrade())
-                        {
-                            observer.update(cx, |observer, cx| {
-                                on_notify(observer, observed, window, cx);
-                            });
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
+                let Some((observer, observed)) = observer.upgrade().zip(observed.upgrade()) else {
+                    return false;
+                };
+                cx.with_window(observer_id, |window, cx| {
+                    observer.update(cx, |observer, cx| {
+                        on_notify(observer, observed, window, cx);
+                    });
+                });
+                true
             }),
         )
     }
@@ -363,28 +363,25 @@ impl<'a, T: 'static> Context<'a, T> {
         Evt: 'static,
     {
         let emitter = emitter.downgrade();
-        let window_handle = window.handle;
         let subscriber = self.weak_entity();
+        let subscriber_id = self.entity_id();
+        self.ensure_window(subscriber_id, window.handle.id);
         self.new_subscription(
             emitter.entity_id(),
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
-                    window_handle
-                        .update(cx, |_, window, cx| {
-                            if let Some((subscriber, emitter)) =
-                                subscriber.upgrade().zip(emitter.upgrade())
-                            {
-                                let event = event.downcast_ref().expect("invalid event type");
-                                subscriber.update(cx, |subscriber, cx| {
-                                    on_event(subscriber, &emitter, event, window, cx);
-                                });
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false)
+                    let Some((subscriber, emitter)) = subscriber.upgrade().zip(emitter.upgrade())
+                    else {
+                        return false;
+                    };
+                    let event = event.downcast_ref().expect("invalid event type");
+                    cx.with_window(subscriber_id, |window, cx| {
+                        subscriber.update(cx, |subscriber, cx| {
+                            on_event(subscriber, &emitter, event, window, cx);
+                        });
+                    });
+                    true
                 }),
             ),
         )
@@ -469,6 +466,24 @@ impl<'a, T: 'static> Context<'a, T> {
     ) -> Subscription {
         let view = self.weak_entity();
         let (subscription, activate) = window.appearance_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                view.update(cx, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked when the window button layout changes.
+    pub fn observe_button_layout_changed(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) = window.button_layout_observers.insert(
             (),
             Box::new(move |window, cx| {
                 view.update(cx, |view, cx| callback(view, window, cx))
@@ -697,11 +712,19 @@ impl<'a, T: 'static> Context<'a, T> {
         let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, window, cx| {
-                        view.update(cx, |view, cx| f(view, window, cx)).is_ok()
-                    })
-                    .unwrap_or(false)
+                // If the entity has been dropped, remove this observer.
+                if view.upgrade().is_none() {
+                    return false;
+                }
+                // If the window is unavailable (e.g. temporarily taken during a
+                // nested update, or already closed), skip this notification but
+                // keep the observer alive so it can fire on future changes.
+                let Ok(entity_alive) = window_handle.update(cx, |_, window, cx| {
+                    view.update(cx, |view, cx| f(view, window, cx)).is_ok()
+                }) else {
+                    return true;
+                };
+                entity_alive
             }),
         );
         self.defer(move |_| activate());
@@ -744,10 +767,14 @@ impl<T> Context<'_, T> {
         T: EventEmitter<Evt>,
         Evt: 'static,
     {
+        let event = self
+            .event_arena
+            .alloc(|| event)
+            .map(|it| it as &mut dyn Any);
         self.app.pending_effects.push_back(Effect::Emit {
             emitter: self.entity_state.entity_id,
             event_type: TypeId::of::<Evt>(),
-            event: Box::new(event),
+            event,
         });
     }
 }
@@ -803,6 +830,15 @@ impl<T> AppContext for Context<'_, T> {
         F: FnOnce(AnyView, &mut Window, &mut App) -> R,
     {
         self.app.update_window(window, update)
+    }
+
+    #[inline]
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        self.app.with_window(entity_id, f)
     }
 
     #[inline]

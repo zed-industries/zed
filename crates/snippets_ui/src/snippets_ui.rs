@@ -1,4 +1,3 @@
-use file_finder::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -6,6 +5,7 @@ use gpui::{
     WeakEntity, Window, actions,
 };
 use language::{LanguageMatcher, LanguageName, LanguageRegistry};
+use open_path_prompt::file_finder_settings::FileFinderSettings;
 use paths::snippets_dir;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;

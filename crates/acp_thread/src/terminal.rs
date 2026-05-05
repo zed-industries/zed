@@ -1,4 +1,4 @@
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
@@ -165,6 +165,12 @@ impl Terminal {
 
     pub fn command(&self) -> &Entity<Markdown> {
         &self.command
+    }
+
+    pub fn update_command_label(&self, label: &str, cx: &mut App) {
+        self.command.update(cx, |command, cx| {
+            command.replace(format!("```\n{}\n```", label), cx);
+        });
     }
 
     pub fn working_dir(&self) -> &Option<PathBuf> {

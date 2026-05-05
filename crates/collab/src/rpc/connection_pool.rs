@@ -30,8 +30,13 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        // v0.220.0 was the version in which we've updated the project search protocol.
-        self.0 >= Version::new(0, 220, 0)
+        // v0.204.1 was the first version after the auto-update bug.
+        // We reject any clients older than that to hope we can persuade them to upgrade.
+        if self.0 < Version::new(0, 204, 1) {
+            return false;
+        }
+
+        true
     }
 }
 
@@ -157,7 +162,7 @@ impl ConnectionPool {
             .is_empty()
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
             assert!(

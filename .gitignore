@@ -1,6 +1,8 @@
 **/*.db
+**/*.proptest-regressions
 **/cargo-target
 **/target
+.webrtc-sys/
 **/venv
 **/.direnv
 *.wasm
@@ -49,3 +51,7 @@ crates/docs_preprocessor/actions.json
 # the repo in the future, but we don't haven't decided exactly
 # where yet, so for now they get generated into a gitignored dir.)
 /crates/zed/test_fixtures/visual_tests/
+
+# Local documentation audit files
+/december-2025-releases.md
+/docs/december-2025-documentation-gaps.md

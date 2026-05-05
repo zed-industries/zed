@@ -327,12 +327,6 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
             self
         }
 
-        /// Sets cursor style when hovering over an element to `none`.
-        /// [Docs](https://tailwindcss.com/docs/cursor)
-        #visibility fn cursor_none(mut self, cursor: CursorStyle) -> Self {
-            self.style().mouse_cursor = Some(gpui::CursorStyle::None);
-            self
-        }
     };
 
     output.into()
@@ -915,8 +909,12 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
             fields: vec![quote! {size.width}, quote! {size.height}],
             doc_string_prefix: "Sets the width and height of the element.",
         },
-        // TODO: These don't use the same size ramp as the others
-        // see https://tailwindcss.com/docs/max-width
+        BoxStylePrefix {
+            prefix: "min_size",
+            auto_allowed: true,
+            fields: vec![quote! {min_size.width}, quote! {min_size.height}],
+            doc_string_prefix: "Sets the minimum width and height of the element.",
+        },
         BoxStylePrefix {
             prefix: "min_w",
             auto_allowed: true,
@@ -930,6 +928,12 @@ fn box_prefixes() -> Vec<BoxStylePrefix> {
             auto_allowed: true,
             fields: vec![quote! { min_size.height }],
             doc_string_prefix: "Sets the minimum height of the element. [Docs](https://tailwindcss.com/docs/min-height)",
+        },
+        BoxStylePrefix {
+            prefix: "max_size",
+            auto_allowed: true,
+            fields: vec![quote! {max_size.width}, quote! {max_size.height}],
+            doc_string_prefix: "Sets the maximum width and height of the element.",
         },
         // TODO: These don't use the same size ramp as the others
         // see https://tailwindcss.com/docs/max-width

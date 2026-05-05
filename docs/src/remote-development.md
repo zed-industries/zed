@@ -1,6 +1,14 @@
+---
+title: Remote Development in Zed - SSH Workflows
+description: Use remote development in Zed to edit code over SSH with local UI performance, remote terminals, language servers, and tasks.
+---
+
 # Remote Development
 
-Remote Development allows you to code at the speed of thought, even when your codebase is not on your local machine. You use Zed locally so the UI is immediately responsive, but offload heavy computation to the development server so that you can work effectively.
+Remote Development lets you edit code on a remote server while running Zed locally. The UI stays responsive because it runs on your machine, while language servers, tasks, and terminals run on the server.
+
+For day-to-day workflows, pair remote development with [Tasks](./tasks.md),
+[Terminal](./terminal.md), and [Debugger](./debugger.md).
 
 ## Overview
 
@@ -8,7 +16,7 @@ Remote development requires two computers, your local machine that runs the Zed 
 
 ![Architectural overview of Zed Remote Development](https://zed.dev/img/remote-development/diagram.png)
 
-On your local machine, Zed runs its UI, talks to language models, uses Tree-sitter to parse and syntax-highlight code, and store unsaved changes and recent projects. The source code, language servers, tasks, and the terminal all run on the remote server.
+On your local machine, Zed runs its UI, talks to language models, uses Tree-sitter to parse and syntax-highlight code, and store unsaved changes and recent projects. The source code, language servers, tasks, and the terminal all run on the remote server. [AI features](./ai/overview.md) work in remote sessions, including the Agent Panel and Inline Assistant.
 
 > **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use that mode.
 
@@ -172,7 +180,7 @@ When opening a remote project there are three relevant settings locations:
 - The server Zed settings (in the same place) on the remote server.
 - The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
-Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main `settings.json`.
+Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings file.
 
 Which settings file you should use depends on the kind of setting you want to make:
 
@@ -204,7 +212,7 @@ Alternatively, you can configure the proxy in the remote machine's `~/.config/ze
 }
 ```
 
-See the [proxy documentation](./configuring-zed.md#network-proxy) for supported proxy types and additional configuration options.
+See the [proxy documentation](./reference/all-settings.md#network-proxy) for supported proxy types and additional configuration options.
 
 ## Initializing the remote server
 
@@ -226,7 +234,7 @@ Each connection tries to run the development server in proxy mode. This mode wil
 
 In the case that reconnecting fails, the daemon will not be re-used. That said, unsaved changes are by default persisted locally, so that you do not lose work. You can always reconnect to the project at a later date and Zed will restore unsaved changes.
 
-If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #remoting-feedback channel in the [Zed Discord](https://zed.dev/community-links).
+If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #support forums on [Discord](https://zed.dev/community-links).
 
 ## Supported SSH Options
 
@@ -250,6 +258,15 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 - You can't open files from the remote Terminal by typing the `zed` command.
 
-## Feedback
+## See also
 
-Please join the #remoting-feedback channel in the [Zed Discord](https://zed.dev/community-links).
+- [Running & Testing](./running-testing.md): Run tasks, terminal commands, and
+  debugger sessions while you work remotely.
+- [Git Worktrees](./git.md#git-worktrees): Create and switch between linked
+  Git worktrees. Zed supports the worktree picker in remote projects when the
+  remote connection is active.
+- [Configuring Zed](./configuring-zed.md): Manage shared and project settings,
+  including `.zed/settings.json`.
+- [Agent Panel](./ai/agent-panel.md): Use AI workflows in remote projects.
+- [Remote Development on zed.dev](https://zed.dev/remote-development): Product
+  overview and release updates.

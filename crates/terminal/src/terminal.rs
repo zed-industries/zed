@@ -26,6 +26,7 @@ use alacritty_terminal::{
     },
 };
 use anyhow::{Context as _, Result, bail};
+use futures_lite::future::yield_now;
 use log::trace;
 
 use futures::{
@@ -39,19 +40,21 @@ use mappings::mouse::{
     scroll_report,
 };
 
+use async_channel::{Receiver, Sender};
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, SpawnInTerminal};
 use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::truncate_and_trailoff;
+use util::{paths::PathStyle, truncate_and_trailoff};
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 use std::{
     borrow::Cow,
     cmp::{self, min},
@@ -60,14 +63,14 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
 use gpui::{
-    App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
-    ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
+    App, AppContext as _, BackgroundExecutor, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -81,6 +84,8 @@ actions!(
         Copy,
         /// Pastes from the clipboard.
         Paste,
+        /// Pastes the text from the clipboard.
+        PasteText,
         /// Shows the character palette for special characters.
         ShowCharacterPalette,
         /// Searches for text in the terminal.
@@ -205,11 +210,16 @@ impl TerminalBounds {
     }
 
     pub fn num_lines(&self) -> usize {
-        (self.bounds.size.height / self.line_height).floor() as usize
+        // Tolerance to prevent f32 precision from losing a row:
+        // `N * line_height / line_height` can be N-epsilon, which floor()
+        // would round down, pushing the first line into invisible scrollback.
+        let raw = self.bounds.size.height / self.line_height;
+        raw.next_up().floor() as usize
     }
 
     pub fn num_columns(&self) -> usize {
-        (self.bounds.size.width / self.cell_width).floor() as usize
+        let raw = self.bounds.size.width / self.cell_width;
+        raw.next_up().floor() as usize
     }
 
     pub fn height(&self) -> Pixels {
@@ -346,6 +356,8 @@ impl TerminalBuilder {
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window_id: u64,
+        background_executor: &BackgroundExecutor,
+        path_style: PathStyle,
     ) -> Result<TerminalBuilder> {
         // Create a display-only terminal (no actual PTY).
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
@@ -408,7 +420,12 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
             event_loop_task: Task::ready(Ok(())),
+            background_executor: background_executor.clone(),
+            path_style,
+            #[cfg(any(test, feature = "test-support"))]
+            input_log: Vec::new(),
         };
 
         Ok(TerminalBuilder {
@@ -432,8 +449,10 @@ impl TerminalBuilder {
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
+        path_style: PathStyle,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
+        let background_executor = cx.background_executor().clone();
         let fut = async move {
             // Remove SHLVL so the spawned shell initializes it to 1, matching
             // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
@@ -596,7 +615,7 @@ impl TerminalBuilder {
                 task,
                 terminal_type: TerminalType::Pty {
                     pty_tx: Notifier(pty_tx),
-                    info: pty_info,
+                    info: Arc::new(pty_info),
                 },
                 completion_tx,
                 term,
@@ -635,7 +654,12 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                keyboard_input_sent: false,
                 event_loop_task: Task::ready(Ok(())),
+                background_executor,
+                path_style,
+                #[cfg(any(test, feature = "test-support"))]
+                input_log: Vec::new(),
             };
 
             if !activation_script.is_empty() && no_task {
@@ -715,7 +739,7 @@ impl TerminalBuilder {
                     }
 
                     if events.is_empty() && !wakeup {
-                        smol::future::yield_now().await;
+                        yield_now().await;
                         break 'outer;
                     }
 
@@ -728,7 +752,7 @@ impl TerminalBuilder {
                             this.process_event(event, cx);
                         }
                     })?;
-                    smol::future::yield_now().await;
+                    yield_now().await;
                 }
             }
             anyhow::Ok(())
@@ -823,7 +847,7 @@ pub enum SelectionPhase {
 enum TerminalType {
     Pty {
         pty_tx: Notifier,
-        info: PtyProcessInfo,
+        info: Arc<PtyProcessInfo>,
     },
     DisplayOnly,
 }
@@ -857,7 +881,12 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    keyboard_input_sent: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
+    background_executor: BackgroundExecutor,
+    path_style: PathStyle,
+    #[cfg(any(test, feature = "test-support"))]
+    input_log: Vec<Vec<u8>>,
 }
 
 struct CopyTemplate {
@@ -963,10 +992,8 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
-                    if info.has_changed() {
-                        cx.emit(Event::TitleChanged);
-                    }
+                if let TerminalType::Pty { info, .. } = &self.terminal_type {
+                    info.emit_title_changed_if_changed(cx);
                 }
             }
             AlacTermEvent::ColorRequest(index, format) => {
@@ -982,8 +1009,8 @@ impl Terminal {
                     .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
-            AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(error_code), cx);
+            AlacTermEvent::ChildExit(raw_status) => {
+                self.register_task_finished(Some(raw_status), cx);
             }
         }
     }
@@ -1176,11 +1203,13 @@ impl Terminal {
                     term,
                     point,
                     &mut self.hyperlink_regex_searches,
+                    self.path_style,
                 ) {
                     Some(hyperlink) => {
                         self.process_hyperlink(hyperlink, *open, cx);
                     }
                     None => {
+                        self.last_content.last_hovered_word = None;
                         cx.emit(Event::NewNavigationTarget(None));
                     }
                 }
@@ -1413,8 +1442,27 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
-        if self.last_content.terminal_bounds != new_bounds {
-            self.events.push_back(InternalEvent::Resize(new_bounds))
+        let mut new_bounds = new_bounds;
+        new_bounds.bounds.size.height = cmp::max(new_bounds.line_height, new_bounds.height());
+        new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
+
+        let old_bounds = self.last_content.terminal_bounds;
+        self.last_content.terminal_bounds = new_bounds;
+
+        // Avoid spamming PTY resizes on pixel-level size changes (e.g. while dragging edges),
+        // since those can generate excessive SIGWINCH/reflows and cause visible flicker.
+        let requires_resize = old_bounds.num_lines() != new_bounds.num_lines()
+            || old_bounds.num_columns() != new_bounds.num_columns()
+            || old_bounds.cell_width != new_bounds.cell_width
+            || old_bounds.line_height != new_bounds.line_height;
+
+        if !requires_resize {
+            return;
+        }
+
+        match self.events.back_mut() {
+            Some(InternalEvent::Resize(pending_bounds)) => *pending_bounds = new_bounds,
+            _ => self.events.push_back(InternalEvent::Resize(new_bounds)),
         }
     }
 
@@ -1439,7 +1487,17 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
+        let input = input.into();
+        #[cfg(any(test, feature = "test-support"))]
+        self.input_log.push(input.to_vec());
+
         self.write_to_pty(input);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_input_log(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.input_log)
     }
 
     pub fn toggle_vi_mode(&mut self) {
@@ -1863,6 +1921,7 @@ impl Terminal {
                 &term_lock,
                 point,
                 &mut self.hyperlink_regex_searches,
+                self.path_style,
             );
             drop(term_lock);
 
@@ -1912,7 +1971,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default();
-                        self.input(text.into_bytes());
+                        self.paste(&text);
                     }
                 }
                 _ => {}
@@ -1954,6 +2013,7 @@ impl Terminal {
                         &term_lock,
                         point,
                         &mut self.hyperlink_regex_searches,
+                        self.path_style,
                     )
                 } {
                     if mouse_down_hyperlink == mouse_up_hyperlink {
@@ -1988,7 +2048,9 @@ impl Terminal {
         let mouse_mode = self.mouse_mode(e.shift);
         let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier)
+            && scroll_lines != 0
+        {
             if mouse_mode {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
@@ -2009,7 +2071,7 @@ impl Terminal {
                 && !e.shift
             {
                 self.write_to_pty(alt_scroll(scroll_lines));
-            } else if scroll_lines != 0 {
+            } else {
                 let scroll = AlacScroll::Delta(scroll_lines);
 
                 self.events.push_back(InternalEvent::Scroll(scroll));
@@ -2083,9 +2145,11 @@ impl Terminal {
     /// remote host, in case Zed is connected to a remote host.
     fn client_side_working_directory(&self) -> Option<PathBuf> {
         match &self.terminal_type {
-            TerminalType::Pty { info, .. } => {
-                info.current.as_ref().map(|process| process.cwd.clone())
-            }
+            TerminalType::Pty { info, .. } => info
+                .current
+                .read()
+                .as_ref()
+                .map(|process| process.cwd.clone()),
             TerminalType::DisplayOnly => None,
         }
     }
@@ -2107,6 +2171,7 @@ impl Terminal {
                 .unwrap_or_else(|| match &self.terminal_type {
                     TerminalType::Pty { info, .. } => info
                         .current
+                        .read()
                         .as_ref()
                         .map(|fpi| {
                             let process_file = fpi
@@ -2145,7 +2210,7 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
+            if let TerminalType::Pty { info, .. } = &self.terminal_type {
                 // First kill the foreground process group (the command running in the shell)
                 info.kill_current_process();
                 // Then kill the shell itself so that the terminal exits properly
@@ -2185,28 +2250,38 @@ impl Terminal {
         Task::ready(None)
     }
 
-    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
-        let e: Option<ExitStatus> = error_code.map(|code| {
+    fn register_task_finished(&mut self, raw_status: Option<i32>, cx: &mut Context<Terminal>) {
+        let exit_status: Option<ExitStatus> = raw_status.map(|value| {
             #[cfg(unix)]
             {
-                std::os::unix::process::ExitStatusExt::from_raw(code)
+                std::os::unix::process::ExitStatusExt::from_raw(value)
             }
             #[cfg(windows)]
             {
-                std::os::windows::process::ExitStatusExt::from_raw(code as u32)
+                std::os::windows::process::ExitStatusExt::from_raw(value as u32)
             }
         });
 
         if let Some(tx) = &self.completion_tx {
-            tx.try_send(e).ok();
+            tx.try_send(exit_status).ok();
         }
-        if let Some(e) = e {
+        if let Some(e) = exit_status {
             self.child_exited = Some(e);
         }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                // For interactive shells (no task), we need to differentiate:
+                // 1. User-initiated exits (typed "exit", Ctrl+D, etc.) - always close,
+                //    even if the shell exits with a non-zero code (e.g. after `false`).
+                // 2. Shell spawn failures (bad $SHELL) - don't close, so the user sees
+                //    the error. Spawn failures never receive keyboard input.
+                let should_close = if self.keyboard_input_sent {
+                    true
+                } else {
+                    self.child_exited.is_none_or(|e| e.code() == Some(0))
+                };
+                if should_close {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2215,7 +2290,7 @@ impl Terminal {
         if task.status != TaskStatus::Running {
             return;
         }
-        match error_code {
+        match exit_status.and_then(|e| e.code()) {
             Some(error_code) => {
                 task.status.register_task_exit(error_code);
             }
@@ -2224,7 +2299,7 @@ impl Terminal {
             }
         };
 
-        let (finished_successfully, task_line, command_line) = task_summary(task, error_code);
+        let (finished_successfully, task_line, command_line) = task_summary(task, exit_status);
         let mut lines_to_show = Vec::new();
         if task.spawned_task.show_summary {
             lines_to_show.push(task_line.as_str());
@@ -2275,6 +2350,7 @@ impl Terminal {
             None,
             cx,
             self.activation_script.clone(),
+            self.path_style,
         )
     }
 }
@@ -2288,19 +2364,35 @@ pub fn row_to_string(row: &Row<Cell>) -> String {
 }
 
 const TASK_DELIMITER: &str = "⏵ ";
-fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
+fn task_summary(task: &TaskState, exit_status: Option<ExitStatus>) -> (bool, String, String) {
     let escaped_full_label = task
         .spawned_task
         .full_label
         .replace("\r\n", "\r")
         .replace('\n', "\r");
-    let success = error_code == Some(0);
-    let task_line = match error_code {
-        Some(0) => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
-        Some(error_code) => format!(
-            "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
-        ),
-        None => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
+    let task_label = |suffix: &str| format!("{TASK_DELIMITER}Task `{escaped_full_label}` {suffix}");
+    let (success, task_line) = match exit_status {
+        Some(status) => {
+            let code = status.code();
+            #[cfg(unix)]
+            let signal = status.signal();
+            #[cfg(not(unix))]
+            let signal: Option<i32> = None;
+
+            match (code, signal) {
+                (Some(0), _) => (true, task_label("finished successfully")),
+                (Some(code), _) => (
+                    false,
+                    task_label(&format!("finished with exit code: {code}")),
+                ),
+                (None, Some(signal)) => (
+                    false,
+                    task_label(&format!("terminated by signal: {signal}")),
+                ),
+                (None, None) => (false, task_label("finished")),
+            }
+        }
+        None => (false, task_label("finished")),
     };
     let escaped_command_label = task
         .spawned_task
@@ -2350,9 +2442,19 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let TerminalType::Pty { pty_tx, info } = &mut self.terminal_type {
-            info.kill_child_process();
+        if let TerminalType::Pty { pty_tx, info } =
+            std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
+        {
             pty_tx.0.send(Msg::Shutdown).ok();
+            info.terminate_child_process();
+
+            let timer = self.background_executor.timer(Duration::from_millis(100));
+            self.background_executor
+                .spawn(async move {
+                    timer.await;
+                    info.kill_child_process();
+                })
+                .detach();
         }
     }
 }
@@ -2485,15 +2587,24 @@ mod tests {
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
+    use async_channel::Receiver;
     use collections::HashMap;
     use gpui::{
         Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
         Point, TestAppContext, bounds, point, size,
     };
     use parking_lot::Mutex;
-    use rand::{Rng, distr, rngs::ThreadRng};
-    use smol::channel::Receiver;
+    use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+
+    #[cfg(not(target_os = "windows"))]
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
 
     /// Helper to build a test terminal running a shell command.
     /// Returns the terminal entity and a receiver for the completion signal.
@@ -2502,7 +2613,7 @@ mod tests {
         command: &str,
         args: &[&str],
     ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
             ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
@@ -2527,6 +2638,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     vec![],
+                    PathStyle::local(),
                 )
             })
             .await
@@ -2542,9 +2654,16 @@ mod tests {
         });
 
         let terminal = cx.new(|cx| {
-            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
-                .unwrap()
-                .subscribe(cx)
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
         });
 
         terminal.update(cx, |terminal, cx| {
@@ -2643,9 +2762,11 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
+        init_test(cx);
+
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2663,6 +2784,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    PathStyle::local(),
                 )
             })
             .await
@@ -2670,7 +2792,7 @@ mod tests {
         // Build an empty command, which will result in a tty shell spawned.
         let terminal = cx.new(|cx| builder.subscribe(cx));
 
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
         cx.update(|cx| {
             cx.subscribe(&terminal, move |_, e, _| {
                 event_tx.send_blocking(e.clone()).unwrap();
@@ -2710,11 +2832,73 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test(iterations = 10)]
+    async fn test_terminal_closes_after_nonzero_exit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::System,
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    None,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
+                event_tx.send_blocking(e.clone()).unwrap();
+            })
+        })
+        .detach();
+
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
+
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"false\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_millis(500)).await;
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"exit\r".to_vec());
+        });
+
+        let mut all_events = vec![first_event];
+        while let Ok(new_event) = event_rx.recv().await {
+            all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
+        assert!(
+            all_events.contains(&Event::CloseTerminal),
+            "Shell exiting after `false && exit` should close terminal, but got events: {all_events:?}",
+        );
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let builder = cx
@@ -2738,6 +2922,7 @@ mod tests {
                     Some(completion_tx),
                     cx,
                     Vec::new(),
+                    PathStyle::local(),
                 )
             })
             .await
@@ -2766,7 +2951,7 @@ mod tests {
                 #[cfg(target_os = "windows")]
                 assert_eq!(exit_status.code(), Some(1));
                 #[cfg(not(target_os = "windows"))]
-                assert_eq!(exit_status.code(), None);
+                assert_eq!(exit_status.code(), Some(127)); // code 127 means "command not found" on Unix
             }
         });
 
@@ -2791,9 +2976,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_test() {
-        let mut rng = rand::rng();
+    #[gpui::test]
+    fn test_mouse_to_cell_test(mut rng: StdRng) {
         const ITERATIONS: usize = 10;
         const PRECISION: usize = 1000;
 
@@ -2841,10 +3025,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_clamp() {
-        let mut rng = rand::rng();
-
+    #[gpui::test]
+    fn test_mouse_to_cell_clamp(mut rng: StdRng) {
         let size = crate::TerminalBounds {
             cell_width: Pixels::from(10.),
             line_height: Pixels::from(10.),
@@ -2875,12 +3057,57 @@ mod tests {
         );
     }
 
-    fn get_cells(size: TerminalBounds, rng: &mut ThreadRng) -> Vec<Vec<char>> {
+    #[gpui::test]
+    async fn test_set_size_coalesces_pixel_only_changes(cx: &mut TestAppContext) {
+        let builder = cx.update(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::Block,
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+        });
+        let mut terminal = builder.terminal;
+
+        let base_bounds = TerminalBounds {
+            cell_width: Pixels::from(10.),
+            line_height: Pixels::from(10.),
+            bounds: bounds(
+                Point::default(),
+                size(Pixels::from(100.), Pixels::from(100.)),
+            ),
+        };
+
+        terminal.set_size(base_bounds);
+        terminal.events.clear();
+        assert_eq!(terminal.last_content.terminal_bounds, base_bounds);
+
+        // Pixel-only change: height grows by 1px but still the same number of rows/cols.
+        let mut pixel_changed = base_bounds;
+        pixel_changed.bounds.size.height = Pixels::from(101.);
+        terminal.set_size(pixel_changed);
+        assert!(terminal.events.is_empty());
+        assert_eq!(terminal.last_content.terminal_bounds, pixel_changed);
+
+        // Grid change: height increases enough to add a row.
+        let mut grid_changed = base_bounds;
+        grid_changed.bounds.size.height = Pixels::from(110.);
+        terminal.set_size(grid_changed);
+        assert!(matches!(
+            terminal.events.back(),
+            Some(InternalEvent::Resize(_))
+        ));
+    }
+
+    fn get_cells(size: TerminalBounds, rng: &mut StdRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..size.num_lines() {
             let mut row_vec = Vec::new();
-            for _ in 0..((size.width() / size.cell_width()) as usize) {
+            for _ in 0..size.num_columns() {
                 let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
@@ -2918,9 +3145,16 @@ mod tests {
     #[gpui::test]
     async fn test_write_output_converts_lf_to_crlf(cx: &mut TestAppContext) {
         let terminal = cx.new(|cx| {
-            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
-                .unwrap()
-                .subscribe(cx)
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
         });
 
         // Test simple LF conversion
@@ -2959,9 +3193,16 @@ mod tests {
     #[gpui::test]
     async fn test_write_output_preserves_existing_crlf(cx: &mut TestAppContext) {
         let terminal = cx.new(|cx| {
-            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
-                .unwrap()
-                .subscribe(cx)
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
         });
 
         // Test that existing CRLF doesn't get doubled
@@ -2994,9 +3235,16 @@ mod tests {
     #[gpui::test]
     async fn test_write_output_preserves_bare_cr(cx: &mut TestAppContext) {
         let terminal = cx.new(|cx| {
-            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
-                .unwrap()
-                .subscribe(cx)
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
         });
 
         // Test that bare CR (without LF) is preserved
@@ -3204,6 +3452,7 @@ mod tests {
                         None,
                         cx,
                         vec![],
+                        PathStyle::local(),
                     )
                 })
                 .await
@@ -3259,6 +3508,60 @@ mod tests {
             for _ in 0..20000 {
                 scroll_by(1);
                 scroll_by(-1);
+            }
+        }
+
+        #[test]
+        fn test_num_lines_float_precision() {
+            let line_heights = [
+                20.1f32, 16.7, 18.3, 22.9, 14.1, 15.6, 17.8, 19.4, 21.3, 23.7,
+            ];
+            for &line_height in &line_heights {
+                for n in 1..=100 {
+                    let height = n as f32 * line_height;
+                    let bounds = TerminalBounds::new(
+                        px(line_height),
+                        px(8.0),
+                        Bounds {
+                            origin: Point::default(),
+                            size: Size {
+                                width: px(800.0),
+                                height: px(height),
+                            },
+                        },
+                    );
+                    assert_eq!(
+                        bounds.num_lines(),
+                        n,
+                        "num_lines() should be {n} for height={height}, line_height={line_height}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn test_num_columns_float_precision() {
+            let cell_widths = [8.1f32, 7.3, 9.7, 6.9, 10.1];
+            for &cell_width in &cell_widths {
+                for n in 1..=200 {
+                    let width = n as f32 * cell_width;
+                    let bounds = TerminalBounds::new(
+                        px(20.0),
+                        px(cell_width),
+                        Bounds {
+                            origin: Point::default(),
+                            size: Size {
+                                width: px(width),
+                                height: px(400.0),
+                            },
+                        },
+                    );
+                    assert_eq!(
+                        bounds.num_columns(),
+                        n,
+                        "num_columns() should be {n} for width={width}, cell_width={cell_width}"
+                    );
+                }
             }
         }
     }
