@@ -4565,15 +4565,16 @@ impl Repository {
                             &repo_diff_state_updates
                         {
                             let index_text = if current_index_text.is_some() {
-                                backend.load_index_text(repo_path.clone()).await
+                                backend.load_index_text(repo_path.clone())
                             } else {
-                                None
+                                future::ready(None).boxed()
                             };
                             let head_text = if current_head_text.is_some() {
-                                backend.load_committed_text(repo_path.clone()).await
+                                backend.load_committed_text(repo_path.clone())
                             } else {
-                                None
+                                future::ready(None).boxed()
                             };
+                            let (index_text, head_text) = future::join(index_text, head_text).await;
 
                             let change =
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {

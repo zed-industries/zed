@@ -1097,15 +1097,16 @@ impl WgpuRenderer {
             );
 
             // TBD. Does retrying more actually help?
-            if self.failed_frame_count > 5 {
+            if self.failed_frame_count > 10 {
+                panic!("Too many consecutive GPU errors. Last error: {error}");
+            } else if self.failed_frame_count > 5 {
                 if let Some(res) = self.resources.as_mut() {
                     res.invalidate_intermediate_textures();
                 }
                 self.atlas.clear();
                 self.needs_redraw = true;
+                self.failed_frame_count = 0;
                 return;
-            } else if self.failed_frame_count > 10 {
-                panic!("Too many consecutive GPU errors. Last error: {error}");
             }
         } else {
             self.failed_frame_count = 0;
@@ -1799,12 +1800,16 @@ impl WgpuRenderer {
             self.resources = None;
             *gpu_context.borrow_mut() = None;
 
-            // Wait for GPU driver to stabilize (350ms copied from windows :shrug:)
+            // Wait briefly for the GPU driver to stabilize, then try to
+            // recreate the context without software renderers. If this fails
+            // the caller should request another frame and retry — the real GPU
+            // may need more time to come back (e.g. after suspend/resume).
             std::thread::sleep(std::time::Duration::from_millis(350));
 
             let instance = WgpuContext::instance(Box::new(window.clone()));
             let surface = create_surface(&instance, window_handle.as_raw())?;
-            let new_context = WgpuContext::new(instance, &surface, self.compositor_gpu)?;
+            let new_context =
+                WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
             *gpu_context.borrow_mut() = Some(new_context);
             surface
         } else {
