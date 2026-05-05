@@ -15,8 +15,8 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// and state directory paths.
 ///
 /// Read from the `APP_NAME` file in the `zed` crate, which is the single source
-/// of truth. The `zed` crate's `build.rs` validates at build time that this
-/// matches the `[package] name` in its `Cargo.toml` (case-insensitively).
+/// of truth. A compile-time assertion in `main.rs` validates that this matches
+/// the `[[bin]] name` (case-insensitively).
 /// Forks should change the `APP_NAME` file to avoid colliding with Zed's user data.
 pub const APP_NAME: &str = include_str!("../../zed/APP_NAME").trim_ascii();
 

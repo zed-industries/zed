@@ -2,8 +2,6 @@
 use std::process::Command;
 
 fn main() {
-    validate_app_name();
-
     #[cfg(target_os = "linux")]
     {
         // Add rpaths for libraries that webrtc-sys dlopens at runtime.
@@ -42,7 +40,6 @@ fn main() {
     }
 
     // Populate git sha environment variable if git is available
-    println!("cargo:rerun-if-changed=APP_NAME");
     println!("cargo:rerun-if-changed=../../.git/logs/HEAD");
     println!(
         "cargo:rustc-env=TARGET={}",
@@ -241,30 +238,6 @@ fn main() {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     prepare_app_icon_x11();
-}
-
-/// Validates that the `APP_NAME` file (the single source of truth for directory
-/// names in the `paths` crate) is consistent with the primary `[[bin]]` target
-/// name in this crate's Cargo.toml.
-fn validate_app_name() {
-    let app_name = include_str!("APP_NAME").trim();
-    let cargo_toml = std::fs::read_to_string("Cargo.toml").expect("failed to read Cargo.toml");
-    let bin_name = cargo_toml
-        .lines()
-        .skip_while(|line| !line.starts_with("[[bin]]"))
-        .find_map(|line| {
-            let line = line.trim();
-            line.strip_prefix("name")
-                .and_then(|rest| rest.trim_start().strip_prefix('='))
-                .map(|rest| rest.trim().trim_matches('"').to_string())
-        })
-        .expect("no [[bin]] name found in Cargo.toml");
-    assert!(
-        app_name.eq_ignore_ascii_case(&bin_name),
-        "APP_NAME file ({app_name:?}) must match the [[bin]] name in Cargo.toml ({bin_name:?}, \
-         case-insensitive). Forks: update the APP_NAME file when renaming the binary."
-    );
-    println!("cargo:rerun-if-changed=Cargo.toml");
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
