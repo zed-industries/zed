@@ -202,6 +202,14 @@ impl Platform for VisualTestPlatform {
         self.platform.set_cursor_style(style)
     }
 
+    fn hide_cursor_until_mouse_moves(&self) {
+        self.platform.hide_cursor_until_mouse_moves();
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.platform.is_cursor_visible()
+    }
+
     fn should_auto_hide_scrollbars(&self) -> bool {
         self.platform.should_auto_hide_scrollbars()
     }
