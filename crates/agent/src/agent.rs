@@ -273,6 +273,9 @@ pub struct NativeAgent {
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
+    /// Watches the global skills directory and refreshes every project's
+    /// context when SKILL.md files there change.
+    _watch_global_skills: Task<()>,
 }
 
 impl gpui::EventEmitter<SkillLoadingError> for NativeAgent {}
@@ -296,6 +299,11 @@ impl NativeAgent {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
             }
 
+            let watch_global_skills = cx.spawn({
+                let fs = fs.clone();
+                async move |this, cx| Self::watch_global_skills_directory(this, fs, cx).await
+            });
+
             Self {
                 sessions: HashMap::default(),
                 pending_sessions: HashMap::default(),
@@ -306,8 +314,48 @@ impl NativeAgent {
                 prompt_store,
                 fs,
                 _subscriptions: subscriptions,
+                _watch_global_skills: watch_global_skills,
             }
         })
+    }
+
+    async fn watch_global_skills_directory(
+        this: WeakEntity<Self>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AsyncApp,
+    ) {
+        let skills_dir = paths::skills_dir();
+
+        // If the skills directory doesn't exist yet, don't watch.
+        // (Re-checking when it appears is out of scope; the user can restart.)
+        if !fs.is_dir(skills_dir).await {
+            return;
+        }
+
+        let (mut events, _watcher) = fs
+            .watch(skills_dir, std::time::Duration::from_millis(500))
+            .await;
+
+        while let Some(changed_paths) = events.next().await {
+            let skill_changed = changed_paths.iter().any(|event| {
+                event
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name == agent_skills::SKILL_FILE_NAME)
+            });
+
+            if !skill_changed {
+                continue;
+            }
+
+            let Ok(()) = this.update(cx, |this, _cx| {
+                for state in this.projects.values_mut() {
+                    state.project_context_needs_refresh.send(()).ok();
+                }
+            }) else {
+                break;
+            };
+        }
     }
 
     fn new_session(
@@ -780,10 +828,12 @@ impl NativeAgent {
                 state.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
+                let skills_prefix = RelPath::unix(project_skills_relative_path()).unwrap();
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
                         .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
+                        || path.starts_with(skills_prefix)
                 }) {
                     state.project_context_needs_refresh.send(()).ok();
                 }
@@ -2402,6 +2452,62 @@ mod internal_tests {
                 thread.read(cx).project_context().read(cx).worktrees,
                 expected_worktrees
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_global_skills_load_and_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = paths::skills_dir();
+        let initial_skill_dir = skills_dir.join("my-skill");
+        let initial_skill_path = initial_skill_dir.join("SKILL.md");
+        fs.create_dir(&initial_skill_dir).await.unwrap();
+        fs.insert_file(
+            &initial_skill_path,
+            b"---\nname: my-skill\ndescription: First version\n---\n\nbody-v1".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // The pre-existing skill should be loaded into the project state.
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            assert_eq!(state.skills.len(), 1);
+            assert_eq!(state.skills[0].name, "my-skill");
+            assert_eq!(state.skills[0].description, "First version");
+        });
+
+        // Modify the SKILL.md and verify the project context refreshes.
+        fs.write(
+            &initial_skill_path,
+            b"---\nname: my-skill\ndescription: Second version\n---\n\nbody-v2",
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            assert_eq!(state.skills.len(), 1);
+            assert_eq!(state.skills[0].description, "Second version");
         });
     }
 
