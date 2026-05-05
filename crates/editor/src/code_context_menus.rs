@@ -2,8 +2,8 @@ use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollHandle, ScrollStrategy,
-    SharedString, Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px,
-    uniform_list,
+    SharedString, Size, StrikethroughStyle, StyledText, Task, TextStyle, UniformListScrollHandle,
+    div, px, uniform_list,
 };
 use itertools::Itertools;
 use language::CodeLabel;
@@ -915,10 +915,18 @@ impl CompletionsMenu {
                                 Some((shifted_start..shifted_end, (*highlight)))
                             })
                             .collect();
+                        // Render the detail/suffix text with a muted color so it's
+                        // visually distinct from the main completion label, matching
+                        // how `documentation_label` is rendered below. Syntax-aware
+                        // highlights from `suffix_highlights` still take precedence.
+                        let suffix_text_style = TextStyle {
+                            color: cx.theme().colors().text_muted,
+                            ..style.text.clone()
+                        };
                         let suffix_label = if !suffix_text.is_empty() {
                             Some(
                                 StyledText::new(suffix_text)
-                                    .with_default_highlights(&style.text, suffix_highlights),
+                                    .with_default_highlights(&suffix_text_style, suffix_highlights),
                             )
                         } else {
                             None
