@@ -1135,10 +1135,13 @@ impl AgentConfiguration {
             id: agent_server_name.clone(),
         };
 
-        let connection_status = self
-            .agent_connection_store
-            .read(cx)
-            .connection_status(&agent, cx);
+        let (connection_status, running_version) = {
+            let connection_store = self.agent_connection_store.read(cx);
+            (
+                connection_store.connection_status(&agent, cx),
+                connection_store.agent_version(&agent, cx),
+            )
+        };
 
         let restart_button = matches!(
             connection_status,
@@ -1252,6 +1255,7 @@ impl AgentConfiguration {
 
         AiSettingItem::new(id, display_name, status, source_kind)
             .icon(icon)
+            .when_some(running_version, |this, version| this.detail_label(version))
             .when_some(restart_button, |this, button| this.action(button))
             .when_some(uninstall_button, |this, button| this.action(button))
     }
