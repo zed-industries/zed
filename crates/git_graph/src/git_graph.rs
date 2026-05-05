@@ -2812,22 +2812,51 @@ impl GitGraph {
         }
     }
 
+    fn handle_entry_click(
+        &mut self,
+        entry_idx: usize,
+        event: &ClickEvent,
+        scroll_strategy: ScrollStrategy,
+        focus_handle: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Right-clicks open the context menu, not the details panel.
+        if event.is_right_click() {
+            return;
+        }
+
+        if let Some(focus_handle) = focus_handle {
+            focus_handle.focus(window, cx);
+        }
+
+        self.select_entry(entry_idx, scroll_strategy, cx);
+
+        if event.click_count() >= 2 {
+            self.open_commit_view(entry_idx, window, cx);
+        }
+    }
+
     fn handle_graph_click(
         &mut self,
         event: &ClickEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.is_right_click() {
-            return;
-        }
-
         if let Some(row) = self.row_at_position(event.position().y, window, cx) {
-            self.select_entry(row, ScrollStrategy::Nearest, cx);
-            if event.click_count() >= 2 {
-                self.open_commit_view(row, window, cx);
-            }
+            self.handle_entry_click(row, event, ScrollStrategy::Nearest, None, window, cx);
         }
+    }
+
+    fn handle_entry_secondary_mouse_down(
+        &mut self,
+        entry_idx: usize,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.deploy_entry_context_menu(event.position, entry_idx, window, cx);
+        cx.stop_propagation();
     }
 
     fn handle_graph_secondary_mouse_down(
@@ -2840,8 +2869,7 @@ impl GitGraph {
             return;
         };
 
-        self.deploy_entry_context_menu(event.position, row, window, cx);
-        cx.stop_propagation();
+        self.handle_entry_secondary_mouse_down(row, event, window, cx);
     }
 
     fn handle_graph_scroll(
@@ -3119,20 +3147,15 @@ impl Render for GitGraph {
                                                 .ok();
                                         })
                                         .on_click(move |event, window, cx| {
-                                            if event.is_right_click() {
-                                                return;
-                                            }
-                                            let click_count = event.click_count();
-                                            table_focus_handle.focus(window, cx);
                                             weak.update(cx, |this, cx| {
-                                                this.select_entry(
+                                                this.handle_entry_click(
                                                     index,
+                                                    event,
                                                     ScrollStrategy::Center,
+                                                    Some(&table_focus_handle),
+                                                    window,
                                                     cx,
                                                 );
-                                                if click_count >= 2 {
-                                                    this.open_commit_view(index, window, cx);
-                                                }
                                             })
                                             .ok();
                                         })
@@ -3141,15 +3164,11 @@ impl Render for GitGraph {
                                             move |event: &MouseDownEvent, window, cx| {
                                                 weak_for_context_menu
                                                     .update(cx, |this, cx| {
-                                                        this.deploy_entry_context_menu(
-                                                            event.position,
-                                                            index,
-                                                            window,
-                                                            cx,
+                                                        this.handle_entry_secondary_mouse_down(
+                                                            index, event, window, cx,
                                                         );
                                                     })
                                                     .ok();
-                                                cx.stop_propagation();
                                             },
                                         )
                                         .into_any_element()
