@@ -1,6 +1,9 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
-use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
+use crate::status::{
+    DiffStat, DiffTreeType, GitDiffStat, GitStatus, StatusCode, TreeDiff, count_untracked_lines,
+    tracked_lines,
+};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
@@ -8,23 +11,27 @@ use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
-use futures::{AsyncWriteExt, FutureExt as _, select_biased};
+use futures::{AsyncReadExt, AsyncWriteExt, FutureExt as _, select_biased};
 use git2::{BranchType, ErrorCode};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
+use itertools::Itertools;
+use log::warn;
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
-use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use smol::Timer;
+use smol::io::{AsyncBufReadExt, BufReader};
 use text::LineEnding;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::sync::atomic::AtomicBool;
 
 use std::process::ExitStatus;
 use std::str::FromStr;
+use std::time::Duration;
 use std::{
     cmp::Ordering,
     future,
@@ -2108,30 +2115,57 @@ impl GitRepository for RealGitRepository {
         &self,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
-        let path_prefixes = path_prefixes.to_vec();
-        let git_binary = self.git_binary();
+        // if we import this in module scope we have to fully qualify `.boxed()` everywhere
+        use smol::future::FutureExt as _;
 
-        self.executor
-            .spawn(async move {
-                let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
-                if !path_prefixes.is_empty() {
-                    args.push("--".into());
-                    args.extend(
-                        path_prefixes
-                            .iter()
-                            .map(|p| p.as_std_path().to_string_lossy().into_owned()),
-                    );
-                }
-                let output = git_binary.run(&args).await?;
-                Ok(crate::status::parse_numstat(&output))
+        let path_prefixes: Vec<_> = path_prefixes
+            .iter()
+            .map(|p| p.as_std_path().as_os_str().to_os_string())
+            .collect();
+        let git_binary = self.git_binary();
+        let fut = async move {
+            let git_binary = git_binary?;
+
+            // `git diff --numstat HEAD` fails when there are no commits yet,
+            // so treat errors as "no tracked changes" rather than propagating.
+            let tracked = tracked_lines(&git_binary, &path_prefixes)
+                .await
+                .unwrap_or_default();
+            let paths_with_stats: Mutex<_> = tracked
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect::<collections::HashSet<_>>()
+                .into();
+
+            let untracked =
+                count_untracked_lines(&git_binary, path_prefixes, &paths_with_stats).await?;
+
+            let timeout = async {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "This will not cause non-determinism since the tests \
+                    should complete well before 2s"
+                )]
+                Timer::after(Duration::from_secs(1)).await;
+                warn!("Timed out counting lines in untracked file paths");
+                BTreeMap::<RepoPath, DiffStat>::new()
+            };
+
+            // streams are lazy, until this point we have not done file access. Here we
+            // concurrently stat all files in any order.
+            use futures::StreamExt;
+            let total: std::collections::BTreeMap<_, _> = untracked
+                .filter_map(|s| std::future::ready(s)) // this is flatten
+                .chain(futures::stream::iter(tracked))
+                .collect() // StreamExt::collect
+                .or(timeout)
+                .await;
+
+            Ok(GitDiffStat {
+                entries: total.into_iter().collect_vec().into(),
             })
-            .boxed()
+        };
+        futures::FutureExt::boxed(fut)
     }
 
     fn stage_paths(
@@ -3280,7 +3314,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
 
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
-    working_directory: PathBuf,
+    pub working_directory: PathBuf,
     git_directory: PathBuf,
     executor: BackgroundExecutor,
     index_file_path: Option<PathBuf>,
@@ -3676,6 +3710,8 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 mod tests {
     use std::fs;
 
+    use crate::status::DiffStat;
+
     use super::*;
     use gpui::TestAppContext;
 
@@ -3805,6 +3841,108 @@ mod tests {
         assert_eq!(
             path,
             git_directory.join(format!("index-{}.tmp", Uuid::nil()))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_diff_stat_includes_untracked_files(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        smol::fs::write(repo_dir.path().join("tracked.txt"), "tracked\n")
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("tracked.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("a"), "lorem")
+            .await
+            .unwrap();
+
+        let stats = repo.diff_stat(&[RepoPath::new("").unwrap()]).await.unwrap();
+        assert_eq!(
+            stats.entries.to_vec(),
+            vec![(
+                RepoPath::new("a").unwrap(),
+                DiffStat {
+                    added: 1,
+                    deleted: 0
+                }
+            )]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_diff_stat_includes_untracked_symlinks(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        smol::fs::write(repo_dir.path().join("tracked.txt"), "tracked\n")
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("tracked.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("a"), "lorem")
+            .await
+            .unwrap();
+
+        let stats = repo.diff_stat(&[RepoPath::new("").unwrap()]).await.unwrap();
+        assert_eq!(
+            stats.entries.to_vec(),
+            vec![(
+                RepoPath::new("a").unwrap(),
+                DiffStat {
+                    added: 1,
+                    deleted: 0
+                }
+            )]
         );
     }
 

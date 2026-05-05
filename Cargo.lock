@@ -7306,6 +7306,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
+ "util_macros",
  "uuid",
  "ztracing",
 ]

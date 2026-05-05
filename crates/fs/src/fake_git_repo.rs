@@ -1098,14 +1098,6 @@ impl GitRepository for FakeGitRepository {
         &self,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
-        fn count_lines(s: &str) -> u32 {
-            if s.is_empty() {
-                0
-            } else {
-                s.lines().count() as u32
-            }
-        }
-
         fn matches_prefixes(path: &RepoPath, prefixes: &[RepoPath]) -> bool {
             if prefixes.is_empty() {
                 return true;
@@ -1119,6 +1111,12 @@ impl GitRepository for FakeGitRepository {
             })
         }
 
+        fn strip_drive_prefix(path: &Path) -> PathBuf {
+            path.components()
+                .filter(|c| !matches!(c, std::path::Component::Prefix(_)))
+                .collect()
+        }
+
         let path_prefixes = path_prefixes.to_vec();
 
         let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
@@ -1127,13 +1125,14 @@ impl GitRepository for FakeGitRepository {
             .files()
             .iter()
             .filter_map(|path| {
+                let path = strip_drive_prefix(path);
                 let repo_path = path.strip_prefix(&workdir_path).ok()?;
                 if repo_path.starts_with(".git") {
                     return None;
                 }
                 let content = self
                     .fs
-                    .read_file_sync(path)
+                    .read_file_sync(&path)
                     .ok()
                     .and_then(|bytes| String::from_utf8(bytes).ok())?;
                 let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
@@ -1146,11 +1145,7 @@ impl GitRepository for FakeGitRepository {
             let all_paths: HashSet<&RepoPath> = state
                 .head_contents
                 .keys()
-                .chain(
-                    worktree_files
-                        .keys()
-                        .filter(|p| state.index_contents.contains_key(*p)),
-                )
+                .chain(worktree_files.keys())
                 .collect();
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {
@@ -1163,8 +1158,8 @@ impl GitRepository for FakeGitRepository {
                         entries.push((
                             path.clone(),
                             git::status::DiffStat {
-                                added: count_lines(new),
-                                deleted: count_lines(old),
+                                added: new.lines().count() as u32,
+                                deleted: old.lines().count() as u32,
                             },
                         ));
                     }
@@ -1173,7 +1168,7 @@ impl GitRepository for FakeGitRepository {
                             path.clone(),
                             git::status::DiffStat {
                                 added: 0,
-                                deleted: count_lines(old),
+                                deleted: old.lines().count() as u32,
                             },
                         ));
                     }
@@ -1181,7 +1176,7 @@ impl GitRepository for FakeGitRepository {
                         entries.push((
                             path.clone(),
                             git::status::DiffStat {
-                                added: count_lines(new),
+                                added: new.lines().count() as u32,
                                 deleted: 0,
                             },
                         ));
