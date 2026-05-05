@@ -6,10 +6,11 @@ use dap::{
     VariableReference,
 };
 use editor::Editor;
-use gpui::{TaskExt, 
+use gpui::{
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
-    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TaskExt,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use itertools::Itertools;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};

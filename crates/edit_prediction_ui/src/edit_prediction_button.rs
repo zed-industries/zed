@@ -10,9 +10,9 @@ use editor::{
 };
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{TaskExt, 
+use gpui::{
     Action, Anchor, Animation, AnimationExt, App, AsyncWindowContext, Entity, FocusHandle,
-    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
+    Focusable, IntoElement, ParentElement, Render, Subscription, TaskExt, WeakEntity, actions, div,
     ease_in_out, pulsating_between,
 };
 use indoc::indoc;

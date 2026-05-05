@@ -2,8 +2,9 @@ use super::{Client, UserStore};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::websocket_protocol::MessageToClient;
 use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
-use gpui::{TaskExt, 
+use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _, Subscription,
+    TaskExt,
 };
 use std::sync::Arc;
 

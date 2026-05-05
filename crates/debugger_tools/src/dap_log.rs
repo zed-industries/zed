@@ -9,9 +9,10 @@ use futures::{
     StreamExt,
     channel::mpsc::{UnboundedSender, unbounded},
 };
-use gpui::{TaskExt, 
+use gpui::{
     App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window, actions, div,
+    ParentElement, Render, SharedString, Styled, Subscription, TaskExt, WeakEntity, Window,
+    actions, div,
 };
 use project::{
     Project,

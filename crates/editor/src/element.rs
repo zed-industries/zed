@@ -38,7 +38,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
-use gpui::{TaskExt, 
+use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DispatchPhase,
     Edges, Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
@@ -46,9 +46,9 @@ use gpui::{TaskExt,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
     MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement, WeakEntity, Window,
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    Style, Styled, StyledText, TaskExt, TextAlign, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{

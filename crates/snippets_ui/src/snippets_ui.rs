@@ -1,8 +1,8 @@
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{TaskExt, 
+use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
-    WeakEntity, Window, actions,
+    TaskExt, WeakEntity, Window, actions,
 };
 use language::{LanguageMatcher, LanguageName, LanguageRegistry};
 use open_path_prompt::file_finder_settings::FileFinderSettings;

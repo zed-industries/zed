@@ -2,12 +2,12 @@ mod edit_prediction_button;
 mod edit_prediction_context_view;
 mod rate_prediction_modal;
 
-use gpui::TaskExt;
 use command_palette_hooks::CommandPaletteFilter;
 use edit_prediction::{EditPredictionStore, ResetOnboarding, capture_example};
 use edit_prediction_context_view::EditPredictionContextView;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
+use gpui::TaskExt;
 use gpui::actions;
 use language::language_settings::AllLanguageSettings;
 use project::DisableAiSettings;

@@ -4,9 +4,9 @@ use std::sync::Arc;
 use call::{ActiveCall, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
-use gpui::{TaskExt, 
-    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
-    canvas, point,
+use gpui::{
+    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, TaskExt,
+    WeakEntity, canvas, point,
 };
 use gpui::{App, Task, Window};
 use icons::IconName;

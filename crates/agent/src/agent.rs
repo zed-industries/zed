@@ -36,8 +36,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task, TaskExt,
-    WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
+    TaskExt, WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{AgentId, Project, ProjectItem, ProjectPath, Worktree};
