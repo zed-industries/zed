@@ -18,18 +18,21 @@ For the organization:
 - **Enforced data controls:** Administrators configure AI and data settings for
   the whole organization from the Data & Privacy dashboard. Controls include the
   [Zed Model Provider](./admin-controls.md#hosted-ai-models),
-  [Edit Predictions](./admin-controls.md#edit-predictions), Edit Prediction
-  Feedback, and [Agent Thread Feedback](./admin-controls.md#agent-thread-feedback).
-  Members can't override these settings individually.
+  [Edit Predictions](./admin-controls.md#edit-predictions),
+  [Edit Prediction Feedback](./admin-controls.md#edit-predictions), and
+  [Agent Thread Feedback](./admin-controls.md#agent-thread-feedback). Members
+  can't override these settings individually.
 - **Private by default:** Zed doesn't store your prompts or train on them
   without explicit opt-in.
   [Data sharing for AI improvement](../ai/ai-improvement.md) is opt-in: members
   can choose to share but are never enrolled automatically. Administrators can
-  enforce this org-wide, blocking members from opting in at all.
-- **RBAC and permissions:** Owners, admins, and members have different access
-  levels. Billing and org settings are only visible to the roles that need them.
-- **Consolidated billing:** Your team's licenses and AI usage appear on one
-  invoice, with no separate bills per member.
+  [enforce this org-wide](./admin-controls.md#data-sharing), blocking members
+  from opting in at all.
+- **[Roles and permissions](../roles.md):** Owners, admins, and members have
+  different access levels. Billing and org settings are only visible to the
+  roles that need them.
+- **Consolidated billing:** Your team's licenses and AI usage appear on
+  [one invoice](../ai/billing.md#organization), with no separate bills per member.
 
 ## Getting started
 

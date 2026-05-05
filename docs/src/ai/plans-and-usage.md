@@ -45,7 +45,7 @@ The [Zed Student plan](https://zed.dev/education) includes all Zed Pro features:
 
 Usage of Zed's hosted models is measured on a token basis, converted to dollars at the rates listed on [the Models page](./models.md) (list price from the provider, +10%).
 
-Monthly included credit resets on your monthly billing date. To view your current usage, visit your account at [dashboard.zed.dev/account](https://dashboard.zed.dev/account). Usage data from our metering provider, Orb, is embedded on that page.
+Monthly included credit resets on your monthly billing date. To view your current usage, visit the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev). Usage data from our metering provider, Orb, is embedded on that page.
 
 ## Spend Limits {#usage-spend-limits}
 

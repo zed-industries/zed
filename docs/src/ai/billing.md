@@ -13,7 +13,7 @@ For details on what's included in each plan and how token usage works, see [Plan
 
 ### Billing information {#settings}
 
-Access billing information and settings from your [Zed dashboard](https://dashboard.zed.dev/account).
+Access billing information and settings from the [Zed dashboard](https://dashboard.zed.dev).
 This page embeds data from Orb, our invoicing and metering partner.
 
 ### Billing cycles {#billing-cycles}
@@ -36,7 +36,7 @@ If payment of an invoice fails, Zed will block usage of our hosted models until 
 
 ### Invoice history {#invoice-history}
 
-You can access your invoice history by navigating to [dashboard.zed.dev/account](https://dashboard.zed.dev/account) and clicking `Invoice history` within the embedded Orb portal.
+You can access your invoice history by navigating to [dashboard.zed.dev](https://dashboard.zed.dev) and clicking `Invoice history` within the embedded Orb portal.
 
 If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev).
 
@@ -56,15 +56,13 @@ Administrators can set an org-wide AI spend limit from the **Data & Privacy** pa
 
 ### Invoice history {#org-invoice-history}
 
-Owners and Admins can access an organizations' invoice history by navigating to [dashboard.zed.dev/account](https://dashboard.zed.dev/account) and clicking `Invoice history` within the embedded Orb portal.
+Owners and Admins can access an organization's invoice history from the Billing page in the [organization dashboard](https://dashboard.zed.dev). Click `Invoice history` within the embedded Orb portal.
 
 If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev).
 
 ## Updating billing information {#updating-billing-info}
 
-<!-- TODO: confirm whether owners/admins can update payment methods, addresses, and tax IDs self-serve at launch; if so, replace the below with instructions -->
-
-From the *Billing* page, owners can update their billing information (name, address, and tax ID) as well as the payment method used for invoices.
+From the *Billing* page, owners can update their billing name, address, and payment method. Tax IDs are collected during checkout and cannot be changed self-serve; email [billing-support@zed.dev](mailto:billing-support@zed.dev) to update your tax ID.
 
 Changes to billing information will **only** affect future invoices. We cannot modify historical invoices. Email [billing-support@zed.dev](mailto:billing-support@zed.dev) with any questions.
 

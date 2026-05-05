@@ -5,10 +5,9 @@ description: How to contact Zed for business inquiries and support.
 
 # Business Support
 
-For business inquiries (account setup, billing, organization questions, or anything specific to your organization), email [sales@zed.dev](mailto:sales@zed.dev).
+For billing and business support (account setup, invoices, organization questions), email [billing-support@zed.dev](mailto:billing-support@zed.dev). Business support is prioritized relative to other support channels.
 
-<!-- TODO: confirm support contact before launch (sales@? dedicated business-support@?) -->
-<!-- TODO: confirm what dedicated support offering, if any, is available at launch -->
+For general questions, email [hi@zed.dev](mailto:hi@zed.dev).
 
 ## Open-source issues
 
