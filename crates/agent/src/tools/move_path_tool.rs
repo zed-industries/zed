@@ -104,7 +104,7 @@ impl AgentTool for MovePathTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
             let paths = vec![input.source_path.clone(), input.destination_path.clone()];
             let decision = cx.update(|cx| {
                 decide_permission_for_paths(Self::NAME, &paths, AgentSettings::get_global(cx))
