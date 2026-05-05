@@ -2818,12 +2818,30 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.is_right_click() {
+            return;
+        }
+
         if let Some(row) = self.row_at_position(event.position().y, window, cx) {
             self.select_entry(row, ScrollStrategy::Nearest, cx);
             if event.click_count() >= 2 {
                 self.open_commit_view(row, window, cx);
             }
         }
+    }
+
+    fn handle_graph_secondary_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.row_at_position(event.position.y, window, cx) else {
+            return;
+        };
+
+        self.deploy_entry_context_menu(event.position, row, window, cx);
+        cx.stop_propagation();
     }
 
     fn handle_graph_scroll(
@@ -3040,6 +3058,10 @@ impl Render for GitGraph {
                                 .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
                                 .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
                                 .on_click(cx.listener(Self::handle_graph_click))
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(Self::handle_graph_secondary_mouse_down),
+                                )
                                 .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
                                     if !is_hovered && this.hovered_entry_idx.is_some() {
                                         this.hovered_entry_idx = None;
