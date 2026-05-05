@@ -33,12 +33,14 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
-///
-/// The terminal emulator is an interactive pty, so commands may block waiting for user input.
-/// Some commands can be configured not to do this, such as `git --no-pager diff` and similar.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    ///
+    /// The terminal emulator is an interactive pty, so it is essential that you not run commands that could
+    /// block waiting for user input. For example, always run `git` commands with `--no-pager` to avoid
+    /// having the terminal hang waiting for `less`, and `GIT_EDITOR=true git rebase` when doing git rebase
+    /// commands, to avoid the terminal hanging waiting for an interactive editor.
     pub command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
