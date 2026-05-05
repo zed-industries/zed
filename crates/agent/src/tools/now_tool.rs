@@ -6,6 +6,7 @@ use gpui::{App, SharedString, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::deserialize_maybe_stringified;
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -23,6 +24,7 @@ pub enum Timezone {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct NowToolInput {
     /// The timezone to use for the datetime. Use `utc` for UTC, or `local` for the system's local time.
+    #[serde(deserialize_with = "deserialize_maybe_stringified")]
     timezone: Timezone,
 }
 
@@ -60,5 +62,30 @@ impl AgentTool for NowTool {
             };
             Ok(format!("The current datetime is {now}."))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use serde_json::json;
+
+    #[gpui::test]
+    async fn test_stringified_timezone_input_succeeds(cx: &mut TestAppContext) {
+        let tool = Arc::new(NowTool);
+        let (mut sender, input) = ToolInput::<NowToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_full(json!({
+            "timezone": "\"utc\""
+        }));
+
+        let result = task.await.unwrap();
+        assert!(
+            result.starts_with("The current datetime is "),
+            "unexpected output: {result}"
+        );
     }
 }

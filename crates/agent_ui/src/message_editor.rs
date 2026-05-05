@@ -146,6 +146,12 @@ pub struct MessageEditor {
 }
 
 #[derive(Clone, Debug)]
+pub enum InputAttempt {
+    Text(Arc<str>),
+    Paste(ClipboardItem),
+}
+
+#[derive(Clone, Debug)]
 pub enum MessageEditorEvent {
     Send,
     SendImmediately,
@@ -153,7 +159,7 @@ pub enum MessageEditorEvent {
     Focus,
     LostFocus,
     InputAttempted {
-        text: Arc<str>,
+        attempt: InputAttempt,
         cursor_offset: usize,
     },
 }
@@ -494,7 +500,7 @@ impl MessageEditor {
                         .to_offset(&editor.buffer().read(cx).snapshot(cx))
                         .0;
                     cx.emit(MessageEditorEvent::InputAttempted {
-                        text: text.clone(),
+                        attempt: InputAttempt::Text(text.clone()),
                         cursor_offset,
                     });
                 }
@@ -954,18 +960,47 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Cancel)
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        if self.editor.read(cx).read_only(cx) {
+            let editor = self.editor.read(cx);
+            let cursor_offset = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .to_offset(&editor.buffer().read(cx).snapshot(cx))
+                .0;
+            cx.emit(MessageEditorEvent::InputAttempted {
+                attempt: InputAttempt::Paste(clipboard),
+                cursor_offset,
+            });
+            cx.stop_propagation();
+            return;
+        }
+
+        cx.stop_propagation();
+        self.paste_item(&clipboard, window, cx);
+    }
+
+    pub fn paste_item(
+        &mut self,
+        clipboard: &ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let editor_clipboard_selections = cx.read_from_clipboard().and_then(|item| {
-            item.entries().iter().find_map(|entry| match entry {
+        let editor_clipboard_selections =
+            clipboard.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::String(text) => {
                     text.metadata_json::<Vec<editor::ClipboardSelection>>()
                 }
                 _ => None,
-            })
-        });
+            });
 
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
@@ -997,7 +1032,6 @@ impl MessageEditor {
         .unwrap_or(false);
 
         if should_insert_creases && let Some(selections) = editor_clipboard_selections {
-            cx.stop_propagation();
             let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
             let (insertion_target, _) = snapshot
                 .anchor_to_buffer_anchor(self.editor.read(cx).selections.newest_anchor().start)
@@ -1085,14 +1119,12 @@ impl MessageEditor {
         }
         // Handle text paste with potential markdown mention links before
         // clipboard context entries so markdown text still pastes as text.
-        if let Some(clipboard_text) = cx.read_from_clipboard().and_then(|item| {
-            item.entries().iter().find_map(|entry| match entry {
-                ClipboardEntry::String(text) => Some(text.text().to_string()),
-                _ => None,
-            })
-        }) {
+        let clipboard_text = clipboard.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::String(text) => Some(text.text().to_string()),
+            _ => None,
+        });
+        if let Some(clipboard_text) = clipboard_text.as_deref() {
             if clipboard_text.contains("[@") {
-                cx.stop_propagation();
                 let selections_before = self.editor.update(cx, |editor, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     editor
@@ -1109,7 +1141,7 @@ impl MessageEditor {
                 });
 
                 self.editor.update(cx, |editor, cx| {
-                    editor.insert(&clipboard_text, window, cx);
+                    editor.insert(clipboard_text, window, cx);
                 });
 
                 let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -1180,12 +1212,13 @@ impl MessageEditor {
             }
         }
 
-        if self.handle_pasted_context(window, cx) {
+        if self.handle_pasted_context(clipboard, window, cx) {
             return;
         }
 
-        // Fall through to default editor paste
-        cx.propagate();
+        self.editor.update(cx, |editor, cx| {
+            editor.paste_item(clipboard, window, cx);
+        });
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -1205,11 +1238,12 @@ impl MessageEditor {
         });
     }
 
-    fn handle_pasted_context(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(clipboard) = cx.read_from_clipboard() else {
-            return false;
-        };
-
+    fn handle_pasted_context(
+        &mut self,
+        clipboard: &ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if matches!(
             clipboard.entries().first(),
             Some(ClipboardEntry::String(_)) | None
@@ -1229,9 +1263,7 @@ impl MessageEditor {
         let editor = self.editor.clone();
         let mention_set = self.mention_set.clone();
         let workspace = self.workspace.clone();
-        let entries = clipboard.into_entries().collect::<Vec<_>>();
-
-        cx.stop_propagation();
+        let entries = clipboard.clone().into_entries().collect::<Vec<_>>();
 
         window
             .spawn(cx, async move |mut cx| {

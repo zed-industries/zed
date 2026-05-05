@@ -4535,7 +4535,7 @@ impl GitPanel {
                             .child(EditorElement::new(&self.commit_editor, panel_editor_style)),
                     )
                     .child(
-                        h_flex()
+                        v_flex()
                             .absolute()
                             .top_2()
                             .right_2()

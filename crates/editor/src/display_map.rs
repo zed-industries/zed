@@ -94,7 +94,7 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
 };
 use language::{
@@ -113,6 +113,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
+use theme::StatusColors;
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -1848,8 +1849,7 @@ impl DisplaySnapshot {
                         && editor_style.show_underlines
                         && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
                         .then(|| {
-                            let diagnostic_color =
-                                super::diagnostic_style(severity, &editor_style.status);
+                            let diagnostic_color = diagnostic_style(severity, &editor_style.status);
                             UnderlineStyle {
                                 color: Some(diagnostic_color),
                                 thickness: 1.0.into(),
@@ -2411,6 +2411,16 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+}
+
+fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+    match severity {
+        lsp::DiagnosticSeverity::ERROR => colors.error,
+        lsp::DiagnosticSeverity::WARNING => colors.warning,
+        lsp::DiagnosticSeverity::INFORMATION => colors.info,
+        lsp::DiagnosticSeverity::HINT => colors.hint,
+        _ => colors.ignored,
     }
 }
 
