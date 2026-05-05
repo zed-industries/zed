@@ -2176,7 +2176,7 @@ impl GitGraph {
                 );
 
             if !git_tasks.is_empty() {
-                context_menu = context_menu.separator().header("Git Tasks");
+                context_menu = context_menu.separator().header("Custom Git Commands");
                 for (task_source_kind, resolved_task) in git_tasks {
                     let label = resolved_task.display_label().to_string();
                     context_menu = context_menu.entry(
