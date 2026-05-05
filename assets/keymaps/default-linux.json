@@ -248,6 +248,12 @@
     },
   },
   {
+    "context": "AgentPanel && Terminal",
+    "bindings": {
+      "ctrl-n": "agent::NewThread",
+    },
+  },
+  {
     "context": "AgentPanel > Markdown",
     "bindings": {
       "copy": "markdown::CopyAsMarkdown",

@@ -181,9 +181,18 @@ fn read_legacy_serialized_panel(kvp: &KeyValueStore) -> Option<SerializedAgentPa
         .and_then(|json| serde_json::from_str::<SerializedAgentPanel>(&json).log_err())
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+enum AgentPanelEntryKind {
+    #[default]
+    Thread,
+    Terminal,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
     selected_agent: Option<Agent>,
+    #[serde(default)]
+    last_created_entry_kind: AgentPanelEntryKind,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
     draft_thread_prompt: Option<Vec<acp::ContentBlock>>,
@@ -201,9 +210,9 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
-                .register_action(|workspace, action: &NewThread, window, cx| {
+                .register_action(|workspace, _: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
+                        panel.update(cx, |panel, cx| panel.new_entry(Some(workspace), window, cx));
                         workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
@@ -779,6 +788,7 @@ pub struct AgentPanel {
     focus_handle: FocusHandle,
     base_view: BaseView,
     last_active_thread_id: Option<ThreadId>,
+    last_created_entry_kind: AgentPanelEntryKind,
     overlay_view: Option<OverlayView>,
     draft_thread: Option<Entity<ConversationView>>,
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
@@ -808,6 +818,7 @@ impl AgentPanel {
         };
 
         let selected_agent = self.selected_agent.clone();
+        let last_created_entry_kind = self.last_created_entry_kind;
 
         let is_draft_active = self.active_thread_is_draft(cx);
         let last_active_thread = self
@@ -866,6 +877,7 @@ impl AgentPanel {
                 workspace_id,
                 SerializedAgentPanel {
                     selected_agent: Some(selected_agent),
+                    last_created_entry_kind,
                     last_active_thread,
                     draft_thread_prompt,
                 },
@@ -958,6 +970,7 @@ impl AgentPanel {
                         global_last_used_agent.filter(|agent| !is_via_collab || agent.is_native());
 
                     if let Some(serialized_panel) = &serialized_panel {
+                        panel.last_created_entry_kind = serialized_panel.last_created_entry_kind;
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent = selected_agent;
                         } else if let Some(agent) = global_fallback {
@@ -1132,6 +1145,7 @@ impl AgentPanel {
             workspace_id,
             base_view,
             last_active_thread_id: None,
+            last_created_entry_kind: AgentPanelEntryKind::Thread,
             overlay_view: None,
             workspace,
             user_store,
@@ -1288,8 +1302,32 @@ impl AgentPanel {
         cx.notify();
     }
 
+    pub fn new_entry(
+        &mut self,
+        workspace: Option<&Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.should_create_terminal_for_new_entry(cx) {
+            self.new_terminal(workspace, window, cx);
+        } else {
+            self.activate_new_thread(true, "agent_panel", window, cx);
+        }
+    }
+
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.activate_draft(true, "agent_panel", window, cx);
+        self.new_entry(None, window, cx);
+    }
+
+    pub fn activate_new_thread(
+        &mut self,
+        focus: bool,
+        trigger: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_last_created_entry_kind(AgentPanelEntryKind::Thread, cx);
+        self.activate_draft(focus, trigger, window, cx);
     }
 
     pub fn new_external_agent_thread(
@@ -1301,7 +1339,7 @@ impl AgentPanel {
         if let Some(agent) = action.agent.clone() {
             self.selected_agent = agent;
         }
-        self.activate_draft(true, "agent_panel", window, cx);
+        self.activate_new_thread(true, "agent_panel", window, cx);
     }
 
     pub fn new_terminal(
@@ -1326,6 +1364,21 @@ impl AgentPanel {
     pub fn supports_terminal(&self, cx: &App) -> bool {
         cx.has_flag::<AgentPanelTerminalFeatureFlag>()
             && self.project.read(cx).supports_terminal(cx)
+    }
+
+    pub fn should_create_terminal_for_new_entry(&self, cx: &App) -> bool {
+        self.last_created_entry_kind == AgentPanelEntryKind::Terminal && self.supports_terminal(cx)
+    }
+
+    fn set_last_created_entry_kind(
+        &mut self,
+        entry_kind: AgentPanelEntryKind,
+        cx: &mut Context<Self>,
+    ) {
+        if self.last_created_entry_kind != entry_kind {
+            self.last_created_entry_kind = entry_kind;
+            self.serialize(cx);
+        }
     }
 
     fn spawn_terminal(
@@ -1377,8 +1430,7 @@ impl AgentPanel {
             return;
         }
         let terminal_entity = terminal_view.read(cx).terminal().clone();
-        // Listen on `TerminalView` for close, since it bridges both shell-exit
-        // (`Event::CloseTerminal`) and user-driven close (`ItemEvent::CloseItem`).
+        // Listen on `TerminalView` for user-driven item closes.
         let item_subscription = cx.subscribe_in(
             &terminal_view,
             window,
@@ -1410,8 +1462,13 @@ impl AgentPanel {
                     this.refresh_terminal_title(terminal_id, cx);
                 }
                 TerminalEvent::Bell => this.mark_terminal_bell_unseen(terminal_id, window, cx),
+                TerminalEvent::CloseTerminal => {
+                    let focus = this.terminals.get(&terminal_id).is_some_and(|terminal| {
+                        terminal.view.focus_handle(cx).contains_focused(window, cx)
+                    });
+                    this.close_terminal(terminal_id, focus, window, cx);
+                }
                 TerminalEvent::BreadcrumbsChanged
-                | TerminalEvent::CloseTerminal
                 | TerminalEvent::Wakeup
                 | TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
@@ -1427,6 +1484,7 @@ impl AgentPanel {
             has_unseen_bell: false,
             _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
         };
+        self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal, cx);
         terminal.refresh_title(cx);
         self.terminals.insert(terminal_id, terminal);
         if focus {
@@ -1465,7 +1523,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.terminals.remove(&terminal_id);
+        if self.terminals.remove(&terminal_id).is_none() {
+            return;
+        }
 
         let was_active = self.active_terminal_id() == Some(terminal_id);
         if was_active {
@@ -2288,7 +2348,7 @@ impl AgentPanel {
                     });
                 }
 
-                self.new_thread(&NewThread, window, cx);
+                self.activate_new_thread(true, "agent_panel", window, cx);
                 if let Some((thread, model)) = self
                     .active_native_agent_thread(cx)
                     .zip(provider.default_model(cx))

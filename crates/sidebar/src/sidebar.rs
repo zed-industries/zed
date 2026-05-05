@@ -4371,13 +4371,37 @@ impl Sidebar {
             self.set_group_expanded(&key, true, cx);
             self.selection = None;
             if let Some(workspace) = self.workspace_for_group(&key, cx) {
-                self.create_new_thread(&workspace, window, cx);
+                self.create_new_entry(&workspace, window, cx);
             } else {
                 self.open_workspace_and_create_draft(&key, window, cx);
             }
         } else if let Some(workspace) = self.active_workspace(cx) {
-            self.create_new_thread(&workspace, window, cx);
+            self.create_new_entry(&workspace, window, cx);
         }
+    }
+
+    fn create_new_entry(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.should_create_terminal_for_workspace(workspace, cx) {
+            self.create_new_terminal(workspace, window, cx);
+        } else {
+            self.create_new_thread(workspace, window, cx);
+        }
+    }
+
+    fn should_create_terminal_for_workspace(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) -> bool {
+        workspace
+            .read(cx)
+            .panel::<AgentPanel>(cx)
+            .is_some_and(|panel| panel.read(cx).should_create_terminal_for_new_entry(cx))
     }
 
     fn create_new_thread(
@@ -4397,7 +4421,7 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.activate_draft(true, "sidebar", window, cx);
+                panel.activate_new_thread(true, "sidebar", window, cx);
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);
@@ -4411,6 +4435,30 @@ impl Sidebar {
                 workspace: workspace.clone(),
             });
         }
+    }
+
+    fn create_new_terminal(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.new_terminal(Some(workspace), window, cx);
+                });
+            }
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
     }
 
     fn selected_group_key(&self) -> Option<ProjectGroupKey> {

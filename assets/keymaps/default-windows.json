@@ -249,6 +249,13 @@
     },
   },
   {
+    "context": "AgentPanel && Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-n": "agent::NewThread",
+    },
+  },
+  {
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
