@@ -5258,20 +5258,17 @@ mod tests {
 
         let t0 = Utc::now();
 
-        let result = vec![
-            local_recent_workspace(
-                WorkspaceId(1),
-                PathList::new(&["/foo/my-feature"]),
-                t0,
-                fs.as_ref(),
-            )
-            .await,
-        ];
+        let result = local_recent_workspace(
+            WorkspaceId(1),
+            PathList::new(&["/foo/my-feature"]),
+            t0,
+            fs.as_ref(),
+        )
+        .await;
 
         // Bare-backed worktrees should resolve to the repo identity path, which
         // is the parent directory users think of as the project root.
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].identity_paths.paths(), &[PathBuf::from("/foo")]);
+        assert_eq!(result.identity_paths.paths(), &[PathBuf::from("/foo")]);
     }
 
     #[gpui::test]
@@ -5281,7 +5278,7 @@ mod tests {
         let fs = fs::FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/monty",
+            "/the-project",
             json!({
                 ".git": "gitdir: ./.bare\n",
                 ".bare": {
@@ -5298,7 +5295,7 @@ mod tests {
         .await;
 
         fs.insert_tree(
-            "/monty/feature-a",
+            "/the-project/feature-a",
             json!({
                 ".git": "gitdir: ../.bare/worktrees/feature-a\n",
                 "src": { "lib.rs": "" }
@@ -5309,11 +5306,16 @@ mod tests {
         let t0 = Utc::now() - chrono::Duration::hours(1);
         let t1 = Utc::now();
         let workspaces = vec![
-            local_recent_workspace(WorkspaceId(1), PathList::new(&["/monty"]), t0, fs.as_ref())
-                .await,
+            local_recent_workspace(
+                WorkspaceId(1),
+                PathList::new(&["/the-project"]),
+                t0,
+                fs.as_ref(),
+            )
+            .await,
             local_recent_workspace(
                 WorkspaceId(2),
-                PathList::new(&["/monty/feature-a"]),
+                PathList::new(&["/the-project/feature-a"]),
                 t1,
                 fs.as_ref(),
             )
@@ -5323,7 +5325,10 @@ mod tests {
         let result = dedupe_recent_workspaces(workspaces);
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].identity_paths.paths(), &[PathBuf::from("/monty")]);
+        assert_eq!(
+            result[0].identity_paths.paths(),
+            &[PathBuf::from("/the-project")]
+        );
         assert_eq!(result[0].workspace_id, WorkspaceId(2));
         assert_eq!(result[0].timestamp, t1);
     }
@@ -5335,7 +5340,7 @@ mod tests {
             WorkspaceDb::open_test_db("test_recent_project_workspaces_preserve_reopen_paths").await;
 
         fs.insert_tree(
-            "/monty",
+            "/the-project",
             json!({
                 ".git": "gitdir: ./.bare\n",
                 ".bare": {
@@ -5352,7 +5357,7 @@ mod tests {
         .await;
 
         fs.insert_tree(
-            "/monty/feature-a",
+            "/the-project/feature-a",
             json!({
                 ".git": "gitdir: ../.bare/worktrees/feature-a\n",
                 "src": { "lib.rs": "" }
@@ -5362,14 +5367,14 @@ mod tests {
 
         db.save_workspace(workspace_with(
             1,
-            &[Path::new("/monty")],
+            &[Path::new("/the-project")],
             empty_pane_group(),
             None,
         ))
         .await;
         db.save_workspace(workspace_with(
             2,
-            &[Path::new("/monty/feature-a")],
+            &[Path::new("/the-project/feature-a")],
             empty_pane_group(),
             None,
         ))
@@ -5387,11 +5392,11 @@ mod tests {
         assert_eq!(recents[0].workspace_id, WorkspaceId(2));
         assert_eq!(
             recents[0].paths.paths(),
-            &[PathBuf::from("/monty/feature-a")]
+            &[PathBuf::from("/the-project/feature-a")]
         );
         assert_eq!(
             recents[0].identity_paths.paths(),
-            &[PathBuf::from("/monty")]
+            &[PathBuf::from("/the-project")]
         );
     }
 
