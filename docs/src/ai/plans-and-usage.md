@@ -45,17 +45,17 @@ The [Zed Student plan](https://zed.dev/education) includes all Zed Pro features:
 
 Usage of Zed's hosted models is measured on a token basis, converted to dollars at the rates listed on [the Models page](./models.md) (list price from the provider, +10%).
 
-Monthly included credit resets on your monthly billing date. To view your current usage, visit the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev). Usage data from our metering provider, Orb, is embedded on that page.
+Monthly included credit resets on your monthly billing date. To view your current usage, navigate to the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev). Usage data from our metering provider, Orb, is embedded on that page.
 
 ## Spend Limits {#usage-spend-limits}
 
-On your *Billing page* you'll find an input for `Monthly Spend Limit`. The dollar amount here specifies your _monthly_ limit for spend on tokens, _not counting_ the $5/month included with your Pro subscription.
+On your Billing page you'll find an input for `Monthly Spend Limit`. The dollar amount here specifies your _monthly_ limit for spend on tokens, _not counting_ the $5/month included with your Pro subscription.
 
 The default value for all Pro users is $10, for a total monthly spend with Zed of $20 ($10 for your Pro subscription, $10 in incremental token spend). This can be set to $0 to limit your spend with Zed to exactly $10/month. If you adjust this limit _higher_ than $10 and consume more than $10 of incremental token spend, you'll be billed via [threshold billing](./billing.md#threshold-billing).
 
 Once the spend limit is hit, we'll stop any further usage until your token spend limit resets.
 
-On Zed Business, administrators set an org-wide spend limit from the **Data & Privacy** page in the organization dashboard. See [Organization Billing](./billing.md#ai-usage) for details.
+On Zed Business, administrators set an org-wide spend limit from the Data & Privacy page in the organization dashboard. See [Organization Billing](./billing.md#ai-usage) for details.
 
 > **Note:** Spend limits are a Zed Pro and Business feature. Student plan users cannot configure spend limits; usage is capped at the $10/month included credit.
 

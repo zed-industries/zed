@@ -13,7 +13,7 @@ For details on what's included in each plan and how token usage works, see [Plan
 
 ### Billing information {#settings}
 
-Access billing information and settings from the [Zed dashboard](https://dashboard.zed.dev).
+Access billing information and settings from your [Zed dashboard](https://dashboard.zed.dev).
 This page embeds data from Orb, our invoicing and metering partner.
 
 ### Billing cycles {#billing-cycles}
@@ -36,7 +36,7 @@ If payment of an invoice fails, Zed will block usage of our hosted models until 
 
 ### Invoice history {#invoice-history}
 
-You can access your invoice history by navigating to [dashboard.zed.dev](https://dashboard.zed.dev) and clicking `Invoice history` within the embedded Orb portal.
+You can access your invoice history from the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev) by clicking `Invoice history` within the embedded Orb portal.
 
 If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev).
 
@@ -52,11 +52,11 @@ Owners and admins can access billing information at [dashboard.zed.dev](https://
 
 AI usage across the organization is metered on a token basis at the same rates as individual Pro subscriptions. See [Plans & Pricing](./plans-and-usage.md#usage) for rate details.
 
-Administrators can set an org-wide AI spend limit from the **Data & Privacy** page in the organization dashboard. The limit starts at $0, so it must be increased before members can use any hosted models. Once the limit is reached, members will see an error when attempting to use hosted models.
+Administrators can set an org-wide AI spend limit from the Data & Privacy page in the organization dashboard. The limit starts at $0, so it must be increased before members can use any hosted models. Once the limit is reached, members will see an error when attempting to use hosted models.
 
 ### Invoice history {#org-invoice-history}
 
-Owners and Admins can access an organization's invoice history from the Billing page in the [organization dashboard](https://dashboard.zed.dev). Click `Invoice history` within the embedded Orb portal.
+Owners and Admins can access an organization's invoice history from the Billing page at [dashboard.zed.dev](https://dashboard.zed.dev) by clicking `Invoice history` within the embedded Orb portal.
 
 If you require historical Stripe invoices, email [billing-support@zed.dev](mailto:billing-support@zed.dev).
 

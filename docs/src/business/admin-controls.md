@@ -11,7 +11,7 @@ Most controls apply server-side to anything that routes through Zed's infrastruc
 
 ## Accessing admin controls
 
-Admin controls are available to owners and admins in the organization dashboard at [dashboard.zed.dev](https://dashboard.zed.dev). Navigate to your organization, then select **Data & Privacy** from the sidebar to configure these settings.
+Admin controls are available to owners and admins in the organization dashboard at [dashboard.zed.dev](https://dashboard.zed.dev). Navigate to your organization, then select Data & Privacy from the sidebar to configure these settings.
 
 ---
 
@@ -19,7 +19,7 @@ Admin controls are available to owners and admins in the organization dashboard 
 
 The **Collaboration** toggle controls whether members can use Zed's real-time collaboration features, including [Channels](../collaboration/channels.md), shared projects, and voice chat. Collaboration is off by default for Business organizations.
 
-This control is configured from the **Data & Privacy** page in the organization dashboard. It is enforced client-side and requires members to be on Zed **0.233 or later**. Members on older versions will not have the setting enforced.
+This control is configured from the Data & Privacy page in the organization dashboard. It is enforced client-side and requires members to be on Zed **0.233 or later**. Members on older versions will not have the setting enforced.
 
 ## Hosted AI models
 
