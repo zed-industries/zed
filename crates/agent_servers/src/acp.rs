@@ -2304,10 +2304,7 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::atomic::{AtomicUsize, Ordering},
-        time::Duration,
-    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
@@ -2492,7 +2489,10 @@ mod tests {
             &mut async_cx,
         )
         .fuse();
-        let timeout = cx.background_executor.timer(Duration::from_secs(5)).fuse();
+        let timeout = cx
+            .background_executor
+            .timer(std::time::Duration::from_secs(5))
+            .fuse();
         futures::pin_mut!(startup, timeout);
 
         let result = futures::select! {
