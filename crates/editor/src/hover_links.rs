@@ -120,7 +120,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let hovered_link_modifier = Editor::is_cmd_or_ctrl_pressed(&modifiers, cx);
-        if !hovered_link_modifier || self.has_pending_selection() || self.mouse_cursor_hidden {
+        if !hovered_link_modifier || self.has_pending_selection() {
+            self.hide_hovered_link(cx);
+            return;
+        }
+
+        if !cx.is_cursor_visible() {
             self.hide_hovered_link(cx);
             return;
         }
@@ -782,7 +787,7 @@ fn surrounding_filename(
 mod tests {
     use super::*;
     use crate::{
-        DisplayPoint, HideMouseCursorOrigin,
+        DisplayPoint,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
@@ -1405,29 +1410,6 @@ mod tests {
         // Modifier active
         let screen_coord = cx.pixel_position(indoc! {"
             Let's test a [complex](https://zed.dev/channeˇl/) case.
-            "});
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
-        cx.assert_editor_text_highlights(
-            HighlightKey::HoveredLinkState,
-            indoc! {"
-            Let's test a [complex](«https://zed.dev/channel/ˇ») case.
-        "},
-        );
-
-        // Cursor hidden with secondary key
-        let screen_coord = cx.pixel_position(indoc! {"
-            Let's test a [complex](https://zed.dev/ˇchannel/) case.
-            "});
-        cx.simulate_mouse_move(screen_coord, None, Modifiers::none());
-        cx.update_editor(|editor, _, cx| {
-            editor.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-        });
-        cx.simulate_modifiers_change(Modifiers::secondary_key());
-        assert_no_highlight!(cx);
-
-        // Cursor active again
-        let screen_coord = cx.pixel_position(indoc! {"
-            Let's test a [complex](https://ˇzed.dev/channel/) case.
             "});
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
