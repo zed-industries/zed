@@ -18,6 +18,7 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use sha2::{Digest, Sha256};
@@ -120,6 +121,15 @@ pub trait ExternalAgentServer {
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>>;
+
+    fn get_fallback_command(
+        &self,
+        _extra_args: Vec<String>,
+        _extra_env: HashMap<String, String>,
+        _cx: &mut AsyncApp,
+    ) -> Option<Task<Result<AgentServerCommand>>> {
+        None
+    }
 
     fn version(&self) -> Option<&SharedString> {
         None
@@ -804,7 +814,15 @@ impl AgentServerStore {
                 if let Some(new_version_available_tx) = new_version_available_tx {
                     agent.set_new_version_available_tx(new_version_available_tx);
                 }
-                anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
+                if envelope.payload.fallback.unwrap_or(false) {
+                    agent
+                        .get_fallback_command(vec![], extra_env, &mut cx.to_async())
+                        .with_context(|| {
+                            format!("agent `{}` has no fallback command", envelope.payload.name)
+                        })
+                } else {
+                    Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
+                }
             })?
             .await?;
         Ok(proto::AgentServerCommand {
@@ -976,17 +994,10 @@ struct RemoteExternalAgentServer {
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
-impl ExternalAgentServer for RemoteExternalAgentServer {
-    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
-        self.new_version_available_tx.take()
-    }
-
-    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
-        self.new_version_available_tx = Some(tx);
-    }
-
-    fn get_command(
+impl RemoteExternalAgentServer {
+    fn command(
         &self,
+        fallback: bool,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -1011,6 +1022,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                             project_id,
                             name,
                             root_dir,
+                            fallback: Some(fallback),
                         })
                 })?
                 .await?;
@@ -1023,6 +1035,34 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                 env: Some(response.env.into_iter().collect()),
             })
         })
+    }
+}
+
+impl ExternalAgentServer for RemoteExternalAgentServer {
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
+    fn get_command(
+        &self,
+        extra_args: Vec<String>,
+        extra_env: HashMap<String, String>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<AgentServerCommand>> {
+        self.command(false, extra_args, extra_env, cx)
+    }
+
+    fn get_fallback_command(
+        &self,
+        extra_args: Vec<String>,
+        extra_env: HashMap<String, String>,
+        cx: &mut AsyncApp,
+    ) -> Option<Task<Result<AgentServerCommand>>> {
+        Some(self.command(true, extra_args, extra_env, cx))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1100,6 +1140,15 @@ fn sanitize_path_component(input: &str) -> String {
     } else {
         sanitized
     }
+}
+
+fn npm_package_spec_with_version_ceiling(package_spec: &str) -> Option<String> {
+    let (package_name, version) = package_spec.rsplit_once('@')?;
+    if package_name.is_empty() || Version::parse(version).is_err() {
+        return None;
+    }
+
+    Some(format!("{package_name}@<={version}"))
 }
 
 fn versioned_archive_cache_dir(
@@ -1512,21 +1561,10 @@ struct LocalRegistryNpxAgent {
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
-impl ExternalAgentServer for LocalRegistryNpxAgent {
-    fn version(&self) -> Option<&SharedString> {
-        Some(&self.version)
-    }
-
-    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
-        self.new_version_available_tx.take()
-    }
-
-    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
-        self.new_version_available_tx = Some(tx);
-    }
-
-    fn get_command(
+impl LocalRegistryNpxAgent {
+    fn command_for_package(
         &self,
+        package: String,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -1535,7 +1573,6 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let registry_id = self.registry_id.clone();
-        let package = self.package.clone();
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
@@ -1554,7 +1591,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join(sanitize_path_component(&registry_id));
             fs.create_dir(&prefix_dir).await?;
 
-            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
+            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
             exec_args.extend(args);
 
             let npm_command = node_runtime
@@ -1581,6 +1618,39 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 
             Ok(command)
         })
+    }
+}
+
+impl ExternalAgentServer for LocalRegistryNpxAgent {
+    fn version(&self) -> Option<&SharedString> {
+        Some(&self.version)
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
+    fn get_command(
+        &self,
+        extra_args: Vec<String>,
+        extra_env: HashMap<String, String>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<AgentServerCommand>> {
+        self.command_for_package(self.package.to_string(), extra_args, extra_env, cx)
+    }
+
+    fn get_fallback_command(
+        &self,
+        extra_args: Vec<String>,
+        extra_env: HashMap<String, String>,
+        cx: &mut AsyncApp,
+    ) -> Option<Task<Result<AgentServerCommand>>> {
+        let fallback_package = npm_package_spec_with_version_ceiling(&self.package)?;
+        Some(self.command_for_package(fallback_package, extra_args, extra_env, cx))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1994,6 +2064,26 @@ mod tests {
                 )
             })
         })
+    }
+
+    #[test]
+    fn builds_bounded_npm_package_fallback_specs() {
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("agent-package@1.2.3").as_deref(),
+            Some("agent-package@<=1.2.3")
+        );
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("@scope/agent-package@1.2.3-beta.1").as_deref(),
+            Some("@scope/agent-package@<=1.2.3-beta.1")
+        );
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("@scope/agent-package"),
+            None
+        );
+        assert_eq!(
+            npm_package_spec_with_version_ceiling("agent-package@latest"),
+            None
+        );
     }
 
     #[test]
