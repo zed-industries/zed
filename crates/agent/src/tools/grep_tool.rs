@@ -18,6 +18,11 @@ use util::paths::PathMatcher;
 
 /// Searches the contents of files in the project with a regular expression
 ///
+/// - If you need a specific symbol's **type**, **signature**, **enum cases**, or **documentation**,
+///   consider using `lsp_hover` or `goto_definition` first — they are faster, more precise, and can
+///   resolve things grep cannot (virtual properties, vendor code, trait methods, generic types).
+/// - If you need all **usages** of a specific symbol, consider `find_references` first — it returns
+///   only semantic references, not textual matches, so there are no false positives.
 /// - Prefer this tool to path search when searching for symbols in the project, because you won't need to guess what path it's in.
 /// - Supports full regex syntax (eg. "log.*Error", "function\\s+\\w+", etc.)
 /// - Pass an `include_pattern` if you know how to narrow your search on the files system

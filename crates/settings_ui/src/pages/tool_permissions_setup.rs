@@ -1415,6 +1415,7 @@ mod tests {
             "go_to_definition",
             "grep",
             "list_directory",
+            "lsp_hover",
             "now",
             "open",
             "read_file",
