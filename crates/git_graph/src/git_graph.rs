@@ -3093,7 +3093,7 @@ impl Render for GitGraph {
                                                 .ok();
                                         })
                                         .on_click(move |event, window, cx| {
-                                            if !event.standard_click() {
+                                            if event.is_right_click() {
                                                 return;
                                             }
                                             let click_count = event.click_count();
