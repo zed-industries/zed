@@ -27,7 +27,6 @@ use std::process::ExitStatus;
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
-    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -1271,9 +1270,6 @@ impl GitRepository for RealGitRepository {
     }
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
-        if self.repository.lock().workdir().is_none() {
-            return future::ready(Err(anyhow!("no working directory"))).boxed();
-        }
         let git = self.git_binary();
         cx.background_spawn(async move {
             let show_output = git
@@ -2459,7 +2455,7 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
-        let working_directory = self.working_directory();
+        let working_directory = self.working_directory().unwrap_or(self.path());
         let git_directory = self.path();
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
@@ -2469,7 +2465,6 @@ impl GitRepository for RealGitRepository {
         // which we want to block on.
         async move {
             let git_binary_path = git_binary_path.context("git not found on $PATH, can't fetch")?;
-            let working_directory = working_directory?;
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
