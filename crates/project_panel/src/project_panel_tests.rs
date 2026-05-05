@@ -4285,8 +4285,9 @@ async fn test_drag_multiple_marked_worktree_roots_reorder_as_group(
         "marked roots r1 and r3 should land after r4 in their original relative order"
     );
 
-    // Now [r3, r1] (reordered above), active=r1, drop onto r2. Active is after
-    // dest, so the group lands BEFORE r2 with relative order (r1, r3) intact.
+    // After the previous move, the order is [r2, r4, r1, r3]; the selected
+    // group is [r1, r3], active=r1, drop onto r2. Active is after dest, so
+    // the group lands BEFORE r2 with relative order (r1, r3) intact.
     panel.update_in(cx, |panel, window, cx| {
         let project = panel.project.read(cx);
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
@@ -4529,9 +4530,10 @@ async fn test_drag_marked_root_with_nested_file_keeps_both(
 
     drag_selection_to(&panel, "root3", false, cx);
 
-    // root1 reorders past root3 (active is the file in root1, so direction
-    // follows root1's position via the source-side fallback in the active
-    // filter).
+    // root1 reorders past root3. The active drag is the file in root1, so
+    // `active_source` resolves to root1's worktree id — which is in `sources`,
+    // so the filter passes through and direction follows root1's own position
+    // (idx 0 < dest idx 2 → group lands after root3).
     let order = panel.update_in(cx, |panel, _, cx| {
         panel
             .project
@@ -9144,6 +9146,99 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
             result,
             Some(src_dir_from_b.id),
             "Should highlight parent of target file from different worktree"
+        );
+    });
+}
+
+// For a multi-root drag, hovering any worktree that is part of the drag
+// (active OR just marked) is a no-op in `move_worktrees`, so the highlight
+// must not advertise it as a valid drop target.
+#[gpui::test]
+async fn test_highlight_entry_for_multi_root_drag_excludes_marked_worktrees(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+    fs.insert_tree("/root4", json!({ "d.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            "/root1".as_ref(),
+            "/root2".as_ref(),
+            "/root3".as_ref(),
+            "/root4".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        let worktrees: Vec<_> = panel.project.read(cx).visible_worktrees(cx).collect();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r3 = worktrees[2].read(cx);
+        let r4 = worktrees[3].read(cx);
+
+        let r1_root = r1.root_entry().unwrap();
+        let r2_root = r2.root_entry().unwrap();
+        let r3_root = r3.root_entry().unwrap();
+        let r4_root = r4.root_entry().unwrap();
+
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root.id,
+            },
+            marked_selections: Arc::new([
+                SelectedEntry {
+                    worktree_id: r1.id(),
+                    entry_id: r1_root.id,
+                },
+                SelectedEntry {
+                    worktree_id: r3.id(),
+                    entry_id: r3_root.id,
+                },
+            ]),
+        };
+
+        // Hovering r2 (not in the drag): highlight allowed.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r2_root, r2, &drag, cx),
+            Some(r2_root.id),
+            "non-dragged worktree root should highlight"
+        );
+
+        // Hovering r4 (not in the drag): highlight allowed.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r4_root, r4, &drag, cx),
+            Some(r4_root.id),
+            "non-dragged worktree root should highlight"
+        );
+
+        // Hovering r1 (active source): no-op, no highlight.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r1_root, r1, &drag, cx),
+            None,
+            "active source's worktree should not highlight"
+        );
+
+        // Hovering r3 (marked but not active): no-op, no highlight.
+        assert_eq!(
+            panel.highlight_entry_for_selection_drag(r3_root, r3, &drag, cx),
+            None,
+            "marked source's worktree should not highlight"
         );
     });
 }

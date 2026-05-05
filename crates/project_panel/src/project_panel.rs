@@ -3596,7 +3596,10 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         self.project.update(cx, |project, cx| {
-            // Reorder only fires on explicit drops onto a worktree root.
+            // Only reorder when the destination resolves to a worktree root.
+            // Nested entries are rejected; the empty area below the panel
+            // resolves to the last worktree's root, which still satisfies
+            // this check.
             if !project.entry_is_worktree_root(destination, cx) {
                 return;
             }
@@ -5236,9 +5239,13 @@ impl ProjectPanel {
             .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx));
         if drag_is_root_only {
             let root_id = target_worktree.root_entry()?.id;
-            if target_entry.id == root_id
-                && target_worktree.id() != drag_state.active_selection.worktree_id
-            {
+            // Hovering any worktree that's part of the drag (active or just
+            // marked) is a no-op in `move_worktrees`, so don't highlight it.
+            let target_worktree_id = target_worktree.id();
+            let target_in_drag = drag_state
+                .items()
+                .any(|entry| entry.worktree_id == target_worktree_id);
+            if target_entry.id == root_id && !target_in_drag {
                 return Some(root_id);
             }
             return None;
