@@ -964,7 +964,7 @@ pub struct Thread {
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
-    skills: Arc<Vec<agent_skills::Skill>>,
+    pub(crate) skills: Arc<Vec<agent_skills::Skill>>,
     pub(crate) templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,

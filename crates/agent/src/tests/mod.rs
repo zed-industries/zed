@@ -5498,6 +5498,56 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_subagent_inherits_skills(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent_skill = agent_skills::parse_skill(
+        std::path::Path::new("/skills/inherited-skill/SKILL.md"),
+        "---\nname: inherited-skill\ndescription: Skill the subagent should inherit\n---\n\nbody",
+        agent_skills::SkillSource::Global,
+    )
+    .unwrap();
+    let parent_skills = Arc::new(vec![parent_skill]);
+
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            parent_skills.clone(),
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, cx));
+    subagent_thread.read_with(cx, |subagent_thread, _cx| {
+        // The subagent must share the same skill list as its parent (by Arc identity
+        // so cloning the parent's skills is cheap and consistent).
+        assert!(
+            Arc::ptr_eq(&subagent_thread.skills, &parent_skills),
+            "subagent should inherit the parent's skills Arc"
+        );
+        assert_eq!(subagent_thread.skills.len(), 1);
+        assert_eq!(subagent_thread.skills[0].name, "inherited-skill");
+    });
+}
+
+#[gpui::test]
 async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppContext) {
     init_test(cx);
 
