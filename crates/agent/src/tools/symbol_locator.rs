@@ -157,14 +157,12 @@ impl SymbolLocator {
             symbol_name,
         } = self;
 
-        let open_buffer_task = project
-            .update(cx, |project, cx| {
-                let Some(project_path) = project.find_project_path(file_path, cx) else {
-                    return Err(format!("Could not find path '{file_path}' in project",));
-                };
-                Ok(project.open_buffer(project_path, cx))
-            })
-            .map_err(|e| e.to_string())?;
+        let open_buffer_task = project.update(cx, |project, cx| {
+            let Some(project_path) = project.find_project_path(file_path, cx) else {
+                return Err(format!("Could not find path '{file_path}' in project",));
+            };
+            Ok(project.open_buffer(project_path, cx))
+        })?;
 
         let buffer = open_buffer_task
             .await
