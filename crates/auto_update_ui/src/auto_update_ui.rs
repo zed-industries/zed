@@ -5,7 +5,7 @@ use auto_update::{AutoUpdater, release_notes_url};
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
-use gpui::{
+use gpui::{TaskExt, 
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, actions, prelude::*,
 };
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};

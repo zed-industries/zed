@@ -5,7 +5,7 @@ use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,

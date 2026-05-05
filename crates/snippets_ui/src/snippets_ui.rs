@@ -1,6 +1,6 @@
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{
+use gpui::{TaskExt, 
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
     WeakEntity, Window, actions,
 };

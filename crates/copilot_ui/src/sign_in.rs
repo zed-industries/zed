@@ -3,7 +3,7 @@ use copilot::{
     Copilot, GlobalCopilotAuth, Status,
     request::{self, PromptUserDeviceFlow},
 };
-use gpui::{
+use gpui::{TaskExt, 
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
     Subscription, Window, WindowBounds, WindowOptions, div, point,

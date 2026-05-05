@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{
+use gpui::{TaskExt, 
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
     prelude::*,
 };

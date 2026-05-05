@@ -12,7 +12,7 @@ use db::kvp::KeyValueStore;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, Anchor, AnyView, App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, WeakEntity,
+    FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, TaskExt, WeakEntity,
     Window, actions,
 };
 use itertools::Itertools;

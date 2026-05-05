@@ -2,7 +2,7 @@ use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollHandle, ScrollStrategy,
-    SharedString, Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px,
+    SharedString, Size, StrikethroughStyle, StyledText, Task, TaskExt, UniformListScrollHandle, div, px,
     uniform_list,
 };
 use itertools::Itertools;

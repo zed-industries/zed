@@ -11,7 +11,7 @@ use editor::{
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
     FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions,
+    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt, WeakEntity, actions,
     anchored, deferred, div,
 };
 use itertools::Itertools;

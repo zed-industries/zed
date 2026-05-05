@@ -4,7 +4,7 @@ pub use active_buffer_language::ActiveBufferLanguage;
 use anyhow::Context as _;
 use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{
+use gpui::{TaskExt, 
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
     Render, Styled, WeakEntity, Window, actions,
 };

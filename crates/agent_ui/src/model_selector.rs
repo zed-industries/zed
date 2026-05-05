@@ -10,7 +10,7 @@ use fs::Fs;
 use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
+    Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task, TaskExt,
     WeakEntity,
 };
 use itertools::Itertools;

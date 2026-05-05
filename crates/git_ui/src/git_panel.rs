@@ -39,7 +39,7 @@ use git::{
 use gpui::{
     AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
     Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent,
-    Point, PromptLevel, ScrollStrategy, Subscription, Task, TextStyle, UniformListScrollHandle,
+    Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt, TextStyle, UniformListScrollHandle,
     WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;

@@ -2,7 +2,7 @@ use crate::{
     ButtonCommon, ButtonStyle, IconButtonShape, KeyBinding, List, ListItem, ListSeparator,
     ListSubHeader, Tooltip, prelude::*, utils::WithRemSize,
 };
-use gpui::{
+use gpui::{TaskExt, 
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
     Subscription, anchored, canvas, prelude::*, px,

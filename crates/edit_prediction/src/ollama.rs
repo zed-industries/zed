@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{
+use gpui::{TaskExt, 
     App, SharedString,
     http_client::{self, HttpClient},
 };

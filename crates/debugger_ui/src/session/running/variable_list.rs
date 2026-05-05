@@ -6,7 +6,7 @@ use dap::{
     VariableReference,
 };
 use editor::Editor;
-use gpui::{
+use gpui::{TaskExt, 
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
     FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,

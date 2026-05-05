@@ -5,7 +5,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
 };
-use gpui::{Context, Entity, EntityId, UpdateGlobal, Window};
+use gpui::{TaskExt, Context, Entity, EntityId, UpdateGlobal, Window};
 use language::SelectionGoal;
 use text::Point;
 use ui::App;

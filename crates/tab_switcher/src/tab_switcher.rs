@@ -9,7 +9,7 @@ use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
-    Render, Styled, Task, WeakEntity, Window, actions, rems,
+    Render, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;

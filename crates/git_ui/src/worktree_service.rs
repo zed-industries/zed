@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use collections::HashSet;
 use fs::Fs;
-use gpui::{AsyncWindowContext, Entity, SharedString, WeakEntity};
+use gpui::{TaskExt, AsyncWindowContext, Entity, SharedString, WeakEntity};
 use project::Project;
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;

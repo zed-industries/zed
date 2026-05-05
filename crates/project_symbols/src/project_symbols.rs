@@ -1,7 +1,7 @@
 use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TextStyle,
+    App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TaskExt, TextStyle,
     WeakEntity, Window, relative, rems,
 };
 use ordered_float::OrderedFloat;

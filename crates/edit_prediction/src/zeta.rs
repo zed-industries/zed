@@ -10,7 +10,7 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
 use edit_prediction_types::PredictedCursorPosition;
-use gpui::{App, AppContext as _, Entity, Task, WeakEntity, prelude::*};
+use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, OffsetRangeExt as _, ToOffset as _,
     language_settings::all_language_settings, text_diff,

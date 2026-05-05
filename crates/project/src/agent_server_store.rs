@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task};
+use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task, TaskExt};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;

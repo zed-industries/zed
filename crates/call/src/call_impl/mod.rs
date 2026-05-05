@@ -8,7 +8,7 @@ use client::{ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIV
 use collections::HashSet;
 use futures::{Future, FutureExt, channel::oneshot, future::Shared};
 use gpui::{
-    AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
+    AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt,
     WeakEntity, Window,
 };
 use postage::watch;

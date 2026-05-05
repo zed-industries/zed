@@ -1,7 +1,7 @@
 use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
-use gpui::{App, WindowHandle, prelude::*};
+use gpui::{TaskExt, App, WindowHandle, prelude::*};
 
 use std::sync::{Arc, Weak};
 use ui::{CollabNotification, prelude::*};

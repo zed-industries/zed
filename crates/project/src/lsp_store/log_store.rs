@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use collections::HashMap;
 use futures::{StreamExt, channel::mpsc};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, WeakEntity};
+use gpui::{TaskExt, App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, WeakEntity};
 use lsp::{
     IoKind, LanguageServer, LanguageServerId, LanguageServerName, LanguageServerSelector,
     MessageType, TraceValue,

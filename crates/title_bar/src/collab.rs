@@ -4,7 +4,7 @@ use std::sync::Arc;
 use call::{ActiveCall, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
-use gpui::{
+use gpui::{TaskExt, 
     AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
     canvas, point,
 };

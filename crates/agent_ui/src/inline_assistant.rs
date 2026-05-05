@@ -35,7 +35,7 @@ use editor::{
 use fs::Fs;
 use futures::{FutureExt, channel::mpsc};
 use gpui::{
-    App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
+    App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, TaskExt, UpdateGlobal,
     WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};

@@ -47,7 +47,7 @@ use git::{
 };
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Subscription, Task, WeakEntity,
+    Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,

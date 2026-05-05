@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{App, AppContext as _, Context, Entity, Window};
+use gpui::{TaskExt, App, AppContext as _, Context, Entity, Window};
 use language::{Capability, Language, proto::serialize_anchor};
 use multi_buffer::MultiBuffer;
 use project::{

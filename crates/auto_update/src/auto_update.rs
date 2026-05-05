@@ -3,7 +3,7 @@ use client::Client;
 use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, TaskExt, Window,
     actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};

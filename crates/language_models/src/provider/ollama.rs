@@ -3,7 +3,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
+use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
