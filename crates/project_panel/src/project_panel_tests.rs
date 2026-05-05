@@ -4417,6 +4417,99 @@ async fn test_drag_worktree_root_onto_nested_entry_is_rejected(
     );
 }
 
+// Dropping a pure-root selection that includes the last worktree onto the
+// blank area below the panel should send the group to the end of the
+// worktree list, preserving relative order. Without the special-case
+// blank-area handling, the destination resolves to the last worktree's
+// root, which is one of the dragged roots, and `move_worktrees`'s
+// self-drop guard would silently no-op the gesture.
+#[gpui::test]
+async fn test_drag_root_group_with_last_worktree_to_blank_area(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+    fs.insert_tree("/root3", json!({ "c.txt": "" })).await;
+    fs.insert_tree("/root4", json!({ "d.txt": "" })).await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            "/root1".as_ref(),
+            "/root2".as_ref(),
+            "/root3".as_ref(),
+            "/root4".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let (r1_id, r2_id, r3_id, r4_id) = panel.update_in(cx, |panel, _, cx| {
+        let worktrees = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        (
+            worktrees[0].read(cx).id(),
+            worktrees[1].read(cx).id(),
+            worktrees[2].read(cx).id(),
+            worktrees[3].read(cx).id(),
+        )
+    });
+
+    // Drag [r1, r4] onto the blank area: route via the panel's blank-area
+    // helper since the drag includes the last worktree.
+    panel.update_in(cx, |panel, _, cx| {
+        let project = panel.project.read(cx);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let r1 = worktrees[0].read(cx);
+        let r4 = worktrees[3].read(cx);
+        let r1_entry = SelectedEntry {
+            worktree_id: r1.id(),
+            entry_id: r1.root_entry().unwrap().id,
+        };
+        let r4_entry = SelectedEntry {
+            worktree_id: r4.id(),
+            entry_id: r4.root_entry().unwrap().id,
+        };
+        let drag = DraggedSelection {
+            active_selection: r1_entry,
+            marked_selections: Arc::new([r1_entry, r4_entry]),
+        };
+        assert!(
+            panel.drag_includes_last_worktree(&drag, cx),
+            "the drag should be flagged as containing the last worktree"
+        );
+        panel.reorder_worktree_roots_to_end(&drag, cx);
+    });
+    cx.run_until_parked();
+
+    let order = panel.update_in(cx, |panel, _, cx| {
+        panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        order,
+        vec![r2_id, r3_id, r1_id, r4_id],
+        "marked roots [r1, r4] should land at the end with their original relative order"
+    );
+}
+
 // Dropping a multi-root selection onto one of its own members has no
 // well-defined intent, so it should leave the order untouched rather than
 // reorder the remaining roots around the destination.

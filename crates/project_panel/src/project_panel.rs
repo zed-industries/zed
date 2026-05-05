@@ -3630,6 +3630,52 @@ impl ProjectPanel {
         });
     }
 
+    /// Moves all root-only entries in the drag to the end of the worktree
+    /// list. Used by the blank-area drop handler so dropping a multi-root
+    /// selection that already contains the last worktree (e.g. `[A, D]` in
+    /// `[A, B, C, D]`) settles the group at the end instead of falling on
+    /// the self-drop guard in `move_worktrees`.
+    fn reorder_worktree_roots_to_end(
+        &mut self,
+        selections: &DraggedSelection,
+        cx: &mut Context<Self>,
+    ) {
+        self.project.update(cx, |project, cx| {
+            let source_ids: Vec<WorktreeId> = selections
+                .items()
+                .filter_map(|entry| {
+                    project
+                        .worktree_for_entry(entry.entry_id, cx)
+                        .map(|wt| wt.read(cx).id())
+                })
+                .collect();
+            if source_ids.is_empty() {
+                return;
+            }
+            project.move_worktrees_to_end(&source_ids, cx).log_err();
+        });
+    }
+
+    fn drag_includes_last_worktree(&self, selections: &DraggedSelection, cx: &App) -> bool {
+        let project = self.project.read(cx);
+        let drag_is_root_only = selections
+            .items()
+            .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx));
+        if !drag_is_root_only {
+            return false;
+        }
+        let Some(last_worktree_id) = project
+            .visible_worktrees(cx)
+            .next_back()
+            .map(|wt| wt.read(cx).id())
+        else {
+            return false;
+        };
+        selections
+            .items()
+            .any(|entry| entry.worktree_id == last_worktree_id)
+    }
+
     fn move_worktree_entry(
         &mut self,
         entry_to_move: ProjectEntryId,
@@ -7083,7 +7129,16 @@ impl Render for ProjectPanel {
                                     move |this, selections: &DraggedSelection, window, cx| {
                                         this.drag_target_entry = None;
                                         this.hover_scroll_task.take();
-                                        if let Some(entry_id) = this.state.last_worktree_root_id {
+                                        // A pure-root drag that contains the
+                                        // last worktree would otherwise hit
+                                        // the self-drop guard in
+                                        // `move_worktrees` and become a no-op.
+                                        // Send the group to the end instead.
+                                        if this.drag_includes_last_worktree(selections, cx) {
+                                            this.reorder_worktree_roots_to_end(selections, cx);
+                                        } else if let Some(entry_id) =
+                                            this.state.last_worktree_root_id
+                                        {
                                             this.drag_onto(selections, entry_id, false, window, cx);
                                         }
                                         cx.stop_propagation();

@@ -1134,6 +1134,66 @@ impl WorktreeStore {
         Ok(())
     }
 
+    /// Removes every source from the worktree list and appends them to the
+    /// end in their original relative order. Intended for "drop on the empty
+    /// area below the panel" gestures, where the user's intent is "send this
+    /// group to the end" rather than reordering relative to a specific row.
+    pub fn move_worktrees_to_end(
+        &mut self,
+        sources: &[WorktreeId],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+
+        for &source in sources {
+            if !self
+                .worktrees
+                .iter()
+                .any(|wt| wt.upgrade().is_some_and(|wt| wt.read(cx).id() == source))
+            {
+                anyhow::bail!("Missing worktree for id {source}");
+            }
+        }
+
+        let source_indices: Vec<usize> = self
+            .worktrees
+            .iter()
+            .enumerate()
+            .filter_map(|(i, wt)| {
+                let id = wt.upgrade()?.read(cx).id();
+                sources.contains(&id).then_some(i)
+            })
+            .collect();
+
+        if source_indices.is_empty() {
+            return Ok(());
+        }
+
+        // Already a contiguous suffix → nothing to do.
+        let len = self.worktrees.len();
+        let already_at_end = source_indices
+            .iter()
+            .enumerate()
+            .all(|(offset, &i)| i == len - source_indices.len() + offset);
+        if already_at_end {
+            return Ok(());
+        }
+
+        let mut to_append = Vec::with_capacity(source_indices.len());
+        for &i in source_indices.iter().rev() {
+            to_append.push(self.worktrees.remove(i));
+        }
+        to_append.reverse();
+        self.worktrees.extend(to_append);
+
+        cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
+        cx.notify();
+        self.send_project_updates(cx);
+        Ok(())
+    }
+
     pub fn disconnected_from_host(&mut self, cx: &mut App) {
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade() {

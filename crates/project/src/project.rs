@@ -4593,6 +4593,19 @@ impl Project {
         })
     }
 
+    /// Moves multiple worktrees to the end of the worktree list, preserving
+    /// their relative order. Used for "drop on the blank area below the
+    /// project panel" gestures.
+    pub fn move_worktrees_to_end(
+        &mut self,
+        sources: &[WorktreeId],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.move_worktrees_to_end(sources, cx)
+        })
+    }
+
     /// Attempts to convert the input path to a WSL path if this is a wsl remote project and the input path is a host windows path.
     pub fn try_windows_path_to_wsl(
         &self,
