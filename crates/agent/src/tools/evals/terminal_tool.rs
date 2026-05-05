@@ -471,3 +471,24 @@ fn eval_git_rebase_sets_git_editor() {
         ))
     });
 }
+
+#[test]
+#[cfg_attr(not(feature = "unit-eval"), ignore)]
+fn eval_git_rebase_implied_sets_git_editor() {
+    eval_utils::eval(100, 0.95, eval_utils::NoProcessor, move || {
+        run_eval(EvalInput::new(
+            vec![message(
+                User,
+                [text(indoc::indoc! {"
+                    My branch has 3 small commits that I'd like to combine
+                    into a single clean commit before merging. Help me do
+                    that with the terminal tool.
+                "})],
+            )],
+            CommandAssertion::command_contains_all(
+                "implied `git rebase` includes `GIT_EDITOR=true`",
+                &["git", "rebase", "GIT_EDITOR=true"],
+            ),
+        ))
+    });
+}
