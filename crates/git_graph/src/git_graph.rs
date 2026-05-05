@@ -1895,15 +1895,17 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.graph_data.commits.get(index).is_none() {
+        let Some(commit) = self.graph_data.commits.get(index) else {
             return;
-        }
+        };
+        let short_sha = commit.data.sha.display_short();
 
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
         let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .context(focus_handle)
+                .header(format!("Commit {short_sha}"))
                 .entry(
                     "View Commit",
                     Some(OpenCommitView.boxed_clone()),
