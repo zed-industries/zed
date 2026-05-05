@@ -542,23 +542,22 @@ impl BufferDiagnosticsEditor {
                 // display map for the new diagnostics. Update the `blocks`
                 // property before finishing, to ensure the blocks are removed
                 // on the next execution.
-                let editor_blocks =
-                    anchor_ranges
-                        .into_iter()
-                        .zip(blocks.into_iter())
-                        .map(|(anchor, block)| {
-                            let editor = buffer_diagnostics_editor.editor.downgrade();
+                let editor_blocks = anchor_ranges
+                    .into_iter()
+                    .zip(blocks)
+                    .map(|(anchor, block)| {
+                        let editor = buffer_diagnostics_editor.editor.downgrade();
 
-                            BlockProperties {
-                                placement: BlockPlacement::Near(anchor.start),
-                                height: Some(1),
-                                style: BlockStyle::Flex,
-                                render: Arc::new(move |block_context| {
-                                    block.render_block(editor.clone(), block_context)
-                                }),
-                                priority: 1,
-                            }
-                        });
+                        BlockProperties {
+                            placement: BlockPlacement::Near(anchor.start),
+                            height: Some(1),
+                            style: BlockStyle::Flex,
+                            render: Arc::new(move |block_context| {
+                                block.render_block(editor.clone(), block_context)
+                            }),
+                            priority: 1,
+                        }
+                    });
 
                 let block_ids = buffer_diagnostics_editor.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {

@@ -20,7 +20,7 @@ use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::{Fs, RemoveOptions};
 use futures::{
-    FutureExt, StreamExt,
+    FutureExt, SinkExt, Stream, StreamExt,
     channel::{
         mpsc,
         oneshot::{self, Canceled},
@@ -301,11 +301,18 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
-    /// The working directory of the original repository. For a normal
-    /// checkout this equals `work_directory_abs_path`. For a git worktree
-    /// checkout, this is the original repo's working directory — used to
-    /// anchor new worktree creation so they don't nest.
-    pub original_repo_abs_path: Arc<Path>,
+    /// Absolute path to the directory holding this worktree's Git state.
+    ///
+    /// For a linked worktree this is the worktree-specific directory under the
+    /// common Git directory, such as `<main>/.git/worktrees/<name>`.
+    pub repository_dir_abs_path: Arc<Path>,
+    /// Absolute path to the repository's common Git directory.
+    ///
+    /// For a normal checkout this is `<work_directory>/.git`. For a linked
+    /// worktree this is the common Git directory shared by all worktrees. If
+    /// that common directory is a bare repository, there may be no main
+    /// worktree path to derive from it.
+    pub common_dir_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub branch_list: Arc<[Branch]>,
@@ -673,6 +680,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
         client.add_entity_request_handler(Self::handle_get_commit_data);
+        client.add_entity_stream_request_handler(Self::handle_search_commits);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1640,12 +1648,8 @@ impl GitStore {
                 ..
             } = update
             {
-                let original_repo_abs_path: Arc<Path> = git::repository::original_repo_path(
-                    work_directory_abs_path,
-                    common_dir_abs_path,
-                    repository_dir_abs_path,
-                )
-                .into();
+                let repository_dir_abs_path = repository_dir_abs_path.clone();
+                let common_dir_abs_path = common_dir_abs_path.clone();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let is_trusted = TrustedWorktrees::try_get_global(cx)
                     .map(|trusted_worktrees| {
@@ -1659,7 +1663,8 @@ impl GitStore {
                     let mut repo = Repository::local(
                         id,
                         work_directory_abs_path.clone(),
-                        original_repo_abs_path.clone(),
+                        repository_dir_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         dot_git_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
@@ -1902,9 +1907,10 @@ impl GitStore {
         &self.repositories
     }
 
-    /// Returns the original (main) repository working directory for the given worktree.
-    /// For normal checkouts this equals the worktree's own path; for linked
-    /// worktrees it points back to the original repo.
+    /// Returns the main repository working directory for the given worktree.
+    /// For normal checkouts this equals the worktree's own path. For linked
+    /// worktrees it points back to the main worktree, if one exists. Linked
+    /// worktrees attached to a bare repository have no main worktree path.
     pub fn original_repo_path_for_worktree(
         &self,
         worktree_id: WorktreeId,
@@ -1919,7 +1925,12 @@ impl GitStore {
                     .is_some_and(|ids| ids.contains(&worktree_id))
             })
             .and_then(|repo_id| self.repositories.get(repo_id))
-            .map(|repo| repo.read(cx).snapshot().original_repo_abs_path)
+            .and_then(|repo| {
+                repo.read(cx)
+                    .snapshot()
+                    .main_worktree_abs_path()
+                    .map(Arc::from)
+            })
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
@@ -2064,8 +2075,12 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
 
-            let original_repo_abs_path: Option<Arc<Path>> = update
-                .original_repo_abs_path
+            let repository_dir_abs_path: Option<Arc<Path>> = update
+                .repository_dir_abs_path
+                .as_deref()
+                .map(|p| Path::new(p).into());
+            let common_dir_abs_path: Option<Arc<Path>> = update
+                .common_dir_abs_path
                 .as_deref()
                 .map(|p| Path::new(p).into());
 
@@ -2076,7 +2091,8 @@ impl GitStore {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
-                        original_repo_abs_path.clone(),
+                        repository_dir_abs_path.clone(),
+                        common_dir_abs_path.clone(),
                         path_style,
                         ProjectId(update.project_id),
                         client,
@@ -2654,6 +2670,63 @@ impl GitStore {
         Ok(proto::GetCommitDataResponse { commits })
     }
 
+    async fn handle_search_commits(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SearchCommits>,
+        mut cx: AsyncApp,
+    ) -> Result<impl Stream<Item = Result<proto::SearchCommitsResponse>>> {
+        const CHUNK_SIZE: usize = 100;
+
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let log_source = log_source_from_proto(
+            envelope
+                .payload
+                .log_source
+                .context("missing search commit log source")?,
+        )?;
+        let search_args = SearchCommitArgs {
+            query: SharedString::from(envelope.payload.query),
+            case_sensitive: envelope.payload.case_sensitive,
+        };
+
+        let (request_tx, request_rx) = async_channel::unbounded();
+        repository_handle.update(&mut cx, |repository, cx| {
+            repository.search_commits(log_source, search_args, request_tx, cx);
+        });
+
+        let (mut response_tx, response_rx) = mpsc::unbounded();
+        cx.background_spawn(async move {
+            let mut shas = Vec::new();
+
+            while let Ok(sha) = request_rx.recv().await {
+                shas.push(sha.to_string());
+
+                if shas.len() >= CHUNK_SIZE {
+                    if response_tx
+                        .send(Ok(proto::SearchCommitsResponse {
+                            shas: mem::take(&mut shas),
+                        }))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+
+            if !shas.is_empty() {
+                response_tx
+                    .send(Ok(proto::SearchCommitsResponse { shas }))
+                    .await
+                    .ok();
+            }
+        })
+        .detach();
+
+        Ok(response_rx)
+    }
+
     async fn handle_edit_ref(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitEditRef>,
@@ -2738,10 +2811,11 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let branch_name = envelope.payload.branch_name;
+        let base_branch = envelope.payload.base_branch;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.create_branch(branch_name, None)
+                repository_handle.create_branch(branch_name, base_branch)
             })
             .await??;
 
@@ -3926,14 +4000,20 @@ impl RepositorySnapshot {
     fn empty(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
-        original_repo_abs_path: Option<Arc<Path>>,
+        repository_dir_abs_path: Option<Arc<Path>>,
+        common_dir_abs_path: Option<Arc<Path>>,
         path_style: PathStyle,
     ) -> Self {
+        let repository_dir_abs_path =
+            repository_dir_abs_path.unwrap_or_else(|| work_directory_abs_path.join(".git").into());
+        let common_dir_abs_path =
+            common_dir_abs_path.unwrap_or_else(|| repository_dir_abs_path.clone());
+
         Self {
             id,
             statuses_by_path: Default::default(),
-            original_repo_abs_path: original_repo_abs_path
-                .unwrap_or_else(|| work_directory_abs_path.clone()),
+            repository_dir_abs_path,
+            common_dir_abs_path,
             work_directory_abs_path,
             branch: None,
             branch_list: Arc::from([]),
@@ -3980,9 +4060,10 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
-            original_repo_abs_path: Some(
-                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            repository_dir_abs_path: Some(
+                self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
+            common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
@@ -4062,14 +4143,32 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
-            original_repo_abs_path: Some(
-                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            repository_dir_abs_path: Some(
+                self.repository_dir_abs_path.to_string_lossy().into_owned(),
             ),
+            common_dir_abs_path: Some(self.common_dir_abs_path.to_string_lossy().into_owned()),
             linked_worktrees: self
                 .linked_worktrees
                 .iter()
                 .map(worktree_to_proto)
                 .collect(),
+        }
+    }
+
+    /// Returns the main worktree path for this repository, if one exists.
+    ///
+    /// Linked worktrees attached to bare repositories do not have a main
+    /// worktree. For linked worktrees attached to a non-bare repository, the
+    /// common Git directory is the main worktree's `.git` directory.
+    pub fn main_worktree_abs_path(&self) -> Option<&Path> {
+        if self.is_linked_worktree() {
+            if self.common_dir_abs_path.file_name()? == std::ffi::OsStr::new(".git") {
+                self.common_dir_abs_path.parent()
+            } else {
+                None
+            }
+        } else {
+            Some(self.work_directory_abs_path.as_ref())
         }
     }
 
@@ -4081,7 +4180,7 @@ impl RepositorySnapshot {
     ///
     /// Submodules also return `true` here, since they are not linked worktrees.
     pub fn is_main_worktree(&self) -> bool {
-        self.work_directory_abs_path == self.original_repo_abs_path
+        !self.is_linked_worktree()
     }
 
     /// Returns true if this repository is a linked worktree, that is, one that
@@ -4089,7 +4188,7 @@ impl RepositorySnapshot {
     ///
     /// Returns `false` for both the main worktree and submodules.
     pub fn is_linked_worktree(&self) -> bool {
-        !self.is_main_worktree()
+        self.repository_dir_abs_path != self.common_dir_abs_path
     }
 
     pub fn linked_worktrees(&self) -> &[GitWorktree] {
@@ -4266,7 +4365,8 @@ impl Repository {
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
-        original_repo_abs_path: Arc<Path>,
+        repository_dir_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
@@ -4277,7 +4377,8 @@ impl Repository {
         let snapshot = RepositorySnapshot::empty(
             id,
             work_directory_abs_path.clone(),
-            Some(original_repo_abs_path),
+            Some(repository_dir_abs_path),
+            Some(common_dir_abs_path),
             PathStyle::local(),
         );
         let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
@@ -4353,7 +4454,8 @@ impl Repository {
     fn remote(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
-        original_repo_abs_path: Option<Arc<Path>>,
+        repository_dir_abs_path: Option<Arc<Path>>,
+        common_dir_abs_path: Option<Arc<Path>>,
         path_style: PathStyle,
         project_id: ProjectId,
         client: AnyProtoClient,
@@ -4363,7 +4465,8 @@ impl Repository {
         let snapshot = RepositorySnapshot::empty(
             id,
             work_directory_abs_path,
-            original_repo_abs_path,
+            repository_dir_abs_path,
+            common_dir_abs_path,
             path_style,
         );
         let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
@@ -4462,15 +4565,16 @@ impl Repository {
                             &repo_diff_state_updates
                         {
                             let index_text = if current_index_text.is_some() {
-                                backend.load_index_text(repo_path.clone()).await
+                                backend.load_index_text(repo_path.clone())
                             } else {
-                                None
+                                future::ready(None).boxed()
                             };
                             let head_text = if current_head_text.is_some() {
-                                backend.load_committed_text(repo_path.clone()).await
+                                backend.load_committed_text(repo_path.clone())
                             } else {
-                                None
+                                future::ready(None).boxed()
                             };
+                            let (index_text, head_text) = future::join(index_text, head_text).await;
 
                             let change =
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {
@@ -4929,6 +5033,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         let repository_state = self.repository_state.clone();
+        let repository_id = self.id;
 
         cx.background_spawn(async move {
             let repo_state = repository_state.await;
@@ -4940,8 +5045,50 @@ impl Repository {
                         .await
                         .log_err();
                 }
-                Ok(RepositoryState::Remote(_)) => {}
-                Err(_) => {}
+
+                Ok(RepositoryState::Remote(RemoteRepositoryState { client, project_id })) => {
+                    let result = client
+                        .request_stream(proto::SearchCommits {
+                            project_id: project_id.to_proto(),
+                            repository_id: repository_id.to_proto(),
+                            log_source: Some(log_source_to_proto(&log_source)),
+                            query: search_args.query.to_string(),
+                            case_sensitive: search_args.case_sensitive,
+                        })
+                        .await;
+
+                    let mut stream = match result {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            log::error!("failed to search commits remotely: {error:?}");
+                            return;
+                        }
+                    };
+
+                    while let Some(response) = stream.next().await {
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(error) => {
+                                log::error!(
+                                    "failed to receive remote commit search results: {error:?}"
+                                );
+                                return;
+                            }
+                        };
+
+                        for sha in &response.shas {
+                            let Ok(oid) = Oid::from_str(sha) else {
+                                return;
+                            };
+                            if request_tx.send(oid).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::error!("failed to get repository state for commit search: {error}");
+                }
             };
         })
         .detach();
@@ -5236,6 +5383,16 @@ impl Repository {
         result_tx: smol::channel::Sender<(Oid, CommitData)>,
         background_executor: BackgroundExecutor,
     ) {
+        async fn receive_commit_data_request(
+            request_rx: &smol::channel::Receiver<Oid>,
+        ) -> Option<Oid> {
+            if request_rx.is_closed() && request_rx.is_empty() {
+                future::pending().await
+            } else {
+                request_rx.recv().await.ok()
+            }
+        }
+
         let reader = match backend.commit_data_reader() {
             Ok(reader) => reader,
             Err(error) => {
@@ -5244,19 +5401,38 @@ impl Repository {
             }
         };
 
+        let read_commit_data = |sha| reader.read(sha).map(move |result| (sha, result));
+        let mut read_futures = FuturesUnordered::new();
+
         loop {
-            let timeout = background_executor.timer(std::time::Duration::from_secs(10));
+            if read_futures.is_empty() {
+                let timeout = background_executor.timer(Duration::from_secs(10));
+
+                futures::select_biased! {
+                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                        if let Some(sha) = sha {
+                            read_futures.push(read_commit_data(sha));
+                        }
+                    }
+                    _ = futures::FutureExt::fuse(timeout) => {
+                        break;
+                    }
+                }
+            }
+
+            let next_read = read_futures.next().fuse();
+            futures::pin_mut!(next_read);
 
             futures::select_biased! {
-                sha = futures::FutureExt::fuse(request_rx.recv()) => {
-                    let Ok(sha) = sha else {
-                        break;
+                result = next_read => {
+                    let Some((sha, result)) = result else {
+                        continue;
                     };
 
-                    match reader.read(sha).await {
+                    match result {
                         Ok(commit_data) => {
                             if result_tx.send((sha, commit_data)).await.is_err() {
-                                break;
+                                return;
                             }
                         }
                         Err(error) => {
@@ -5264,8 +5440,10 @@ impl Repository {
                         }
                     }
                 }
-                _ = futures::FutureExt::fuse(timeout) => {
-                    break;
+                sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                    if let Some(sha) = sha {
+                        read_futures.push(read_commit_data(sha));
+                    }
                 }
             }
         }
@@ -6437,15 +6615,13 @@ impl Repository {
     }
 
     /// If this is a linked worktree (*NOT* the main checkout of a repository),
-    /// returns the pathed for the linked worktree.
+    /// returns the path for the linked worktree.
     ///
     /// Returns None if this is the main checkout.
     pub fn linked_worktree_path(&self) -> Option<&Arc<Path>> {
-        if self.work_directory_abs_path != self.original_repo_abs_path {
-            Some(&self.work_directory_abs_path)
-        } else {
-            None
-        }
+        self.snapshot
+            .is_linked_worktree()
+            .then_some(&self.work_directory_abs_path)
     }
 
     pub fn path_for_new_linked_worktree(
@@ -6453,11 +6629,15 @@ impl Repository {
         branch_name: &str,
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
-        let original_repo = self.original_repo_abs_path.clone();
-        let project_name = original_repo
+        let repository_anchor = self
+            .snapshot
+            .main_worktree_abs_path()
+            .unwrap_or(self.common_dir_abs_path.as_ref());
+        let project_name = repository_anchor
             .file_name()
             .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
-        let directory = worktrees_directory_for_repo(&original_repo, worktree_directory_setting)?;
+        let directory =
+            worktrees_directory_for_repo(repository_anchor, worktree_directory_setting)?;
         Ok(directory.join(branch_name).join(project_name))
     }
 
@@ -6707,7 +6887,11 @@ impl Repository {
 
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        let original_repo_abs_path = self.snapshot.original_repo_abs_path.clone();
+        let repository_anchor_path: Arc<Path> = self
+            .snapshot
+            .main_worktree_abs_path()
+            .unwrap_or(self.snapshot.common_dir_abs_path.as_ref())
+            .into();
         self.send_job(
             Some(format!("git worktree remove: {}", path.display()).into()),
             move |repo, cx| async move {
@@ -6750,7 +6934,7 @@ impl Repository {
 
                         let managed_worktree_base = cx.update(|cx| {
                             let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-                            worktrees_directory_for_repo(&original_repo_abs_path, setting).log_err()
+                            worktrees_directory_for_repo(&repository_anchor_path, setting).log_err()
                         });
 
                         if let Some(managed_worktree_base) = managed_worktree_base {
@@ -6952,6 +7136,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             branch_name,
+                            base_branch,
                         })
                         .await?;
 
@@ -7128,8 +7313,12 @@ impl Repository {
         update: proto::UpdateRepository,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some(main_path) = &update.original_repo_abs_path {
-            self.snapshot.original_repo_abs_path = Path::new(main_path.as_str()).into();
+        if let Some(repository_dir_abs_path) = &update.repository_dir_abs_path {
+            self.snapshot.repository_dir_abs_path =
+                Path::new(repository_dir_abs_path.as_str()).into();
+        }
+        if let Some(common_dir_abs_path) = &update.common_dir_abs_path {
+            self.snapshot.common_dir_abs_path = Path::new(common_dir_abs_path.as_str()).into();
         }
 
         let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
@@ -7728,14 +7917,17 @@ impl Repository {
 }
 
 /// If `path` is a git linked worktree checkout, resolves it to the main
-/// repository's working directory path. Returns `None` if `path` is a normal
-/// repository, not a git repo, or if resolution fails.
+/// repository's identity path. For regular linked worktrees this is the main
+/// repository's working directory; for linked worktrees backed by a bare repo
+/// such as `.bare`, this is the parent project directory users think of as the
+/// repository root. Returns `None` if `path` is a normal repository, not a git
+/// repo, or if resolution fails.
 ///
 /// Resolution works by:
 /// 1. Reading the `.git` file to get the `gitdir:` pointer
 /// 2. Following that to the worktree-specific git directory
 /// 3. Reading the `commondir` file to find the shared `.git` directory
-/// 4. Deriving the main repo's working directory from the common dir
+/// 4. Deriving the main repo's identity path from the common dir
 pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
     let dot_git = path.join(".git");
     let metadata = fs.metadata(&dot_git).await.ok()??;
@@ -7752,7 +7944,7 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
         .canonicalize(&gitdir_abs.join(commondir_content.trim()))
         .await
         .ok()?;
-    git::repository::original_repo_path_from_common_dir(&common_dir)
+    Some(repo_identity_path(&common_dir).to_path_buf())
 }
 
 /// Validates that the resolved worktree directory is acceptable:
@@ -7762,7 +7954,7 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
 ///
 /// Returns `Ok(resolved_path)` or an error with a user-facing message.
 pub fn worktrees_directory_for_repo(
-    original_repo_abs_path: &Path,
+    repository_anchor_path: &Path,
     worktree_directory_setting: &str,
 ) -> Result<PathBuf> {
     // Check the original setting before trimming, since a path like "///"
@@ -7788,25 +7980,25 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = original_repo_abs_path.join(trimmed);
+    let joined = repository_anchor_path.join(trimmed);
     let resolved = util::normalize_path(&joined);
-    let resolved = if resolved.starts_with(original_repo_abs_path) {
+    let resolved = if resolved.starts_with(repository_anchor_path) {
         resolved
-    } else if let Some(repo_dir_name) = original_repo_abs_path.file_name() {
+    } else if let Some(repo_dir_name) = repository_anchor_path.file_name() {
         resolved.join(repo_dir_name)
     } else {
         resolved
     };
 
-    let parent = original_repo_abs_path
+    let parent = repository_anchor_path
         .parent()
-        .unwrap_or(original_repo_abs_path);
+        .unwrap_or(repository_anchor_path);
 
     if !resolved.starts_with(parent) {
         anyhow::bail!(
             "git.worktree_directory resolved to {resolved:?}, which is outside \
              the project root and its parent directory. It must resolve to a \
-             subdirectory of {original_repo_abs_path:?} or a sibling of it."
+             subdirectory of {repository_anchor_path:?} or a sibling of it."
         );
     }
 
@@ -7850,6 +8042,29 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
         }
 
         current = parent;
+    }
+}
+
+/// Returns the repository's identity path given its common Git directory.
+///
+/// This is the canonical, on-disk path used for project grouping and as the
+/// basis for display names. The goal is to return the directory the user
+/// thinks of as "the project":
+///
+/// - If `common_dir`'s last component starts with `.` (e.g. `.git` for a
+///   normal checkout, or `.bare` for a bare clone), the parent directory is
+///   returned. Both of these are internal Git directories; the parent is the
+///   meaningful project root.
+/// - Otherwise (e.g. `zed.git` for a bare clone), `common_dir` itself is
+///   returned — it is already a meaningful on-disk path.
+pub fn repo_identity_path(common_dir: &Path) -> &Path {
+    let is_dot_entry = common_dir
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+    if is_dot_entry {
+        common_dir.parent().unwrap_or(common_dir)
+    } else {
+        common_dir
     }
 }
 
@@ -8007,6 +8222,31 @@ fn deserialize_blame_buffer_response(
         .collect::<HashMap<_, _>>();
 
     Some(Blame { entries, messages })
+}
+
+fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
+    proto::GitLogSource {
+        source: Some(match log_source {
+            LogSource::All => proto::git_log_source::Source::All(proto::GitLogSourceAll {}),
+            LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
+            LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
+            LogSource::Path(path) => proto::git_log_source::Source::Path(path.to_proto()),
+        }),
+    }
+}
+
+fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
+    match log_source
+        .source
+        .context("git log source is missing source")?
+    {
+        proto::git_log_source::Source::All(_) => Ok(LogSource::All),
+        proto::git_log_source::Source::Branch(branch) => Ok(LogSource::Branch(branch.into())),
+        proto::git_log_source::Source::Sha(sha) => Ok(LogSource::Sha(Oid::from_str(&sha)?)),
+        proto::git_log_source::Source::Path(path) => {
+            Ok(LogSource::Path(RepoPath::from_proto(&path)?))
+        }
+    }
 }
 
 fn commit_data_to_proto(commit: &CommitData) -> proto::CommitData {

@@ -1,7 +1,6 @@
 use crate::test_both_dbs;
 
 use super::*;
-use chrono::Utc;
 use collab::db::RoomId;
 use collab::db::*;
 use pretty_assertions::assert_eq;
@@ -71,69 +70,6 @@ async fn test_get_users(db: &Arc<Database>) {
             )
         ]
     );
-}
-
-test_both_dbs!(
-    test_update_or_create_user_by_github_account,
-    test_update_or_create_user_by_github_account_postgres,
-    test_update_or_create_user_by_github_account_sqlite
-);
-
-async fn test_update_or_create_user_by_github_account(db: &Arc<Database>) {
-    db.create_user(
-        "user1@example.com",
-        None,
-        false,
-        NewUserParams {
-            github_login: "login1".into(),
-            github_user_id: 101,
-        },
-    )
-    .await
-    .unwrap();
-    let user_id2 = db
-        .create_user(
-            "user2@example.com",
-            None,
-            false,
-            NewUserParams {
-                github_login: "login2".into(),
-                github_user_id: 102,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
-    let user = db
-        .update_or_create_user_by_github_account(
-            "the-new-login2",
-            102,
-            None,
-            None,
-            Utc::now(),
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(user.id, user_id2);
-    assert_eq!(&user.github_login, "the-new-login2");
-    assert_eq!(user.github_user_id, 102);
-
-    let user = db
-        .update_or_create_user_by_github_account(
-            "login3",
-            103,
-            Some("user3@example.com"),
-            None,
-            Utc::now(),
-            None,
-        )
-        .await
-        .unwrap();
-    assert_eq!(&user.github_login, "login3");
-    assert_eq!(user.github_user_id, 103);
-    assert_eq!(user.email_address, Some("user3@example.com".into()));
 }
 
 test_both_dbs!(

@@ -18,6 +18,7 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use sha2::{Digest, Sha256};
@@ -1535,7 +1536,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let registry_id = self.registry_id.clone();
-        let package = self.package.clone();
+        let package = bounded_npm_package_spec(&self.package);
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
@@ -1554,7 +1555,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join(sanitize_path_component(&registry_id));
             fs.create_dir(&prefix_dir).await?;
 
-            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
+            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
             exec_args.extend(args);
 
             let npm_command = node_runtime
@@ -1590,6 +1591,30 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// People are using min-release-age more frequently. Which means a fresh registry will likely have
+/// new package versions than the user can install.
+/// We set the version to now be a ceiling and not an exact pin instead. This allows npm to resolve
+/// the latest version it can find that satisfies the constraint. npm seems to check regularly enough
+/// that new versions are available. This does have a few downsides:
+/// - The user might have an older cached version of the package that satisfies the constraint, until
+///   npm checks for updates again.
+/// - The registry args/env may not be valid for the resolved version.
+///
+/// This is a best-effort attempt to install a version that works without overriding the user's
+/// security settings, as the args don't change often. The registry will need to support this better
+/// at some point, but until then, this is a best-effort workaround that hopefully solves the issue
+/// for most users.
+fn bounded_npm_package_spec(package_spec: &str) -> String {
+    let Some((package_name, version)) = package_spec.rsplit_once('@') else {
+        return package_spec.to_string();
+    };
+    if package_name.is_empty() || Version::parse(version).is_err() {
+        return package_spec.to_string();
+    }
+
+    format!("{package_name}@<={version}")
 }
 
 struct LocalCustomAgent {
@@ -1994,6 +2019,26 @@ mod tests {
                 )
             })
         })
+    }
+
+    #[test]
+    fn builds_bounded_npm_package_specs() {
+        assert_eq!(
+            bounded_npm_package_spec("agent-package@1.2.3"),
+            "agent-package@<=1.2.3"
+        );
+        assert_eq!(
+            bounded_npm_package_spec("@scope/agent-package@1.2.3-beta.1"),
+            "@scope/agent-package@<=1.2.3-beta.1"
+        );
+        assert_eq!(
+            bounded_npm_package_spec("@scope/agent-package"),
+            "@scope/agent-package"
+        );
+        assert_eq!(
+            bounded_npm_package_spec("agent-package@latest"),
+            "agent-package@latest"
+        );
     }
 
     #[test]
