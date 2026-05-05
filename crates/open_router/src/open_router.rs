@@ -447,8 +447,11 @@ pub async fn stream_completion(
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
+        .header("Referer", "https://zed.dev")
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
+        .header("X-Title", "Zed Editor")
+        .header("X-OpenRouter-Title", "Zed Editor")
+        .header("Origin", "https://zed.dev");
 
     let request = request_builder
         .body(AsyncBody::from(
@@ -534,14 +537,17 @@ pub async fn list_models(
     api_url: &str,
     api_key: &str,
 ) -> Result<Vec<Model>, OpenRouterError> {
-    let uri = format!("{api_url}/models/user");
+    let uri = format!("{api_url}/models");
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
+        .header("Referer", "https://zed.dev")
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
+        .header("X-Title", "Zed Editor")
+        .header("X-OpenRouter-Title", "Zed Editor")
+        .header("Origin", "https://zed.dev");
 
     let request = request_builder
         .body(AsyncBody::default())
