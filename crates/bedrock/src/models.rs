@@ -532,12 +532,9 @@ impl Model {
 
     pub fn extended_context_token_count(&self) -> Option<u64> {
         match self {
-            Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_5
+            Self::ClaudeSonnet4_6
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_7
-            | Self::ClaudeSonnet4_6 => Some(1_000_000),
+            | Self::ClaudeOpus4_7 => Some(1_000_000),
             _ => None,
         }
     }
