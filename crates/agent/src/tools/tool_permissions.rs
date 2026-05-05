@@ -395,10 +395,7 @@ pub fn authorize_file_edit(
     }
 
     let path_owned = path.to_path_buf();
-    let title = format!(
-        "Edit {}",
-        util::markdown::MarkdownInlineCode(&path_str)
-    );
+    let title = format!("Edit {}", util::markdown::MarkdownInlineCode(&path_str));
     let tool_name = tool_name.to_string();
     let thread = thread.clone();
     let event_stream = event_stream.clone();
@@ -501,11 +498,7 @@ pub fn authorize_file_edit(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
                     );
-                    event_stream.authorize_always_prompt(
-                        format!("{title} (settings)"),
-                        context,
-                        cx,
-                    )
+                    event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
                 });
                 return authorize.await;
             }
