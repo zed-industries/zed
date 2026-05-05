@@ -25556,12 +25556,10 @@ impl Editor {
                             if has_file && !is_project_file {
                                 editor.set_read_only(true);
                             }
-                            let autoscroll = match scroll_offset {
-                                Some(scroll_offset) => {
-                                    Autoscroll::top_relative(scroll_offset as ScrollOffset)
-                                }
-                                None => Autoscroll::newest(),
-                            };
+                            let autoscroll = Autoscroll::for_go_to_definition(
+                                scroll_offset.map(|offset| offset as ScrollOffset),
+                                cx,
+                            );
                             let nav_history = editor.nav_history.take();
                             let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                             let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
