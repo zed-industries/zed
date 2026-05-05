@@ -1174,3 +1174,568 @@ mod git_traversal {
         pretty_assertions::assert_eq!(found_statuses, expected_statuses);
     }
 }
+
+mod git_worktrees {
+    use fs::{FakeFs, Fs};
+    use gpui::TestAppContext;
+    use project::worktrees_directory_for_repo;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::{Path, PathBuf};
+    use util::path;
+
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[test]
+    fn test_validate_worktree_directory() {
+        let work_dir = Path::new("/code/my-project");
+
+        // Valid: sibling
+        assert!(worktrees_directory_for_repo(work_dir, "../worktrees").is_ok());
+
+        // Valid: subdirectory
+        assert!(worktrees_directory_for_repo(work_dir, ".git/zed-worktrees").is_ok());
+        assert!(worktrees_directory_for_repo(work_dir, "my-worktrees").is_ok());
+
+        // Invalid: just ".." would resolve back to the working directory itself
+        let err = worktrees_directory_for_repo(work_dir, "..").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+
+        // Invalid: ".." with trailing separators
+        let err = worktrees_directory_for_repo(work_dir, "..\\").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+        let err = worktrees_directory_for_repo(work_dir, "../").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+
+        // Invalid: empty string would resolve to the working directory itself
+        let err = worktrees_directory_for_repo(work_dir, "").unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+
+        // Invalid: absolute path
+        let err = worktrees_directory_for_repo(work_dir, "/tmp/worktrees").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "/" is absolute on Unix
+        let err = worktrees_directory_for_repo(work_dir, "/").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "///" is absolute
+        let err = worktrees_directory_for_repo(work_dir, "///").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: escapes too far up
+        let err = worktrees_directory_for_repo(work_dir, "../../other-project/wt").unwrap_err();
+        assert!(err.to_string().contains("outside"));
+    }
+
+    #[gpui::test]
+    async fn test_git_worktrees_list_and_create(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].path, PathBuf::from(path!("/root")));
+
+        let worktrees_directory = PathBuf::from(path!("/root"));
+        let worktree_1_directory = worktrees_directory.join("feature-branch");
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "feature-branch".to_string(),
+                        base_sha: Some("abc123".to_string()),
+                    },
+                    worktree_1_directory.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].path, PathBuf::from(path!("/root")));
+        assert_eq!(worktrees[1].path, worktree_1_directory);
+        assert_eq!(
+            worktrees[1].ref_name,
+            Some("refs/heads/feature-branch".into())
+        );
+        assert_eq!(worktrees[1].sha.as_ref(), "abc123");
+
+        let worktree_2_directory = worktrees_directory.join("bugfix-branch");
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "bugfix-branch".to_string(),
+                        base_sha: None,
+                    },
+                    worktree_2_directory.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        // List worktrees — should now have main + two created
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 3);
+
+        let worktree_1 = worktrees
+            .iter()
+            .find(|worktree| worktree.ref_name == Some("refs/heads/feature-branch".into()))
+            .expect("should find feature-branch worktree");
+        assert_eq!(worktree_1.path, worktree_1_directory);
+
+        let worktree_2 = worktrees
+            .iter()
+            .find(|worktree| worktree.ref_name == Some("refs/heads/bugfix-branch".into()))
+            .expect("should find bugfix-branch worktree");
+        assert_eq!(worktree_2.path, worktree_2_directory);
+        assert_eq!(worktree_2.sha.as_ref(), "fake-sha");
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_removes_managed_parent_directories(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let worktree_path = PathBuf::from(path!("/worktrees/root/feature/nested/root"));
+        let worktree_parent = PathBuf::from(path!("/worktrees/root/feature/nested"));
+        let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/root/feature"));
+        let worktree_base = PathBuf::from(path!("/worktrees/root"));
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "feature/nested".to_string(),
+                        base_sha: Some("abc123".to_string()),
+                    },
+                    worktree_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.remove_worktree(worktree_path.clone(), false)
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+    }
+
+    use crate::Project;
+}
+
+mod trust_tests {
+    use collections::HashSet;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::trusted_worktrees::*;
+
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    use crate::Project;
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_repository_defaults_to_untrusted_without_trust_system(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "hello",
+            }),
+        )
+        .await;
+
+        // Create project without trust system — repos should default to untrusted.
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                !repo.is_trusted(),
+                "repository should default to untrusted when no trust system is initialized"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_multiple_repos_trust_with_single_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "hello",
+                "sub": {
+                    ".git": {},
+                    "b.txt": "world",
+                },
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            init(DbTrustedPaths::default(), cx);
+        });
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+
+        let repos = project.read_with(cx, |project, cx| {
+            project
+                .repositories(cx)
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(repos.len(), 2, "should have two repositories");
+        for repo in &repos {
+            repo.read_with(cx, |repo, _| {
+                assert!(
+                    !repo.is_trusted(),
+                    "all repos should be untrusted initially"
+                );
+            });
+        }
+
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        for repo in &repos {
+            repo.read_with(cx, |repo, _| {
+                assert!(
+                    repo.is_trusted(),
+                    "all repos should be trusted after worktree is trusted"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_repository_trust_restrict_trust_cycle(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "hello",
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            project::trusted_worktrees::init(DbTrustedPaths::default(), cx);
+        });
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        repository.read_with(cx, |repo, _| {
+            assert!(!repo.is_trusted(), "repository should start untrusted");
+        });
+
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted after worktree is trusted"
+            );
+        });
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.restrict(
+                worktree_store.downgrade(),
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                !repo.is_trusted(),
+                "repository should be untrusted after worktree is restricted"
+            );
+        });
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted again after second trust"
+            );
+        });
+    }
+}
+
+mod resolve_worktree_tests {
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::{
+        git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name,
+        repo_identity_path,
+    };
+    use serde_json::json;
+    use std::path::{Path, PathBuf};
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_to_main_repo(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        // Set up a main repo with a worktree entry
+        fs.insert_tree(
+            "/main-repo",
+            json!({
+                ".git": {
+                    "worktrees": {
+                        "feature": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        // Set up a worktree checkout pointing back to the main repo
+        fs.insert_tree(
+            "/worktree-checkout",
+            json!({
+                ".git": "gitdir: /main-repo/.git/worktrees/feature",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result =
+            resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/worktree-checkout")).await;
+        assert_eq!(result, Some(PathBuf::from("/main-repo")));
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_normal_repo_returns_none(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/repo")).await;
+        assert_eq!(result, None);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_no_git_returns_none(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/plain",
+            json!({
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/plain")).await;
+        assert_eq!(result, None);
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_nonexistent_returns_none(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+
+        let result =
+            resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/does-not-exist")).await;
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_repo_identity_path() {
+        let examples = [
+            // Normal checkout: `.git` starts with `.`, so parent is the worktree
+            ("/home/bob/zed/.git", "/home/bob/zed"),
+            // Bare clone named `.bare`: starts with `.`, so parent is the project dir
+            ("/repos/project/.bare", "/repos/project"),
+            // Bare clone with `.git` extension: does not start with `.`, kept as-is
+            ("/repos/zed.git", "/repos/zed.git"),
+            // Bare clone with arbitrary plain name: kept as-is
+            ("/repos/project", "/repos/project"),
+        ];
+        for (common_dir, expected) in examples {
+            assert_eq!(
+                repo_identity_path(Path::new(common_dir)),
+                Path::new(expected),
+                "identity path for common_dir {common_dir:?} should be {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_linked_worktree_short_name() {
+        let examples = [
+            (
+                "/home/bob/zed",
+                "/home/bob/worktrees/olivetti/zed",
+                Some("olivetti".into()),
+            ),
+            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/worktrees/zed/selectric",
+                Some("selectric".into()),
+            ),
+            ("/home/bob/zed", "/home/bob/zed", None),
+        ];
+        for (main_worktree_path, linked_worktree_path, expected) in examples {
+            let short_name = linked_worktree_short_name(
+                Path::new(main_worktree_path),
+                Path::new(linked_worktree_path),
+            );
+            assert_eq!(
+                short_name, expected,
+                "short name for {linked_worktree_path:?}, linked worktree of {main_worktree_path:?}, should be {expected:?}"
+            );
+        }
+    }
+}

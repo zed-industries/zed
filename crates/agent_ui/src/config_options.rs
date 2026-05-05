@@ -1,9 +1,9 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
-use agent_settings::AgentSettings;
+
 use collections::HashSet;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
@@ -13,14 +13,13 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use ui::{
-    DocumentationSide, ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle,
-    Tooltip, prelude::*,
+    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 
-use crate::ui::HoldForDefault;
+use crate::ui::{HoldForDefault, documentation_aside_side};
 
 const PICKER_THRESHOLD: usize = 5;
 
@@ -350,10 +349,7 @@ impl ConfigOptionSelector {
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
-        .icon(icon)
-        .icon_size(IconSize::XSmall)
-        .icon_position(IconPosition::End)
-        .icon_color(Color::Muted)
+        .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
         .disabled(self.setting_value)
     }
 }
@@ -385,7 +381,7 @@ impl Render for ConfigOptionSelector {
             self.picker.clone(),
             trigger_button,
             tooltip,
-            gpui::Corner::BottomRight,
+            gpui::Anchor::BottomRight,
             cx,
         )
         .with_handle(self.picker_handle.clone())
@@ -493,12 +489,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         cx.notify();
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(ConfigOptionPickerEntry::Option(_)) => true,
             Some(ConfigOptionPickerEntry::Separator(_)) | None => false,
@@ -658,7 +649,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                                 .end_slot(div().pr_2().when(is_selected, |this| {
                                     this.child(Icon::new(IconName::Check).color(Color::Accent))
                                 }))
-                                .end_hover_slot(div().pr_1p5().child({
+                                .end_slot_on_hover(div().pr_1p5().child({
                                     let (icon, color, tooltip) = if is_favorite {
                                         (IconName::StarFilled, Color::Accent, "Unfavorite")
                                     } else {
@@ -703,13 +694,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                 let description = description.clone();
                 let is_default = *is_default;
 
-                let settings = AgentSettings::get_global(cx);
-                let side = match settings.dock {
-                    settings::DockPosition::Left => DocumentationSide::Right,
-                    settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                        DocumentationSide::Left
-                    }
-                };
+                let side = documentation_aside_side(cx);
 
                 ui::DocumentationAside::new(
                     side,

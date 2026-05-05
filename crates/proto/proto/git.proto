@@ -125,6 +125,11 @@ message UpdateRepository {
   repeated StashEntry stash_entries = 13;
   optional string remote_upstream_url = 14;
   optional string remote_origin_url = 15;
+  reserved 16;
+  repeated Worktree linked_worktrees = 17;
+  repeated Branch branch_list = 18;
+  optional string repository_dir_abs_path = 19;
+  optional string common_dir_abs_path = 20;
 }
 
 message RemoveRepository {
@@ -175,6 +180,7 @@ message GitCreateBranch {
   reserved 2;
   uint64 repository_id = 3;
   string branch_name = 4;
+  optional string base_branch = 5;
 }
 
 message GitChangeBranch {
@@ -208,6 +214,7 @@ message GitDeleteBranch {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   string branch_name = 3;
+  bool is_remote = 4;
 }
 
 message GitDiff {
@@ -226,29 +233,6 @@ message GitDiff {
 
 message GitDiffResponse {
   string diff = 1;
-}
-
-message GitDiffStat {
-  uint64 project_id = 1;
-  uint64 repository_id = 2;
-  DiffType diff_type = 3;
-  optional string merge_base_ref = 4;
-
-  enum DiffType {
-    HEAD_TO_WORKTREE = 0;
-    HEAD_TO_INDEX = 1;
-    MERGE_BASE = 2;
-  }
-}
-
-message GitDiffStatResponse {
-  repeated GitDiffStatEntry entries = 1;
-}
-
-message GitDiffStatEntry {
-  string path = 1;
-  uint32 added = 2;
-  uint32 deleted = 3;
 }
 
 message GitInit {
@@ -330,35 +314,14 @@ message GitCheckoutFiles {
   repeated string paths = 5;
 }
 
-message GitFileHistory {
-  uint64 project_id = 1;
-  reserved 2;
-  uint64 repository_id = 3;
-  string path = 4;
-  uint64 skip = 5;
-  optional uint64 limit = 6;
-}
-
-message GitFileHistoryResponse {
-  repeated FileHistoryEntry entries = 1;
-  string path = 2;
-}
-
-message FileHistoryEntry {
-  string sha = 1;
-  string subject = 2;
-  string message = 3;
-  int64 commit_timestamp = 4;
-  string author_name = 5;
-  string author_email = 6;
-}
-
 // Move to `git.proto` once collab's min version is >=0.171.0.
 message StatusEntry {
   string repo_path = 1;
   // Can be removed once collab's min version is >=0.171.0.
   GitStatus simple_status = 2;
   GitFileStatus status = 3;
+  optional uint32 diff_stat_added = 4;
+  optional uint32 diff_stat_deleted = 5;
 }
 
 message StashEntry {
@@ -421,6 +384,7 @@ message Commit {
   message CommitOptions {
     bool amend = 1;
     bool signoff = 2;
+    bool allow_empty = 3;
   }
 }
 
@@ -585,6 +549,31 @@ message GitGetWorktrees {
   uint64 repository_id = 2;
 }
 
+message GitGetHeadSha {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitGetHeadShaResponse {
+  optional string sha = 1;
+}
+
+message GitEditRef {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string ref_name = 3;
+  oneof action {
+    string update_to_commit = 4;
+    DeleteRef delete = 5;
+  }
+  message DeleteRef {}
+}
+
+message GitRepairWorktrees {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
 message GitWorktreesResponse {
   repeated Worktree worktrees = 1;
 }
@@ -593,6 +582,8 @@ message Worktree {
   string path = 1;
   string ref_name = 2;
   string sha = 3;
+  bool is_main = 4;
+  bool is_bare = 5;
 }
 
 message GitCreateWorktree {
@@ -601,6 +592,75 @@ message GitCreateWorktree {
   string name = 3;
   string directory = 4;
   optional string commit = 5;
+  bool use_existing_branch = 6;
+}
+
+message GitCreateCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitCreateCheckpointResponse {
+  bytes commit_sha = 1;
+}
+
+message GitCreateArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitCreateArchiveCheckpointResponse {
+  string staged_commit_sha = 1;
+  string unstaged_commit_sha = 2;
+}
+
+message GitRestoreCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  bytes commit_sha = 3;
+}
+
+message GitRestoreArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string staged_commit_sha = 3;
+  string unstaged_commit_sha = 4;
+}
+
+message GitCompareCheckpoints {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  bytes left_commit_sha = 3;
+  bytes right_commit_sha = 4;
+}
+
+message GitCompareCheckpointsResponse {
+  bool equal = 1;
+}
+
+message GitDiffCheckpoints {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  bytes base_commit_sha = 3;
+  bytes target_commit_sha = 4;
+}
+
+message GitDiffCheckpointsResponse {
+  string diff = 1;
+}
+
+message GitRemoveWorktree {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string path = 3;
+  bool force = 4;
+}
+
+message GitRenameWorktree {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string old_path = 3;
+  string new_path = 4;
 }
 
 message RunGitHook {
@@ -612,4 +672,47 @@ message RunGitHook {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   GitHook hook = 3;
+}
+
+message GetCommitData {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  repeated string shas = 3;
+}
+
+message CommitData {
+  string sha = 1;
+  repeated string parents = 2;
+  string author_name = 3;
+  string author_email = 4;
+  int64 commit_timestamp = 5;
+  string subject = 6;
+  string message = 7;
+}
+
+message GetCommitDataResponse {
+  repeated CommitData commits = 1;
+}
+
+message GitLogSourceAll {}
+
+message GitLogSource {
+  oneof source {
+    GitLogSourceAll all = 1;
+    string branch = 2;
+    string sha = 3;
+    string path = 4;
+  }
+}
+
+message SearchCommits {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  GitLogSource log_source = 3;
+  string query = 4;
+  bool case_sensitive = 5;
+}
+
+message SearchCommitsResponse {
+  repeated string shas = 1;
 }

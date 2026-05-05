@@ -111,6 +111,7 @@ impl WindowsWindowInner {
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -593,33 +594,63 @@ impl WindowsWindowInner {
     }
 
     pub(crate) fn update_ime_position(&self, handle: HWND, caret_position: POINT) {
+        let Some(ctx) = ImeContext::get(handle) else {
+            return;
+        };
         unsafe {
-            let ctx = ImmGetContext(handle);
-            if ctx.is_invalid() {
-                return;
-            }
+            ImmSetCompositionWindow(
+                *ctx,
+                &COMPOSITIONFORM {
+                    dwStyle: CFS_POINT,
+                    ptCurrentPos: caret_position,
+                    ..Default::default()
+                },
+            )
+            .ok()
+            .log_err();
 
-            let config = COMPOSITIONFORM {
-                dwStyle: CFS_POINT,
-                ptCurrentPos: caret_position,
-                ..Default::default()
-            };
-            ImmSetCompositionWindow(ctx, &config).ok().log_err();
-            let config = CANDIDATEFORM {
-                dwStyle: CFS_CANDIDATEPOS,
-                ptCurrentPos: caret_position,
-                ..Default::default()
-            };
-            ImmSetCandidateWindow(ctx, &config).ok().log_err();
-            ImmReleaseContext(handle, ctx).ok().log_err();
+            ImmSetCandidateWindow(
+                *ctx,
+                &CANDIDATEFORM {
+                    dwStyle: CFS_CANDIDATEPOS,
+                    ptCurrentPos: caret_position,
+                    ..Default::default()
+                },
+            )
+            .ok()
+            .log_err();
+        }
+    }
+
+    fn update_ime_enabled(&self, handle: HWND) {
+        let ime_enabled = self
+            .with_input_handler(|input_handler| input_handler.query_accepts_text_input())
+            .unwrap_or(false);
+        if ime_enabled == self.state.ime_enabled.get() {
+            return;
+        }
+        self.state.ime_enabled.set(ime_enabled);
+        unsafe {
+            if ime_enabled {
+                ImmAssociateContextEx(handle, HIMC::default(), IACE_DEFAULT)
+                    .ok()
+                    .log_err();
+            } else {
+                if let Some(ctx) = ImeContext::get(handle) {
+                    ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0)
+                        .ok()
+                        .log_err();
+                }
+                ImmAssociateContextEx(handle, HIMC::default(), 0)
+                    .ok()
+                    .log_err();
+            }
         }
     }
 
     fn handle_ime_composition(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        let ctx = unsafe { ImmGetContext(handle) };
-        let result = self.handle_ime_composition_inner(ctx, lparam);
-        unsafe { ImmReleaseContext(handle, ctx).ok().log_err() };
-        result
+        let ctx = ImeContext::get(handle)?;
+        self.handle_ime_composition_inner(*ctx, lparam)
     }
 
     fn handle_ime_composition_inner(&self, ctx: HIMC, lparam: LPARAM) -> Option<isize> {
@@ -694,6 +725,25 @@ impl WindowsWindowInner {
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
         let this = self.clone();
+
+        // When the window is activated (gains focus), reset the modifier tracking state.
+        // This fixes the issue where Alt-Tab away and back leaves stale modifier state
+        // (especially the Alt key) because Windows doesn't always send key-up events to
+        // windows that have lost focus.
+        if activated {
+            this.state.last_reported_modifiers.set(None);
+            this.state.last_reported_capslock.set(None);
+
+            if let Some(mut func) = this.state.callbacks.input.take() {
+                let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers: current_modifiers(),
+                    capslock: current_capslock(),
+                });
+                func(input);
+                this.state.callbacks.input.set(Some(func));
+            }
+        }
+
         self.executor
             .spawn(async move {
                 if let Some(mut func) = this.state.callbacks.active_status_change.take() {
@@ -727,6 +777,10 @@ impl WindowsWindowInner {
         let new_scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
         self.state.scale_factor.set(new_scale_factor);
         self.state.border_offset.update(handle).log_err();
+
+        self.state
+            .direct_manipulation
+            .set_scale_factor(new_scale_factor);
 
         if is_maximized {
             // Get the monitor and its work area at the new DPI
@@ -1109,20 +1163,39 @@ impl WindowsWindowInner {
         Some(0)
     }
 
+    fn handle_dm_pointer_hit_test(&self, wparam: WPARAM) -> Option<isize> {
+        self.state.direct_manipulation.on_pointer_hit_test(wparam);
+        None
+    }
+
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
         let mut request_frame = self.state.callbacks.request_frame.take()?;
 
-        // we are instructing gpui to force render a frame, this will
-        // re-populate all the gpu textures for us so we can resume drawing in
-        // case we disabled drawing earlier due to a device loss
-        self.state.renderer.borrow_mut().mark_drawable();
+        self.state.direct_manipulation.update();
+
+        let events = self.state.direct_manipulation.drain_events();
+        if !events.is_empty() {
+            if let Some(mut func) = self.state.callbacks.input.take() {
+                for event in events {
+                    func(event);
+                }
+                self.state.callbacks.input.set(Some(func));
+            }
+        }
+
+        if force_render {
+            // Re-enable drawing after a device loss recovery. The forced render
+            // will rebuild the scene with fresh atlas textures.
+            self.state.renderer.borrow_mut().mark_drawable();
+        }
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,
         });
 
         self.state.callbacks.request_frame.set(Some(request_frame));
+        self.update_ime_enabled(handle);
         unsafe { ValidateRect(Some(handle), None).ok().log_err() };
 
         Some(0)
@@ -1202,6 +1275,36 @@ impl WindowsWindowInner {
         let result = f(&mut input_handler, scale_factor);
         self.state.input_handler.set(Some(input_handler));
         result
+    }
+}
+
+struct ImeContext {
+    hwnd: HWND,
+    himc: HIMC,
+}
+
+impl ImeContext {
+    fn get(hwnd: HWND) -> Option<Self> {
+        let himc = unsafe { ImmGetContext(hwnd) };
+        if himc.is_invalid() {
+            return None;
+        }
+        Some(Self { hwnd, himc })
+    }
+}
+
+impl std::ops::Deref for ImeContext {
+    type Target = HIMC;
+    fn deref(&self) -> &HIMC {
+        &self.himc
+    }
+}
+
+impl Drop for ImeContext {
+    fn drop(&mut self) {
+        unsafe {
+            ImmReleaseContext(self.hwnd, self.himc).ok().log_err();
+        }
     }
 }
 

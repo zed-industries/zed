@@ -121,6 +121,16 @@
   // References
   {
     "token_type": "parameter",
+    "token_modifiers": ["declaration"],
+    "style": ["variable.parameter"]
+  },
+  {
+    "token_type": "parameter",
+    "token_modifiers": ["definition"],
+    "style": ["variable.parameter"]
+  },
+  {
+    "token_type": "parameter",
     "token_modifiers": [],
     "style": ["variable"],
   },
@@ -200,6 +210,11 @@
     "token_type": "comment",
     "token_modifiers": [],
     "style": ["comment"],
+  },
+  {
+    "token_type": "string",
+    "token_modifiers": ["documentation"],
+    "style": ["string.doc"],
   },
   {
     "token_type": "string",

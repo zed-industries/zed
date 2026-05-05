@@ -89,8 +89,8 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
   "languages": {
     "Python": {
       "language_servers": [
-        // Disable basedpyright and enable ty, and otherwise
-        // use the default configuration.
+        // Enable ty, disable basedpyright, and enable all
+        // other registered language servers (ruff, pylsp, pyright).
         "ty",
         "!basedpyright",
         "..."
@@ -397,6 +397,37 @@ requirements.txt
 ```
 
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
+
+#### Debug a Django App
+
+For projects using Django with a structure similar to the following:
+
+```
+my_django_project/
+  manage.py
+  …
+  my_django_app/
+    migrations/
+    templates/
+    models.py
+    urls.py
+    …
+```
+
+…the following configuration can be used:
+
+```json [debug]
+[
+  {
+    "label": "Python: Django",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "program": "manage.py",
+    "args": ["runserver"],
+    "django": true
+  }
+]
+```
 
 ## Troubleshooting
 

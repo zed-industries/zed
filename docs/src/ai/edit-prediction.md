@@ -1,21 +1,23 @@
 ---
-title: AI Code Completion in Zed - Zeta, Copilot, Sweep, Mercury Coder
-description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Sweep, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
+title: AI Code Completion in Zed - Zeta, Copilot, Codestral, Mercury Coder
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
 ---
 
 # Edit Prediction
 
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
-Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
+Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions you accept by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Sweep, Mercury Coder, and Codestral.
+The default provider is [Zeta, an open source model developed by Zed](https://zed.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
 
 ## Configuring Zeta
 
 To use Zeta, [sign in](../authentication.md#what-features-require-signing-in).
 Once signed in, predictions appear as you type.
 
-You can confirm that Zeta is properly configured either by verifying whether you have the following code in your settings file:
+You can confirm that Zeta is properly configured by opening the [Settings Editor](zed://settings/edit_predictions.providers) (`Cmd+,` on macOS or `Ctrl+,` on Linux/Windows) and searching for `edit_predictions`. The `provider` field should be set to `Zed AI`.
+
+Or verify this in your settings.json:
 
 ```json [settings]
 {
@@ -33,7 +35,7 @@ The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../ai/pl
 
 ### Switching Modes {#switching-modes}
 
-Zed's Edit Prediction comes with two different display modes:
+Edit Prediction has two display modes:
 
 1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
@@ -52,197 +54,99 @@ Or directly via the UI through the status bar menu:
 
 > Note that edit prediction modes work with any prediction provider.
 
-### Conflict With Other `tab` Actions {#edit-predictions-conflict}
+## Default Key Bindings
 
-By default, when `tab` would normally perform a different action, Zed requires a modifier key to accept predictions:
+On macOS and Windows, you can accept edit predictions with `alt-tab`. On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is the default key binding for edit predictions.
 
-1. When the language server completions menu is visible.
-2. When your cursor isn't at the right indentation level.
-
-In these cases, `alt-tab` is used instead to accept the prediction. When the language server completions menu is open, holding `alt` first will cause it to temporarily disappear in order to preview the prediction within the buffer.
-
-On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is provided as the default binding for accepting predictions. `tab` and `alt-tab` also work, but aren't displayed by default.
+In `eager` mode, you can also use the `tab` key to accept edit predictions, unless the completion menu is open, in which case `tab` accepts LSP completions. To use `tab` to insert whitespace, you need to dismiss the prediction with {#kb editor::Cancel} before hitting `tab`.
 
 {#action editor::AcceptNextWordEditPrediction} ({#kb editor::AcceptNextWordEditPrediction}) can be used to accept the current edit prediction up to the next word boundary.
 {#action editor::AcceptNextLineEditPrediction} ({#kb editor::AcceptNextLineEditPrediction}) can be used to accept the current edit prediction up to the new line boundary.
 
 ## Configuring Edit Prediction Keybindings {#edit-predictions-keybinding}
 
-By default, `tab` is used to accept edit predictions. You can use another keybinding by inserting this in your keymap:
-
-```json [keymap]
-{
-  "context": "Editor && edit_prediction",
-  "bindings": {
-    // Here we also allow `alt-enter` to accept the prediction
-    "alt-enter": "editor::AcceptEditPrediction"
-  }
-}
-```
-
-When there's a [conflict with the `tab` key](#edit-predictions-conflict), Zed uses a different key context to accept keybindings (`edit_prediction_conflict`).
-If you want to use a different one, you can insert this in your keymap:
-
-```json [keymap]
-{
-  "context": "Editor && edit_prediction_conflict",
-  "bindings": {
-    "ctrl-enter": "editor::AcceptEditPrediction" // Example of a modified keybinding
-  }
-}
-```
-
-If your keybinding contains a modifier (`ctrl` in the example above), it will also be used to preview the edit prediction and temporarily hide the language server completion menu.
-
-You can also bind this action to keybind without a modifier.
-In that case, Zed will use the default modifier (`alt`) to preview the edit prediction.
-
-```json [keymap]
-{
-  "context": "Editor && edit_prediction_conflict",
-  "bindings": {
-    // Here we bind tab to accept even when there's a language server completion
-    // or the cursor isn't at the correct indentation level
-    "tab": "editor::AcceptEditPrediction"
-  }
-}
-```
-
-To maintain the use of the modifier key for accepting predictions when there is a language server completions menu, but allow `tab` to accept predictions regardless of cursor position, you can specify the context further with `showing_completions`:
-
-```json [keymap]
-{
-  "context": "Editor && edit_prediction_conflict && !showing_completions",
-  "bindings": {
-    // Here we don't require a modifier unless there's a language server completion
-    "tab": "editor::AcceptEditPrediction"
-  }
-}
-```
-
 ### Keybinding Example: Always Use Tab
 
-If you want to use `tab` to always accept edit predictions, you can use the following keybinding:
+To always use `tab` for accepting edit predictions, regardless of whether the LSP completions menu is open, you can add the following to your keymap:
+
+Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and hit `edit`. Then change the context the binding is active in to just `Editor && edit_prediction` and save it.
+
+Alternatively, you can put the following in your `keymap.json`:
 
 ```json [keymap]
-{
-  "context": "Editor && edit_prediction_conflict && showing_completions",
-  "bindings": {
-    "tab": "editor::AcceptEditPrediction"
+[
+  {
+    "context": "Editor && edit_prediction",
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction"
+    }
   }
-}
+]
 ```
 
-This will make `tab` work to accept edit predictions _even when_ you're also seeing language server completions.
-That means that you need to rely on `enter` for accepting the latter.
+After that, {#kb editor::ComposeCompletion} remains available for accepting LSP completions.
 
 ### Keybinding Example: Always Use Alt-Tab
 
-The keybinding example below causes `alt-tab` to always be used instead of sometimes using `tab`.
-You might want this in order to have just one (alternative) keybinding to use for accepting edit predictions, since the behavior of `tab` varies based on context.
+To stop using `tab` for accepting edit predictions and always use `alt-tab` instead, unbind the default `tab` binding in the eager edit prediction context:
+
+Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and delete it.
+
+Alternatively, you can put the following in your `keymap.json`:
 
 ```json [keymap]
+[
   {
     "context": "Editor && edit_prediction",
-    "bindings": {
-      "alt-tab": "editor::AcceptEditPrediction"
+    "unbind": {
+      "tab": "editor::AcceptEditPrediction"
     }
-  },
-  // Bind `tab` back to its original behavior.
-  {
-    "context": "Editor",
-    "bindings": {
-      "tab": "editor::Tab"
-    }
-  },
-  {
-    "context": "Editor && showing_completions",
-    "bindings": {
-      "tab": "editor::ComposeCompletion"
-    }
-  },
+  }
+]
 ```
 
-If you are using [Vim mode](../vim.md), then additional bindings are needed after the above to return `tab` to its original behavior:
+After that, `alt-tab` remains available for accepting edit predictions, and on Linux `alt-l` does too unless you unbind it.
+
+### Keybinding Example: Rebind Both Tab and Alt-Tab
+
+To move both default accept bindings to something else, unbind them and add your replacement:
+
+Open the keymap editor with {#action zed::OpenKeymap} ({#kb zed::OpenKeymap}), search for `AcceptEditPrediction`, right click on the binding for `tab` and delete it. Then right click on the binding for `alt-tab`, select "Edit", and record your desired keystrokes before hitting saving.
+
+Alternatively, you can put the following in your `keymap.json`:
 
 ```json [keymap]
-  {
-    "context": "(VimControl && !menu) || vim_mode == replace || vim_mode == waiting",
-    "bindings": {
-      "tab": "vim::Tab"
-    }
-  },
-  {
-    "context": "vim_mode == literal",
-    "bindings": {
-      "tab": ["vim::Literal", ["tab", "\u0009"]]
-    }
-  },
-```
-
-### Keybinding Example: Displaying Tab and Alt-Tab on Linux
-
-While `tab` and `alt-tab` are supported on Linux, `alt-l` is displayed instead.
-If your window manager does not reserve `alt-tab`, and you would prefer to use `tab` and `alt-tab`, include these bindings in `keymap.json`:
-
-```json [keymap]
+[
   {
     "context": "Editor && edit_prediction",
-    "bindings": {
-      "tab": "editor::AcceptEditPrediction",
-      // Optional: This makes the default `alt-l` binding do nothing.
-      "alt-l": null
-    }
-  },
-  {
-    "context": "Editor && edit_prediction_conflict",
-    "bindings": {
+    "unbind": {
       "alt-tab": "editor::AcceptEditPrediction",
-      // Optional: This makes the default `alt-l` binding do nothing.
-      "alt-l": null
-    }
-  },
-```
-
-### Missing keybind {#edit-predictions-missing-keybinding}
-
-Zed requires at least one keybinding for the {#action editor::AcceptEditPrediction} action in both the `Editor && edit_prediction` and `Editor && edit_prediction_conflict` contexts ([learn more above](#edit-predictions-keybinding)).
-
-If you have previously bound the default keybindings to different actions in the global context, you will not be able to preview or accept edit predictions. For example:
-
-```json [keymap]
-[
-  // Your keymap
-  {
+      // Add this as well on Windows/Linux
+      // "alt-l": "editor::AcceptEditPrediction",
+      "tab": "editor::AcceptEditPrediction"
+    },
     "bindings": {
-      // Binds `alt-tab` to a different action globally
-      "alt-tab": "menu::SelectNext"
+      "ctrl-enter": "editor::AcceptEditPrediction"
     }
   }
 ]
 ```
 
-To fix this, you can specify your own keybinding for accepting edit predictions:
+In this case, because the binding contains the modifier `ctrl`, it will be used to preview the prediction in subtle mode, or when the completions menu is open.
 
-```json [keymap]
-[
-  // ...
-  {
-    "context": "Editor && edit_prediction_conflict",
-    "bindings": {
-      "alt-l": "editor::AcceptEditPrediction"
-    }
-  }
-]
-```
+### Cleaning Up Older Keymap Entries
 
-If you would like to use the default keybinding, you can free it up by either moving yours to a more specific context or changing it to something else.
+If you configured edit prediction keybindings before Zed `v0.229.0`, your `keymap.json` may have entries that are now redundant.
+
+**Old tab workaround**: Before `unbind` existed, the only way to prevent `tab` from accepting edit predictions was to copy all the default non-edit-prediction `tab` bindings into your keymap alongside a custom `AcceptEditPrediction` binding. If your keymap still contains those copy-pasted entries, delete them and use a single `"unbind"` entry as shown in the examples above.
+
+**Renamed context**: The `edit_prediction_conflict` context has been replaced by `edit_prediction && (showing_completions || in_leading_whitespace)`. Zed automatically migrates any bindings that used `edit_prediction_conflict`, so no changes are required on your end.
 
 ## Disabling Automatic Edit Prediction
 
 You can disable edit predictions at several levels, or turn them off entirely.
 
-Alternatively, if you have Zed set as your provider, consider [using Subtle Mode](#switching-modes).
+Alternatively, consider [using Subtle Mode](#switching-modes).
 
 ### On Buffers
 
@@ -254,7 +158,7 @@ To not have predictions appear automatically as you type, set this in your setti
 }
 ```
 
-This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in (valid only if you have Zed as your provider).
+This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in.
 Still, you can trigger edit predictions manually by executing {#action editor::ShowEditPrediction} or hitting {#kb editor::ShowEditPrediction}.
 
 ### For Specific Languages
@@ -329,8 +233,8 @@ If your organization uses GitHub Copilot Enterprise, you can configure Zed to us
 
 Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (e.g., `https://foo.ghe.com`).
 
-Once set, Zed will route Copilot requests through your enterprise endpoint.
-When you sign in by clicking the Copilot icon in the status bar, you will be redirected to your configured enterprise URL to complete authentication.
+Once set, Zed routes Copilot requests through your enterprise endpoint.
+When you sign in by clicking the Copilot icon in the status bar, you are redirected to your configured enterprise URL to complete authentication.
 All other Copilot features and usage remain the same.
 
 Copilot can provide multiple completion alternatives, and these can be navigated with the following actions:
@@ -338,33 +242,11 @@ Copilot can provide multiple completion alternatives, and these can be navigated
 - {#action editor::NextEditPrediction} ({#kb editor::NextEditPrediction}): To cycle to the next edit prediction
 - {#action editor::PreviousEditPrediction} ({#kb editor::PreviousEditPrediction}): To cycle to the previous edit prediction
 
-### Sweep {#sweep}
-
-To use [Sweep](https://sweep.dev/) as your provider:
-
-1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
-2. Search for "Edit Predictions" and click **Configure Providers**
-3. Find the Sweep section and enter your API key from the
-   [Sweep dashboard](https://app.sweep.dev/)
-
-Alternatively, click the edit prediction icon in the status bar and select
-**Configure Providers** from the menu.
-
-After adding your API key, Sweep will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in your settings file:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "sweep"
-  }
-}
-```
-
 ### Mercury Coder {#mercury-coder}
 
 To use [Mercury Coder](https://www.inceptionlabs.ai/) by Inception Labs as your provider:
 
-1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+1. Open the Settings Editor ({#kb zed::OpenSettings})
 2. Search for "Edit Predictions" and click **Configure Providers**
 3. Find the Mercury section and enter your API key from the
    [Inception Labs dashboard](https://platform.inceptionlabs.ai/dashboard/api-keys)
@@ -405,8 +287,6 @@ After adding your API key, Codestral will appear in the provider dropdown in the
 ```
 
 ### Self-Hosted OpenAI-compatible servers
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 You can use any self-hosted server that implements the OpenAI completion API format. This works with vLLM, llama.cpp server, LocalAI, and other compatible servers.
 

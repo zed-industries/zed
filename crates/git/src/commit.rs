@@ -1,11 +1,11 @@
 use crate::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, parse_git_remote_url,
-    status::StatusCode,
+    repository::GitBinary, status::StatusCode,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::SharedString;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Default)]
 pub struct ParsedCommitMessage {
@@ -48,7 +48,7 @@ impl ParsedCommitMessage {
     }
 }
 
-pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
+pub(crate) async fn get_messages(git: &GitBinary, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
     if shas.is_empty() {
         return Ok(HashMap::default());
     }
@@ -63,12 +63,12 @@ pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<Hash
 
         let mut result = vec![];
         for shas in shas.chunks(MAX_ENTRIES_PER_INVOCATION) {
-            let partial = get_messages_impl(working_directory, shas).await?;
+            let partial = get_messages_impl(git, shas).await?;
             result.extend(partial);
         }
         result
     } else {
-        get_messages_impl(working_directory, shas).await?
+        get_messages_impl(git, shas).await?
     };
 
     Ok(shas
@@ -78,11 +78,10 @@ pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<Hash
         .collect::<HashMap<Oid, String>>())
 }
 
-async fn get_messages_impl(working_directory: &Path, shas: &[Oid]) -> Result<Vec<String>> {
+async fn get_messages_impl(git: &GitBinary, shas: &[Oid]) -> Result<Vec<String>> {
     const MARKER: &str = "<MARKER>";
-    let output = util::command::new_command("git")
-        .current_dir(working_directory)
-        .arg("show")
+    let output = git
+        .build_command(&["show"])
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))
         .args(shas.iter().map(ToString::to_string))
@@ -92,7 +91,7 @@ async fn get_messages_impl(working_directory: &Path, shas: &[Oid]) -> Result<Vec
     anyhow::ensure!(
         output.status.success(),
         "'git show' failed with error {:?}",
-        output.status
+        String::from_utf8_lossy(&output.stderr)
     );
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim()

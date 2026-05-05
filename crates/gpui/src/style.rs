@@ -138,6 +138,42 @@ impl ObjectFit {
     }
 }
 
+/// The minimum size of a column or row in a grid layout
+#[derive(
+    Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, JsonSchema, Serialize, Deserialize,
+)]
+pub enum TemplateColumnMinSize {
+    /// The column size may be 0
+    #[default]
+    Zero,
+    /// The column size can be determined by the min content
+    MinContent,
+    /// The column size can be determined by the max content
+    MaxContent,
+}
+
+/// A simplified representation of the grid-template-* value
+#[derive(
+    Copy,
+    Clone,
+    Refineable,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    Default,
+    JsonSchema,
+    Serialize,
+    Deserialize,
+)]
+pub struct GridTemplate {
+    /// How this template directive should be repeated
+    pub repeat: u16,
+    /// The minimum size in the repeat(<>, minmax(_, 1fr)) equation
+    pub min_size: TemplateColumnMinSize,
+}
+
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -262,16 +298,12 @@ pub struct Style {
     pub opacity: Option<f32>,
 
     /// The grid columns of this element
-    /// Equivalent to the Tailwind `grid-cols-<number>`
-    pub grid_cols: Option<u16>,
-
-    /// The grid columns with min-content minimum sizing.
-    /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
-    pub grid_cols_min_content: Option<u16>,
+    /// Roughly equivalent to the Tailwind `grid-cols-<number>`
+    pub grid_cols: Option<GridTemplate>,
 
     /// The row span of this element
     /// Equivalent to the Tailwind `grid-rows-<number>`
-    pub grid_rows: Option<u16>,
+    pub grid_rows: Option<GridTemplate>,
 
     /// The grid location of this element
     pub grid_location: Option<GridLocation>,
@@ -666,72 +698,16 @@ impl Style {
 
         if self.is_border_visible() {
             let border_widths = self.border_widths.to_pixels(rem_size);
-            let max_border_width = border_widths.max();
-            let max_corner_radius = corner_radii.max();
-            let zero_size = Size {
-                width: Pixels::ZERO,
-                height: Pixels::ZERO,
-            };
-
-            let mut top_bounds = Bounds::from_corners(
-                bounds.origin,
-                bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-            );
-            top_bounds.size = top_bounds.size.max(&zero_size);
-            let mut bottom_bounds = Bounds::from_corners(
-                bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                bounds.bottom_right(),
-            );
-            bottom_bounds.size = bottom_bounds.size.max(&zero_size);
-            let mut left_bounds = Bounds::from_corners(
-                top_bounds.bottom_left(),
-                bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
-            );
-            left_bounds.size = left_bounds.size.max(&zero_size);
-            let mut right_bounds = Bounds::from_corners(
-                top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
-                bottom_bounds.top_right(),
-            );
-            right_bounds.size = right_bounds.size.max(&zero_size);
-
             let mut background = self.border_color.unwrap_or_default();
             background.a = 0.;
-            let quad = quad(
+            window.paint_quad(quad(
                 bounds,
                 corner_radii,
                 background,
                 border_widths,
                 self.border_color.unwrap_or_default(),
                 self.border_style,
-            );
-
-            window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
-                window.paint_quad(quad.clone());
-            });
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: right_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: bottom_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: left_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad);
-                },
-            );
+            ));
         }
 
         #[cfg(debug_assertions)]
@@ -790,7 +766,6 @@ impl Default for Style {
             opacity: None,
             grid_rows: None,
             grid_cols: None,
-            grid_cols_min_content: None,
             grid_location: None,
 
             #[cfg(debug_assertions)]

@@ -35,6 +35,7 @@ raw-window-handle = "0.6"
 wasm_thread = { version = "0.3", features = ["es_modules"], optional = true }
 web-sys = { version = "0.3", features = [
     "console",
+    "CompositionEvent",
     "CssStyleDeclaration",
     "DataTransfer",
     "Document",

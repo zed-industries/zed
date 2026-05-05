@@ -1,3 +1,4 @@
+use crate::Tooltip;
 use crate::prelude::*;
 
 #[derive(IntoElement, RegisterComponent)]
@@ -6,6 +7,7 @@ pub struct DiffStat {
     added: usize,
     removed: usize,
     label_size: LabelSize,
+    tooltip: Option<SharedString>,
 }
 
 impl DiffStat {
@@ -15,6 +17,7 @@ impl DiffStat {
             added,
             removed,
             label_size: LabelSize::Small,
+            tooltip: None,
         }
     }
 
@@ -22,41 +25,32 @@ impl DiffStat {
         self.label_size = label_size;
         self
     }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
 }
 
 impl RenderOnce for DiffStat {
     fn render(self, _: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let tooltip = self.tooltip;
         h_flex()
             .id(self.id)
             .gap_1()
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(IconSize::XSmall)
-                            .color(Color::Success),
-                    )
-                    .child(
-                        Label::new(self.added.to_string())
-                            .color(Color::Success)
-                            .size(self.label_size),
-                    ),
+                Label::new(format!("+\u{2009}{}", self.added))
+                    .color(Color::Success)
+                    .size(self.label_size),
             )
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(
-                        Icon::new(IconName::Dash)
-                            .size(IconSize::XSmall)
-                            .color(Color::Error),
-                    )
-                    .child(
-                        Label::new(self.removed.to_string())
-                            .color(Color::Error)
-                            .size(self.label_size),
-                    ),
+                Label::new(format!("\u{2012}\u{2009}{}", self.removed))
+                    .color(Color::Error)
+                    .size(self.label_size),
             )
+            .when_some(tooltip, |this, tooltip| {
+                this.tooltip(Tooltip::text(tooltip))
+            })
     }
 }
 

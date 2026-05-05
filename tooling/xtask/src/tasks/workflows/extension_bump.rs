@@ -1,15 +1,17 @@
-use gh_workflow::{ctx::Context, *};
+use gh_workflow::*;
 use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
     extension_tests::{self},
     runners,
     steps::{
-        self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob,
-        checkout_repo, dependant_job, named,
+        self, BASH_SHELL, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob,
+        RepositoryTarget, cache_rust_dependencies_namespace, checkout_repo, dependant_job,
+        generate_token, named,
     },
     vars::{
-        JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
+        JobOutput, StepOutput, WorkflowInput, WorkflowSecret,
+        one_workflow_per_non_main_branch_and_token,
     },
 };
 
@@ -22,6 +24,7 @@ pub(crate) fn extension_bump() -> Workflow {
     // TODO: Ideally, this would have a default of `false`, but this is currently not
     // supported in gh-workflows
     let force_bump = WorkflowInput::bool("force-bump", None);
+    let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
     let (app_id, app_secret) = extension_workflow_secrets();
     let (check_version_changed, version_changed, current_version) = check_version_changed();
@@ -39,16 +42,17 @@ pub(crate) fn extension_bump() -> Workflow {
         &app_id,
         &app_secret,
     );
-    let create_label = create_version_label(
+    let (create_label, tag) = create_version_label(
         &dependencies,
         &version_changed,
         &current_version,
         &app_id,
         &app_secret,
     );
+    let tag = tag.as_job_output(&create_label);
     let trigger_release = trigger_release(
         &[&check_version_changed, &create_label],
-        current_version,
+        tag,
         &app_id,
         &app_secret,
     );
@@ -59,6 +63,7 @@ pub(crate) fn extension_bump() -> Workflow {
                 WorkflowCall::default()
                     .add_input(bump_type.name, bump_type.call_input())
                     .add_input(force_bump.name, force_bump.call_input())
+                    .add_input(working_directory.name, working_directory.call_input())
                     .secrets([
                         (app_id.name.to_owned(), app_id.secret_configuration()),
                         (
@@ -68,7 +73,7 @@ pub(crate) fn extension_bump() -> Workflow {
                     ]),
             ),
         )
-        .concurrency(one_workflow_per_non_main_branch())
+        .concurrency(one_workflow_per_non_main_branch_and_token("extension-bump"))
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
@@ -82,10 +87,19 @@ pub(crate) fn extension_bump() -> Workflow {
         .add_job(trigger_release.name, trigger_release.job)
 }
 
+fn extension_job_defaults() -> Defaults {
+    Defaults::default().run(
+        RunDefaults::default()
+            .shell(BASH_SHELL)
+            .working_directory("${{ inputs.working-directory }}"),
+    )
+}
+
 fn check_version_changed() -> (NamedJob, StepOutput, StepOutput) {
     let (compare_versions, version_changed, current_version) = compare_versions();
 
     let job = Job::default()
+        .defaults(extension_job_defaults())
         .with_repository_owner_guard()
         .outputs([
             (version_changed.name.to_owned(), version_changed.to_string()),
@@ -108,26 +122,35 @@ fn create_version_label(
     current_version: &JobOutput,
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
-) -> NamedJob {
+) -> (NamedJob, StepOutput) {
     let (generate_token, generated_token) =
-        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
+        generate_token(&app_id.to_string(), &app_secret.to_string()).into();
+    let (determine_tag_step, tag) = determine_tag(current_version);
     let job = steps::dependant_job(dependencies)
+        .defaults(extension_job_defaults())
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && \
             github.ref == 'refs/heads/main' && {version_changed} == 'true'",
             version_changed = version_changed_output.expr(),
         )))
+        .outputs([(tag.name.to_owned(), tag.to_string())])
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
-        .add_step(create_version_tag(current_version, generated_token));
+        .add_step(determine_tag_step)
+        .add_step(create_version_tag(&tag, generated_token));
 
-    named::job(job)
+    (named::job(job), tag)
 }
 
-fn create_version_tag(current_version: &JobOutput, generated_token: StepOutput) -> Step<Use> {
-    named::uses("actions", "github-script", "v7").with(
+fn create_version_tag(tag: &StepOutput, generated_token: StepOutput) -> Step<Use> {
+    named::uses(
+        "actions",
+        "github-script",
+        "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+    )
+    .with(
         Input::default()
             .add(
                 "script",
@@ -135,7 +158,7 @@ fn create_version_tag(current_version: &JobOutput, generated_token: StepOutput) 
                     github.rest.git.createRef({{
                         owner: context.repo.owner,
                         repo: context.repo.repo,
-                        ref: 'refs/tags/v{current_version}',
+                        ref: 'refs/tags/{tag}',
                         sha: context.sha
                     }})"#
                 },
@@ -144,17 +167,35 @@ fn create_version_tag(current_version: &JobOutput, generated_token: StepOutput) 
     )
 }
 
+fn determine_tag(current_version: &JobOutput) -> (Step<Run>, StepOutput) {
+    let step = named::bash(formatdoc! {r#"
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            TAG="v${{CURRENT_VERSION}}"
+        else
+            TAG="${{EXTENSION_ID}}-v${{CURRENT_VERSION}}"
+        fi
+
+        echo "tag=${{TAG}}" >> "$GITHUB_OUTPUT"
+    "#})
+    .id("determine-tag")
+    .add_env(("CURRENT_VERSION", current_version.to_string()))
+    .add_env(("WORKING_DIR", "${{ inputs.working-directory }}"));
+
+    let tag = StepOutput::new(&step, "tag");
+    (step, tag)
+}
+
 /// Compares the current and previous commit and checks whether versions changed inbetween.
 pub(crate) fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
     let check_needs_bump = named::bash(formatdoc! {
     r#"
         CURRENT_VERSION="$({VERSION_CHECK})"
 
-        if [[ "${{{{ github.event_name }}}}" == "pull_request" ]]; then
+        if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
-        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
-            git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
         fi
@@ -186,67 +227,32 @@ fn bump_extension_version(
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
     let (generate_token, generated_token) =
-        generate_token(&app_id.to_string(), &app_secret.to_string(), None);
-    let (bump_version, new_version) = bump_version(current_version, bump_type);
+        generate_token(&app_id.to_string(), &app_secret.to_string()).into();
+    let (bump_version, _new_version, title, body, branch_name) =
+        bump_version(current_version, bump_type);
 
     let job = steps::dependant_job(dependencies)
+        .defaults(extension_job_defaults())
         .cond(Expression::new(format!(
             "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == true || {version_changed} == 'false')",
             force_bump = force_bump_output.expr(),
             version_changed = version_changed_output.expr(),
         )))
         .runs_on(runners::LINUX_SMALL)
-        .timeout_minutes(3u32)
+        .timeout_minutes(5u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
+        .add_step(cache_rust_dependencies_namespace())
         .add_step(install_bump_2_version())
         .add_step(bump_version)
-        .add_step(create_pull_request(new_version, generated_token));
+        .add_step(create_pull_request(
+            title,
+            body,
+            generated_token,
+            branch_name,
+        ));
 
     named::job(job)
-}
-
-pub(crate) fn generate_token(
-    app_id_source: &str,
-    app_secret_source: &str,
-    repository_target: Option<RepositoryTarget>,
-) -> (Step<Use>, StepOutput) {
-    let step = named::uses("actions", "create-github-app-token", "v2")
-        .id("generate-token")
-        .add_with(
-            Input::default()
-                .add("app-id", app_id_source)
-                .add("private-key", app_secret_source)
-                .when_some(
-                    repository_target,
-                    |input,
-                     RepositoryTarget {
-                         owner,
-                         repositories,
-                         permissions,
-                     }| {
-                        input
-                            .when_some(owner, |input, owner| input.add("owner", owner))
-                            .when_some(repositories, |input, repositories| {
-                                input.add("repositories", repositories)
-                            })
-                            .when_some(permissions, |input, permissions| {
-                                permissions
-                                    .into_iter()
-                                    .fold(input, |input, (permission, level)| {
-                                        input.add(
-                                            permission,
-                                            serde_json::to_value(&level).unwrap_or_default(),
-                                        )
-                                    })
-                            })
-                    },
-                ),
-        );
-
-    let generated_token = StepOutput::new(&step, "token");
-
-    (step, generated_token)
 }
 
 fn install_bump_2_version() -> Step<Run> {
@@ -256,10 +262,11 @@ fn install_bump_2_version() -> Step<Run> {
     )
 }
 
-fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step<Run>, StepOutput) {
+fn bump_version(
+    current_version: &JobOutput,
+    bump_type: &WorkflowInput,
+) -> (Step<Run>, StepOutput, StepOutput, StepOutput, StepOutput) {
     let step = named::bash(formatdoc! {r#"
-        OLD_VERSION="{current_version}"
-
         BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
             BUMP_FILES+=("Cargo.toml")
@@ -269,71 +276,88 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
             --search "version = \"{{current_version}}"\" \
             --replace "version = \"{{new_version}}"\" \
             --current-version "$OLD_VERSION" \
-            --no-configured-files {bump_type} "${{BUMP_FILES[@]}}"
+            --no-configured-files "$BUMP_TYPE" "${{BUMP_FILES[@]}}"
 
         if [[ -f "Cargo.toml" ]]; then
-            cargo update --workspace
+            cargo +stable update --workspace
         fi
 
         NEW_VERSION="$({VERSION_CHECK})"
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+        EXTENSION_NAME="$(sed -n 's/^name = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            {{
+                echo "title=Bump version to ${{NEW_VERSION}}";
+                echo "body=This PR bumps the version of this extension to v${{NEW_VERSION}}";
+                echo "branch_name=zed-zippy-autobump";
+            }} >> "$GITHUB_OUTPUT"
+        else
+            {{
+                echo "title=${{EXTENSION_ID}}: Bump to v${{NEW_VERSION}}";
+                echo "body<<EOF";
+                echo "This PR bumps the version of the ${{EXTENSION_NAME}} extension to v${{NEW_VERSION}}.";
+                echo "";
+                echo "Release Notes:";
+                echo "";
+                echo "- N/A";
+                echo "EOF";
+                echo "branch_name=zed-zippy-${{EXTENSION_ID}}-autobump";
+            }} >> "$GITHUB_OUTPUT"
+        fi
 
         echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
         "#
     })
-    .id("bump-version");
+    .id("bump-version")
+    .add_env(("OLD_VERSION", current_version.to_string()))
+    .add_env(("BUMP_TYPE", bump_type.to_string()))
+    .add_env(("WORKING_DIR", "${{ inputs.working-directory }}"));
 
     let new_version = StepOutput::new(&step, "new_version");
-    (step, new_version)
+    let title = StepOutput::new(&step, "title");
+    let body = StepOutput::new(&step, "body");
+    let branch_name = StepOutput::new(&step, "branch_name");
+    (step, new_version, title, body, branch_name)
 }
 
-fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> Step<Use> {
-    let formatted_version = format!("v{new_version}");
-
-    named::uses("peter-evans", "create-pull-request", "v7").with(
-        Input::default()
-            .add("title", format!("Bump version to {new_version}"))
-            .add(
-                "body",
-                format!("This PR bumps the version of this extension to {formatted_version}",),
-            )
-            .add(
-                "commit-message",
-                format!("Bump version to {formatted_version}"),
-            )
-            .add("branch", "zed-zippy-autobump")
-            .add(
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            )
-            .add("base", "main")
-            .add("delete-branch", true)
-            .add("token", generated_token.to_string())
-            .add("sign-commits", true)
-            .add("assignees", Context::github().actor().to_string()),
-    )
+fn create_pull_request(
+    title: StepOutput,
+    body: StepOutput,
+    generated_token: StepOutput,
+    branch_name: StepOutput,
+) -> Step<Use> {
+    steps::CreatePrStep::new(title.to_string(), branch_name, &generated_token)
+        .with_body(body)
+        .into()
 }
 
 fn trigger_release(
     dependencies: &[&NamedJob],
-    version: JobOutput,
+    tag: JobOutput,
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
     let extension_registry = RepositoryTarget::new("zed-industries", &["extensions"]);
-    let (generate_token, generated_token) = generate_token(
-        &app_id.to_string(),
-        &app_secret.to_string(),
-        Some(extension_registry),
-    );
+    let (generate_token, generated_token) =
+        generate_token(&app_id.to_string(), &app_secret.to_string())
+            .for_repository(extension_registry)
+            .into();
     let (get_extension_id, extension_id) = get_extension_id();
+    let (release_action, pull_request_number) = release_action(extension_id, tag, &generated_token);
 
     let job = dependant_job(dependencies)
+        .defaults(extension_job_defaults())
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
         .add_step(generate_token)
         .add_step(checkout_repo())
         .add_step(get_extension_id)
-        .add_step(release_action(extension_id, version, generated_token));
+        .add_step(release_action)
+        .add_step(enable_automerge_if_staff(
+            pull_request_number,
+            generated_token,
+        ));
 
     named::job(job)
 }
@@ -354,14 +378,98 @@ fn get_extension_id() -> (Step<Run>, StepOutput) {
 
 fn release_action(
     extension_id: StepOutput,
-    version: JobOutput,
+    tag: JobOutput,
+    generated_token: &StepOutput,
+) -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "huacnlee",
+        "zed-extension-action",
+        "82920ff0876879f65ffbcfa3403589114a8919c6",
+    )
+    .id("extension-update")
+    .add_with(("extension-name", extension_id.to_string()))
+    .add_with(("push-to", "zed-industries/extensions"))
+    .add_with(("tag", tag.to_string()))
+    .add_env(("COMMITTER_TOKEN", generated_token.to_string()));
+
+    let pull_request_number = StepOutput::new(&step, "pull-request-number");
+
+    (step, pull_request_number)
+}
+
+fn enable_automerge_if_staff(
+    pull_request_number: StepOutput,
     generated_token: StepOutput,
 ) -> Step<Use> {
-    named::uses("huacnlee", "zed-extension-action", "v2")
-        .add_with(("extension-name", extension_id.to_string()))
-        .add_with(("push-to", "zed-industries/extensions"))
-        .add_with(("tag", format!("v{version}")))
-        .add_env(("COMMITTER_TOKEN", generated_token.to_string()))
+    named::uses(
+        "actions",
+        "github-script",
+        "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+    )
+        .add_with(("github-token", generated_token.to_string()))
+        .add_with((
+            "script",
+            indoc! {r#"
+                const prNumber = process.env.PR_NUMBER;
+                if (!prNumber) {
+                    console.log('No pull request number set, skipping automerge.');
+                    return;
+                }
+
+                const author = process.env.GITHUB_ACTOR;
+                let isStaff = false;
+                try {
+                    const response = await github.rest.teams.getMembershipForUserInOrg({
+                        org: 'zed-industries',
+                        team_slug: 'staff',
+                        username: author
+                    });
+                    isStaff = response.data.state === 'active';
+                } catch (error) {
+                    if (error.status !== 404) {
+                        throw error;
+                    }
+                }
+
+                if (!isStaff) {
+                    console.log(`Actor ${author} is not a staff member, skipping automerge.`);
+                    return;
+                }
+
+                // Assign staff member responsible for the bump
+                const pullNumber = parseInt(prNumber);
+
+                await github.rest.issues.addAssignees({
+                    owner: 'zed-industries',
+                    repo: 'extensions',
+                    issue_number: pullNumber,
+                    assignees: [author]
+                });
+                console.log(`Assigned ${author} to PR #${prNumber} in zed-industries/extensions`);
+
+                // Get the GraphQL node ID
+                const { data: pr } = await github.rest.pulls.get({
+                    owner: 'zed-industries',
+                    repo: 'extensions',
+                    pull_number: pullNumber
+                });
+
+                await github.graphql(`
+                    mutation($pullRequestId: ID!) {
+                        enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
+                            pullRequest {
+                                autoMergeRequest {
+                                    enabledAt
+                                }
+                            }
+                        }
+                    }
+                `, { pullRequestId: pr.node_id });
+
+                console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
+            "#},
+        ))
+        .add_env(("PR_NUMBER", pull_request_number.to_string()))
 }
 
 fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {
@@ -370,35 +478,4 @@ fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {
         WorkflowSecret::new("app-secret", "The app secret for the corresponding app ID");
 
     (app_id, app_secret)
-}
-
-pub(crate) struct RepositoryTarget {
-    owner: Option<String>,
-    repositories: Option<String>,
-    permissions: Option<Vec<(String, Level)>>,
-}
-
-impl RepositoryTarget {
-    pub fn new<T: ToString>(owner: T, repositories: &[&str]) -> Self {
-        Self {
-            owner: Some(owner.to_string()),
-            repositories: Some(repositories.join("\n")),
-            permissions: None,
-        }
-    }
-
-    pub fn current() -> Self {
-        Self {
-            owner: None,
-            repositories: None,
-            permissions: None,
-        }
-    }
-
-    pub fn permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
-        Self {
-            permissions: Some(permissions.into()),
-            ..self
-        }
-    }
 }

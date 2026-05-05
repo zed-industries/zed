@@ -14,7 +14,7 @@ use smol::fs::File;
 use smol::io::AsyncReadExt;
 use smol::lock::OnceCell;
 use std::ffi::OsString;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::{
     ffi::OsStr,
@@ -42,7 +42,7 @@ impl PythonDebugAdapter {
     const LANGUAGE_NAME: &'static str = "Python";
 
     async fn generate_debugpy_arguments<'a>(
-        host: &'a Ipv4Addr,
+        host: &'a IpAddr,
         port: u16,
         launch_mode: DebugpyLaunchMode<'a>,
         user_installed_path: Option<&'a Path>,
@@ -224,16 +224,27 @@ impl PythonDebugAdapter {
     ) -> Result<Arc<Path>, String> {
         self.debugpy_whl_base_path
             .get_or_init(|| async move {
-                self.maybe_fetch_new_wheel(toolchain, delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))?;
-                Ok(Arc::from(
-                    debug_adapters_dir()
-                        .join(Self::ADAPTER_NAME)
-                        .join("debugpy")
-                        .join("adapter")
-                        .as_ref(),
-                ))
+                let adapter_path = debug_adapters_dir()
+                    .join(Self::ADAPTER_NAME)
+                    .join("debugpy")
+                    .join("adapter");
+
+                if let Err(error) = self.maybe_fetch_new_wheel(toolchain, delegate).await {
+                    if delegate
+                        .fs()
+                        .metadata(&adapter_path)
+                        .await
+                        .is_ok_and(|m| m.is_some())
+                    {
+                        log::warn!(
+                            "Failed to fetch latest debugpy, using cached version: {error:#}"
+                        );
+                    } else {
+                        return Err(format!("{error}"));
+                    }
+                }
+
+                Ok(Arc::from(adapter_path.as_ref()))
             })
             .await
             .clone()
@@ -369,7 +380,7 @@ impl PythonDebugAdapter {
             }
 
             if let Some(hostname) = config_host {
-                tcp_connection.host = Some(hostname.parse().context("hostname must be IPv4")?);
+                tcp_connection.host = Some(hostname.parse().context("invalid IP address")?);
             }
             tcp_connection.port = config_port;
             DebugpyLaunchMode::AttachWithConnect { host: config_host }
@@ -963,7 +974,7 @@ mod tests {
                 .contains("Cannot have two different ports")
         );
 
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let config_with_host_conflict = json!({
             "request": "attach",
             "connect": {
@@ -1007,7 +1018,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_attach_with_connect_mode_generates_correct_arguments() {
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let port = 5678;
 
         let args_without_host = PythonDebugAdapter::generate_debugpy_arguments(
@@ -1060,7 +1071,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_debugpy_install_path_cases() {
-        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let host = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
         let port = 5678;
 
         // Case 1: User-defined debugpy path (highest precedence)

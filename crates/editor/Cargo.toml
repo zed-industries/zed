@@ -26,6 +26,7 @@ test-support = [
     "tree-sitter-rust",
     "tree-sitter-typescript",
     "tree-sitter-html",
+    "proptest",
     "unindent",
 ]
 
@@ -45,6 +46,7 @@ emojis.workspace = true
 feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
+futures-lite.workspace = true
 fuzzy.workspace = true
 fs.workspace = true
 git.workspace = true
@@ -63,6 +65,8 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
+proptest = { workspace = true, optional = true }
+proptest-derive = { workspace = true, optional = true }
 rand.workspace = true
 regex.workspace = true
 rpc.workspace = true
@@ -72,7 +76,6 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-smol.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
 task.workspace = true
@@ -80,6 +83,7 @@ telemetry.workspace = true
 text.workspace = true
 time.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
@@ -110,14 +114,17 @@ lsp = { workspace = true, features = ["test-support"] }
 markdown = { workspace = true, features = ["test-support"] }
 multi_buffer = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+proptest.workspace = true
+proptest-derive.workspace = true
 release_channel.workspace = true
 rand.workspace = true
 semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-tempfile.workspace = true
+
 text = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-c.workspace = true
+tree-sitter-go.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
@@ -128,7 +135,7 @@ unicode-width.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
+
 zlog.workspace = true
 
 

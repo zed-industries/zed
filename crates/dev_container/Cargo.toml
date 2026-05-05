@@ -5,21 +5,29 @@ publish.workspace = true
 edition.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+async-tar.workspace = true
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_json_lenient.workspace = true
+yaml-rust2.workspace = true
+shlex.workspace = true
 http_client.workspace = true
 http.workspace = true
 gpui.workspace = true
+fs.workspace = true
 futures.workspace = true
 log.workspace = true
-node_runtime.workspace = true
 menu.workspace = true
 paths.workspace = true
+regex.workspace = true
 picker.workspace = true
+project.workspace = true
 settings.workspace = true
-smol.workspace = true
 ui.workspace = true
 util.workspace = true
+walkdir.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 
@@ -29,9 +37,11 @@ gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-theme.workspace = true
+
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 
 [lints]
 workspace = true

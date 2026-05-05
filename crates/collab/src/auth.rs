@@ -74,7 +74,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
             .await?
             .with_context(|| format!("user {user_id} not found"))?;
 
-        req.extensions_mut().insert(Principal::User(user));
+        req.extensions_mut().insert(Principal::User(user.into()));
         return Ok::<_, Error>(next.run(req).await);
     }
 

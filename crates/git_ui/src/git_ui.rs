@@ -2,30 +2,32 @@ use anyhow::anyhow;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
 
-use project::ProjectPath;
 use ui::{
-    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
-    StyledExt, div, h_flex, rems, v_flex,
+    Color, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render,
+    Styled, StyledExt, div, h_flex, rems, v_flex,
 };
+use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
 pub mod clone;
 
 use git::{
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window,
+    App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, Window,
 };
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
+use time::OffsetDateTime;
 use ui::prelude::*;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
-use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
+use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -34,7 +36,6 @@ pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
-pub mod file_history_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
@@ -45,7 +46,11 @@ pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod stash_picker;
 pub mod text_diff_view;
+pub mod worktree_names;
 pub mod worktree_picker;
+pub mod worktree_service;
+
+pub use conflict_view::MergeConflictIndicator;
 
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
@@ -62,6 +67,64 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
+
+        workspace.register_action(
+            |workspace, action: &zed_actions::CreateWorktree, window, cx| {
+                worktree_service::handle_create_worktree(workspace, action, window, None, cx);
+            },
+        );
+        workspace.register_action(
+            |workspace, action: &zed_actions::SwitchWorktree, window, cx| {
+                worktree_service::handle_switch_worktree(workspace, action, window, None, cx);
+            },
+        );
+
+        workspace.register_action(|workspace, _: &zed_actions::git::Worktree, window, cx| {
+            let focused_dock = workspace.focused_dock_position(window, cx);
+            let project = workspace.project().clone();
+            let workspace_handle = workspace.weak_handle();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                worktree_picker::WorktreePicker::new_modal(
+                    project,
+                    workspace_handle,
+                    focused_dock,
+                    window,
+                    cx,
+                )
+            });
+        });
+
+        workspace.register_action(
+            |workspace, action: &zed_actions::OpenWorktreeInNewWindow, window, cx| {
+                let path = action.path.clone();
+                let is_remote = !workspace.project().read(cx).is_local();
+
+                if is_remote {
+                    let connection_options =
+                        workspace.project().read(cx).remote_connection_options(cx);
+                    let app_state = workspace.app_state().clone();
+                    let workspace_handle = workspace.weak_handle();
+                    cx.spawn_in(window, async move |_, cx| {
+                        if let Some(connection_options) = connection_options {
+                            crate::worktree_picker::open_remote_worktree(
+                                connection_options,
+                                vec![path],
+                                app_state,
+                                workspace_handle,
+                                cx,
+                            )
+                            .await?;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                } else {
+                    workspace
+                        .open_workspace_for_paths(OpenMode::NewWindow, vec![path], window, cx)
+                        .detach_and_log_err(cx);
+                }
+            },
+        );
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
@@ -205,6 +268,10 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::RenameBranch, window, cx| {
             rename_current_branch(workspace, window, cx);
         });
+        workspace.register_action(|workspace, _: &git::CopyBranchName, _, cx| {
+            copy_branch_name(workspace, cx);
+        });
+        workspace.register_action(show_ref_picker);
         workspace.register_action(
             |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
                 if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
@@ -212,41 +279,6 @@ pub fn init(cx: &mut App) {
                 };
             },
         );
-        workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
-            let Some(active_item) = workspace.active_item(cx) else {
-                return;
-            };
-            let Some(editor) = active_item.downcast::<Editor>() else {
-                return;
-            };
-            let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() else {
-                return;
-            };
-            let Some(file) = buffer.read(cx).file() else {
-                return;
-            };
-            let worktree_id = file.worktree_id(cx);
-            let project_path = ProjectPath {
-                worktree_id,
-                path: file.path().clone(),
-            };
-            let project = workspace.project();
-            let git_store = project.read(cx).git_store();
-            let Some((repo, repo_path)) = git_store
-                .read(cx)
-                .repository_and_path_for_project_path(&project_path, cx)
-            else {
-                return;
-            };
-            file_history_view::FileHistoryView::open(
-                repo_path,
-                git_store.downgrade(),
-                repo.downgrade(),
-                workspace.weak_handle(),
-                window,
-                cx,
-            );
-        });
     })
     .detach();
 }
@@ -277,32 +309,6 @@ fn open_modified_files(
     for path in modified_paths {
         workspace.open_path(path, None, true, window, cx).detach();
     }
-}
-
-/// Resolves the repository for git operations, respecting the workspace's
-/// active worktree override from the project dropdown.
-pub fn resolve_active_repository(workspace: &Workspace, cx: &App) -> Option<Entity<Repository>> {
-    let project = workspace.project().read(cx);
-    workspace
-        .active_worktree_override()
-        .and_then(|override_id| {
-            project
-                .worktree_for_id(override_id, cx)
-                .and_then(|worktree| {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    let git_store = project.git_store().read(cx);
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            let repo_path = &repo.read(cx).work_directory_abs_path;
-                            *repo_path == worktree_abs_path
-                                || worktree_abs_path.starts_with(repo_path.as_ref())
-                        })
-                        .cloned()
-                })
-        })
-        .or_else(|| project.active_repository(cx))
 }
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
@@ -425,6 +431,249 @@ fn rename_current_branch(
     });
 }
 
+fn copy_branch_name(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    let Some(panel) = workspace.panel::<GitPanel>(cx) else {
+        return;
+    };
+    let branch_name = panel.update(cx, |panel, cx| {
+        let repo = panel.active_repository.as_ref()?;
+        let repo = repo.read(cx);
+        repo.branch.as_ref().map(|branch| branch.name().to_string())
+    });
+    if let Some(name) = branch_name {
+        cx.write_to_clipboard(ClipboardItem::new_string(name));
+    }
+}
+
+struct RefPickerModal {
+    editor: Entity<Editor>,
+    repo: Entity<Repository>,
+    workspace: Entity<Workspace>,
+    commit_details: Option<CommitDetails>,
+    lookup_task: Option<Task<()>>,
+    _editor_subscription: Subscription,
+}
+
+impl RefPickerModal {
+    fn new(
+        repo: Entity<Repository>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Enter git ref...", window, cx);
+            editor
+        });
+
+        let _editor_subscription = cx.subscribe_in(
+            &editor,
+            window,
+            |this, _editor, event: &editor::EditorEvent, window, cx| {
+                if let editor::EditorEvent::BufferEdited = event {
+                    this.lookup_commit_details(window, cx);
+                }
+            },
+        );
+
+        Self {
+            editor,
+            repo,
+            workspace,
+            commit_details: None,
+            lookup_task: None,
+            _editor_subscription,
+        }
+    }
+
+    fn lookup_commit_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let git_ref = self.editor.read(cx).text(cx);
+        let git_ref = git_ref.trim().to_string();
+
+        if git_ref.is_empty() {
+            self.commit_details = None;
+            cx.notify();
+            return;
+        }
+
+        let repo = self.repo.clone();
+        self.lookup_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(300))
+                .await;
+
+            let show_result = repo
+                .update(cx, |repo, _| repo.show(git_ref.clone()))
+                .await
+                .ok();
+
+            if let Some(show_future) = show_result {
+                if let Ok(details) = show_future {
+                    this.update(cx, |this, cx| {
+                        this.commit_details = Some(details);
+                        cx.notify();
+                    })
+                    .ok();
+                } else {
+                    this.update(cx, |this, cx| {
+                        this.commit_details = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        }));
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let git_ref = self.editor.read(cx).text(cx);
+        let git_ref = git_ref.trim();
+
+        if git_ref.is_empty() {
+            cx.emit(DismissEvent);
+            return;
+        }
+
+        let git_ref_string = git_ref.to_string();
+
+        let repo = self.repo.clone();
+        let workspace = self.workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| -> anyhow::Result<()> {
+                let show_future = repo.update(cx, |repo, _| repo.show(git_ref_string.clone()));
+                let show_result = show_future.await;
+
+                match show_result {
+                    Ok(Ok(details)) => {
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            CommitView::open(
+                                details.sha.to_string(),
+                                repo.downgrade(),
+                                workspace.weak_handle(),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            );
+                        })?;
+                    }
+                    Ok(Err(_)) | Err(_) => {
+                        workspace.update(cx, |workspace, cx| {
+                            let error = anyhow::anyhow!("View commit failed");
+                            Self::show_git_error_toast(&git_ref_string, error, workspace, cx);
+                        });
+                    }
+                }
+
+                Ok(())
+            })
+            .detach();
+        cx.emit(DismissEvent);
+    }
+
+    fn show_git_error_toast(
+        _git_ref: &str,
+        error: anyhow::Error,
+        workspace: &mut Workspace,
+        cx: &mut Context<Workspace>,
+    ) {
+        let toast = Toast::new(NotificationId::unique::<()>(), error.to_string());
+        workspace.show_toast(toast, cx);
+    }
+}
+
+impl EventEmitter<DismissEvent> for RefPickerModal {}
+impl ModalView for RefPickerModal {}
+impl Focusable for RefPickerModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for RefPickerModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_commit_details = self.commit_details.is_some();
+        let commit_preview = self.commit_details.as_ref().map(|details| {
+            let commit_time = OffsetDateTime::from_unix_timestamp(details.commit_timestamp)
+                .unwrap_or_else(|_| OffsetDateTime::now_utc());
+            let local_offset =
+                time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+            let formatted_time = time_format::format_localized_timestamp(
+                commit_time,
+                OffsetDateTime::now_utc(),
+                local_offset,
+                time_format::TimestampFormat::Relative,
+            );
+
+            let subject = details.message.lines().next().unwrap_or("").to_string();
+            let author_and_subject = format!("{} • {}", details.author_name, subject);
+
+            h_flex()
+                .w_full()
+                .gap_6()
+                .justify_between()
+                .overflow_x_hidden()
+                .child(
+                    div().max_w_96().child(
+                        Label::new(author_and_subject)
+                            .size(LabelSize::Small)
+                            .truncate()
+                            .color(Color::Muted),
+                    ),
+                )
+                .child(
+                    Label::new(formatted_time)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+        });
+
+        v_flex()
+            .key_context("RefPickerModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::Hash).size(IconSize::XSmall))
+                    .child(Headline::new("View Commit").size(HeadlineSize::XSmall)),
+            )
+            .child(div().px_3().w_full().child(self.editor.clone()))
+            .when_some(commit_preview, |el, preview| {
+                el.child(div().px_3().pb_3().w_full().child(preview))
+            })
+            .when(!has_commit_details, |el| el.child(div().pb_3()))
+    }
+}
+
+fn show_ref_picker(
+    workspace: &mut Workspace,
+    _: &git::ViewCommit,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(repo) = workspace.project().read(cx).active_repository(cx) else {
+        return;
+    };
+
+    let workspace_entity = cx.entity();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RefPickerModal::new(repo, workspace_entity, window, cx)
+    });
+}
+
 fn render_remote_button(
     id: impl Into<SharedString>,
     branch: &Branch,
@@ -466,7 +715,7 @@ fn render_remote_button(
 }
 
 mod remote_button {
-    use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
+    use gpui::{Action, Anchor, AnyView, ClickEvent, FocusHandle};
     use ui::{
         App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
         IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
@@ -654,7 +903,7 @@ mod remote_button {
                         .action("Force Push", git::ForcePush.boxed_clone())
                 }))
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -871,8 +1120,7 @@ impl Render for GitCloneModal {
                     .child(
                         Button::new("learn-more", "Learn More")
                             .label_size(LabelSize::Small)
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
                             .on_click(|_, _, cx| {
                                 cx.open_url("https://github.com/git-guides/git-clone");
                             }),
@@ -894,3 +1142,105 @@ impl Render for GitCloneModal {
 impl EventEmitter<DismissEvent> for GitCloneModal {}
 
 impl ModalView for GitCloneModal {}
+
+#[cfg(test)]
+mod view_commit_tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+    use language::language_settings::AllLanguageSettings;
+    use project::project_settings::ProjectSettings;
+    use project::{FakeFs, Project, WorktreeSettings};
+    use serde_json::json;
+    use settings::{Settings as _, SettingsStore};
+    use std::path::Path;
+    use std::sync::Arc;
+    use theme::LoadThemes;
+    use util::path;
+    use workspace::WorkspaceSettings;
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(LoadThemes::JustBase, cx);
+            AllLanguageSettings::register(cx);
+            editor::init(cx);
+            ProjectSettings::register(cx);
+            WorktreeSettings::register(cx);
+            WorkspaceSettings::register(cx);
+        });
+    }
+
+    async fn setup_git_repo(cx: &mut TestAppContext) -> Arc<FakeFs> {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs
+    }
+
+    async fn create_test_workspace(
+        fs: Arc<FakeFs>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, WindowHandle<Workspace>) {
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        (project, workspace)
+    }
+
+    #[gpui::test]
+    async fn test_show_ref_picker_with_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = setup_git_repo(cx).await;
+
+        fs.set_status_for_repo(
+            Path::new("/root/project/.git"),
+            &[("src/main.rs", git::status::StatusCode::Modified.worktree())],
+        );
+
+        let (_project, workspace) = create_test_workspace(fs, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        let initial_modal_state = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_modal::<RefPickerModal>(cx).is_some()
+            })
+            .unwrap_or(false);
+
+        let _ = workspace.update(cx, |workspace, window, cx| {
+            show_ref_picker(workspace, &git::ViewCommit, window, cx);
+        });
+
+        let final_modal_state = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_modal::<RefPickerModal>(cx).is_some()
+            })
+            .unwrap_or(false);
+
+        assert!(!initial_modal_state);
+        assert!(final_modal_state);
+    }
+}
