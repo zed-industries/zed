@@ -350,7 +350,7 @@ impl AnyAgentTool for ContextServerTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| anyhow::anyhow!(format!("Failed to receive tool input: {e}")))?;
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
             authorize
                 .await

@@ -229,9 +229,11 @@ impl UserStore {
                         | Status::Reauthenticated
                         | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
+                                let system_id =
+                                    client.telemetry().system_id().map(|id| id.to_string());
                                 let response = client
                                     .cloud_client()
-                                    .get_authenticated_user()
+                                    .get_authenticated_user(system_id)
                                     .await
                                     .log_err();
 
@@ -912,15 +914,19 @@ impl UserStore {
         cx.spawn(async move |cx| {
             match message {
                 MessageToClient::UserUpdated => {
-                    let cloud_client = cx
+                    let (cloud_client, system_id) = cx
                         .update(|cx| {
                             this.read_with(cx, |this, _cx| {
-                                this.client.upgrade().map(|client| client.cloud_client())
+                                this.client.upgrade().map(|client| {
+                                    let system_id =
+                                        client.telemetry().system_id().map(|id| id.to_string());
+                                    (client.cloud_client(), system_id)
+                                })
                             })
                         })?
                         .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
 
-                    let response = cloud_client.get_authenticated_user().await?;
+                    let response = cloud_client.get_authenticated_user(system_id).await?;
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
                             this.update_authenticated_user(response, cx);

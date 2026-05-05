@@ -66,6 +66,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
 - [Shell Script](./languages/sh.md)
+- [Standard ML](./languages/sml.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [Tailwind CSS](./languages/tailwindcss.md) \*
