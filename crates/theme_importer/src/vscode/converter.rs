@@ -3,7 +3,8 @@ use collections::IndexMap;
 use strum::IntoEnumIterator;
 use theme_settings::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
-    ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
+    ThemeColorsContent, ThemeContent, ThemeFamilyContent, ThemeStyleContent,
+    WindowBackgroundContent,
 };
 
 use crate::ThemeMetadata;
@@ -45,15 +46,17 @@ impl VsCodeThemeConverter {
         }
     }
 
-    pub fn convert(self) -> Result<ThemeContent> {
+    pub fn convert(self) -> Result<ThemeFamilyContent> {
         let appearance = self.theme_metadata.appearance.into();
+        let name = self.theme_metadata.name.clone();
 
+        let author = self.convert_author();
         let status_colors = self.convert_status_colors()?;
         let theme_colors = self.convert_theme_colors()?;
         let syntax_theme = self.convert_syntax_theme()?;
 
-        Ok(ThemeContent {
-            name: self.theme_metadata.name,
+        let content = ThemeContent {
+            name: name.clone(),
             appearance,
             style: ThemeStyleContent {
                 window_background_appearance: Some(WindowBackgroundContent::Opaque),
@@ -63,7 +66,20 @@ impl VsCodeThemeConverter {
                 players: Vec::new(),
                 syntax: syntax_theme,
             },
+        };
+
+        Ok(ThemeFamilyContent {
+            name,
+            author,
+            themes: vec![content],
         })
+    }
+
+    fn convert_author(&self) -> String {
+        self.theme.author.as_ref().map_or_else(
+            || "Unknown".to_string(),
+            |author| format!("{author} (VSCode Import)"),
+        )
     }
 
     fn convert_status_colors(&self) -> Result<StatusColorsContent> {
@@ -273,5 +289,56 @@ impl VsCodeThemeConverter {
         }
 
         Ok(highlight_styles)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl Default for VsCodeTheme {
+        fn default() -> Self {
+            Self {
+                schema: None,
+                name: None,
+                author: None,
+                maintainers: None,
+                semantic_class: None,
+                semantic_highlighting: None,
+                // vscode_theme::Colors does not implement Default. An empty JSON object
+                // used in place.
+                colors: serde_json::from_str("{}")
+                    .expect("failed to build default vscode_theme::Colors from empty object"),
+                token_colors: Vec::new(),
+            }
+        }
+    }
+
+    fn convert_author_boilerplate(author: Option<String>) -> ThemeFamilyContent {
+        let vscode_theme = VsCodeTheme {
+            author,
+            name: Some("foo".to_string()),
+            ..Default::default()
+        };
+
+        let theme_metadata = ThemeMetadata::default();
+        let converter =
+            VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::default());
+
+        let result = converter.convert();
+        assert!(result.is_ok());
+        result.unwrap()
+    }
+
+    #[test]
+    pub fn test_author_import() {
+        let result = convert_author_boilerplate(Some("zed-author".into()));
+        assert_eq!(result.author, "zed-author (VSCode Import)")
+    }
+
+    #[test]
+    pub fn test_author_import_missing() {
+        let result = convert_author_boilerplate(None);
+        assert_eq!(result.author, "Unknown")
     }
 }
