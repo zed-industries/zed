@@ -50,7 +50,8 @@ use ui::{
     Tooltip, prelude::*, right_click_menu,
 };
 use util::{
-    ResultExt, debug_panic, maybe, paths::PathStyle, serde::default_true, truncate_and_remove_front,
+    ResultExt, debug_panic, markdown::MarkdownInlineCode, maybe, paths::PathStyle,
+    serde::default_true, truncate_and_remove_front,
 };
 
 /// A selected entry in e.g. project panel.
@@ -4900,7 +4901,10 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) ->
         })
         .unwrap_or("This buffer".into());
     let path = truncate_and_remove_front(&path, 80);
-    format!("{path} contains unsaved edits. Do you want to save it?")
+    format!(
+        "{} contains unsaved edits. Do you want to save it?",
+        MarkdownInlineCode(path.as_str())
+    )
 }
 
 pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {

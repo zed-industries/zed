@@ -66,7 +66,9 @@ use ui::{
     StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
-    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    ResultExt, TakeUntilExt, TryFutureExt,
+    markdown::MarkdownInlineCode,
+    maybe,
     paths::{PathStyle, compare_paths},
     rel_path::{RelPath, RelPathBuf},
 };
@@ -2197,7 +2199,7 @@ impl ProjectPanel {
             let file_name = entry.path.file_name()?.to_string();
 
             let answer = if !action.skip_prompt {
-                let prompt = format!("Discard changes to {}?", file_name);
+                let prompt = format!("Discard changes to {}?", MarkdownInlineCode(&file_name));
                 Some(window.prompt(PromptLevel::Info, &prompt, None, &["Restore", "Cancel"], cx))
             } else {
                 None
@@ -2357,7 +2359,10 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{message_start} {path}?{unsaved_warning}")
+                        format!(
+                            "{message_start} {}?{unsaved_warning}",
+                            MarkdownInlineCode(path)
+                        )
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2365,9 +2370,9 @@ impl ProjectPanel {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
                             let mut paths = file_paths
                                 .iter()
-                                .map(|(_, _, path)| path.clone())
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
                                 .take(CUTOFF_POINT)
-                                .collect::<Vec<_>>();
+                                .collect::<Vec<String>>();
                             paths.truncate(CUTOFF_POINT);
                             if truncated_path_counts == 1 {
                                 paths.push(".. 1 file not shown".into());
@@ -2376,7 +2381,10 @@ impl ProjectPanel {
                             }
                             paths
                         } else {
-                            file_paths.iter().map(|(_, _, path)| path.clone()).collect()
+                            file_paths
+                                .iter()
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
+                                .collect::<Vec<String>>()
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
@@ -4335,7 +4343,7 @@ impl ProjectPanel {
                             "already exists in the destination folder. ",
                             "Do you want to replace it?"
                         ),
-                        filename
+                        MarkdownInlineCode(filename)
                     );
                     let answer = cx
                         .update(|window, cx| {

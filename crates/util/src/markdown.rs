@@ -310,6 +310,34 @@ mod tests {
     }
 
     #[test]
+    fn test_markdown_inline_code_filenames() {
+        assert_eq!(
+            MarkdownInlineCode("__init__.py").to_string(),
+            "`__init__.py`"
+        );
+        assert_eq!(
+            MarkdownInlineCode("__main__.py").to_string(),
+            "`__main__.py`"
+        );
+        assert_eq!(
+            MarkdownInlineCode("test__file.py").to_string(),
+            "`test__file.py`"
+        );
+        assert_eq!(
+            MarkdownInlineCode("_private_module.rs").to_string(),
+            "`_private_module.rs`"
+        );
+        assert_eq!(
+            MarkdownInlineCode("*glob*pattern*").to_string(),
+            "`*glob*pattern*`"
+        );
+        assert_eq!(
+            MarkdownInlineCode("file`with`backticks.py").to_string(),
+            "``file`with`backticks.py``"
+        );
+    }
+
+    #[test]
     fn test_count_max_consecutive_chars() {
         assert_eq!(
             count_max_consecutive_chars("``a```b``", '`'),
