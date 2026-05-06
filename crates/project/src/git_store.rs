@@ -2222,14 +2222,25 @@ impl GitStore {
             &mut cx,
         );
 
-        let options = envelope
-            .payload
-            .options
-            .as_ref()
-            .map(|_| match envelope.payload.options() {
-                proto::push::PushOptions::SetUpstream => git::repository::PushOptions::SetUpstream,
-                proto::push::PushOptions::Force => git::repository::PushOptions::Force,
-            });
+        let options =
+            envelope
+                .payload
+                .options
+                .as_ref()
+                .map(|options| git::repository::PushOptions {
+                    set_upstream: options.set_upstream,
+                    push_mode: match options.push_mode() {
+                        proto::push::push_options::PushMode::Normal => {
+                            git::repository::PushMode::Normal
+                        }
+                        proto::push::push_options::PushMode::ForceWithLease => {
+                            git::repository::PushMode::ForceWithLease
+                        }
+                        proto::push::push_options::PushMode::Force => {
+                            git::repository::PushMode::Force
+                        }
+                    },
+                });
 
         let branch_name = envelope.payload.branch_name.into();
         let remote_branch_name = envelope.payload.remote_branch_name.into();
@@ -2887,10 +2898,11 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let is_remote = envelope.payload.is_remote;
         let branch_name = envelope.payload.branch_name;
+        let force_delete = envelope.payload.force_delete;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(is_remote, branch_name)
+                repository_handle.delete_branch(is_remote, branch_name, force_delete)
             })
             .await??;
 
@@ -5036,11 +5048,11 @@ impl Repository {
         })
     }
 
-    pub fn revert_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
+    pub fn revert_commit(&mut self, sha: String, no_commit: bool) -> oneshot::Receiver<Result<()>> {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.revert_commit(sha).await
+                    backend.revert_commit(sha, no_commit).await
                 }
                 RepositoryState::Remote(_) => {
                     bail!("Git graph commit operations are not supported for collab repositories")
@@ -6407,11 +6419,14 @@ impl Repository {
         let id = self.id;
 
         let args = options
-            .map(|option| match option {
-                PushOptions::SetUpstream => " --set-upstream",
-                PushOptions::Force => " --force-with-lease",
+            .map(|options| {
+                options
+                    .command_args()
+                    .into_iter()
+                    .map(|arg| format!(" {arg}"))
+                    .collect::<String>()
             })
-            .unwrap_or("");
+            .unwrap_or_default();
 
         let updates_tx = self
             .git_store()
@@ -6475,13 +6490,20 @@ impl Repository {
                                 branch_name: branch.to_string(),
                                 remote_branch_name: remote_branch.to_string(),
                                 remote_name: remote.to_string(),
-                                options: options.map(|options| match options {
-                                    PushOptions::Force => proto::push::PushOptions::Force,
-                                    PushOptions::SetUpstream => {
-                                        proto::push::PushOptions::SetUpstream
-                                    }
-                                }
-                                    as i32),
+                                options: options.map(|options| proto::push::PushOptions {
+                                    set_upstream: options.set_upstream,
+                                    push_mode: match options.push_mode {
+                                        git::repository::PushMode::Normal => {
+                                            proto::push::push_options::PushMode::Normal
+                                        }
+                                        git::repository::PushMode::ForceWithLease => {
+                                            proto::push::push_options::PushMode::ForceWithLease
+                                        }
+                                        git::repository::PushMode::Force => {
+                                            proto::push::push_options::PushMode::Force
+                                        }
+                                    } as i32,
+                                }),
                             })
                             .await?;
 
@@ -6972,6 +6994,88 @@ impl Repository {
         self.edit_ref(ref_name, None)
     }
 
+    pub fn delete_tag(&mut self, name: String) -> oneshot::Receiver<Result<()>> {
+        let this = self.this.clone();
+        self.send_job(None, move |repo, mut cx| async move {
+            let result = match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.delete_tag(name).await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!(
+                        "Git graph commit operations are not supported for collab repositories"
+                    )
+                }
+            };
+            if result.is_ok() {
+                this.update(&mut cx, |this, cx| {
+                    this.initial_graph_data.clear();
+                    cx.notify();
+                })
+                .ok();
+            }
+            result
+        })
+    }
+
+    pub fn push_tag(
+        &mut self,
+        name: SharedString,
+        remote: SharedString,
+        askpass: AskPassDelegate,
+        _cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+        let id = self.id;
+
+        self.send_job(
+            Some(format!("git push {} refs/tags/{}", remote, name).into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState {
+                        backend,
+                        environment,
+                        ..
+                    }) => {
+                        backend
+                            .push_tag(
+                                name.to_string(),
+                                remote.to_string(),
+                                askpass,
+                                environment,
+                                _cx,
+                            )
+                            .await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        askpass_delegates.lock().insert(askpass_id, askpass);
+                        let _defer = util::defer(|| {
+                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                            debug_assert!(askpass_delegate.is_some());
+                        });
+
+                        client
+                            .request(proto::Push {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                askpass_id,
+                                remote_name: remote.to_string(),
+                                branch_name: format!("refs/tags/{name}"),
+                                remote_branch_name: format!("refs/tags/{name}"),
+                                options: None,
+                            })
+                            .await
+                            .map(|response| RemoteCommandOutput {
+                                stdout: response.stdout,
+                                stderr: response.stderr,
+                            })
+                    }
+                }
+            },
+        )
+    }
+
     pub fn repair_worktrees(&mut self) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
@@ -7330,13 +7434,19 @@ impl Repository {
         &mut self,
         is_remote: bool,
         branch_name: String,
+        force_delete: bool,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
             Some(
                 format!(
                     "git branch {} {}",
-                    if is_remote { "-dr" } else { "-d" },
+                    match (is_remote, force_delete) {
+                        (true, true) => "-Dr",
+                        (true, false) => "-dr",
+                        (false, true) => "-D",
+                        (false, false) => "-d",
+                    },
                     branch_name
                 )
                 .into(),
@@ -7344,7 +7454,10 @@ impl Repository {
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(state) => {
-                        state.backend.delete_branch(is_remote, branch_name).await
+                        state
+                            .backend
+                            .delete_branch(is_remote, branch_name, force_delete)
+                            .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -7353,6 +7466,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 is_remote,
                                 branch_name,
+                                force_delete,
                             })
                             .await?;
 

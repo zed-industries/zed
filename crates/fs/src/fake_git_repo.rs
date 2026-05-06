@@ -14,7 +14,7 @@ use git::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, DropCommitSupport, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
         GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -908,7 +908,7 @@ impl GitRepository for FakeGitRepository {
         future::ready(Ok(())).boxed()
     }
 
-    fn revert_commit(&self, _sha: String) -> BoxFuture<'_, Result<()>> {
+    fn revert_commit(&self, _sha: String, _no_commit: bool) -> BoxFuture<'_, Result<()>> {
         future::ready(Ok(())).boxed()
     }
 
@@ -945,13 +945,37 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn delete_branch(&self, _is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(
+        &self,
+        _is_remote: bool,
+        name: String,
+        _force_delete: bool,
+    ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             if !state.branches.remove(&name) {
                 bail!("no such branch: {name}");
             }
             Ok(())
         })
+    }
+
+    fn delete_tag(&self, _name: String) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
+    fn push_tag(
+        &self,
+        _name: String,
+        _remote_name: String,
+        _ask_pass: AskPassDelegate,
+        _env: Arc<HashMap<String, String>>,
+        _cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
+        future::ready(Ok(RemoteCommandOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+        }))
+        .boxed()
     }
 
     fn blame(

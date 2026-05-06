@@ -795,14 +795,28 @@ pub trait GitRepository: Send + Sync {
         record_origin: bool,
         no_commit: bool,
     ) -> BoxFuture<'_, Result<()>>;
-    fn revert_commit(&self, sha: String) -> BoxFuture<'_, Result<()>>;
+    fn revert_commit(&self, sha: String, no_commit: bool) -> BoxFuture<'_, Result<()>>;
     fn drop_commit_support(&self, sha: String) -> BoxFuture<'_, Result<DropCommitSupport>>;
     fn drop_commit(&self, sha: String) -> BoxFuture<'_, Result<()>>;
     fn merge_commit(&self, sha: String) -> BoxFuture<'_, Result<()>>;
     fn rebase_onto(&self, sha: String) -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
-    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>>;
+    fn delete_branch(
+        &self,
+        is_remote: bool,
+        name: String,
+        force_delete: bool,
+    ) -> BoxFuture<'_, Result<()>>;
+    fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn push_tag(
+        &self,
+        name: String,
+        remote_name: String,
+        ask_pass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
@@ -1041,9 +1055,34 @@ pub enum DiffType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
-pub enum PushOptions {
-    SetUpstream,
+pub enum PushMode {
+    Normal,
+    ForceWithLease,
     Force,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+pub struct PushOptions {
+    pub set_upstream: bool,
+    pub push_mode: PushMode,
+}
+
+impl PushOptions {
+    pub fn command_args(self) -> Vec<&'static str> {
+        let mut args = Vec::new();
+
+        if self.set_upstream {
+            args.push("--set-upstream");
+        }
+
+        match self.push_mode {
+            PushMode::Normal => {}
+            PushMode::ForceWithLease => args.push("--force-with-lease"),
+            PushMode::Force => args.push("--force"),
+        }
+
+        args
+    }
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -2180,8 +2219,13 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn revert_commit(&self, sha: String) -> BoxFuture<'_, Result<()>> {
-        self.simple_git_command(vec!["revert".into(), "--no-edit".into(), sha])
+    fn revert_commit(&self, sha: String, no_commit: bool) -> BoxFuture<'_, Result<()>> {
+        let mut args = vec!["revert".into(), "--no-edit".into()];
+        if no_commit {
+            args.push("--no-commit".into());
+        }
+        args.push(sha);
+        self.simple_git_command(args)
     }
 
     fn drop_commit_support(&self, sha: String) -> BoxFuture<'_, Result<DropCommitSupport>> {
@@ -2303,17 +2347,70 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(
+        &self,
+        is_remote: bool,
+        name: String,
+        force_delete: bool,
+    ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
-                git_binary?
-                    .run(&["branch", if is_remote { "-dr" } else { "-d" }, &name])
-                    .await?;
+                let flag = match (is_remote, force_delete) {
+                    (true, true) => "-Dr",
+                    (true, false) => "-dr",
+                    (false, true) => "-D",
+                    (false, false) => "-d",
+                };
+                git_binary?.run(&["branch", flag, &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
+    }
+
+    fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        self.simple_git_command(vec!["tag".into(), "-d".into(), name])
+    }
+
+    fn push_tag(
+        &self,
+        name: String,
+        remote_name: String,
+        ask_pass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
+        let working_directory = self.working_directory();
+        let git_directory = self.path();
+        let executor = cx.background_executor().clone();
+        let git_binary_path = self.system_git_binary_path.clone();
+        let is_trusted = self.is_trusted();
+
+        async move {
+            let git_binary_path =
+                git_binary_path.context("git not found on $PATH, can't push tag")?;
+            let working_directory = working_directory?;
+            let git = GitBinary::new(
+                git_binary_path,
+                working_directory,
+                git_directory,
+                executor.clone(),
+                is_trusted,
+            );
+
+            let mut command = git.build_command(&["push"]);
+            command
+                .envs(env.iter())
+                .arg(remote_name)
+                .arg(format!("refs/tags/{name}"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            run_git_command(env, ask_pass, command, executor).await
+        }
+        .boxed()
     }
 
     fn blame(
@@ -2639,10 +2736,7 @@ impl GitRepository for RealGitRepository {
             let mut command = git.build_command(&["push"]);
             command
                 .envs(env.iter())
-                .args(options.map(|option| match option {
-                    PushOptions::SetUpstream => "--set-upstream",
-                    PushOptions::Force => "--force-with-lease",
-                }))
+                .args(options.into_iter().flat_map(PushOptions::command_args))
                 .arg(remote_name)
                 .arg(format!("{}:{}", branch_name, remote_branch_name))
                 .stdin(Stdio::null())
@@ -3928,6 +4022,42 @@ mod tests {
             std::env::set_var("GIT_CONFIG_GLOBAL", "");
             std::env::set_var("GIT_CONFIG_SYSTEM", "");
         }
+    }
+
+    #[test]
+    fn test_push_options_command_args() {
+        assert_eq!(
+            PushOptions {
+                set_upstream: false,
+                push_mode: PushMode::Normal,
+            }
+            .command_args(),
+            Vec::<&'static str>::new()
+        );
+        assert_eq!(
+            PushOptions {
+                set_upstream: true,
+                push_mode: PushMode::Normal,
+            }
+            .command_args(),
+            vec!["--set-upstream"]
+        );
+        assert_eq!(
+            PushOptions {
+                set_upstream: false,
+                push_mode: PushMode::ForceWithLease,
+            }
+            .command_args(),
+            vec!["--force-with-lease"]
+        );
+        assert_eq!(
+            PushOptions {
+                set_upstream: true,
+                push_mode: PushMode::Force,
+            }
+            .command_args(),
+            vec!["--set-upstream", "--force"]
+        );
     }
 
     #[gpui::test]

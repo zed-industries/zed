@@ -7328,11 +7328,13 @@ name = "git_graph"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "async-channel 2.5.0",
  "collections",
  "db",
  "editor",
  "fs",
+ "futures 0.3.32",
  "git",
  "git_ui",
  "gpui",
@@ -7352,6 +7354,7 @@ dependencies = [
  "time",
  "ui",
  "workspace",
+ "zeroize",
 ]
 
 [[package]]

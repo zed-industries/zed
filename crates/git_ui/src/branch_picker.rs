@@ -529,7 +529,7 @@ impl BranchListDelegate {
 
                     is_remote = branch.is_remote();
                     repo.update(cx, |repo, _| {
-                        repo.delete_branch(is_remote, branch.name().to_string())
+                        repo.delete_branch(is_remote, branch.name().to_string(), false)
                     })
                     .await?
                 }
