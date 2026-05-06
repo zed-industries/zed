@@ -11,14 +11,7 @@ use util::rel_path::{RelPath, RelPathBuf};
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
-/// The application name, used to derive platform-specific data, config, cache,
-/// and state directory paths.
-///
-/// Read from the `APP_NAME` file in the `zed` crate, which is the single source
-/// of truth. A compile-time assertion in `main.rs` validates that this matches
-/// the `[[bin]] name` (case-insensitively).
-/// Forks should change the `APP_NAME` file to avoid colliding with Zed's user data.
-pub const APP_NAME: &str = include_str!("../../zed/APP_NAME").trim_ascii();
+include!(concat!(env!("OUT_DIR"), "/app_name.rs"));
 
 /// Returns the lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.

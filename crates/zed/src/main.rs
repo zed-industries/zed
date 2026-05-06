@@ -26,7 +26,7 @@ const _: () = {
             env!("CARGO_BIN_NAME").as_bytes(),
         ),
         "paths::APP_NAME must match the binary name (case-insensitive). \
-         Forks: update the crates/zed/APP_NAME file when renaming the binary.",
+         Forks: update crates/paths/APP_NAME when renaming the binary.
     );
 };
 
