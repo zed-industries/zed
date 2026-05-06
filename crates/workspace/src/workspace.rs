@@ -3305,9 +3305,12 @@ impl Workspace {
                 }
             }
 
+            let skip_hot_exit = close_intent == CloseIntent::ReplaceWindow
+                && this.update(cx, |this, cx| this.root_paths(cx).is_empty())?;
+
             let save_result = this
                 .update_in(cx, |this, window, cx| {
-                    this.save_all_internal(SaveIntent::Close, window, cx)
+                    this.save_all_internal(SaveIntent::Close, skip_hot_exit, window, cx)
                 })?
                 .await;
 
@@ -3328,6 +3331,7 @@ impl Workspace {
     fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all_internal(
             action.save_intent.unwrap_or(SaveIntent::SaveAll),
+            false,
             window,
             cx,
         )
@@ -3425,12 +3429,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        self.save_all_internal(SaveIntent::Close, window, cx)
+        self.save_all_internal(SaveIntent::Close, false, window, cx)
     }
 
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
+        skip_hot_exit: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
@@ -3455,26 +3460,34 @@ impl Workspace {
         let project = self.project.clone();
         cx.spawn_in(window, async move |workspace, cx| {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
-                let mut serialize_tasks = Vec::new();
-                let mut remaining_dirty_items = Vec::new();
-                workspace.update_in(cx, |workspace, window, cx| {
-                    for (pane, item) in dirty_items {
-                        if let Some(task) = item
-                            .to_serializable_item_handle(cx)
-                            .and_then(|handle| handle.serialize(workspace, true, window, cx))
-                        {
-                            serialize_tasks.push((pane, item, task));
-                        } else {
-                            remaining_dirty_items.push((pane, item));
+                // When skip_hot_exit is true (empty workspace being replaced), bypass
+                // hot-exit serialization: the new workspace gets a different database_id
+                // so serialized content would never be restored.
+                let remaining_dirty_items = if skip_hot_exit {
+                    dirty_items
+                } else {
+                    let mut serialize_tasks = Vec::new();
+                    let mut remaining = Vec::new();
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        for (pane, item) in dirty_items {
+                            if let Some(task) = item
+                                .to_serializable_item_handle(cx)
+                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                            {
+                                serialize_tasks.push((pane, item, task));
+                            } else {
+                                remaining.push((pane, item));
+                            }
+                        }
+                    })?;
+
+                    for (pane, item, task) in serialize_tasks {
+                        if task.await.log_err().is_none() {
+                            remaining.push((pane, item));
                         }
                     }
-                })?;
-
-                for (pane, item, task) in serialize_tasks {
-                    if task.await.log_err().is_none() {
-                        remaining_dirty_items.push((pane, item));
-                    }
-                }
+                    remaining
+                };
 
                 if !remaining_dirty_items.is_empty() {
                     workspace.update(cx, |_, cx| cx.emit(Event::Activate))?;
