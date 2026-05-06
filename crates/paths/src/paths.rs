@@ -21,24 +21,29 @@ pub const APP_NAME: &str = "Zed";
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
 pub const APP_NAME_LOWERCASE: &str = {
     assert!(!APP_NAME.is_empty(), "APP_NAME must not be empty");
+    assert!(APP_NAME.as_bytes().is_ascii(), "APP_NAME must be ASCII");
     const BYTES: [u8; APP_NAME.len()] = {
-        let input = APP_NAME.as_bytes();
-        let mut output = [0u8; APP_NAME.len()];
+        let mut bytes = [0u8; APP_NAME.len()];
         let mut i = 0;
-        while i < input.len() {
-            let byte = input[i];
-            assert!(byte.is_ascii(), "APP_NAME must be ASCII");
+        while i < APP_NAME.len() {
             assert!(
-                byte != b'/' && byte != b'\\',
+                APP_NAME.as_bytes()[i] != b'/' && APP_NAME.as_bytes()[i] != b'\\',
                 "APP_NAME must not contain path separators",
             );
-            assert!(byte >= 0x20, "APP_NAME must not contain control characters");
-            output[i] = byte.to_ascii_lowercase();
+            assert!(
+                APP_NAME.as_bytes()[i] >= 0x20,
+                "APP_NAME must not contain control characters"
+            );
+            bytes[i] = APP_NAME.as_bytes()[i];
             i += 1;
         }
-        output
+        bytes.make_ascii_lowercase();
+        bytes
     };
-    unsafe { std::str::from_utf8_unchecked(&BYTES) }
+    match std::str::from_utf8(&BYTES) {
+        Ok(s) => s,
+        Err(_) => unreachable!(),
+    }
 };
 
 /// A custom data directory override, set only by `set_custom_data_dir`.
@@ -237,13 +242,13 @@ pub fn remote_server_state_dir() -> &'static PathBuf {
     REMOTE_SERVER_STATE.get_or_init(|| data_dir().join("server_state"))
 }
 
-/// Returns the path to the log file.
+/// Returns the path to the `Zed.log` file.
 pub fn log_file() -> &'static PathBuf {
     static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
     LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log", APP_NAME)))
 }
 
-/// Returns the path to the old log file.
+/// Returns the path to the `Zed.log.old` file.
 pub fn old_log_file() -> &'static PathBuf {
     static OLD_LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
     OLD_LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log.old", APP_NAME)))

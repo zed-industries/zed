@@ -4,31 +4,15 @@
 mod reliability;
 mod zed;
 
-// Validate at compile time that the APP_NAME file (used by the `paths` crate to
-// derive data/config directory paths) matches this binary's name.
-const _: () = {
-    const fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
-        if a.len() != b.len() {
-            return false;
-        }
-        let mut i = 0;
-        while i < a.len() {
-            if !a[i].eq_ignore_ascii_case(&b[i]) {
-                return false;
-            }
-            i += 1;
-        }
-        true
-    }
-    assert!(
-        eq_ignore_ascii_case(
-            paths::APP_NAME.as_bytes(),
-            env!("CARGO_BIN_NAME").as_bytes(),
-        ),
-        "paths::APP_NAME must match the binary name (case-insensitive). \
-         Forks: update crates/paths/APP_NAME when renaming the binary.",
-    );
-};
+// Ensure the binary name stays in sync with APP_NAME so that the paths used
+// at runtime (data dir, config dir, etc.) match what the binary is called.
+const _: () = assert!(
+    paths::APP_NAME_LOWERCASE
+        .as_bytes()
+        .eq_ignore_ascii_case(env!("CARGO_BIN_NAME").as_bytes()),
+    "paths::APP_NAME_LOWERCASE must match the binary name. \
+     Forks: update APP_NAME in crates/paths/src/paths.rs when renaming the binary.",
+);
 
 use agent::{SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;
