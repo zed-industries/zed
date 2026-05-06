@@ -33,6 +33,12 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the file path being edited.",
     },
     ToolInfo {
+        id: "write_file",
+        name: "Write File",
+        description: "File creation and overwrite operations",
+        regex_explanation: "Patterns are matched against the file path being written.",
+    },
+    ToolInfo {
         id: "delete_path",
         name: "Delete Path",
         description: "File and directory deletion",
@@ -303,6 +309,7 @@ fn get_tool_render_fn(
     match tool_id {
         "terminal" => render_terminal_tool_config,
         "edit_file" => render_edit_file_tool_config,
+        "write_file" => render_write_file_tool_config,
         "delete_path" => render_delete_path_tool_config,
         "copy_path" => render_copy_path_tool_config,
         "move_path" => render_move_path_tool_config,
@@ -1383,6 +1390,7 @@ macro_rules! tool_config_page_fn {
 
 tool_config_page_fn!(render_terminal_tool_config, "terminal");
 tool_config_page_fn!(render_edit_file_tool_config, "edit_file");
+tool_config_page_fn!(render_write_file_tool_config, "write_file");
 tool_config_page_fn!(render_delete_path_tool_config, "delete_path");
 tool_config_page_fn!(render_copy_path_tool_config, "copy_path");
 tool_config_page_fn!(render_move_path_tool_config, "move_path");

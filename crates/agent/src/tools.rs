@@ -5,6 +5,7 @@ mod create_directory_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_file_tool;
+mod edit_session;
 #[cfg(all(test, feature = "unit-eval"))]
 mod evals;
 mod fetch_tool;
@@ -27,6 +28,7 @@ mod terminal_tool;
 mod tool_permissions;
 mod update_plan_tool;
 mod web_search_tool;
+mod write_file_tool;
 
 use crate::AgentTool;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
@@ -85,6 +87,7 @@ pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use update_plan_tool::*;
 pub use web_search_tool::*;
+pub use write_file_tool::*;
 
 macro_rules! tools {
     ($($tool:ty),* $(,)?) => {
@@ -179,4 +182,5 @@ tools! {
     TerminalTool,
     UpdatePlanTool,
     WebSearchTool,
+    WriteFileTool,
 }
