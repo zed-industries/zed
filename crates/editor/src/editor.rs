@@ -56,6 +56,7 @@ mod editor_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+pub mod word_segmenter;
 
 #[path = "editor/diagnostics.rs"]
 mod diagnostics;
@@ -4250,7 +4251,14 @@ impl Editor {
                 let position = display_map
                     .clip_point(position, Bias::Left)
                     .to_offset(&display_map, Bias::Left);
-                let (range, _) = buffer.surrounding_word(position, None);
+                let use_fine_word_segmentation =
+                    EditorSettings::get_global(cx).use_fine_word_segmentation;
+                let (range, _) = crate::word_segmenter::surrounding_word(
+                    buffer,
+                    position,
+                    None,
+                    use_fine_word_segmentation,
+                );
                 start = buffer.anchor_before(range.start);
                 end = buffer.anchor_before(range.end);
                 mode = SelectMode::Word(start..end);
@@ -4413,7 +4421,14 @@ impl Editor {
                     let head_offset = if buffer.is_inside_word(offset, None)
                         || original_range.contains(&offset)
                     {
-                        let (word_range, _) = buffer.surrounding_word(offset, None);
+                        let use_fine_word_segmentation =
+                            EditorSettings::get_global(cx).use_fine_word_segmentation;
+                        let (word_range, _) = crate::word_segmenter::surrounding_word(
+                            buffer,
+                            offset,
+                            None,
+                            use_fine_word_segmentation,
+                        );
                         if word_range.start < original_range.start {
                             word_range.start
                         } else {
@@ -15244,10 +15259,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    crate::word_segmenter::previous_word_start_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -15276,10 +15296,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    crate::word_segmenter::previous_word_start_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -15311,13 +15336,18 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::previous_word_start(map, selection.head())
+                            crate::word_segmenter::previous_word_start_with_segmenter(
+                                map,
+                                selection.head(),
+                                use_fine_word_segmentation,
+                            )
                         } else {
                             movement::previous_word_start_or_newline(map, selection.head())
                         };
@@ -15374,9 +15404,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    crate::word_segmenter::next_word_end_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -15400,9 +15438,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    crate::word_segmenter::next_word_end_with_segmenter(
+                        map,
+                        head,
+                        use_fine_word_segmentation,
+                    ),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -15429,12 +15475,17 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let use_fine_word_segmentation = EditorSettings::get_global(cx).use_fine_word_segmentation;
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::next_word_end(map, selection.head())
+                            crate::word_segmenter::next_word_end_with_segmenter(
+                                map,
+                                selection.head(),
+                                use_fine_word_segmentation,
+                            )
                         } else {
                             movement::next_word_end_or_newline(map, selection.head())
                         };
@@ -16497,8 +16548,15 @@ impl Editor {
             }
 
             if only_carets {
+                let use_fine_word_segmentation =
+                    EditorSettings::get_global(cx).use_fine_word_segmentation;
                 for selection in &mut selections {
-                    let (word_range, _) = buffer.surrounding_word(selection.start, None);
+                    let (word_range, _) = crate::word_segmenter::surrounding_word(
+                        buffer,
+                        selection.start,
+                        None,
+                        use_fine_word_segmentation,
+                    );
                     selection.start = word_range.start;
                     selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;
@@ -16721,8 +16779,15 @@ impl Editor {
             }
 
             if only_carets {
+                let use_fine_word_segmentation =
+                    EditorSettings::get_global(cx).use_fine_word_segmentation;
                 for selection in &mut selections {
-                    let (word_range, _) = buffer.surrounding_word(selection.start, None);
+                    let (word_range, _) = crate::word_segmenter::surrounding_word(
+                        buffer,
+                        selection.start,
+                        None,
+                        use_fine_word_segmentation,
+                    );
                     selection.start = word_range.start;
                     selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;
