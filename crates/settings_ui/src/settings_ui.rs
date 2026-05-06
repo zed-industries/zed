@@ -4,7 +4,10 @@ pub mod pages;
 
 use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
-use futures::{StreamExt, channel::mpsc};
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
@@ -235,9 +238,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 move |settings, app| {
                     (this.write)(settings, value_to_set, app);
                 },
-            )
-            // todo(settings_ui): Don't log err
-            .log_err();
+            );
         }));
     }
 
@@ -530,6 +531,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
         .add_basic_renderer::<settings::PlaySoundWhenAgentDone>(render_dropdown)
+        .add_basic_renderer::<settings::NewThreadLocation>(render_dropdown)
         .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
@@ -561,7 +563,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
         .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
-        .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -763,6 +764,7 @@ pub struct SettingsWindow {
     list_state: ListState,
     shown_errors: HashSet<String>,
     pub(crate) regex_validation_error: Option<String>,
+    settings_write_error: Option<String>,
 }
 
 struct SearchDocument {
@@ -1684,6 +1686,7 @@ impl SettingsWindow {
             search_index: None,
             shown_errors: HashSet::default(),
             regex_validation_error: None,
+            settings_write_error: None,
             list_state,
         };
 
@@ -1725,35 +1728,6 @@ impl SettingsWindow {
         *expanded = !*expanded;
         self.navbar_entry = nav_entry_index;
         self.reset_list_state();
-    }
-
-    fn toggle_and_focus_navbar_entry(
-        &mut self,
-        nav_entry_index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_navbar_entry(nav_entry_index);
-        window.focus(&self.navbar_entries[nav_entry_index].focus_handle, cx);
-        cx.notify();
-    }
-
-    fn toggle_navbar_entry_on_double_click(
-        &mut self,
-        nav_entry_index: usize,
-        event: &gpui::ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(entry) = self.navbar_entries.get(nav_entry_index) else {
-            return false;
-        };
-        if !entry.is_root || event.click_count() != 2 {
-            return false;
-        }
-
-        self.toggle_and_focus_navbar_entry(nav_entry_index, window, cx);
-        true
     }
 
     fn build_navbar(&mut self, cx: &App) {
@@ -2769,11 +2743,13 @@ impl SettingsWindow {
                                             item.expanded(entry.expanded || this.has_query)
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
-                                                        this.toggle_and_focus_navbar_entry(
-                                                            entry_index,
-                                                            window,
+                                                        this.toggle_navbar_entry(entry_index);
+                                                        window.focus(
+                                                            &this.navbar_entries[entry_index]
+                                                                .focus_handle,
                                                             cx,
                                                         );
+                                                        cx.notify();
                                                     },
                                                 ))
                                         })
@@ -2782,17 +2758,7 @@ impl SettingsWindow {
                                             let subcategory =
                                                 (!entry.is_root).then_some(entry.title);
 
-                                            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                                                if this.toggle_navbar_entry_on_double_click(
-                                                        entry_index,
-                                                        event,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                {
-                                                    return;
-                                                }
-
+                                            cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
                                                     "Settings Navigation Clicked",
                                                     category = category,
@@ -3342,6 +3308,37 @@ impl SettingsWindow {
                     _ => this,
                 })
                 .into_any_element()
+        }
+
+        if let Some(error) = self.settings_write_error.clone() {
+            warning_banner = v_flex()
+                .gap_2()
+                .child(warning_banner)
+                .child(
+                    Banner::new()
+                        .severity(Severity::Warning)
+                        .child(
+                            v_flex()
+                                .my_0p5()
+                                .gap_0p5()
+                                .child(Label::new(
+                                    "Failed to save settings. Your last change may not be persisted.",
+                                ))
+                                .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
+                        )
+                        .action_slot(
+                            div().pr_1().pb_1().child(
+                                Button::new("dismiss-settings-write-error", "Dismiss")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.settings_write_error = None;
+                                        cx.notify();
+                                    })),
+                            ),
+                        ),
+                )
+                .into_any_element();
         }
 
         v_flex()
@@ -3924,31 +3921,50 @@ fn open_user_settings_in_workspace(
     .detach();
 }
 
-fn update_settings_file(
+pub(crate) fn update_settings_file(
     file: SettingsUiFile,
     file_name: Option<&'static str>,
     window: &mut Window,
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
-) -> Result<()> {
+) {
     telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
 
-    match file {
+    let settings_window = window.root::<SettingsWindow>().flatten();
+    let update_result = match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let Some(settings_window) = window.root::<SettingsWindow>().flatten() else {
-                anyhow::bail!("No settings window found");
-            };
-
-            update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
+            if let Some(settings_window) = settings_window.clone() {
+                update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
+            } else {
+                Task::ready(Err(anyhow::anyhow!("No settings window found")))
+            }
         }
         SettingsUiFile::User => {
-            // todo(settings_ui) error?
-            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
-            Ok(())
+            let completion = SettingsStore::global(cx)
+                .update_settings_file_with_completion(<dyn fs::Fs>::global(cx), update);
+            cx.spawn(async move |_cx| {
+                completion
+                    .await
+                    .context("Settings write task was canceled")?
+            })
         }
         SettingsUiFile::Server(_) => unimplemented!(),
-    }
+    };
+
+    cx.spawn(async move |cx| {
+        if let Err(err) = update_result.await {
+            if let Some(settings_window) = settings_window {
+                settings_window.update(cx, |this, cx| {
+                    this.settings_write_error = Some(format!("{err:#}"));
+                    cx.notify();
+                });
+            } else {
+                log::error!("Failed to update settings: {err:#}");
+            }
+        }
+    })
+    .detach();
 }
 
 struct ProjectSettingsUpdateEntry {
@@ -3961,7 +3977,7 @@ struct ProjectSettingsUpdateEntry {
 }
 
 struct ProjectSettingsUpdateQueue {
-    tx: mpsc::UnboundedSender<ProjectSettingsUpdateEntry>,
+    tx: mpsc::UnboundedSender<(ProjectSettingsUpdateEntry, oneshot::Sender<Result<()>>)>,
     _task: Task<()>,
 }
 
@@ -3969,23 +3985,38 @@ impl Global for ProjectSettingsUpdateQueue {}
 
 impl ProjectSettingsUpdateQueue {
     fn new(cx: &mut App) -> Self {
-        let (tx, mut rx) = mpsc::unbounded();
+        let (tx, mut rx) =
+            mpsc::unbounded::<(ProjectSettingsUpdateEntry, oneshot::Sender<Result<()>>)>();
         let task = cx.spawn(async move |mut cx| {
-            while let Some(entry) = rx.next().await {
-                if let Err(err) = Self::process_entry(entry, &mut cx).await {
+            while let Some((entry, completion_tx)) = rx.next().await {
+                let result = Self::process_entry(entry, &mut cx).await;
+                if let Err(err) = &result {
                     log::error!("Failed to update project settings: {err:?}");
+                }
+                if let Err(err) = completion_tx.send(result) {
+                    log::error!("Failed to send project settings update result: {err:?}");
                 }
             }
         });
         Self { tx, _task: task }
     }
 
-    fn enqueue(cx: &mut App, entry: ProjectSettingsUpdateEntry) {
-        cx.update_global::<Self, _>(|queue, _cx| {
-            if let Err(err) = queue.tx.unbounded_send(entry) {
-                log::error!("Failed to enqueue project settings update: {err}");
-            }
-        });
+    fn enqueue(cx: &mut App, entry: ProjectSettingsUpdateEntry) -> Task<Result<()>> {
+        let (completion_tx, completion_rx) = oneshot::channel();
+        if let Err(err) = cx.update_global::<Self, _>(|queue, _cx| {
+            queue
+                .tx
+                .unbounded_send((entry, completion_tx))
+                .map_err(|err| anyhow::anyhow!("Failed to enqueue project settings update: {err}"))
+        }) {
+            return Task::ready(Err(err));
+        }
+
+        cx.spawn(async move |_cx| {
+            completion_rx
+                .await
+                .context("Project settings update task was canceled")?
+        })
     }
 
     async fn process_entry(entry: ProjectSettingsUpdateEntry, cx: &mut AsyncApp) -> Result<()> {
@@ -4075,7 +4106,7 @@ fn update_project_setting_file(
     update: impl 'static + FnOnce(&mut SettingsContent, &App),
     settings_window: Entity<SettingsWindow>,
     cx: &mut App,
-) -> Result<()> {
+) -> Task<Result<()>> {
     let Some((worktree, project)) =
         all_projects(settings_window.read(cx).original_window.as_ref(), cx).find_map(|project| {
             project
@@ -4084,7 +4115,10 @@ fn update_project_setting_file(
                 .zip(Some(project))
         })
     else {
-        anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+        return Task::ready(Err(anyhow::anyhow!(
+            "Could not find project with worktree id: {}",
+            worktree_id
+        )));
     };
 
     let entry = ProjectSettingsUpdateEntry {
@@ -4096,9 +4130,7 @@ fn update_project_setting_file(
         update: Box::new(update),
     };
 
-    ProjectSettingsUpdateQueue::enqueue(cx, entry);
-
-    Ok(())
+    ProjectSettingsUpdateQueue::enqueue(cx, entry)
 }
 
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
@@ -4131,8 +4163,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     move |settings, app| {
                         (field.write)(settings, new_text.map(Into::into), app);
                     },
-                )
-                .log_err(); // todo(settings_ui) don't log err
+                );
             }
         })
         .into_any_element()
@@ -4162,8 +4193,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 let state = *state == ui::ToggleState::Selected;
                 update_settings_file(file.clone(), field.json_path, window, cx, move |settings, app| {
                     (field.write)(settings, Some(state.into()), app);
-                })
-                .log_err(); // todo(settings_ui) don't log err
+                });
             }
         })
         .into_any_element()
@@ -4198,8 +4228,7 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
                     move |settings, app| {
                         (field.write)(settings, Some(value), app);
                     },
-                )
-                .log_err(); // todo(settings_ui) don't log err
+                );
             }
         })
         .into_any_element()
@@ -4238,8 +4267,7 @@ where
                 move |settings, app| {
                     (field.write)(settings, Some(value), app);
                 },
-            )
-            .log_err(); // todo(settings_ui) don't log err
+            );
         }
     })
     .tab_index(0)
@@ -4293,8 +4321,7 @@ fn render_font_picker(
                             move |settings, app| {
                                 (field.write)(settings, Some(font_name.to_string().into()), app);
                             },
-                        )
-                        .log_err(); // todo(settings_ui) don't log err
+                        );
                     },
                     window,
                     cx,
@@ -4347,8 +4374,7 @@ fn render_theme_picker(
                                     app,
                                 );
                             },
-                        )
-                        .log_err(); // todo(settings_ui) don't log err
+                        );
                     },
                     window,
                     cx,
@@ -4401,8 +4427,7 @@ fn render_icon_theme_picker(
                                     app,
                                 );
                             },
-                        )
-                        .log_err(); // todo(settings_ui) don't log err
+                        );
                     },
                     window,
                     cx,
@@ -4472,6 +4497,7 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
                 regex_validation_error: None,
+                settings_write_error: None,
             }
         }
     }
@@ -4597,6 +4623,7 @@ pub mod test {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
             regex_validation_error: None,
+            settings_write_error: None,
         };
 
         settings_window.build_filter_table();
@@ -4786,91 +4813,6 @@ pub mod test {
         > Appearance & Behavior
         "
     );
-
-    #[gpui::test]
-    fn navbar_double_click_toggle(cx: &mut gpui::TestAppContext) {
-        let (settings_window, cx) = cx.add_window_view(|window, cx| {
-            register_settings(cx);
-            let mut settings_window = parse(
-                r"
-                > General*
-                - General
-                - Privacy
-                v Project
-                - Project Settings
-                ",
-                window,
-                cx,
-            );
-            settings_window.build_content_handles(window, cx);
-            settings_window
-        });
-
-        settings_window.update_in(cx, |settings_window, window, cx| {
-            let general_idx = settings_window
-                .navbar_entries
-                .iter()
-                .position(|entry| entry.title == "General" && entry.is_root)
-                .expect("General root entry should exist");
-            let privacy_idx = settings_window
-                .navbar_entries
-                .iter()
-                .position(|entry| entry.title == "Privacy" && !entry.is_root)
-                .expect("Privacy nested entry should exist");
-
-            let click_event = |click_count| {
-                gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
-                    down: gpui::MouseDownEvent {
-                        button: gpui::MouseButton::Left,
-                        click_count,
-                        ..Default::default()
-                    },
-                    up: gpui::MouseUpEvent {
-                        button: gpui::MouseButton::Left,
-                        click_count,
-                        ..Default::default()
-                    },
-                })
-            };
-
-            assert!(
-                !settings_window.toggle_navbar_entry_on_double_click(
-                    general_idx,
-                    &click_event(1),
-                    window,
-                    cx,
-                ),
-                "single-clicks should use the normal navigation path"
-            );
-            assert!(!settings_window.navbar_entries[general_idx].expanded);
-
-            assert!(settings_window.toggle_navbar_entry_on_double_click(
-                general_idx,
-                &click_event(2),
-                window,
-                cx,
-            ));
-            assert!(settings_window.navbar_entries[general_idx].expanded);
-
-            assert!(
-                !settings_window.toggle_navbar_entry_on_double_click(
-                    general_idx,
-                    &click_event(3),
-                    window,
-                    cx,
-                ),
-                "triple-clicks should not toggle the entry again"
-            );
-            assert!(settings_window.navbar_entries[general_idx].expanded);
-
-            assert!(!settings_window.toggle_navbar_entry_on_double_click(
-                privacy_idx,
-                &click_event(2),
-                window,
-                cx,
-            ));
-        });
-    }
 
     #[gpui::test]
     async fn test_settings_window_shows_worktrees_from_multiple_workspaces(
@@ -5299,8 +5241,9 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task.await.expect("settings update should succeed");
 
         let buffer_store = setup
             .project
@@ -5333,8 +5276,9 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task.await.expect("settings update should succeed");
 
         let buffer_store = setup
             .project
@@ -5358,6 +5302,7 @@ mod project_settings_update_tests {
 
         let update_order = Arc::new(std::sync::Mutex::new(Vec::new()));
 
+        let mut update_tasks = Vec::new();
         for i in 1..=3 {
             let update_order = update_order.clone();
             let entry = ProjectSettingsUpdateEntry {
@@ -5372,10 +5317,13 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(i).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+            update_tasks.push(cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry)));
         }
 
         cx.executor().run_until_parked();
+        for update_task in update_tasks {
+            update_task.await.expect("settings update should succeed");
+        }
 
         let order = update_order.lock().unwrap().clone();
         assert_eq!(order, vec![1, 2, 3], "Updates should be processed in order");
@@ -5402,7 +5350,7 @@ mod project_settings_update_tests {
 
         let successful_updates = Arc::new(AtomicUsize::new(0));
 
-        {
+        let first_update_task = {
             let successful_updates = successful_updates.clone();
             let entry = ProjectSettingsUpdateEntry {
                 worktree_id: setup.worktree_id,
@@ -5416,10 +5364,10 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(2).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
-        }
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry))
+        };
 
-        {
+        let failed_update_task = {
             let entry = ProjectSettingsUpdateEntry {
                 worktree_id: setup.worktree_id,
                 rel_path: setup.rel_path.clone(),
@@ -5431,10 +5379,10 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(99).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
-        }
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry))
+        };
 
-        {
+        let third_update_task = {
             let successful_updates = successful_updates.clone();
             let entry = ProjectSettingsUpdateEntry {
                 worktree_id: setup.worktree_id,
@@ -5448,10 +5396,19 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(4).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
-        }
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry))
+        };
 
         cx.executor().run_until_parked();
+        first_update_task
+            .await
+            .expect("first settings update should succeed");
+        failed_update_task
+            .await
+            .expect_err("second settings update should fail");
+        third_update_task
+            .await
+            .expect("third settings update should succeed");
 
         assert_eq!(
             successful_updates.load(Ordering::SeqCst),
@@ -5491,8 +5448,11 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task
+            .await
+            .expect_err("settings update should fail when worktree is dropped");
 
         let file_content = setup
             .fs
@@ -5562,8 +5522,9 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task.await.expect("settings update should succeed");
 
         let text = buffer.read_with(cx, |buffer, _| buffer.text());
         assert!(
