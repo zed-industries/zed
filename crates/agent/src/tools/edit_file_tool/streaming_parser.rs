@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::{Edit, PartialEdit};
+use crate::tools::edit_session::{Edit, PartialEdit};
 
 /// Events emitted by `StreamingParser` for edit-mode input.
 #[derive(Debug, PartialEq, Eq)]

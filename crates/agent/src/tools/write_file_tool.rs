@@ -1,6 +1,6 @@
-use super::edit_file_tool::{
-    EditFileToolOutput, EditSession, EditSessionResult, FileTool, Mode,
-    initial_title_from_partial_path, replay_output, run_session,
+use super::edit_session::{
+    EditSession, EditSessionContext, EditSessionMode, EditSessionOutput, EditSessionResult,
+    initial_title_from_partial_path, run_session,
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
 use action_log::ActionLog;
@@ -59,7 +59,9 @@ struct WriteFileToolPartialInput {
     content: Option<String>,
 }
 
-pub struct WriteFileTool(FileTool);
+pub struct WriteFileTool {
+    session_context: Arc<EditSessionContext>,
+}
 
 impl WriteFileTool {
     pub fn new(
@@ -68,12 +70,14 @@ impl WriteFileTool {
         action_log: Entity<ActionLog>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
-        Self(FileTool::new(
-            project,
-            thread,
-            action_log,
-            language_registry,
-        ))
+        Self {
+            session_context: Arc::new(EditSessionContext::new(
+                project,
+                thread,
+                action_log,
+                language_registry,
+            )),
+        }
     }
 
     async fn process_streaming_writes(
@@ -103,9 +107,9 @@ impl WriteFileTool {
                                     {
                                         match EditSession::new(
                                             PathBuf::from(path),
-                                            Mode::Write,
+                                            EditSessionMode::Write,
                                             Self::NAME,
-                                            &self.0,
+                                            self.session_context.clone(),
                                             event_stream,
                                             cx,
                                         )
@@ -123,7 +127,7 @@ impl WriteFileTool {
                                     }
 
                                     if let Some(current_session) = &mut session
-                                        && let Err(error) = current_session.process_write(parsed.content.as_deref(), &self.0, cx)
+                                        && let Err(error) = current_session.process_write(parsed.content.as_deref(), cx)
                                     {
                                         log::error!("Failed to process write: {}", error);
                                         return EditSessionResult::Failed { error, session };
@@ -136,9 +140,9 @@ impl WriteFileTool {
                                 } else {
                                     match EditSession::new(
                                         full_input.path.clone(),
-                                        Mode::Write,
+                                        EditSessionMode::Write,
                                         Self::NAME,
-                                        &self.0,
+                                        self.session_context.clone(),
                                         event_stream,
                                         cx,
                                     )
@@ -155,7 +159,7 @@ impl WriteFileTool {
                                     }
                                 };
 
-                                return match session.finalize_write(&full_input.content, &self.0, cx).await {
+                                return match session.finalize_write(&full_input.content, cx).await {
                                     Ok(()) => EditSessionResult::Completed(session),
                                     Err(error) => {
                                         log::error!("Failed to finalize write: {}", error);
@@ -195,7 +199,7 @@ impl WriteFileTool {
 
 impl AgentTool for WriteFileTool {
     type Input = WriteFileToolInput;
-    type Output = EditFileToolOutput;
+    type Output = EditSessionOutput;
 
     const NAME: &'static str = "write_file";
 
@@ -213,11 +217,12 @@ impl AgentTool for WriteFileTool {
         cx: &mut App,
     ) -> SharedString {
         match input {
-            Ok(input) => self
-                .0
-                .initial_title_from_path(&input.path, DEFAULT_UI_TEXT, cx),
+            Ok(input) => {
+                self.session_context
+                    .initial_title_from_path(&input.path, DEFAULT_UI_TEXT, cx)
+            }
             Err(raw_input) => initial_title_from_partial_path::<WriteFileToolPartialInput>(
-                &self.0,
+                &self.session_context,
                 raw_input,
                 |partial| partial.path.clone(),
                 DEFAULT_UI_TEXT,
@@ -234,7 +239,6 @@ impl AgentTool for WriteFileTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx: &mut AsyncApp| {
             run_session(
-                &self.0,
                 self.process_streaming_writes(&mut input, &event_stream, cx)
                     .await,
                 cx,
@@ -250,6 +254,6 @@ impl AgentTool for WriteFileTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> anyhow::Result<()> {
-        replay_output(&self.0, output, event_stream, cx)
+        self.session_context.replay_output(output, event_stream, cx)
     }
 }
