@@ -614,7 +614,7 @@ impl DebugPanel {
         let active_session = self.active_session.clone();
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
-        let div = if is_side { v_flex() } else { h_flex() };
+        let div = h_flex();
 
         let new_session_button = || {
             IconButton::new("debug-new-session", IconName::Plus)
@@ -935,12 +935,6 @@ impl DebugPanel {
                                 },
                             ),
                         )
-                        .when(is_side, |this| {
-                            this.child(new_session_button())
-                                .child(edit_debug_json_button())
-                                .child(documentation_button())
-                                .child(logs_button())
-                        }),
                 )
                 .child(
                     h_flex()
@@ -988,13 +982,11 @@ impl DebugPanel {
                                     window,
                                     cx,
                                 ))
-                                .when(!is_side, |this| {
-                                    this.child(new_session_button())
-                                        .child(edit_debug_json_button())
-                                        .child(documentation_button())
-                                        .child(logs_button())
-                                        .child(close_bottom_panel_button)
-                                }),
+                                .child(new_session_button())
+                                .child(edit_debug_json_button())
+                                .child(documentation_button())
+                                .child(logs_button())
+                                .when(!is_side, |this| this.child(close_bottom_panel_button)),
                         ),
                 ),
         )
