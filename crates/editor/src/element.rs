@@ -10083,8 +10083,6 @@ impl Element for EditorElement {
                         .editor
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
-                    let is_light = cx.theme().appearance().is_light();
-
                     let mut highlighted_ranges = self
                         .editor_with_selections(cx)
                         .map(|editor| {
@@ -10124,42 +10122,49 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_default();
 
+                    struct DiffHunkHighlightColors {
+                        filled_background: Hsla,
+                        hollow_background: Hsla,
+                        hollow_border: Hsla,
+                    }
+
+                    let colors = cx.theme().colors();
+                    let added_diff_hunk_colors = DiffHunkHighlightColors {
+                        filled_background: colors.editor_diff_hunk_added_background,
+                        hollow_background: colors.editor_diff_hunk_added_hollow_background,
+                        hollow_border: colors.editor_diff_hunk_added_hollow_border,
+                    };
+                    let deleted_diff_hunk_colors = DiffHunkHighlightColors {
+                        filled_background: colors.editor_diff_hunk_deleted_background,
+                        hollow_background: colors.editor_diff_hunk_deleted_hollow_background,
+                        hollow_border: colors.editor_diff_hunk_deleted_hollow_border,
+                    };
+                    let drag_highlight_color = colors.editor_active_line_background;
+                    let drag_border_color = colors.border_focused;
+
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
 
-                        let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted => {
-                                cx.theme().colors().version_control_deleted
-                            }
+                        let diff_hunk_colors = match diff_status.kind {
+                            DiffHunkStatusKind::Added => &added_diff_hunk_colors,
+                            DiffHunkStatusKind::Deleted => &deleted_diff_hunk_colors,
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
                             }
                         };
 
-                        let hunk_opacity = if is_light { 0.16 } else { 0.12 };
-
                         let hollow_highlight = LineHighlight {
-                            background: (background_color.opacity(if is_light {
-                                0.08
-                            } else {
-                                0.06
-                            }))
-                            .into(),
-                            border: Some(if is_light {
-                                background_color.opacity(0.48)
-                            } else {
-                                background_color.opacity(0.36)
-                            }),
+                            background: diff_hunk_colors.hollow_background.into(),
+                            border: Some(diff_hunk_colors.hollow_border),
                             include_gutter: true,
                             type_id: None,
                         };
 
                         let filled_highlight = LineHighlight {
-                            background: solid_background(background_color.opacity(hunk_opacity)),
+                            background: solid_background(diff_hunk_colors.filled_background),
                             border: None,
                             include_gutter: true,
                             type_id: None,
@@ -10184,11 +10189,9 @@ impl Element for EditorElement {
                         let range = drag_state.row_range(&snapshot.display_snapshot);
                         let start_row = range.start().0;
                         let end_row = range.end().0;
-                        let drag_highlight_color =
-                            cx.theme().colors().editor_active_line_background;
                         let drag_highlight = LineHighlight {
                             background: solid_background(drag_highlight_color),
-                            border: Some(cx.theme().colors().border_focused),
+                            border: Some(drag_border_color),
                             include_gutter: true,
                             type_id: None,
                         };
