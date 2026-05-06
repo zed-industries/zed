@@ -140,7 +140,7 @@ impl OpenRequest {
         }
 
         for url in request.urls {
-            if let Some(server_name) = url.strip_prefix("zed-cli://") {
+            if let Some(server_name) = paths::strip_cli_connection_url(&url) {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
                 this.kind = Some(OpenRequestKind::DockMenuAction {
@@ -327,7 +327,7 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
 
-    let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    let sock_path = paths::data_dir().join(paths::ipc_socket_name(&RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path)
         && e.kind() == std::io::ErrorKind::ConnectionRefused

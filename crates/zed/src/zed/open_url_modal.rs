@@ -54,7 +54,7 @@ impl OpenUrlModal {
         }
 
         // Handle zed:// URLs internally.
-        if url.starts_with("zed://") || url.starts_with("zed-cli://") {
+        if url.starts_with("zed://") || url.starts_with(paths::cli_url_prefix().as_str()) {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![url],
                 ..Default::default()

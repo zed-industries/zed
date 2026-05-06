@@ -16,7 +16,40 @@ include!(concat!(env!("OUT_DIR"), "/app_name.rs"));
 /// Returns the lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
 fn app_name_lowercase() -> String {
-    APP_NAME.to_lowercase()
+    app_name_lowercase_for(APP_NAME)
+}
+
+fn app_name_lowercase_for(app_name: &str) -> String {
+    app_name.to_lowercase()
+}
+
+fn ipc_socket_name_for_app(app_name: &str, release_channel_name: &str) -> String {
+    format!(
+        "{}-{}.sock",
+        app_name_lowercase_for(app_name),
+        release_channel_name
+    )
+}
+
+pub fn ipc_socket_name(release_channel_name: &str) -> String {
+    ipc_socket_name_for_app(APP_NAME, release_channel_name)
+}
+
+fn cli_url_prefix_for_app(app_name: &str) -> String {
+    format!("{}-cli://", app_name_lowercase_for(app_name))
+}
+
+pub fn cli_url_prefix() -> String {
+    cli_url_prefix_for_app(APP_NAME)
+}
+
+pub fn cli_connection_url(server_name: &str) -> String {
+    format!("{}{server_name}", cli_url_prefix())
+}
+
+pub fn strip_cli_connection_url(url: &str) -> Option<&str> {
+    let prefix = cli_url_prefix();
+    url.strip_prefix(prefix.as_str())
 }
 
 /// A custom data directory override, set only by `set_custom_data_dir`.
@@ -212,7 +245,7 @@ pub fn logs_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     LOGS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            home_dir().join("Library/Logs/Zed")
+            home_dir().join("Library/Logs").join(APP_NAME)
         } else {
             data_dir().join("logs")
         }
@@ -225,16 +258,16 @@ pub fn remote_server_state_dir() -> &'static PathBuf {
     REMOTE_SERVER_STATE.get_or_init(|| data_dir().join("server_state"))
 }
 
-/// Returns the path to the `Zed.log` file.
+/// Returns the path to the log file.
 pub fn log_file() -> &'static PathBuf {
     static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
-    LOG_FILE.get_or_init(|| logs_dir().join("Zed.log"))
+    LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log", APP_NAME)))
 }
 
-/// Returns the path to the `Zed.log.old` file.
+/// Returns the path to the old log file.
 pub fn old_log_file() -> &'static PathBuf {
     static OLD_LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
-    OLD_LOG_FILE.get_or_init(|| logs_dir().join("Zed.log.old"))
+    OLD_LOG_FILE.get_or_init(|| logs_dir().join(format!("{}.log.old", APP_NAME)))
 }
 
 /// Returns the path to the database directory.

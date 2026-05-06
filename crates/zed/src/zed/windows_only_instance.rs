@@ -116,7 +116,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
 
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
-    let url = format!("zed-cli://{server_name}");
+    let url = paths::cli_connection_url(&server_name);
 
     let request = {
         let mut paths = vec![];

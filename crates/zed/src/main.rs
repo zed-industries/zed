@@ -26,7 +26,7 @@ const _: () = {
             env!("CARGO_BIN_NAME").as_bytes(),
         ),
         "paths::APP_NAME must match the binary name (case-insensitive). \
-         Forks: update crates/paths/APP_NAME when renaming the binary.
+         Forks: update crates/paths/APP_NAME when renaming the binary.",
     );
 };
 
@@ -1763,7 +1763,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
         Err(_) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed://")
-                || arg.starts_with("zed-cli://")
+                || arg.starts_with(paths::cli_url_prefix().as_str())
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()
             {
