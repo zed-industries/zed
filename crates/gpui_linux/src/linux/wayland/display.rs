@@ -25,7 +25,7 @@ impl Hash for WaylandDisplay {
 
 impl PlatformDisplay for WaylandDisplay {
     fn id(&self) -> DisplayId {
-        DisplayId::new(self.id.protocol_id())
+        DisplayId::new(self.id.protocol_id() as u64)
     }
 
     fn uuid(&self) -> anyhow::Result<Uuid> {

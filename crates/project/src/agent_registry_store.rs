@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
 use fs::Fs;
 use futures::AsyncReadExt;
-use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
+use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task, TaskExt};
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
 use settings::Settings as _;
