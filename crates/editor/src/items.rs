@@ -1943,7 +1943,7 @@ impl SearchableItem for Editor {
 
                     for rx in results {
                         if let Ok(results) = rx.await {
-                            ranges.extend(results.into_iter());
+                            ranges.extend(results);
                         }
                     }
                 }
