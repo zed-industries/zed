@@ -4930,10 +4930,21 @@ impl ThreadView {
                 .shape(ui::IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Ignored)
-                .tooltip(Tooltip::text("Scroll To Most Recent User Prompt"))
+                .tooltip(Tooltip::text(
+                    "Scroll To Recent User Prompt (click again for previous)",
+                ))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.scroll_to_most_recent_user_prompt(cx);
                 }));
+
+        let copy_last_response = IconButton::new("copy_last_response", IconName::Copy)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Copy Last Response"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.copy_last_assistant_response(cx);
+            }));
 
         let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
             .shape(ui::IconButtonShape::Square)
@@ -5095,6 +5106,7 @@ impl ThreadView {
 
         container
             .child(open_as_markdown)
+            .child(copy_last_response)
             .child(scroll_to_recent_user_prompt)
             .child(scroll_to_top)
             .into_any_element()
@@ -5106,12 +5118,26 @@ impl ThreadView {
             return;
         }
 
-        // Find the most recent user message and scroll it to the top of the viewport.
-        // (Fallback: if no user message exists, scroll to the bottom.)
-        if let Some(ix) = entries
+        // Walk backwards through user prompts on each click. The first click from
+        // a position below the latest prompt lands on it (preserving the original
+        // "scroll to most recent" behavior); subsequent clicks step to the
+        // previous prompt. After the oldest prompt, wrap around to the latest.
+        let current_top = self.list_state.logical_scroll_top().item_ix;
+        let target = entries
             .iter()
-            .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
-        {
+            .enumerate()
+            .rev()
+            .find(|(ix, entry)| {
+                *ix < current_top && matches!(entry, AgentThreadEntry::UserMessage(_))
+            })
+            .map(|(ix, _)| ix)
+            .or_else(|| {
+                entries
+                    .iter()
+                    .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+            });
+
+        if let Some(ix) = target {
             self.list_state.scroll_to(ListOffset {
                 item_ix: ix,
                 offset_in_item: px(0.0),
@@ -5119,6 +5145,25 @@ impl ThreadView {
             cx.notify();
         } else {
             self.scroll_to_end(cx);
+        }
+    }
+
+    /// Copy the most recent assistant message in this thread to the system
+    /// clipboard, rendered as Markdown. No-op if the thread has no assistant
+    /// messages yet.
+    pub(crate) fn copy_last_assistant_response(&self, cx: &mut Context<Self>) {
+        let markdown = self
+            .thread
+            .read(cx)
+            .entries()
+            .iter()
+            .rev()
+            .find_map(|entry| match entry {
+                AgentThreadEntry::AssistantMessage(message) => Some(message.to_markdown(cx)),
+                _ => None,
+            });
+        if let Some(markdown) = markdown {
+            cx.write_to_clipboard(ClipboardItem::new_string(markdown));
         }
     }
 
