@@ -3977,14 +3977,14 @@ mod tests {
         sender.send_partial(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": "old_"}]
+            "edits": [{"new_text": "new_content", "old_text": ""}]
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": "old_content"}]
+            "edits": [{"new_text": "new_content", "old_text": "old"}]
         }));
         cx.run_until_parked();
 
