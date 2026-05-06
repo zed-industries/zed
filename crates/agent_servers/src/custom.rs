@@ -1,13 +1,15 @@
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
-use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use gpui::{App, AppContext as _, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use language_model::{ApiKey, EnvVar};
-use project::agent_server_store::{AgentId, AllAgentServersSettings};
+use project::{
+    Project,
+    agent_server_store::{AgentId, AllAgentServersSettings},
+};
 use settings::{SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
 use ui::IconName;
@@ -289,14 +291,10 @@ impl AgentServer for CustomAgentServer {
     fn connect(
         &self,
         delegate: AgentServerDelegate,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let agent_id = self.agent_id();
-        let display_name = delegate
-            .store
-            .read(cx)
-            .agent_display_name(&agent_id)
-            .unwrap_or_else(|| agent_id.0.clone());
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
         let is_registry_agent = is_registry_agent(agent_id.clone(), cx);
@@ -362,17 +360,17 @@ impl AgentServer for CustomAgentServer {
                     let agent = store.get_external_agent(&agent_id).with_context(|| {
                         format!("Custom agent server `{}` is not registered", agent_id)
                     })?;
-                    anyhow::Ok(agent.get_command(
-                        extra_env,
-                        delegate.new_version_available,
-                        &mut cx.to_async(),
-                    ))
+                    if let Some(new_version_available_tx) = delegate.new_version_available {
+                        agent.set_new_version_available_tx(new_version_available_tx);
+                    }
+                    anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
                 })??
                 .await?;
             let connection = crate::acp::connect(
                 agent_id,
-                display_name,
+                project,
                 command,
+                store.clone(),
                 default_mode,
                 default_model,
                 default_config_options,
@@ -393,7 +391,7 @@ fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
     if let Some(key) = env_var.value {
         return Task::ready(Ok(key));
     }
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    let credentials_provider = zed_credentials_provider::global(cx);
     let api_url = google_ai::API_URL.to_string();
     cx.spawn(async move |cx| {
         Ok(
@@ -479,6 +477,7 @@ mod tests {
                         description: SharedString::from(""),
                         version: SharedString::from("1.0.0"),
                         repository: None,
+                        website: None,
                         icon_path: None,
                     },
                     package: id,

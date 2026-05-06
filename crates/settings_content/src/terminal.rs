@@ -129,6 +129,10 @@ pub struct TerminalSettingsContent {
     /// Default: true
     pub button: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
+    /// Whether the terminal panel should use flexible (proportional) sizing.
+    ///
+    /// Default: true
+    pub flexible: Option<bool>,
     /// Default width when the terminal is docked to the left or right.
     ///
     /// Default: 640
@@ -175,6 +179,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub show_count_badge: Option<bool>,
+    /// What to do when the `BEL` character (`\a`) is printed to terminal.
+    ///
+    /// Default: "system"
+    pub bell: Option<TerminalBell>,
 }
 
 /// Shell configuration to open the terminal with.
@@ -388,6 +396,29 @@ pub struct TerminalToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalBell {
+    /// Play an OS-specific alert sound.
+    #[default]
+    System,
+    /// Do not play any sound.
+    Off,
 }
 
 #[derive(

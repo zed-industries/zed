@@ -44,7 +44,7 @@ impl PlatformAtlas for MetalAtlas {
     ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(tile.clone()))
+            Ok(Some(*tile))
         } else {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
@@ -54,14 +54,14 @@ impl PlatformAtlas for MetalAtlas {
                 .context("failed to allocate")?;
             let texture = lock.texture(tile.texture_id);
             texture.upload(tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
+            lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
         }
     }
 
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
-        let Some(id) = lock.tiles_by_key.get(key).map(|v| v.texture_id) else {
+        let Some(id) = lock.tiles_by_key.remove(key).map(|v| v.texture_id) else {
             return;
         };
 
@@ -81,10 +81,8 @@ impl PlatformAtlas for MetalAtlas {
 
         if let Some(mut texture) = texture_slot.take() {
             texture.decrement_ref_count();
-
             if texture.is_unreferenced() {
                 textures.free_list.push(id.index as usize);
-                lock.tiles_by_key.remove(key);
             } else {
                 *texture_slot = Some(texture);
             }
@@ -271,3 +269,81 @@ fn point_from_etagere(value: etagere::Point) -> Point<DevicePixels> {
 struct AssertSend<T>(T);
 
 unsafe impl<T> Send for AssertSend<T> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::PlatformAtlas;
+    use std::borrow::Cow;
+
+    fn create_atlas() -> Option<MetalAtlas> {
+        let device = metal::Device::system_default()?;
+        Some(MetalAtlas::new(device, true))
+    }
+
+    fn make_image_key(image_id: usize, frame_index: usize) -> AtlasKey {
+        AtlasKey::Image(gpui::RenderImageParams {
+            image_id: gpui::ImageId(image_id),
+            frame_index,
+        })
+    }
+
+    fn insert_tile(atlas: &MetalAtlas, key: &AtlasKey, size: Size<DevicePixels>) -> AtlasTile {
+        atlas
+            .get_or_insert_with(key, &mut || {
+                let byte_count = (size.width.0 as usize) * (size.height.0 as usize) * 4;
+                Ok(Some((size, Cow::Owned(vec![0u8; byte_count]))))
+            })
+            .expect("allocation should succeed")
+            .expect("callback returns Some")
+    }
+
+    #[test]
+    fn test_remove_clears_stale_keys_from_tiles_by_key() {
+        let Some(atlas) = create_atlas() else {
+            return;
+        };
+
+        let small = Size {
+            width: DevicePixels(64),
+            height: DevicePixels(64),
+        };
+
+        let key_a = make_image_key(1, 0);
+        let key_b = make_image_key(2, 0);
+        let key_c = make_image_key(3, 0);
+
+        let tile_a = insert_tile(&atlas, &key_a, small);
+        let tile_b = insert_tile(&atlas, &key_b, small);
+        let tile_c = insert_tile(&atlas, &key_c, small);
+
+        assert_eq!(tile_a.texture_id, tile_b.texture_id);
+        assert_eq!(tile_b.texture_id, tile_c.texture_id);
+
+        // Remove A: texture still has B and C, so it stays.
+        // The key for A must be removed from tiles_by_key.
+        atlas.remove(&key_a);
+
+        // Remove B: texture still has C.
+        atlas.remove(&key_b);
+
+        // Remove C: texture becomes unreferenced and is deleted.
+        atlas.remove(&key_c);
+
+        // Re-inserting A must allocate a fresh tile on a new texture,
+        // NOT return a stale tile referencing the deleted texture.
+        let tile_a2 = insert_tile(&atlas, &key_a, small);
+
+        // The texture must actually exist — this would panic before the fix.
+        let _texture = atlas.metal_texture(tile_a2.texture_id);
+    }
+
+    #[test]
+    fn test_remove_nonexistent_key_is_noop() {
+        let Some(atlas) = create_atlas() else {
+            return;
+        };
+        let key = make_image_key(999, 0);
+        atlas.remove(&key);
+    }
+}

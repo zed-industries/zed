@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "ep"
 path = "src/main.rs"
@@ -19,8 +22,9 @@ http_client.workspace = true
 chrono.workspace = true
 clap = "4"
 client.workspace = true
-cloud_llm_client.workspace= true
+cloud_llm_client = { workspace = true, features = ["predict-edits"] }
 collections.workspace = true
+db.workspace = true
 debug_adapter_extension.workspace = true
 dirs.workspace = true
 extension.workspace = true
@@ -57,6 +61,7 @@ terminal_view.workspace = true
 util.workspace = true
 watch.workspace = true
 edit_prediction = { workspace = true, features = ["cli-support"] }
+edit_prediction_metrics.workspace = true
 telemetry_events.workspace = true
 wasmtime.workspace = true
 zeta_prompt.workspace = true
@@ -64,7 +69,7 @@ rand.workspace = true
 similar = "2.7.0"
 flate2 = "1.1.8"
 toml.workspace = true
-rust-embed = { workspace = true, features = ["debug-embed"] }
+rust-embed.workspace = true
 gaoya = "0.2.0"
 
 # Wasmtime is included as a dependency in order to enable the same
@@ -85,3 +90,4 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+

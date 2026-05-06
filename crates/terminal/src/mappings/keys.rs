@@ -65,14 +65,6 @@ pub fn to_esc_str(
         ("backspace", AlacModifiers::Alt) => Some("\x1b\x7f"),
         ("backspace", AlacModifiers::Shift) => Some("\x7f"),
         ("space", AlacModifiers::Ctrl) => Some("\x00"),
-        ("home", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => Some("\x1b[1;2H"),
-        ("end", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => Some("\x1b[1;2F"),
-        ("pageup", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
-            Some("\x1b[5;2~")
-        }
-        ("pagedown", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
-            Some("\x1b[6;2~")
-        }
         ("home", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOH"),
         ("home", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => Some("\x1b[H"),
         ("end", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOF"),
@@ -205,7 +197,6 @@ pub fn to_esc_str(
             "f18" => Some(format!("\x1b[32;{}~", modifier_code)),
             "f19" => Some(format!("\x1b[33;{}~", modifier_code)),
             "f20" => Some(format!("\x1b[34;{}~", modifier_code)),
-            _ if modifier_code == 2 => None,
             "insert" => Some(format!("\x1b[2;{}~", modifier_code)),
             "pageup" => Some(format!("\x1b[5;{}~", modifier_code)),
             "pagedown" => Some(format!("\x1b[6;{}~", modifier_code)),
@@ -267,47 +258,6 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_scroll_keys() {
-        //These keys should be handled by the scrolling element directly
-        //Need to signify this by returning 'None'
-        let shift_pageup = Keystroke::parse("shift-pageup").unwrap();
-        let shift_pagedown = Keystroke::parse("shift-pagedown").unwrap();
-        let shift_home = Keystroke::parse("shift-home").unwrap();
-        let shift_end = Keystroke::parse("shift-end").unwrap();
-
-        let none = TermMode::NONE;
-        assert_eq!(to_esc_str(&shift_pageup, &none, false), None);
-        assert_eq!(to_esc_str(&shift_pagedown, &none, false), None);
-        assert_eq!(to_esc_str(&shift_home, &none, false), None);
-        assert_eq!(to_esc_str(&shift_end, &none, false), None);
-
-        let alt_screen = TermMode::ALT_SCREEN;
-        assert_eq!(
-            to_esc_str(&shift_pageup, &alt_screen, false),
-            Some("\x1b[5;2~".into())
-        );
-        assert_eq!(
-            to_esc_str(&shift_pagedown, &alt_screen, false),
-            Some("\x1b[6;2~".into())
-        );
-        assert_eq!(
-            to_esc_str(&shift_home, &alt_screen, false),
-            Some("\x1b[1;2H".into())
-        );
-        assert_eq!(
-            to_esc_str(&shift_end, &alt_screen, false),
-            Some("\x1b[1;2F".into())
-        );
-
-        let pageup = Keystroke::parse("pageup").unwrap();
-        let pagedown = Keystroke::parse("pagedown").unwrap();
-        let any = TermMode::ANY;
-
-        assert_eq!(to_esc_str(&pageup, &any, false), Some("\x1b[5~".into()));
-        assert_eq!(to_esc_str(&pagedown, &any, false), Some("\x1b[6~".into()));
-    }
-
-    #[test]
     fn test_plain_inputs() {
         let ks = Keystroke {
             modifiers: Modifiers {
@@ -345,6 +295,24 @@ mod test {
             Some("\x1bOC".into())
         );
         assert_eq!(to_esc_str(&left, &app_cursor, false), Some("\x1bOD".into()));
+
+        let home = Keystroke::parse("home").unwrap();
+        let end = Keystroke::parse("end").unwrap();
+        assert_eq!(to_esc_str(&home, &none, false), Some("\x1b[H".into()));
+        assert_eq!(to_esc_str(&end, &none, false), Some("\x1b[F".into()));
+        assert_eq!(to_esc_str(&home, &app_cursor, false), Some("\x1bOH".into()));
+        assert_eq!(to_esc_str(&end, &app_cursor, false), Some("\x1bOF".into()));
+
+        let shift_home = Keystroke::parse("shift-home").unwrap();
+        let shift_end = Keystroke::parse("shift-end").unwrap();
+        assert_eq!(
+            to_esc_str(&shift_home, &none, false),
+            Some("\x1b[1;2H".into())
+        );
+        assert_eq!(
+            to_esc_str(&shift_end, &none, false),
+            Some("\x1b[1;2F".into())
+        );
     }
 
     #[test]

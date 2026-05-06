@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use feature_flags::FeatureFlagAppExt;
 use futures::{AsyncReadExt, TryStreamExt};
-use gpui::{App, AppContext as _, SerializedThreadTaskTimings};
+use gpui::{App, AppContext as _, SerializedThreadTaskTimings, TaskExt};
 use http_client::{self, AsyncBody, HttpClient, Request};
 use log::info;
 use project::Project;
@@ -22,7 +22,11 @@ use crate::STARTUP_TIME;
 const MAX_HANG_TRACES: usize = 3;
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    monitor_hangs(cx);
+    if cfg!(debug_assertions) {
+        log::info!("Debug assertions enabled, skipping hang monitoring");
+    } else {
+        monitor_hangs(cx);
+    }
 
     cx.on_flags_ready({
         let client = client.clone();
@@ -262,6 +266,10 @@ async fn upload_minidump(
     minidump: Vec<u8>,
     metadata: &crashes::CrashInfo,
 ) -> Result<()> {
+    if metadata.init.commit_sha == "no sha" {
+        log::warn!("No commit sha set, skipping minidump upload");
+        return Ok(());
+    }
     let mut form = Form::new()
         .part(
             "upload_file_minidump",

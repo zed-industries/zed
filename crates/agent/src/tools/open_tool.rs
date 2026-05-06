@@ -3,7 +3,7 @@ use super::tool_permissions::{
     resolve_project_path,
 };
 use crate::{AgentTool, ToolInput};
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use project::Project;
@@ -43,8 +43,8 @@ impl AgentTool for OpenTool {
 
     const NAME: &'static str = "open";
 
-    fn kind() -> ToolKind {
-        ToolKind::Execute
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
     }
 
     fn initial_title(
@@ -67,10 +67,7 @@ impl AgentTool for OpenTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
 
             // If path_or_url turns out to be a path in the project, make it absolute.
             let (abs_path, initial_title) = cx.update(|cx| {
