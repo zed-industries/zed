@@ -1,7 +1,7 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
+    AnyRenderContext, AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
     Underline, get_gamma_correction_ratios,
 };
@@ -67,6 +67,27 @@ struct PathRasterizationVertex {
     st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
+}
+
+/// Context passed to custom render pass callbacks. Contains the GPU resources
+/// needed to render directly to the window surface. All fields are owned
+/// (reference-counted) so the context is `'static`.
+pub struct CustomRenderPassContext {
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
+    pub view: wgpu::TextureView,
+    pub format: wgpu::TextureFormat,
+    pub bounds: Bounds<ScaledPixels>,
+}
+
+impl AnyRenderContext for CustomRenderPassContext {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 pub struct WgpuSurfaceConfig {
@@ -1302,6 +1323,47 @@ impl WgpuRenderer {
                         PrimitiveBatch::Surfaces(_surfaces) => {
                             // Surfaces are macOS-only for video playback
                             // Not implemented for Linux/wgpu
+                            true
+                        }
+                        PrimitiveBatch::CustomRenderPasses(range) => {
+                            let custom_passes = &scene.custom_render_passes[range];
+                            if custom_passes.is_empty() {
+                                continue;
+                            }
+
+                            drop(pass);
+
+                            let resources = self.resources();
+                            let device = Arc::clone(&resources.device);
+                            let queue = Arc::clone(&resources.queue);
+                            let view = frame_view.clone();
+                            let format = self.surface_config.format;
+
+                            for custom in custom_passes {
+                                let mut ctx = CustomRenderPassContext {
+                                    device: Arc::clone(&device),
+                                    queue: Arc::clone(&queue),
+                                    view: view.clone(),
+                                    format,
+                                    bounds: custom.bounds,
+                                };
+                                (custom.callback)(&mut ctx);
+                            }
+
+                            pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("main_pass_after_custom"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &frame_view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                    depth_slice: None,
+                                })],
+                                depth_stencil_attachment: None,
+                                ..Default::default()
+                            });
                             true
                         }
                     };

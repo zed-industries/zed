@@ -9,10 +9,12 @@ use crate::{
     Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
+    any::Any,
     fmt::Debug,
     iter::Peekable,
     ops::{Add, Range, Sub},
     slice,
+    sync::Arc,
 };
 
 #[allow(non_camel_case_types, unused)]
@@ -36,6 +38,7 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub custom_render_passes: Vec<CustomRenderPassPrimitive>,
 }
 
 #[expect(missing_docs)]
@@ -52,6 +55,7 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.custom_render_passes.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -119,6 +123,10 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            Primitive::CustomRenderPass(custom) => {
+                custom.order = order;
+                self.custom_render_passes.push(custom.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -146,6 +154,7 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.custom_render_passes.sort_by_key(|custom| custom.order);
     }
 
     #[cfg_attr(
@@ -173,6 +182,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            custom_render_passes_start: 0,
+            custom_render_passes_iter: self.custom_render_passes.iter().peekable(),
         }
     }
 }
@@ -195,6 +206,7 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    CustomRenderPass,
 }
 
 pub(crate) enum PaintOperation {
@@ -214,6 +226,7 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    CustomRenderPass(CustomRenderPassPrimitive),
 }
 
 #[expect(missing_docs)]
@@ -228,6 +241,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::CustomRenderPass(custom) => &custom.bounds,
         }
     }
 
@@ -241,6 +255,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::CustomRenderPass(custom) => &custom.content_mask,
         }
     }
 }
@@ -269,6 +284,8 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    custom_render_passes_start: usize,
+    custom_render_passes_iter: Peekable<slice::Iter<'a, CustomRenderPassPrimitive>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -301,6 +318,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            (
+                self.custom_render_passes_iter.peek().map(|c| c.order),
+                PrimitiveKind::CustomRenderPass,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -447,6 +468,20 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::CustomRenderPass => {
+                let custom_render_passes_start = self.custom_render_passes_start;
+                let mut custom_render_passes_end = custom_render_passes_start + 1;
+                self.custom_render_passes_iter.next();
+                while self
+                    .custom_render_passes_iter
+                    .next_if(|custom| (custom.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    custom_render_passes_end += 1;
+                }
+                self.custom_render_passes_start = custom_render_passes_end;
+                Some(PrimitiveBatch::CustomRenderPasses(custom_render_passes_start..custom_render_passes_end))
+            }
         }
     }
 }
@@ -479,6 +514,7 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    CustomRenderPasses(Range<usize>),
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -723,6 +759,37 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+/// A trait implemented by renderer-specific context types passed to custom render callbacks.
+/// The callback can downcast to the concrete type using `Any` methods.
+pub trait AnyRenderContext: std::any::Any {
+    /// Returns a reference to the underlying `Any` for downcasting.
+    fn as_any(&self) -> &dyn std::any::Any;
+    /// Returns a mutable reference to the underlying `Any` for downcasting.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+
+/// A primitive that invokes a custom render callback during the wgpu render pass.
+/// The callback receives a type-erased context which the renderer populates with
+/// platform-specific GPU resources. This keeps gpui independent of wgpu while
+/// allowing full GPU access to consumers.
+///
+/// The callback should downcast the context to the concrete type provided by the
+/// renderer (e.g., `CustomRenderPassContext` in `gpui_wgpu`).
+#[derive(Clone)]
+#[expect(missing_docs)]
+pub struct CustomRenderPassPrimitive {
+    pub order: DrawOrder,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub callback: Arc<dyn Fn(&mut dyn AnyRenderContext) + Send + Sync>,
+}
+
+impl From<CustomRenderPassPrimitive> for Primitive {
+    fn from(custom: CustomRenderPassPrimitive) -> Self {
+        Primitive::CustomRenderPass(custom)
     }
 }
 
