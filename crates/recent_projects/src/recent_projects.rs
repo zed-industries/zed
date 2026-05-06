@@ -83,6 +83,15 @@ enum ProjectPickerEntry {
     RecentProject(StringMatch),
 }
 
+fn is_selectable_entry(entry: &ProjectPickerEntry) -> bool {
+    matches!(
+        entry,
+        ProjectPickerEntry::OpenFolder { .. }
+            | ProjectPickerEntry::ProjectGroup(_)
+            | ProjectPickerEntry::RecentProject(_)
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProjectPickerStyle {
     Modal,
@@ -2105,10 +2114,18 @@ impl RecentProjectsDelegate {
         .detach();
     }
 
-    fn replacement_index_after_recent_project_deletion(
+    /// Returns the new selection index after the entry at `deleted_index`
+    /// is removed.
+    ///
+    /// - Prefers the nearest entry matching `prefer_section` so the user
+    ///   stays in the same section they were navigating.
+    /// - Falls back to any other selectable entry so the picker doesn't
+    ///   land on a header.
+    fn replacement_index_after_deletion(
         &self,
         deleted_index: usize,
         prefer_previous: bool,
+        prefer_section: fn(&ProjectPickerEntry) -> bool,
     ) -> Option<usize> {
         let replacement_index = |matches_entry: fn(&ProjectPickerEntry) -> bool| {
             let next_index = self
@@ -2132,18 +2149,7 @@ impl RecentProjectsDelegate {
             }
         };
 
-        replacement_index(|entry| matches!(entry, ProjectPickerEntry::RecentProject(_))).or_else(
-            || {
-                replacement_index(|entry| {
-                    matches!(
-                        entry,
-                        ProjectPickerEntry::OpenFolder { .. }
-                            | ProjectPickerEntry::ProjectGroup(_)
-                            | ProjectPickerEntry::RecentProject(_)
-                    )
-                })
-            },
-        )
+        replacement_index(prefer_section).or_else(|| replacement_index(is_selectable_entry))
     }
 
     fn update_picker_after_recent_project_deletion(
@@ -2162,10 +2168,11 @@ impl RecentProjectsDelegate {
             window,
             cx,
         );
-        if let Some(replacement_index) = picker
-            .delegate
-            .replacement_index_after_recent_project_deletion(deleted_index, prefer_previous)
-        {
+        if let Some(replacement_index) = picker.delegate.replacement_index_after_deletion(
+            deleted_index,
+            prefer_previous,
+            |entry| matches!(entry, ProjectPickerEntry::RecentProject(_)),
+        ) {
             picker.set_selected_index(replacement_index, None, false, window, cx);
         }
     }
