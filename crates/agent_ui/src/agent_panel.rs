@@ -862,17 +862,16 @@ impl AgentPanel {
                     // Collab workspaces only support NativeAgent, so inheriting a
                     // custom agent would cause set_active → new_agent_thread_inner
                     // to bypass the collab guard in external_thread.
-                    let global_fallback =
-                        global_last_used_agent.filter(|agent| !is_via_collab || agent.is_native());
+                    let global_fallback = global_last_used_agent.filter(|agent| {
+                        (!is_via_collab || agent.is_native()) && panel.is_valid_agent(agent, cx)
+                    });
 
-                    if let Some(serialized_panel) = &serialized_panel {
-                        if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
-                            panel.selected_agent = selected_agent;
-                        } else if let Some(agent) = global_fallback {
-                            panel.selected_agent = agent;
-                        }
-                    } else if let Some(agent) = global_fallback {
-                        panel.selected_agent = agent;
+                    if let Some(serialized_panel) = &serialized_panel && let Some(selected_agent) = serialized_panel.selected_agent.clone()
+                        && panel.is_valid_agent(&selected_agent, cx)
+                    {
+                        panel.selected_agent = selected_agent;
+                    } else if let Some(fallback_agent) = global_fallback {
+                        panel.selected_agent = fallback_agent;
                     }
                     cx.notify();
                 });
@@ -945,6 +944,21 @@ impl AgentPanel {
 
             Ok(panel)
         })
+    }
+
+    fn is_valid_agent(&self, agent: &Agent, cx: &App) -> bool {
+        match agent {
+            Agent::NativeAgent => true,
+            #[cfg(any(test, feature = "test-support"))]
+            Agent::Stub => true,
+            Agent::Custom { id } => self
+                .project
+                .read(cx)
+                .agent_server_store()
+                .read(cx)
+                .external_agents()
+                .any(|external_agent_id| external_agent_id == id),
+        }
     }
 
     pub(crate) fn new(
@@ -3772,6 +3786,13 @@ mod tests {
     use std::time::Instant;
     use workspace::MultiWorkspace;
 
+    fn register_external_agent(project: &Entity<Project>, agent_id: &str, cx: &mut App) {
+        let store = project.read(cx).agent_server_store().clone();
+        store.update(cx, |store, _cx| {
+            store.insert_test_external_agent(AgentId::new(agent_id));
+        });
+    }
+
     #[derive(Clone, Default)]
     struct SessionTrackingConnection {
         next_session_number: Arc<Mutex<usize>>,
@@ -3998,6 +4019,12 @@ mod tests {
         panel_a.update(cx, |panel, cx| panel.serialize(cx));
         panel_b.update(cx, |panel, cx| panel.serialize(cx));
         cx.run_until_parked();
+
+        // Register the custom agents so they're valid when restored.
+        cx.update(|_, cx| {
+            register_external_agent(&project_a, "Test", cx);
+            register_external_agent(&project_b, "claude-acp", cx);
+        });
 
         // Load fresh panels for each workspace and verify independent state.
         let async_cx = cx.update(|window, cx| window.to_async(cx));
@@ -5466,6 +5493,10 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
+        cx.update(|_, cx| {
+            register_external_agent(&project, "my-preferred-agent", cx);
+        });
+
         // Load the panel via `load()`, which reads the global fallback
         // asynchronously when no per-workspace state exists.
         let async_cx = cx.update(|window, cx| window.to_async(cx));
@@ -5478,6 +5509,125 @@ mod tests {
             assert_eq!(
                 panel.selected_agent, custom_agent,
                 "new workspace should inherit the global last-used agent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stale_custom_agent_in_serialized_panel_falls_back(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            cx.set_global(db::AppDatabase::test_new());
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let workspace_id = workspace
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .expect("workspace should have a database id");
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let stale_agent = Agent::Custom {
+            id: "stale-custom-agent".into(),
+        };
+        let fallback_agent = Agent::Custom {
+            id: "fallback-agent".into(),
+        };
+
+        cx.update(|_, cx| {
+            register_external_agent(&project, "fallback-agent", cx);
+        });
+
+        let kvp = cx.update(|_window, cx| KeyValueStore::global(cx));
+        write_global_last_used_agent(kvp.clone(), fallback_agent.clone()).await;
+
+        let scope = kvp.scoped(AGENT_PANEL_KEY);
+        let key = i64::from(workspace_id).to_string();
+        let panel_json = serde_json::to_string(&SerializedAgentPanel {
+            selected_agent: Some(stale_agent.clone()),
+            last_active_thread: None,
+            draft_thread_prompt: None,
+        })
+        .expect("serialization should succeed");
+        scope.write(key, panel_json).await.log_err();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent, fallback_agent,
+                "stale custom agent '{:?}' should fall back to global fallback agent",
+                stale_agent
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stale_custom_global_fallback_is_ignored(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            cx.set_global(db::AppDatabase::test_new());
+        });
+
+        let stale_agent = Agent::Custom {
+            id: "stale-global-agent".into(),
+        };
+
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        write_global_last_used_agent(kvp, stale_agent.clone()).await;
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent,
+                Agent::NativeAgent,
+                "stale custom global fallback '{:?}' should be ignored",
+                stale_agent
             );
         });
     }
@@ -5545,6 +5695,12 @@ mod tests {
         panel_a.update(cx, |panel, cx| panel.serialize(cx));
         panel_b.update(cx, |panel, cx| panel.serialize(cx));
         cx.run_until_parked();
+
+        // Register custom agents so they're valid when restored via AgentPanel::load.
+        cx.update(|_, cx| {
+            register_external_agent(&project_a, "agent-alpha", cx);
+            register_external_agent(&project_b, "agent-beta", cx);
+        });
 
         // Load fresh panels from serialized state and verify independence
         let async_cx = cx.update(|window, cx| window.to_async(cx));
