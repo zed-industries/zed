@@ -12,10 +12,6 @@ pub struct VsCodeTheme {
     )]
     pub schema: Option<String>,
     pub name: Option<String>,
-    #[expect(
-        unused,
-        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
-    )]
     pub author: Option<String>,
     #[expect(
         unused,
