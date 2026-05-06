@@ -7,7 +7,7 @@ use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
-use gpui::{BackgroundExecutor, Entity, TestAppContext};
+use gpui::{BackgroundExecutor, Entity, TaskExt, TestAppContext};
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16, range_to_lsp,
 };

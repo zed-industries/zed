@@ -6,7 +6,7 @@ use copilot::{
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, Window, WindowBounds, WindowOptions, div, point,
+    Subscription, TaskExt, Window, WindowBounds, WindowOptions, div, point,
 };
 use project::project_settings::ProjectSettings;
 use settings::Settings as _;

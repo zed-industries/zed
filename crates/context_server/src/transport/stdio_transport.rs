@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use anyhow::{Context as _, Result};
-use async_process::Child;
+use anyhow::Result;
 use async_trait::async_trait;
 use futures::io::{BufReader, BufWriter};
 use futures::{
     AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, Stream, StreamExt as _,
 };
 use gpui::AsyncApp;
+
 use util::TryFutureExt as _;
+use util::process::Child;
 use util::shell::Shell;
 use util::shell_builder::ShellBuilder;
 
@@ -31,22 +32,20 @@ impl StdioTransport {
     ) -> Result<Self> {
         let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
         let mut command =
-            builder.build_smol_command(Some(binary.executable.display().to_string()), &binary.args);
+            builder.build_std_command(Some(binary.executable.display().to_string()), &binary.args);
 
-        command
-            .envs(binary.env.unwrap_or_default())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
+        command.envs(binary.env.unwrap_or_default());
 
         if let Some(working_directory) = working_directory {
             command.current_dir(working_directory);
         }
 
-        let mut server = command
-            .spawn()
-            .with_context(|| format!("failed to spawn command {command:?})",))?;
+        let mut server = Child::spawn(
+            command,
+            std::process::Stdio::piped(),
+            std::process::Stdio::piped(),
+            std::process::Stdio::piped(),
+        )?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
