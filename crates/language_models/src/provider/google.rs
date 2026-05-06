@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 pub use google_ai::completion::{GoogleEventMapper, into_google};
 use google_ai::{GenerateContentResponse, GoogleModelMode};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModelCompletionError,

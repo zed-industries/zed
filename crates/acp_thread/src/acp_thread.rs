@@ -299,10 +299,15 @@ impl ToolCall {
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
 
+        let label = if tool_call.kind == acp::ToolKind::Execute {
+            cx.new(|cx| Markdown::new_text(title.into(), cx))
+        } else {
+            cx.new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx))
+        };
+
         let result = Self {
             id: tool_call.tool_call_id,
-            label: cx
-                .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
+            label,
             kind: tool_call.kind,
             content,
             locations: tool_call.locations,
@@ -1177,6 +1182,7 @@ pub enum LoadError {
     FailedToInstall(SharedString),
     Exited {
         status: ExitStatus,
+        stderr: Option<SharedString>,
     },
     Other(SharedString),
 }
@@ -1195,7 +1201,7 @@ impl Display for LoadError {
                 )
             }
             LoadError::FailedToInstall(msg) => write!(f, "Failed to install: {msg}"),
-            LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
+            LoadError::Exited { status, .. } => write!(f, "Server exited with status {status}"),
             LoadError::Other(msg) => write!(f, "{msg}"),
         }
     }

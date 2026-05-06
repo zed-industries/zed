@@ -49,6 +49,10 @@ pub trait AgentConnection {
 
     fn telemetry_id(&self) -> SharedString;
 
+    fn agent_version(&self) -> Option<SharedString> {
+        None
+    }
+
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
