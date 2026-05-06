@@ -4467,6 +4467,22 @@ impl ProjectPanel {
         .detach();
     }
 
+    fn handle_drag_modifiers_changed(
+        &mut self,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_drag_cursor_style(modifiers, window, cx);
+        // The copy modifier flips highlight semantics for worktree-root
+        // drags. Drop the cached target so the next drag-move event
+        // recomputes under the new mode — otherwise the on_drag_move
+        // fast path skips the recomputation while the pointer stays put.
+        if self.drag_target_entry.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn refresh_drag_cursor_style(
         &self,
         modifiers: &Modifiers,
@@ -5342,19 +5358,28 @@ impl ProjectPanel {
         &self,
         drag_state: &DraggedSelection,
         last_root_id: ProjectEntryId,
+        is_copy_mode: bool,
         cx: &App,
     ) -> bool {
+        let project = self.project.read(cx);
+
+        // Worktree roots can't be copied, so a pure-root copy drag is a
+        // guaranteed no-op — don't advertise the background as a target.
+        if is_copy_mode
+            && drag_state
+                .items()
+                .all(|entry| project.entry_is_worktree_root(entry.entry_id, cx))
+        {
+            return false;
+        }
+
         // Always highlight for multiple entries
         if drag_state.items().count() > 1 {
             return true;
         }
 
         // Since root will always have empty relative path
-        if let Some(entry_path) = self
-            .project
-            .read(cx)
-            .path_for_entry(drag_state.active_selection.entry_id, cx)
-        {
+        if let Some(entry_path) = project.path_for_entry(drag_state.active_selection.entry_id, cx) {
             if let Some(parent_path) = entry_path.path.parent() {
                 if !parent_path.is_empty() {
                     return true;
@@ -5363,11 +5388,7 @@ impl ProjectPanel {
         }
 
         // If parent is empty, check if different worktree
-        if let Some(last_root_worktree_id) = self
-            .project
-            .read(cx)
-            .worktree_id_for_entry(last_root_id, cx)
-        {
+        if let Some(last_root_worktree_id) = project.worktree_id_for_entry(last_root_id, cx) {
             if drag_state.active_selection.worktree_id != last_root_worktree_id {
                 return true;
             }
@@ -6751,7 +6772,7 @@ impl Render for ProjectPanel {
                 .relative()
                 .on_modifiers_changed(cx.listener(
                     |this, event: &ModifiersChangedEvent, window, cx| {
-                        this.refresh_drag_cursor_style(&event.modifiers, window, cx);
+                        this.handle_drag_modifiers_changed(&event.modifiers, window, cx);
                     },
                 ))
                 .key_context(self.dispatch_context(window, cx))
@@ -7094,16 +7115,23 @@ impl Render for ProjectPanel {
                                     },
                                 ))
                                 .on_drag_move::<DraggedSelection>(cx.listener(
-                                    move |this, event: &DragMoveEvent<DraggedSelection>, _, cx| {
+                                    move |this,
+                                          event: &DragMoveEvent<DraggedSelection>,
+                                          window,
+                                          cx| {
                                         let Some(last_root_id) = this.state.last_worktree_root_id
                                         else {
                                             return;
                                         };
                                         if event.bounds.contains(&event.event.position) {
                                             let drag_state = event.drag(cx);
+                                            let is_copy_mode = Self::is_copy_modifier_set(
+                                                &window.modifiers(),
+                                            );
                                             if this.should_highlight_background_for_selection_drag(
                                                 &drag_state,
                                                 last_root_id,
+                                                is_copy_mode,
                                                 cx,
                                             ) {
                                                 this.drag_target_entry =

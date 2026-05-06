@@ -9480,6 +9480,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &multiple_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(result, "Should highlight background for multiple entries");
@@ -9499,6 +9500,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &nested_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(result, "Should highlight background for nested file");
@@ -9518,6 +9520,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &root_file_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(
@@ -9529,6 +9532,7 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &root_file_dragged_selection,
             root2_entry.id,
+            false,
             cx,
         );
         assert!(
@@ -9551,11 +9555,118 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
         let result = panel.should_highlight_background_for_selection_drag(
             &child_file_dragged_selection,
             root1_entry.id,
+            false,
             cx,
         );
         assert!(
             result,
             "Should highlight background for file with non-empty parent path"
+        );
+    });
+}
+
+// In copy mode, a pure worktree-root drag is a no-op, so the blank area
+// below the panel should not light up as a valid drop target.
+#[gpui::test]
+async fn test_should_highlight_background_suppressed_for_root_drag_in_copy_mode(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+    fs.insert_tree("/root2", json!({ "b.txt": "" })).await;
+
+    let project =
+        Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update(cx, |panel, cx| {
+        let worktrees: Vec<_> = panel.project.read(cx).visible_worktrees(cx).collect();
+        let r1 = worktrees[0].read(cx);
+        let r2 = worktrees[1].read(cx);
+        let r1_root_id = r1.root_entry().unwrap().id;
+        let r2_root_id = r2.root_entry().unwrap().id;
+
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root_id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: r1.id(),
+                entry_id: r1_root_id,
+            }]),
+        };
+
+        // Sanity: in non-copy mode, the background highlights for a cross-
+        // worktree root drag (so the user can drop at the end).
+        assert!(
+            panel.should_highlight_background_for_selection_drag(
+                &drag,
+                r2_root_id,
+                false,
+                cx,
+            ),
+            "non-copy root drag should highlight background"
+        );
+
+        // In copy mode, the same drag is a no-op → no background highlight.
+        assert!(
+            !panel.should_highlight_background_for_selection_drag(
+                &drag,
+                r2_root_id,
+                true,
+                cx,
+            ),
+            "copy-mode root drag should suppress background highlight"
+        );
+    });
+}
+
+// Toggling the copy modifier while the cursor stays still must invalidate
+// the cached drag target so the next drag-move event recomputes the
+// highlight under the new mode (otherwise the row stays in its old
+// highlight state until the pointer leaves and re-enters).
+#[gpui::test]
+async fn test_modifier_change_clears_drag_target_entry(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({ "a.txt": "" })).await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.drag_target_entry = Some(DragTarget::Background);
+        panel.handle_drag_modifiers_changed(
+            &gpui::Modifiers {
+                alt: true,
+                control: true,
+                ..Default::default()
+            },
+            window,
+            cx,
+        );
+        assert!(
+            panel.drag_target_entry.is_none(),
+            "modifier change should clear drag_target_entry so the next \
+             drag-move can recompute highlights under the new mode"
         );
     });
 }
