@@ -2140,6 +2140,7 @@ impl Drop for QueryCursorHandle {
         cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
         cursor.set_containing_byte_range(0..usize::MAX);
         cursor.set_containing_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
+        cursor.set_max_start_depth(None);
         QUERY_CURSORS.lock().push(cursor)
     }
 }
