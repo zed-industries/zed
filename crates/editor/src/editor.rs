@@ -1304,6 +1304,7 @@ pub struct Editor {
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
     selection_mark_mode: bool,
+    continue_selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
@@ -2585,6 +2586,7 @@ impl Editor {
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
+            continue_selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             serialize_selections: Task::ready(()),
             serialize_folds: Task::ready(()),
@@ -4001,6 +4003,9 @@ impl Editor {
             state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
             let (changed, result) = self.selections.change_with(&snapshot, change);
             state.changed |= changed;
+            if self.selection_mark_mode {
+                self.continue_selection_mark_mode = true;
+            }
             return result;
         }
         let mut state = DeferredSelectionEffectsState {
@@ -4016,6 +4021,9 @@ impl Editor {
         };
         let (changed, result) = self.selections.change_with(&snapshot, change);
         state.changed = state.changed || changed;
+        if self.selection_mark_mode {
+            self.continue_selection_mark_mode = true;
+        }
         if self.defer_selection_effects {
             self.deferred_selection_effects_state = Some(state);
         } else {
@@ -20244,7 +20252,22 @@ impl Editor {
             })
         }
         self.selection_mark_mode = true;
+        self.continue_selection_mark_mode = true;
         cx.notify();
+    }
+
+    pub fn reset_mark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selection_mark_mode && !self.continue_selection_mark_mode {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.move_with(&mut |_, sel| {
+                    sel.collapse_to(sel.head(), SelectionGoal::None);
+                });
+            });
+
+            self.selection_mark_mode = false;
+        }
+
+        self.continue_selection_mark_mode = false;
     }
 
     pub fn swap_selection_ends(
@@ -24500,6 +24523,7 @@ impl Editor {
                     }
                 }
 
+                self.selection_mark_mode = false;
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
 
