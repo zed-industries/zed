@@ -35,8 +35,7 @@ use ui::SharedString;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt};
 
-const DEFAULT_UI_TEXT_EDIT: &str = "Editing file";
-const DEFAULT_UI_TEXT_WRITE: &str = "Writing file";
+const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying edits to an existing file.
 ///
@@ -72,45 +71,11 @@ pub struct EditFileToolInput {
     pub edits: Vec<Edit>,
 }
 
-/// This is a tool for creating a new file or overwriting an existing file with completely new contents.
-///
-/// To make granular edits to an existing file, prefer the `edit_file` tool instead.
-///
-/// Before using this tool:
-///
-/// 1. Verify the directory path is correct (only applicable when creating new files):
-///    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct WriteFileToolInput {
-    /// The full path of the file to create or overwrite in the project.
-    ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
-    ///
-    /// The following examples assume we have two root directories in the project:
-    /// - /a/b/backend
-    /// - /c/d/frontend
-    ///
-    /// <example>
-    /// `backend/src/main.rs`
-    ///
-    /// Notice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!
-    /// </example>
-    ///
-    /// <example>
-    /// `frontend/db.js`
-    /// </example>
-    pub path: PathBuf,
-
-    /// The complete content for the file.
-    /// This field should contain the entire file content.
-    pub content: String,
-}
-
 /// Operating mode used internally by `EditSession`/`Pipeline` to choose between
 /// applying granular edits (the `edit_file` tool) or replacing/creating the
 /// entire file content (the `write_file` tool).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Mode {
+pub(crate) enum Mode {
     Write,
     Edit,
 }
@@ -137,14 +102,6 @@ struct EditFileToolPartialInput {
     path: Option<String>,
     #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
     edits: Option<Vec<PartialEdit>>,
-}
-
-#[derive(Clone, Default, Debug, Deserialize)]
-struct WriteFileToolPartialInput {
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
 }
 
 #[derive(Clone, Default, Debug, Deserialize)]
@@ -232,7 +189,7 @@ impl From<EditFileToolOutput> for LanguageModelToolResultContent {
 /// Shared core for `EditFileTool` and `WriteFileTool`. Holds the dependencies
 /// the streaming pipeline and `EditSession` need; instance methods on the
 /// public tools delegate here.
-struct FileTool {
+pub(crate) struct FileTool {
     project: Entity<Project>,
     thread: WeakEntity<Thread>,
     action_log: Entity<ActionLog>,
@@ -240,9 +197,8 @@ struct FileTool {
 }
 
 pub struct EditFileTool(FileTool);
-pub struct WriteFileTool(FileTool);
 
-enum EditSessionResult {
+pub(crate) enum EditSessionResult {
     Completed(EditSession),
     Failed {
         error: String,
@@ -251,7 +207,7 @@ enum EditSessionResult {
 }
 
 impl FileTool {
-    fn new(
+    pub(crate) fn new(
         project: Entity<Project>,
         thread: WeakEntity<Thread>,
         action_log: Entity<ActionLog>,
@@ -324,7 +280,7 @@ impl FileTool {
         });
     }
 
-    fn initial_title_from_path(
+    pub(crate) fn initial_title_from_path(
         &self,
         path: &std::path::Path,
         default: &str,
@@ -461,123 +417,6 @@ impl FileTool {
             }
         }
     }
-
-    async fn process_streaming_writes(
-        &self,
-        tool_name: &str,
-        input: &mut ToolInput<WriteFileToolInput>,
-        event_stream: &ToolCallEventStream,
-        cx: &mut AsyncApp,
-    ) -> EditSessionResult {
-        let mut session: Option<EditSession> = None;
-        let mut last_path: Option<String> = None;
-
-        loop {
-            futures::select! {
-                payload = input.next().fuse() => {
-                    match payload {
-                        Ok(payload) => match payload {
-                            ToolInputPayload::Partial(partial) => {
-                                if let Ok(parsed) = serde_json::from_value::<WriteFileToolPartialInput>(partial) {
-                                    let path_complete = parsed.path.is_some()
-                                        && parsed.path.as_ref() == last_path.as_ref();
-
-                                    last_path = parsed.path.clone();
-
-                                    if session.is_none()
-                                        && path_complete
-                                        && let Some(path) = parsed.path.as_ref()
-                                    {
-                                        match EditSession::new(
-                                            PathBuf::from(path),
-                                            Mode::Write,
-                                            tool_name,
-                                            self,
-                                            event_stream,
-                                            cx,
-                                        )
-                                        .await
-                                        {
-                                            Ok(created_session) => session = Some(created_session),
-                                            Err(error) => {
-                                                log::error!("Failed to create edit session: {}", error);
-                                                return EditSessionResult::Failed {
-                                                    error,
-                                                    session: None,
-                                                };
-                                            }
-                                        }
-                                    }
-
-                                    if let Some(current_session) = &mut session
-                                        && let Err(error) = current_session.process_write(parsed.content.as_deref(), self, cx)
-                                    {
-                                        log::error!("Failed to process write: {}", error);
-                                        return EditSessionResult::Failed { error, session };
-                                    }
-                                }
-                            }
-                            ToolInputPayload::Full(full_input) => {
-                                let mut session = if let Some(session) = session {
-                                    session
-                                } else {
-                                    match EditSession::new(
-                                        full_input.path.clone(),
-                                        Mode::Write,
-                                        tool_name,
-                                        self,
-                                        event_stream,
-                                        cx,
-                                    )
-                                    .await
-                                    {
-                                        Ok(created_session) => created_session,
-                                        Err(error) => {
-                                            log::error!("Failed to create edit session: {}", error);
-                                            return EditSessionResult::Failed {
-                                                error,
-                                                session: None,
-                                            };
-                                        }
-                                    }
-                                };
-
-                                return match session.finalize_write(&full_input.content, self, cx).await {
-                                    Ok(()) => EditSessionResult::Completed(session),
-                                    Err(error) => {
-                                        log::error!("Failed to finalize write: {}", error);
-                                        EditSessionResult::Failed {
-                                            error,
-                                            session: Some(session),
-                                        }
-                                    }
-                                };
-                            }
-                            ToolInputPayload::InvalidJson { error_message } => {
-                                log::error!("Received invalid JSON: {error_message}");
-                                return EditSessionResult::Failed {
-                                    error: error_message,
-                                    session,
-                                };
-                            }
-                        },
-                        Err(error) => {
-                            return EditSessionResult::Failed {
-                                error: error.to_string(),
-                                session,
-                            };
-                        }
-                    }
-                }
-                _ = event_stream.cancelled_by_user().fuse() => {
-                    return EditSessionResult::Failed {
-                        error: "Write cancelled by user".to_string(),
-                        session,
-                    };
-                }
-            }
-        }
-    }
 }
 
 impl EditFileTool {
@@ -606,21 +445,6 @@ impl EditFileTool {
     }
 }
 
-impl WriteFileTool {
-    pub fn new(
-        project: Entity<Project>,
-        thread: WeakEntity<Thread>,
-        action_log: Entity<ActionLog>,
-        language_registry: Arc<LanguageRegistry>,
-    ) -> Self {
-        Self(FileTool::new(
-            project,
-            thread,
-            action_log,
-            language_registry,
-        ))
-    }
-}
 impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
@@ -643,12 +467,12 @@ impl AgentTool for EditFileTool {
         match input {
             Ok(input) => self
                 .0
-                .initial_title_from_path(&input.path, DEFAULT_UI_TEXT_EDIT, cx),
+                .initial_title_from_path(&input.path, DEFAULT_UI_TEXT, cx),
             Err(raw_input) => initial_title_from_partial_path::<EditFileToolPartialInput>(
                 &self.0,
                 raw_input,
                 |partial| partial.path.clone(),
-                DEFAULT_UI_TEXT_EDIT,
+                DEFAULT_UI_TEXT,
                 cx,
             ),
         }
@@ -662,7 +486,6 @@ impl AgentTool for EditFileTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx: &mut AsyncApp| {
             run_session(
-                Self::NAME,
                 &self.0,
                 self.0
                     .process_streaming_edits(Self::NAME, &mut input, &event_stream, cx)
@@ -684,70 +507,7 @@ impl AgentTool for EditFileTool {
     }
 }
 
-impl AgentTool for WriteFileTool {
-    type Input = WriteFileToolInput;
-    type Output = EditFileToolOutput;
-
-    const NAME: &'static str = "write_file";
-
-    fn supports_input_streaming() -> bool {
-        true
-    }
-
-    fn kind() -> acp::ToolKind {
-        acp::ToolKind::Edit
-    }
-
-    fn initial_title(
-        &self,
-        input: Result<Self::Input, serde_json::Value>,
-        cx: &mut App,
-    ) -> SharedString {
-        match input {
-            Ok(input) => self
-                .0
-                .initial_title_from_path(&input.path, DEFAULT_UI_TEXT_WRITE, cx),
-            Err(raw_input) => initial_title_from_partial_path::<WriteFileToolPartialInput>(
-                &self.0,
-                raw_input,
-                |partial| partial.path.clone(),
-                DEFAULT_UI_TEXT_WRITE,
-                cx,
-            ),
-        }
-    }
-
-    fn run(
-        self: Arc<Self>,
-        mut input: ToolInput<Self::Input>,
-        event_stream: ToolCallEventStream,
-        cx: &mut App,
-    ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |cx: &mut AsyncApp| {
-            run_session(
-                Self::NAME,
-                &self.0,
-                self.0
-                    .process_streaming_writes(Self::NAME, &mut input, &event_stream, cx)
-                    .await,
-                cx,
-            )
-            .await
-        })
-    }
-
-    fn replay(
-        &self,
-        _input: Self::Input,
-        output: Self::Output,
-        event_stream: ToolCallEventStream,
-        cx: &mut App,
-    ) -> Result<()> {
-        replay_output(&self.0, output, event_stream, cx)
-    }
-}
-
-fn initial_title_from_partial_path<P>(
+pub(crate) fn initial_title_from_partial_path<P>(
     tool: &FileTool,
     raw_input: serde_json::Value,
     extract_path: impl FnOnce(&P) -> Option<String>,
@@ -768,8 +528,7 @@ where
     default.into()
 }
 
-async fn run_session(
-    _tool_name: &'static str,
+pub(crate) async fn run_session(
     tool: &FileTool,
     result: EditSessionResult,
     cx: &mut AsyncApp,
@@ -808,7 +567,7 @@ async fn run_session(
     }
 }
 
-fn replay_output(
+pub(crate) fn replay_output(
     tool: &FileTool,
     output: EditFileToolOutput,
     event_stream: ToolCallEventStream,
@@ -836,7 +595,7 @@ fn replay_output(
     }
 }
 
-pub struct EditSession {
+pub(crate) struct EditSession {
     abs_path: PathBuf,
     input_path: PathBuf,
     buffer: Entity<Buffer>,
@@ -1122,7 +881,7 @@ impl EditPipeline {
 }
 
 impl EditSession {
-    async fn new(
+    pub(crate) async fn new(
         path: PathBuf,
         mode: Mode,
         tool_name: &str,
@@ -1227,7 +986,7 @@ impl EditSession {
         Ok(())
     }
 
-    async fn finalize_write(
+    pub(crate) async fn finalize_write(
         &mut self,
         content: &str,
         tool: &FileTool,
@@ -1292,7 +1051,7 @@ impl EditSession {
         Ok(())
     }
 
-    fn process_write(
+    pub(crate) fn process_write(
         &mut self,
         content: Option<&str>,
         tool: &FileTool,
@@ -1531,7 +1290,9 @@ fn resolve_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ContextServerRegistry, Templates, ToolInputSender};
+    use crate::{
+        ContextServerRegistry, Templates, ToolInputSender, WriteFileTool, WriteFileToolInput,
+    };
     use fs::Fs as _;
     use futures::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal};
@@ -3332,11 +3093,11 @@ mod tests {
                     })),
                     cx
                 ),
-                DEFAULT_UI_TEXT_EDIT
+                DEFAULT_UI_TEXT
             );
             assert_eq!(
                 edit_tool.initial_title(Err(serde_json::Value::Null), cx),
-                DEFAULT_UI_TEXT_EDIT
+                DEFAULT_UI_TEXT
             );
         });
     }
