@@ -16,6 +16,8 @@ use fuzzy::CharBag;
 use crate::matcher::{self, LENGTH_PENALTY};
 use crate::{Cancelled, Case, Query, case_penalty, count_case_mismatches, positions_from_sorted};
 
+const ADDITIONAL_PATH_MATCH_BONUS: f64 = 1.0;
+
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
     pub is_dir: bool,
@@ -134,6 +136,30 @@ fn get_filename_match_bonus(
     score as f64 / filename.len().max(1) as f64
 }
 
+#[inline]
+fn count_additional_matches(candidate_buf: &str, needle: Utf32Str<'_>) -> usize {
+    let needle = match needle {
+        Utf32Str::Ascii(bytes) => match std::str::from_utf8(bytes) {
+            Ok(needle) => needle.to_lowercase(),
+            Err(_) => return 0,
+        },
+        Utf32Str::Unicode(chars) => chars.iter().copied().collect::<String>().to_lowercase(),
+    };
+    candidate_buf.matches(&needle).count().saturating_sub(1)
+}
+
+#[inline]
+fn get_additional_path_match_bonus(candidate_buf: &str, pattern: &Pattern) -> f64 {
+    let candidate_buf = candidate_buf.to_lowercase();
+    let additional_match_count = pattern
+        .atoms
+        .iter()
+        .map(|atom| count_additional_matches(&candidate_buf, atom.needle_text()))
+        .sum::<usize>();
+
+    additional_match_count as f64 * ADDITIONAL_PATH_MATCH_BONUS
+}
+
 fn path_match_helper<'a>(
     matcher: &mut nucleo::Matcher,
     query: &Query,
@@ -193,7 +219,10 @@ fn path_match_helper<'a>(
 
         let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
         let filename_bonus = get_filename_match_bonus(&candidate_buf, &query.pattern, matcher);
-        let positive = (score as f64 + filename_bonus) * case_penalty(case_mismatches);
+        let additional_path_match_bonus =
+            get_additional_path_match_bonus(&candidate_buf, &query.pattern);
+        let positive = (score as f64 + filename_bonus + additional_path_match_bonus)
+            * case_penalty(case_mismatches);
         let adjusted_score = positive - length_penalty;
         let positions = positions_from_sorted(&candidate_buf, &matched_chars);
 
@@ -353,4 +382,62 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let mut results = segment_results.concat();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use util::rel_path::rel_path;
+
+    fn candidates(paths: &[&'static str]) -> Vec<PathMatchCandidate<'static>> {
+        paths
+            .iter()
+            .map(|path| PathMatchCandidate::new(rel_path(path), false, None))
+            .collect()
+    }
+
+    #[test]
+    fn test_repeated_path_occurrences_rank_higher() {
+        let results = match_fixed_path_set(
+            candidates(&["y/x.rs", "x/x.rs"]),
+            0,
+            None,
+            "x",
+            Case::Ignore,
+            10,
+            PathStyle::Posix,
+        );
+
+        assert_eq!(results[0].path.as_ref(), rel_path("x/x.rs"));
+    }
+
+    #[test]
+    fn test_repeated_path_occurrences_rank_higher_with_smart_case() {
+        let results = match_fixed_path_set(
+            candidates(&["y/x.rs", "x/x.rs"]),
+            0,
+            None,
+            "X",
+            Case::Smart,
+            10,
+            PathStyle::Posix,
+        );
+
+        assert_eq!(results[0].path.as_ref(), rel_path("x/x.rs"));
+    }
+
+    #[test]
+    fn test_repeated_path_segment_occurrences_rank_higher() {
+        let results = match_fixed_path_set(
+            candidates(&["other/zed.rs", "zed/zed.rs"]),
+            0,
+            None,
+            "zed",
+            Case::Ignore,
+            10,
+            PathStyle::Posix,
+        );
+
+        assert_eq!(results[0].path.as_ref(), rel_path("zed/zed.rs"));
+    }
 }
