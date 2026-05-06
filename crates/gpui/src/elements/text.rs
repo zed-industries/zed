@@ -291,7 +291,7 @@ impl StyledText {
 
     /// Set the text runs for this piece of text.
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
-        let mut text = &**self.text;
+        let mut text = &*self.text;
         for run in &runs {
             text = text.get(run.len..).unwrap_or_else(|| {
                 #[cfg(debug_assertions)]
@@ -399,9 +399,11 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let line_height = text_style
-            .line_height
-            .to_pixels(font_size.into(), window.rem_size());
+        let line_height = window.pixel_snap(
+            text_style
+                .line_height
+                .to_pixels(font_size.into(), window.rem_size()),
+        );
 
         let runs = if let Some(runs) = runs {
             runs

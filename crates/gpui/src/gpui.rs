@@ -122,6 +122,8 @@ pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
 
+pub use pollster::block_on;
+
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
 pub trait AppContext {
@@ -168,6 +170,16 @@ pub trait AppContext {
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T;
+
+    /// Run `f` against the entity's *current* window — the most recently
+    /// rendered window that referenced the entity. Returns `None` if the
+    /// entity has no current window or that window is unavailable. See
+    /// [`App::with_window`] for the underlying lookup.
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R>;
 
     /// Read a window off of the application context.
     fn read_window<T, R>(

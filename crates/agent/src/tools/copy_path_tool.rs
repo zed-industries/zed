@@ -1,11 +1,12 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_escapes, canonicalize_worktree_roots,
-    collect_symlink_escapes, sensitive_settings_kind,
+    authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
+    sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_paths,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_paths,
 };
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
@@ -61,8 +62,8 @@ impl AgentTool for CopyPathTool {
 
     const NAME: &'static str = "copy_path";
 
-    fn kind() -> ToolKind {
-        ToolKind::Move
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Move
     }
 
     fn initial_title(
@@ -87,10 +88,7 @@ impl AgentTool for CopyPathTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let paths = vec![input.source_path.clone(), input.destination_path.clone()];
             let decision = cx.update(|cx| {
                 decide_permission_for_paths(Self::NAME, &paths, &AgentSettings::get_global(cx))
@@ -141,12 +139,13 @@ impl AgentTool for CopyPathTool {
                         vec![input.source_path.clone(), input.destination_path.clone()],
                     );
                     let title = format!("Copy {src} to {dest}");
-                    let title = match sensitive_kind {
-                        Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                        Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                        None => title,
-                    };
-                    event_stream.authorize(title, context, cx)
+                    authorize_with_sensitive_settings(
+                        sensitive_kind,
+                        context,
+                        &title,
+                        &event_stream,
+                        cx,
+                    )
                 }))
             } else {
                 None
@@ -198,7 +197,6 @@ impl AgentTool for CopyPathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};

@@ -24,6 +24,11 @@ async fn test_core_channels(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
+    // Subscribe to channels (simulates opening the collab panel)
+    client_a.initialize_channel_store(cx_a);
+    client_b.initialize_channel_store(cx_b);
+    executor.run_until_parked();
+
     let channel_a_id = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
@@ -290,6 +295,11 @@ async fn test_core_channels(
 
     server.allow_connections();
     executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+
+    // Re-subscribe to channels after reconnection (simulates collab panel re-rendering)
+    client_a.initialize_channel_store(cx_a);
+    executor.run_until_parked();
+
     assert_channels(
         client_a.channel_store(),
         cx_a,

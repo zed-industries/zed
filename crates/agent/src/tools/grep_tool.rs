@@ -1,5 +1,5 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
@@ -126,7 +126,7 @@ impl AgentTool for GrepTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
 
             let results = cx.update(|cx| {
                 let path_style = project.read(cx).path_style(cx);
@@ -189,8 +189,15 @@ impl AgentTool for GrepTool {
                         return Err("Search cancelled by user".to_string());
                     }
                 };
-                let Some(SearchResult::Buffer { buffer, ranges }) = search_result else {
-                    break;
+
+                let (buffer, ranges) = match search_result {
+                    Some(SearchResult::Buffer { buffer, ranges }) => (buffer, ranges),
+                    Some(SearchResult::LimitReached) => {
+                        has_more_matches = true;
+                        break;
+                    }
+                    Some(SearchResult::WaitingForScan | SearchResult::Searching) => continue,
+                    None => break,
                 };
                 if ranges.is_empty() {
                     continue;

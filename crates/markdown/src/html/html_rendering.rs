@@ -115,7 +115,12 @@ impl MarkdownElement {
                 self.render_html_list(list, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::BlockQuote(block_quote) => {
-                self.push_markdown_block_quote(builder, &block_quote.source_range, markdown_end);
+                self.push_markdown_block_quote(
+                    builder,
+                    None,
+                    &block_quote.source_range,
+                    markdown_end,
+                );
                 self.render_html_elements(
                     &block_quote.children,
                     source_allocator,

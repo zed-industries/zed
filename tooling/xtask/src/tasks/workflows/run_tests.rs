@@ -15,6 +15,7 @@ use crate::tasks::workflows::{
 };
 
 use super::{
+    deploy_docs,
     runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
@@ -52,7 +53,7 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(clippy(Platform::Windows, None)),
         should_run_tests
-            .and_not_in_merge_queue()
+            .and_always()
             .then(clippy(Platform::Linux, None)),
         should_run_tests
             .and_not_in_merge_queue()
@@ -82,7 +83,7 @@ pub(crate) fn run_tests() -> Workflow {
             .then(check_dependencies()), // could be more specific here?
         should_check_docs
             .and_not_in_merge_queue()
-            .then(check_docs()),
+            .then(deploy_docs::check_docs()),
         should_check_licences
             .and_not_in_merge_queue()
             .then(check_licenses()),
@@ -430,12 +431,7 @@ fn check_style() -> NamedJob {
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_machete() -> Step<Use> {
-        named::uses(
-            "taiki-e",
-            "install-action",
-            "02cc5f8ca9f2301050c0c099055816a41ee05507",
-        )
-        .add_with(("tool", "cargo-machete@0.7.0"))
+        steps::taiki_install_action("cargo-machete@0.7.0")
     }
 
     fn run_cargo_machete() -> Step<Run> {
@@ -718,54 +714,6 @@ fn check_licenses() -> NamedJob {
     )
 }
 
-fn check_docs() -> NamedJob {
-    fn lychee_link_check(dir: &str) -> Step<Use> {
-        named::uses(
-            "lycheeverse",
-            "lychee-action",
-            "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
-        ) // v2.4.1
-        .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
-        .add_with(("fail", true))
-        .add_with(("jobSummary", false))
-    }
-
-    fn install_mdbook() -> Step<Use> {
-        named::uses(
-            "peaceiris",
-            "actions-mdbook",
-            "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
-        )
-        .with(("mdbook-version", "0.4.37"))
-    }
-
-    fn build_docs() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            mkdir -p target/deploy
-            mdbook build ./docs --dest-dir=../target/deploy/docs/
-        "#})
-    }
-
-    named::job(use_clang(
-        release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(Platform::Linux))
-            // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(
-                lychee_link_check("./docs/src/**/*"), // check markdown links
-            )
-            .map(steps::install_linux_dependencies)
-            .add_step(steps::script("./script/generate-action-metadata"))
-            .add_step(install_mdbook())
-            .add_step(build_docs())
-            .add_step(
-                lychee_link_check("target/deploy/docs"), // check links in generated html
-            ),
-    ))
-}
-
 pub(crate) fn check_scripts() -> NamedJob {
     fn download_actionlint() -> Step<Run> {
         named::bash(
@@ -797,7 +745,7 @@ pub(crate) fn check_scripts() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))

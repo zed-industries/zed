@@ -3,6 +3,8 @@ pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
+#[cfg(target_os = "macos")]
+pub(crate) mod move_to_applications;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
@@ -34,7 +36,7 @@ use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TitlebarOptions,
+    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
     UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
     actions, image_cache, img, point, px, retain_all,
 };
@@ -100,6 +102,10 @@ use zed_actions::{
     OpenZedUrl, Quit,
 };
 
+pub struct CrashHandler(pub Arc<crashes::Client>);
+
+impl gpui::Global for CrashHandler {}
+
 actions!(
     zed,
     [
@@ -159,8 +165,8 @@ pub fn init(cx: &mut App) {
 
     cx.observe_flag::<PanicFeatureFlag, _>({
         let mut added = false;
-        move |enabled, cx| {
-            if added || !enabled {
+        move |flag, cx| {
+            if added || !*flag {
                 return;
             }
             added = true;
@@ -378,6 +384,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     })
     .detach();
 
+    init_cursor_hide_mode(cx);
+
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -410,6 +418,22 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             .detach();
         }
 
+        cx.spawn_in(window, async move |_this, cx| {
+            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+            loop {
+                cx.background_executor().timer(TELEMETRY_INTERVAL).await;
+                if cx
+                    .update(|window, cx| {
+                        input_latency_ui::report_input_latency_telemetry(window, cx);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         let multi_workspace_handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             multi_workspace_handle
@@ -423,6 +447,38 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 
         let window_handle = window.window_handle();
         let multi_workspace_handle = cx.entity();
+        cx.subscribe_in(
+            &multi_workspace_handle,
+            window,
+            |this, _multi_workspace, event: &workspace::MultiWorkspaceEvent, window, cx| {
+                let workspace::MultiWorkspaceEvent::ActiveWorkspaceChanged { source_workspace } =
+                    event
+                else {
+                    return;
+                };
+
+                let active_workspace = this.workspace().clone();
+                let source_workspace = source_workspace.clone();
+                active_workspace.update(cx, |workspace, cx| {
+                    if let Some(ref source) = source_workspace {
+                        if let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.initialize_from_source_workspace_if_needed(
+                                    source.clone(),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+
+                    ensure_agent_panel_for_workspace(workspace, source_workspace, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            },
+        )
+        .detach();
+
         cx.defer(move |cx| {
             window_handle
                 .update(cx, |_, window, cx| {
@@ -467,7 +523,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            crashes::set_gpu_info(specs);
+            if let Some(crash_client) = cx.try_global::<CrashHandler>() {
+                crashes::set_gpu_info(&crash_client.0, specs);
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -525,8 +583,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(active_file_name, window, cx);
-            status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_left_item(merge_conflict_indicator, window, cx);
+            status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
@@ -735,24 +793,43 @@ fn setup_or_teardown_ai_panel<P: Panel>(
     }
 }
 
+fn ensure_agent_panel_for_workspace(
+    workspace: &mut Workspace,
+    source_workspace: Option<WeakEntity<Workspace>>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<anyhow::Result<()>> {
+    let task = setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
+        agent_ui::AgentPanel::load(workspace, cx)
+    });
+
+    cx.spawn_in(window, async move |workspace, cx| {
+        task.await?;
+        workspace.update_in(cx, |workspace, window, cx| {
+            if let Some(source_workspace) = source_workspace.clone()
+                && let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx)
+            {
+                panel.update(cx, |panel, cx| {
+                    panel.initialize_from_source_workspace_if_needed(source_workspace, window, cx);
+                });
+            }
+        })
+    })
+}
+
 async fn initialize_agent_panel(
     workspace_handle: WeakEntity<Workspace>,
     mut cx: AsyncWindowContext,
 ) -> anyhow::Result<()> {
     workspace_handle
         .update_in(&mut cx, |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, cx)
-            })
+            ensure_agent_panel_for_workspace(workspace, None, window, cx)
         })?
         .await?;
 
     workspace_handle.update_in(&mut cx, |workspace, window, cx| {
         cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, cx)
-            })
-            .detach_and_log_err(cx);
+            ensure_agent_panel_for_workspace(workspace, None, window, cx).detach_and_log_err(cx);
         })
         .detach();
 
@@ -1558,7 +1635,7 @@ fn quit(_: &Quit, cx: &mut App) {
             for workspace in workspaces {
                 if let Some(should_close) = window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.activate(workspace.clone(), window, cx);
+                        multi_workspace.activate(workspace.clone(), None, window, cx);
                         window.activate_window();
                         workspace.update(cx, |workspace, cx| {
                             workspace.prepare_to_close(CloseIntent::Quit, window, cx)
@@ -1777,6 +1854,25 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             }
         }
     };
+}
+
+#[derive(Copy, Clone, Debug, settings::RegisterSetting)]
+struct CursorHideModeSetting(gpui::CursorHideMode);
+
+impl Settings for CursorHideModeSetting {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(match content.hide_mouse.unwrap_or_default() {
+            settings::HideMouseMode::Never => gpui::CursorHideMode::Never,
+            settings::HideMouseMode::OnTyping => gpui::CursorHideMode::OnTyping,
+            settings::HideMouseMode::OnTypingAndAction => gpui::CursorHideMode::OnTypingAndAction,
+        })
+    }
+}
+
+fn init_cursor_hide_mode(cx: &mut App) {
+    let apply = |cx: &mut App| cx.set_cursor_hide_mode(CursorHideModeSetting::get_global(cx).0);
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
 }
 
 pub fn watch_settings_files(fs: Arc<dyn fs::Fs>, cx: &mut App) {
@@ -2977,6 +3073,10 @@ mod tests {
         let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
             cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
         };
+        let workspace_database_id = |window: WindowHandle<MultiWorkspace>,
+                                     cx: &mut TestAppContext| {
+            cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).database_id())
+        };
 
         let editor = window
             .read_with(cx, |multi_workspace, cx| {
@@ -2991,6 +3091,11 @@ mod tests {
             .unwrap();
 
         assert!(!window_is_edited(window, cx));
+        let initial_database_id = workspace_database_id(window, cx);
+        assert!(
+            initial_database_id.is_some(),
+            "a restored workspace must have a stable database id"
+        );
 
         // Editing a buffer marks the window as edited.
         window
@@ -3036,6 +3141,11 @@ mod tests {
                 .unwrap()
         });
         assert!(window_is_edited(window, cx));
+        assert_eq!(
+            workspace_database_id(window, cx),
+            initial_database_id,
+            "the workspace must keep the same database id across a close/reopen cycle"
+        );
 
         window
             .update(cx, |multi_workspace, _, cx| {
@@ -5129,6 +5239,7 @@ mod tests {
                 "vim",
                 "window",
                 "workspace",
+                "worktree_picker",
                 "zed",
                 "zed_actions",
                 "zed_predict_onboarding",
@@ -5673,10 +5784,10 @@ mod tests {
 
         window
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.activate(workspace2.clone(), window, cx);
-                multi_workspace.activate(workspace3.clone(), window, cx);
+                multi_workspace.activate(workspace2.clone(), None, window, cx);
+                multi_workspace.activate(workspace3.clone(), None, window, cx);
                 // Switch back to workspace1 for test setup
-                multi_workspace.activate(workspace1.clone(), window, cx);
+                multi_workspace.activate(workspace1.clone(), None, window, cx);
                 assert_eq!(multi_workspace.workspace(), &workspace1);
             })
             .unwrap();
@@ -5860,8 +5971,8 @@ mod tests {
 
         window1
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.activate(workspace1_2.clone(), window, cx);
-                multi_workspace.activate(workspace1_1.clone(), window, cx);
+                multi_workspace.activate(workspace1_2.clone(), None, window, cx);
+                multi_workspace.activate(workspace1_1.clone(), None, window, cx);
             })
             .unwrap();
 
@@ -6180,7 +6291,7 @@ mod tests {
         window_a
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspaces().next().unwrap().clone();
-                multi_workspace.activate(workspace, window, cx);
+                multi_workspace.activate(workspace, None, window, cx);
             })
             .unwrap();
 
@@ -6388,7 +6499,7 @@ mod tests {
                     })
                     .expect("workspace_a should exist")
                     .clone();
-                mw.activate(workspace_a, window, cx);
+                mw.activate(workspace_a, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();

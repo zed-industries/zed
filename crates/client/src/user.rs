@@ -15,7 +15,8 @@ use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
+    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, TaskExt,
+    WeakEntity,
 };
 use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
@@ -220,7 +221,7 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
-                    // if the client is dropped, the app is shutting down.
+                    // If the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };
@@ -229,9 +230,11 @@ impl UserStore {
                         | Status::Reauthenticated
                         | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
+                                let system_id =
+                                    client.telemetry().system_id().map(|id| id.to_string());
                                 let response = client
                                     .cloud_client()
-                                    .get_authenticated_user()
+                                    .get_authenticated_user(system_id)
                                     .await
                                     .log_err();
 
@@ -740,6 +743,21 @@ impl UserStore {
             .get(&current_organization.id)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_configuration_for_test(
+        &mut self,
+        organization: Arc<Organization>,
+        configuration: OrganizationConfiguration,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_organization = Some(organization.clone());
+        self.organizations = vec![organization.clone()];
+        self.configuration_by_organization
+            .insert(organization.id.clone(), configuration);
+        cx.emit(Event::OrganizationChanged);
+        cx.notify();
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -897,15 +915,19 @@ impl UserStore {
         cx.spawn(async move |cx| {
             match message {
                 MessageToClient::UserUpdated => {
-                    let cloud_client = cx
+                    let (cloud_client, system_id) = cx
                         .update(|cx| {
                             this.read_with(cx, |this, _cx| {
-                                this.client.upgrade().map(|client| client.cloud_client())
+                                this.client.upgrade().map(|client| {
+                                    let system_id =
+                                        client.telemetry().system_id().map(|id| id.to_string());
+                                    (client.cloud_client(), system_id)
+                                })
                             })
                         })?
                         .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
 
-                    let response = cloud_client.get_authenticated_user().await?;
+                    let response = cloud_client.get_authenticated_user(system_id).await?;
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
                             this.update_authenticated_user(response, cx);

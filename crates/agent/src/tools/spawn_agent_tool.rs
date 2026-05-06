@@ -1,5 +1,5 @@
 use acp_thread::{SUBAGENT_SESSION_INFO_META_KEY, SubagentSessionInfo};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
@@ -137,7 +137,7 @@ impl AgentTool for SpawnAgentTool {
                 .await
                 .map_err(|e| SpawnAgentToolOutput::Error {
                     session_id: None,
-                    error: format!("Failed to receive tool input: {e}"),
+                    error: e.to_string(),
                     session_info: None,
                 })?;
 
