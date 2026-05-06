@@ -3571,7 +3571,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
- "async-process",
  "async-trait",
  "base64 0.22.1",
  "collections",
@@ -5547,6 +5546,24 @@ dependencies = [
  "zed_actions",
  "zlog",
  "ztracing",
+]
+
+[[package]]
+name = "editor_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "gpui_platform",
+ "language",
+ "multi_buffer",
+ "project",
+ "release_channel",
+ "semver",
+ "settings",
+ "theme",
+ "workspace",
 ]
 
 [[package]]
