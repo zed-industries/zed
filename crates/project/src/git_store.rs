@@ -505,6 +505,66 @@ impl EventEmitter<RepositoryEvent> for Repository {}
 impl EventEmitter<JobsUpdated> for Repository {}
 impl EventEmitter<GitStoreEvent> for GitStore {}
 
+fn push_mode_from_proto(mode: proto::push::push_options_v2::PushMode) -> git::repository::PushMode {
+    match mode {
+        proto::push::push_options_v2::PushMode::Normal => git::repository::PushMode::Normal,
+        proto::push::push_options_v2::PushMode::ForceWithLease => {
+            git::repository::PushMode::ForceWithLease
+        }
+        proto::push::push_options_v2::PushMode::Force => git::repository::PushMode::Force,
+    }
+}
+
+fn push_mode_to_proto(mode: git::repository::PushMode) -> proto::push::push_options_v2::PushMode {
+    match mode {
+        git::repository::PushMode::Normal => proto::push::push_options_v2::PushMode::Normal,
+        git::repository::PushMode::ForceWithLease => {
+            proto::push::push_options_v2::PushMode::ForceWithLease
+        }
+        git::repository::PushMode::Force => proto::push::push_options_v2::PushMode::Force,
+    }
+}
+
+fn push_options_from_proto(payload: &proto::Push) -> Option<git::repository::PushOptions> {
+    if let Some(options) = payload.options_v2.as_ref() {
+        return Some(git::repository::PushOptions {
+            set_upstream: options.set_upstream,
+            push_mode: push_mode_from_proto(options.push_mode()),
+        });
+    }
+
+    payload.options.as_ref().map(|_| match payload.options() {
+        proto::push::PushOptions::SetUpstream => git::repository::PushOptions {
+            set_upstream: true,
+            push_mode: git::repository::PushMode::Normal,
+        },
+        proto::push::PushOptions::Force => git::repository::PushOptions {
+            set_upstream: false,
+            push_mode: git::repository::PushMode::ForceWithLease,
+        },
+    })
+}
+
+fn push_options_to_proto(
+    options: git::repository::PushOptions,
+) -> (
+    Option<proto::push::PushOptions>,
+    Option<proto::push::PushOptionsV2>,
+) {
+    let options_v2 = proto::push::PushOptionsV2 {
+        set_upstream: options.set_upstream,
+        push_mode: push_mode_to_proto(options.push_mode) as i32,
+    };
+
+    let legacy_options = match (options.set_upstream, options.push_mode) {
+        (true, git::repository::PushMode::Normal) => Some(proto::push::PushOptions::SetUpstream),
+        (false, git::repository::PushMode::ForceWithLease) => Some(proto::push::PushOptions::Force),
+        _ => None,
+    };
+
+    (legacy_options, Some(options_v2))
+}
+
 pub struct GitJob {
     job: Box<dyn FnOnce(RepositoryState, &mut AsyncApp) -> Task<()>>,
     key: Option<GitJobKey>,
@@ -2222,25 +2282,7 @@ impl GitStore {
             &mut cx,
         );
 
-        let options =
-            envelope
-                .payload
-                .options
-                .as_ref()
-                .map(|options| git::repository::PushOptions {
-                    set_upstream: options.set_upstream,
-                    push_mode: match options.push_mode() {
-                        proto::push::push_options::PushMode::Normal => {
-                            git::repository::PushMode::Normal
-                        }
-                        proto::push::push_options::PushMode::ForceWithLease => {
-                            git::repository::PushMode::ForceWithLease
-                        }
-                        proto::push::push_options::PushMode::Force => {
-                            git::repository::PushMode::Force
-                        }
-                    },
-                });
+        let options = push_options_from_proto(&envelope.payload);
 
         let branch_name = envelope.payload.branch_name.into();
         let remote_branch_name = envelope.payload.remote_branch_name.into();
@@ -6482,6 +6524,8 @@ impl Repository {
                             let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
                             debug_assert!(askpass_delegate.is_some());
                         });
+                        let (legacy_options, options_v2) =
+                            options.map(push_options_to_proto).unwrap_or((None, None));
                         let response = client
                             .request(proto::Push {
                                 project_id: project_id.0,
@@ -6490,20 +6534,8 @@ impl Repository {
                                 branch_name: branch.to_string(),
                                 remote_branch_name: remote_branch.to_string(),
                                 remote_name: remote.to_string(),
-                                options: options.map(|options| proto::push::PushOptions {
-                                    set_upstream: options.set_upstream,
-                                    push_mode: match options.push_mode {
-                                        git::repository::PushMode::Normal => {
-                                            proto::push::push_options::PushMode::Normal
-                                        }
-                                        git::repository::PushMode::ForceWithLease => {
-                                            proto::push::push_options::PushMode::ForceWithLease
-                                        }
-                                        git::repository::PushMode::Force => {
-                                            proto::push::push_options::PushMode::Force
-                                        }
-                                    } as i32,
-                                }),
+                                options: legacy_options.map(Into::into),
+                                options_v2,
                             })
                             .await?;
 
@@ -7064,6 +7096,7 @@ impl Repository {
                                 branch_name: format!("refs/tags/{name}"),
                                 remote_branch_name: format!("refs/tags/{name}"),
                                 options: None,
+                                options_v2: None,
                             })
                             .await
                             .map(|response| RemoteCommandOutput {
@@ -8687,6 +8720,88 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_push_options_from_legacy_proto() {
+        let mut push = proto::Push::default();
+        push.options = Some(proto::push::PushOptions::SetUpstream as i32);
+        assert_eq!(
+            push_options_from_proto(&push),
+            Some(PushOptions {
+                set_upstream: true,
+                push_mode: git::repository::PushMode::Normal,
+            })
+        );
+
+        push.options = Some(proto::push::PushOptions::Force as i32);
+        assert_eq!(
+            push_options_from_proto(&push),
+            Some(PushOptions {
+                set_upstream: false,
+                push_mode: git::repository::PushMode::ForceWithLease,
+            })
+        );
+    }
+
+    #[test]
+    fn test_push_options_v2_precedes_legacy_proto() {
+        let mut push = proto::Push::default();
+        push.options = Some(proto::push::PushOptions::SetUpstream as i32);
+        push.options_v2 = Some(proto::push::PushOptionsV2 {
+            set_upstream: false,
+            push_mode: proto::push::push_options_v2::PushMode::Force as i32,
+        });
+
+        assert_eq!(
+            push_options_from_proto(&push),
+            Some(PushOptions {
+                set_upstream: false,
+                push_mode: git::repository::PushMode::Force,
+            })
+        );
+    }
+
+    #[test]
+    fn test_push_options_to_proto_sets_v2_and_representable_legacy() {
+        let (legacy, options_v2) = push_options_to_proto(PushOptions {
+            set_upstream: true,
+            push_mode: git::repository::PushMode::Normal,
+        });
+        assert_eq!(legacy, Some(proto::push::PushOptions::SetUpstream));
+        assert_eq!(
+            options_v2,
+            Some(proto::push::PushOptionsV2 {
+                set_upstream: true,
+                push_mode: proto::push::push_options_v2::PushMode::Normal as i32,
+            })
+        );
+
+        let (legacy, options_v2) = push_options_to_proto(PushOptions {
+            set_upstream: false,
+            push_mode: git::repository::PushMode::ForceWithLease,
+        });
+        assert_eq!(legacy, Some(proto::push::PushOptions::Force));
+        assert_eq!(
+            options_v2,
+            Some(proto::push::PushOptionsV2 {
+                set_upstream: false,
+                push_mode: proto::push::push_options_v2::PushMode::ForceWithLease as i32,
+            })
+        );
+
+        let (legacy, options_v2) = push_options_to_proto(PushOptions {
+            set_upstream: true,
+            push_mode: git::repository::PushMode::Force,
+        });
+        assert_eq!(legacy, None);
+        assert_eq!(
+            options_v2,
+            Some(proto::push::PushOptionsV2 {
+                set_upstream: true,
+                push_mode: proto::push::push_options_v2::PushMode::Force as i32,
+            })
+        );
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {

@@ -404,8 +404,14 @@ message Push {
   optional PushOptions options = 6;
   uint64 askpass_id = 7;
   string remote_branch_name = 8;
+  optional PushOptionsV2 options_v2 = 9;
 
-  message PushOptions {
+  enum PushOptions {
+    SET_UPSTREAM = 0;
+    FORCE = 1;
+  }
+
+  message PushOptionsV2 {
     bool set_upstream = 1;
     PushMode push_mode = 2;
 

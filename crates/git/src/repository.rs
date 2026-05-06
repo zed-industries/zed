@@ -1085,6 +1085,18 @@ impl PushOptions {
     }
 }
 
+fn revert_commit_command_args(sha: &str, parent_count: usize, no_commit: bool) -> Vec<String> {
+    let mut args = vec!["revert".into(), "--no-edit".into()];
+    if parent_count > 1 {
+        args.extend(["-m".into(), "1".into()]);
+    }
+    if no_commit {
+        args.push("--no-commit".into());
+    }
+    args.push(sha.into());
+    args
+}
+
 impl std::fmt::Debug for dyn GitRepository {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("dyn GitRepository<...>").finish()
@@ -2220,12 +2232,17 @@ impl GitRepository for RealGitRepository {
     }
 
     fn revert_commit(&self, sha: String, no_commit: bool) -> BoxFuture<'_, Result<()>> {
-        let mut args = vec!["revert".into(), "--no-edit".into()];
-        if no_commit {
-            args.push("--no-commit".into());
-        }
-        args.push(sha);
-        self.simple_git_command(args)
+        let git = self.git_binary();
+
+        self.executor
+            .spawn(async move {
+                let commit_line = git.run(&["rev-list", "--parents", "-n", "1", &sha]).await?;
+                let parent_count = commit_line.split_whitespace().count().saturating_sub(1);
+                git.run(&revert_commit_command_args(&sha, parent_count, no_commit))
+                    .await?;
+                Ok(())
+            })
+            .boxed()
     }
 
     fn drop_commit_support(&self, sha: String) -> BoxFuture<'_, Result<DropCommitSupport>> {
@@ -4057,6 +4074,26 @@ mod tests {
             }
             .command_args(),
             vec!["--set-upstream", "--force"]
+        );
+    }
+
+    #[test]
+    fn test_revert_commit_command_args() {
+        assert_eq!(
+            revert_commit_command_args("abc123", 1, false),
+            vec!["revert", "--no-edit", "abc123"]
+        );
+        assert_eq!(
+            revert_commit_command_args("abc123", 1, true),
+            vec!["revert", "--no-edit", "--no-commit", "abc123"]
+        );
+        assert_eq!(
+            revert_commit_command_args("abc123", 2, false),
+            vec!["revert", "--no-edit", "-m", "1", "abc123"]
+        );
+        assert_eq!(
+            revert_commit_command_args("abc123", 2, true),
+            vec!["revert", "--no-edit", "-m", "1", "--no-commit", "abc123"]
         );
     }
 
