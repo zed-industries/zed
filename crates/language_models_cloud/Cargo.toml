@@ -25,9 +25,7 @@ schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-smol.workspace = true
 thiserror.workspace = true
-x_ai = { workspace = true, features = ["schemars"] }
 
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }

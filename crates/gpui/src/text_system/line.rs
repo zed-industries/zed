@@ -208,8 +208,16 @@ impl ShapedLine {
         }
 
         // Split text
-        let left_text = SharedString::new(self.text[..byte_index].to_string());
-        let right_text = SharedString::new(self.text[byte_index..].to_string());
+        let left_text = if byte_index == self.text.len() {
+            self.text.clone()
+        } else {
+            SharedString::new(&self.text[..byte_index])
+        };
+        let right_text = if byte_index == 0 {
+            self.text.clone()
+        } else {
+            SharedString::new(&self.text[byte_index..])
+        };
 
         let left_width = x_offset;
         let right_width = self.layout.width - left_width;
@@ -776,7 +784,7 @@ mod tests {
                 }],
                 len: text.len(),
             }),
-            text: SharedString::new(text.to_string()),
+            text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
         }
     }

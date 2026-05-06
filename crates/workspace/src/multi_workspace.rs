@@ -3,8 +3,8 @@ use fs::Fs;
 
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, WeakEntity, Window,
-    WindowId, actions, deferred, px,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, Tiling, WeakEntity,
+    Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
@@ -396,7 +396,7 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        !DisableAiSettings::get_global(cx).disable_ai
+        !DisableAiSettings::get_global(cx).disable_ai && AgentSettings::get_global(cx).enabled
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1930,15 +1930,55 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(
-                PathList::new(&paths),
-                None,
-                &[],
-                None,
-                OpenMode::Activate,
-                window,
-                cx,
-            )
+            let empty_workspace = if self
+                .active_workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .is_none()
+            {
+                Some(self.active_workspace.clone())
+            } else {
+                None
+            };
+
+            cx.spawn_in(window, async move |this, cx| {
+                if let Some(empty_workspace) = empty_workspace.as_ref() {
+                    let should_continue = empty_workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+                        })?
+                        .await?;
+                    if !should_continue {
+                        return Ok(empty_workspace.clone());
+                    }
+                }
+
+                let create_task = this.update_in(cx, |this, window, cx| {
+                    this.find_or_create_local_workspace(
+                        PathList::new(&paths),
+                        None,
+                        empty_workspace.as_slice(),
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                })?;
+                let new_workspace = create_task.await?;
+
+                if let Some(empty_workspace) = empty_workspace {
+                    this.update(cx, |this, cx| {
+                        if this.is_workspace_retained(&empty_workspace) {
+                            this.detach_workspace(&empty_workspace, cx);
+                        }
+                    })?;
+                }
+
+                Ok(new_workspace)
+            })
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {

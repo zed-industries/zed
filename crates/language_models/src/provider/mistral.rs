@@ -3,7 +3,7 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -327,32 +327,6 @@ impl LanguageModel for MistralLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        cx.background_spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -416,14 +390,19 @@ pub fn into_mistral(
                             // Tool use is not supported in User messages for Mistral
                         }
                         MessageContent::ToolResult(tool_result) => {
-                            let tool_content = match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => text.to_string(),
-                                LanguageModelToolResultContent::Image(_) => {
-                                    "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                            let mut text_parts: Vec<String> = Vec::new();
+                            for part in &tool_result.content {
+                                match part {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        text_parts.push(text.to_string());
+                                    }
+                                    LanguageModelToolResultContent::Image(_) => {
+                                        text_parts.push("[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string());
+                                    }
                                 }
-                            };
+                            }
                             messages.push(mistral::RequestMessage::Tool {
-                                content: tool_content,
+                                content: text_parts.join("\n"),
                                 tool_call_id: tool_result.tool_use_id.to_string(),
                             });
                         }
@@ -1042,7 +1021,7 @@ mod tests {
             speed: None,
         };
 
-        let (mistral_request, _) = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
+        let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);
 
         assert_eq!(mistral_request.messages.len(), 1);
         assert!(matches!(

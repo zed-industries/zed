@@ -3,7 +3,7 @@ use super::tool_permissions::{
     resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
@@ -127,8 +127,8 @@ impl AgentTool for ListDirectoryTool {
 
     const NAME: &'static str = "list_directory";
 
-    fn kind() -> ToolKind {
-        ToolKind::Read
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Read
     }
 
     fn initial_title(
@@ -155,7 +155,7 @@ impl AgentTool for ListDirectoryTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+                .map_err(|e| e.to_string())?;
 
             // Sometimes models will return these even though we tell it to give a path and not a glob.
             // When this happens, just list the root worktree directories.
@@ -267,7 +267,6 @@ impl AgentTool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;

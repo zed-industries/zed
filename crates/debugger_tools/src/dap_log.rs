@@ -11,7 +11,8 @@ use futures::{
 };
 use gpui::{
     App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window, actions, div,
+    ParentElement, Render, SharedString, Styled, Subscription, TaskExt, WeakEntity, Window,
+    actions, div,
 };
 use project::{
     Project,
@@ -1028,9 +1029,14 @@ impl SearchableItem for DapLogView {
         })
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.editor
-            .update(cx, |e, cx| e.query_suggestion(window, cx))
+            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
     }
 
     fn activate_match(

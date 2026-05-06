@@ -58,12 +58,6 @@ impl PathKey {
 }
 
 impl MultiBuffer {
-    pub fn buffer_for_path(&self, path: &PathKey, cx: &App) -> Option<Entity<Buffer>> {
-        let snapshot = self.snapshot(cx);
-        let excerpt = snapshot.excerpts_for_path(path).next()?;
-        self.buffer(excerpt.context.start.buffer_id)
-    }
-
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
         let snapshot = self.snapshot(cx);
         let excerpt = snapshot.excerpts_for_path(path).next()?;
@@ -317,7 +311,7 @@ impl MultiBuffer {
                 cursor.next();
             }
 
-            ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
+            ranges.sort_by_key(|r| r.context.start);
 
             self.set_excerpt_ranges_for_path(path.clone(), buffer, buffer_snapshot, ranges, cx);
         }

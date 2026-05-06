@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
-use agent_client_protocol::ToolCallId;
+use agent_client_protocol::schema as acp;
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
@@ -283,9 +283,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(ToolCallId),
-    NewTerminal(ToolCallId),
-    TerminalMovedToBackground(ToolCallId),
+    NewDiff(acp::ToolCallId),
+    NewTerminal(acp::ToolCallId),
+    TerminalMovedToBackground(acp::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -449,7 +449,7 @@ fn create_editor_diff(
         editor.set_show_vertical_scrollbar(false, cx);
         editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
         editor.set_soft_wrap_mode(SoftWrap::None, cx);
-        editor.scroll_manager.set_forbid_vertical_scroll(true);
+        editor.set_forbid_vertical_scroll(true);
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
         editor.set_delegate_open_excerpts(true);
@@ -482,7 +482,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol as acp;
+    use agent_client_protocol::schema as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;

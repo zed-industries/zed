@@ -52,7 +52,9 @@ impl HighlightedMatch {
 }
 impl RenderOnce for HighlightedMatch {
     fn render(self, _window: &mut Window, _: &mut App) -> impl IntoElement {
-        HighlightedLabel::new(self.text, self.highlight_positions).color(self.color)
+        HighlightedLabel::new(self.text, self.highlight_positions)
+            .color(self.color)
+            .truncate()
     }
 }
 
@@ -74,6 +76,7 @@ impl HighlightedMatchWithPaths {
 impl RenderOnce for HighlightedMatchWithPaths {
     fn render(mut self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         v_flex()
+            .min_w_0()
             .child(
                 h_flex()
                     .gap_1()

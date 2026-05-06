@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use async_lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use cloud_api_types::OrganizationId;
-use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 
 use crate::{ClientApiError, CloudApiClient};
 

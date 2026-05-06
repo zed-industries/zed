@@ -1,5 +1,5 @@
 mod agent_configuration;
-pub(crate) mod agent_connection_store;
+pub mod agent_connection_store;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
@@ -38,7 +38,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
@@ -60,6 +60,7 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
+pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
@@ -255,7 +256,7 @@ pub struct NewExternalAgentThread {
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewNativeAgentThreadFromSummary {
-    from_session_id: agent_client_protocol::SessionId,
+    from_session_id: acp::SessionId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -339,7 +340,7 @@ pub enum AgentInitialContent {
         title: Option<SharedString>,
     },
     ContentBlock {
-        blocks: Vec<agent_client_protocol::ContentBlock>,
+        blocks: Vec<acp::ContentBlock>,
         auto_submit: bool,
     },
     FromExternalSource(ExternalSourcePrompt),
@@ -584,8 +585,7 @@ fn update_command_palette_filter(cx: &mut App) {
                 | EditPredictionProvider::Codestral
                 | EditPredictionProvider::Ollama
                 | EditPredictionProvider::OpenAiCompatibleApi
-                | EditPredictionProvider::Mercury
-                | EditPredictionProvider::Experimental(_) => {
+                | EditPredictionProvider::Mercury => {
                     filter.show_namespace("edit_prediction");
                     filter.hide_namespace("copilot");
                     filter.show_action_types(edit_prediction_actions.iter());
@@ -713,7 +713,6 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            new_thread_location: Default::default(),
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         };

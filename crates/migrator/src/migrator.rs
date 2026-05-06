@@ -253,6 +253,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(
             migrations::m_2026_04_17::promote_show_branch_icon_true_to_show_branch_status_icon,
         ),
+        MigrationType::TreeSitter(
+            migrations::m_2026_05_04::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2026_05_04,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -394,6 +398,10 @@ define_query!(
 define_query!(
     KEYMAP_QUERY_2026_03_23,
     migrations::m_2026_03_23::KEYMAP_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2026_05_04,
+    migrations::m_2026_05_04::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -3199,7 +3207,16 @@ mod tests {
             }
             "#
             .unindent(),
-            None,
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "zed"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
         );
 
         // Platform key: settings nested inside "linux" should be migrated
@@ -4934,6 +4951,98 @@ mod tests {
     }
 
     #[test]
+    fn test_migration_helpers_handle_various_profile_forms() {
+        let setting = "a_setting";
+        let old_value = "old_value";
+        let new_value = "new_value";
+
+        fn language_setting_fn(value: &mut serde_json::Value, _: &[&str]) -> anyhow::Result<()> {
+            if let Some(obj) = value.as_object_mut() {
+                if let Some(v) = obj.get_mut("a_setting") {
+                    *v = serde_json::json!("new_value");
+                }
+            }
+            Ok(())
+        }
+
+        let mut settings_fn = |map: &mut serde_json::Map<String, serde_json::Value>| {
+            if let Some(v) = map.get_mut(setting) {
+                *v = serde_json::json!(new_value);
+            }
+            Ok(())
+        };
+
+        // Legacy form
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    setting: old_value
+                }
+            }
+        });
+        let expected = serde_json::json!({
+            "profiles": {
+                "work": {
+                    setting: new_value
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, expected);
+
+        let mut value = input;
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, expected);
+
+        // Form after migration: `m_2026_04_01`
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "settings": {
+                        setting: old_value
+                    }
+                }
+            }
+        });
+        let expected = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "settings": {
+                        setting: new_value
+                    }
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, expected);
+
+        let mut value = input;
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, expected);
+
+        // Base-only form after migration: `m_2026_04_01` (no settings to migrate)
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "base": "default"
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, input);
+
+        let mut value = input.clone();
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, input);
+    }
+
+    #[test]
     fn test_rename_web_search_to_search_web_root_level_profile() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
@@ -5241,6 +5350,42 @@ mod tests {
                 }
                 "#
                 .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_hide_mouse_on_typing_and_movement_to_on_typing_and_action() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "hide_mouse": "on_typing_and_movement"
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "hide_mouse": "on_typing_and_action"
+                }
+            "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_chain_hide_mouse_while_typing_to_on_typing_and_action() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "hide_mouse_while_typing": true
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "hide_mouse": "on_typing_and_action"
+                }
+            "#,
             ),
         );
     }
