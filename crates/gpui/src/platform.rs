@@ -326,22 +326,22 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
-pub struct DisplayId(pub(crate) u32);
+pub struct DisplayId(pub(crate) u64);
 
 impl DisplayId {
     /// Create a new `DisplayId` from a raw platform display identifier.
-    pub fn new(id: u32) -> Self {
+    pub fn new(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<u32> for DisplayId {
-    fn from(id: u32) -> Self {
+impl From<u64> for DisplayId {
+    fn from(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<DisplayId> for u32 {
+impl From<DisplayId> for u64 {
     fn from(id: DisplayId) -> Self {
         id.0
     }
