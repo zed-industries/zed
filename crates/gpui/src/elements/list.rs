@@ -125,6 +125,14 @@ impl FollowState {
             *self = FollowState::Tail { is_following: true };
         }
     }
+
+    fn stop_following(&mut self) {
+        if let FollowState::Tail { is_following: true } = self {
+            *self = FollowState::Tail {
+                is_following: false,
+            };
+        }
+    }
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -263,6 +271,7 @@ struct ListItemSummary {
     unrendered_count: usize,
     height: Pixels,
     has_focus_handles: bool,
+    has_unknown_height: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -391,6 +400,25 @@ impl ListState {
         self.0.borrow().items.summary().count
     }
 
+    /// Whether the list is scrolled to the end, or `None` if the list is
+    /// not scrollable or the total content height is not yet known.
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        let state = self.0.borrow();
+        let bounds = state.last_layout_bounds?;
+        let summary = state.items.summary();
+        if summary.has_unknown_height {
+            return None;
+        }
+        let padding = state.last_padding.unwrap_or_default();
+        let content_height = summary.height + padding.top + padding.bottom;
+        let scroll_max = (content_height - bounds.size.height).max(px(0.));
+        if scroll_max <= px(0.) {
+            return None;
+        }
+        let scroll_top = state.scroll_top(&state.logical_scroll_top());
+        Some(scroll_top >= scroll_max)
+    }
+
     /// Inform the list state that the items in `old_range` have been replaced
     /// by `count` new items that must be recalculated.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
@@ -464,9 +492,7 @@ impl ListState {
         let state = &mut *self.0.borrow_mut();
 
         if distance < px(0.) {
-            if let FollowState::Tail { is_following } = &mut state.follow_state {
-                *is_following = false;
-            }
+            state.follow_state.stop_following();
         }
 
         let mut cursor = state.items.cursor::<ListItemSummary>(());
@@ -544,9 +570,7 @@ impl ListState {
         }
 
         if scroll_top.item_ix < item_count {
-            if let FollowState::Tail { is_following } = &mut state.follow_state {
-                *is_following = false;
-            }
+            state.follow_state.stop_following();
         }
 
         state.logical_scroll_top = Some(scroll_top);
@@ -727,10 +751,8 @@ impl StateInner {
             });
         }
 
-        if let FollowState::Tail { is_following } = &mut self.follow_state {
-            if delta.y > px(0.) {
-                *is_following = false;
-            }
+        if delta.y > px(0.) {
+            self.follow_state.stop_following();
         }
 
         if let Some(handler) = self.scroll_handler.as_mut() {
@@ -1135,7 +1157,7 @@ impl StateInner {
             content_height - self.scrollbar_drag_start_height.unwrap_or(content_height);
         let new_scroll_top = (point.y - drag_offset).abs().max(px(0.)).min(scroll_max);
 
-        self.follow_state = FollowState::Normal;
+        self.follow_state.stop_following();
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
@@ -1383,6 +1405,7 @@ impl sum_tree::Item for ListItem {
                     px(0.)
                 },
                 has_focus_handles: focus_handle.is_some(),
+                has_unknown_height: size_hint.is_none(),
             },
             ListItem::Measured {
                 size, focus_handle, ..
@@ -1392,6 +1415,7 @@ impl sum_tree::Item for ListItem {
                 unrendered_count: 0,
                 height: size.height,
                 has_focus_handles: focus_handle.is_some(),
+                has_unknown_height: false,
             },
         }
     }
@@ -1408,6 +1432,7 @@ impl sum_tree::ContextLessSummary for ListItemSummary {
         self.unrendered_count += summary.unrendered_count;
         self.height += summary.height;
         self.has_focus_handles |= summary.has_focus_handles;
+        self.has_unknown_height |= summary.has_unknown_height;
     }
 }
 
@@ -2014,14 +2039,11 @@ mod test {
         );
     }
 
-    /// Calling `set_follow_mode(FollowState::Normal)` or dragging the scrollbar should
-    /// fully disengage follow_tail — clearing any suspended state so
-    /// follow_tail won’t auto-re-engage.
     #[gpui::test]
-    fn test_follow_tail_suspended_state_cleared_by_explicit_actions(cx: &mut TestAppContext) {
+    fn test_follow_tail_reengages_after_scrollbar_disengagement(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport.
+        // 10 items × 50px = 500px total, 200px viewport, scroll_max = 300px.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
 
         struct TestView(ListState);
@@ -2038,59 +2060,24 @@ mod test {
         let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
 
         state.set_follow_mode(FollowMode::Tail);
-        // --- Part 1: set_follow_mode(FollowState::Normal) clears suspended state ---
-
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.clone().into_any_element()
         });
+        assert!(state.is_following_tail());
 
-        // Scroll up — suspends follow_tail.
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(100.)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(50.))),
-            ..Default::default()
-        });
+        // Drag the scrollbar up to the middle — follow_tail should suspend.
+        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
         assert!(!state.is_following_tail());
 
-        // Scroll back to the bottom — should re-engage follow_tail.
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(100.)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(-10000.))),
-            ..Default::default()
-        });
-
+        // Drag the scrollbar back to the bottom — follow_tail should re-engage
+        // on the next paint.
+        state.set_offset_from_scrollbar(point(px(0.), px(300.)));
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
+            view.into_any_element()
         });
         assert!(
             state.is_following_tail(),
-            "follow_tail should re-engage after scrolling back to the bottom"
-        );
-
-        // --- Part 2: scrollbar drag clears suspended state ---
-
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
-        });
-
-        // Drag the scrollbar to the middle — should clear suspended state.
-        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
-
-        // Scroll to the bottom.
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(100.)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(-10000.))),
-            ..Default::default()
-        });
-
-        // Paint — should NOT re-engage because the scrollbar drag
-        // cleared the suspended state.
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
-        });
-        assert!(
-            !state.is_following_tail(),
-            "follow_tail should not re-engage after scrollbar drag cleared the suspended state"
+            "follow_tail should re-engage after scrolling back to the bottom via the scrollbar"
         );
     }
 }

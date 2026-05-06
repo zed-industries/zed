@@ -11,9 +11,9 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::{
-    AnthropicError, AnthropicModelMode, CacheControl, CacheControlType, ContentDelta,
-    CountTokensRequest, Event, ImageSource, Message, RequestContent, ResponseContent,
-    StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
+    AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
+    ContentDelta, Event, ImageSource, Message, RequestContent, ResponseContent, StringOrContents,
+    Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
 };
 
 fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
@@ -70,172 +70,39 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
             input: tool_use.input,
             cache_control: None,
         }),
-        MessageContent::ToolResult(tool_result) => Some(RequestContent::ToolResult {
-            tool_use_id: tool_result.tool_use_id.to_string(),
-            is_error: tool_result.is_error,
-            content: match tool_result.content {
-                LanguageModelToolResultContent::Text(text) => {
+        MessageContent::ToolResult(tool_result) => {
+            let content = match tool_result.content.as_slice() {
+                [LanguageModelToolResultContent::Text(text)] => {
                     ToolResultContent::Plain(text.to_string())
                 }
-                LanguageModelToolResultContent::Image(image) => {
-                    ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                        source: ImageSource {
-                            source_type: "base64".to_string(),
-                            media_type: "image/png".to_string(),
-                            data: image.source.to_string(),
-                        },
-                    }])
+                _ => {
+                    let parts = tool_result
+                        .content
+                        .into_iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => ToolResultPart::Text {
+                                text: text.to_string(),
+                            },
+                            LanguageModelToolResultContent::Image(image) => ToolResultPart::Image {
+                                source: ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: image.source.to_string(),
+                                },
+                            },
+                        })
+                        .collect();
+                    ToolResultContent::Multipart(parts)
                 }
-            },
-            cache_control: None,
-        }),
-    }
-}
-
-/// Convert a LanguageModelRequest to an Anthropic CountTokensRequest.
-pub fn into_anthropic_count_tokens_request(
-    request: LanguageModelRequest,
-    model: String,
-    mode: AnthropicModelMode,
-) -> CountTokensRequest {
-    let mut new_messages: Vec<Message> = Vec::new();
-    let mut system_message = String::new();
-
-    for message in request.messages {
-        if message.contents_empty() {
-            continue;
-        }
-
-        match message.role {
-            Role::User | Role::Assistant => {
-                let anthropic_message_content: Vec<RequestContent> = message
-                    .content
-                    .into_iter()
-                    .filter_map(to_anthropic_content)
-                    .collect();
-                let anthropic_role = match message.role {
-                    Role::User => crate::Role::User,
-                    Role::Assistant => crate::Role::Assistant,
-                    Role::System => unreachable!("System role should never occur here"),
-                };
-                if anthropic_message_content.is_empty() {
-                    continue;
-                }
-
-                if let Some(last_message) = new_messages.last_mut()
-                    && last_message.role == anthropic_role
-                {
-                    last_message.content.extend(anthropic_message_content);
-                    continue;
-                }
-
-                new_messages.push(Message {
-                    role: anthropic_role,
-                    content: anthropic_message_content,
-                });
-            }
-            Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.string_contents());
-            }
-        }
-    }
-
-    CountTokensRequest {
-        model,
-        messages: new_messages,
-        system: if system_message.is_empty() {
-            None
-        } else {
-            Some(StringOrContents::String(system_message))
-        },
-        thinking: if request.thinking_allowed {
-            match mode {
-                AnthropicModelMode::Thinking { budget_tokens } => {
-                    Some(Thinking::Enabled { budget_tokens })
-                }
-                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive),
-                AnthropicModelMode::Default => None,
-            }
-        } else {
-            None
-        },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| Tool {
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.input_schema,
-                eager_input_streaming: tool.use_input_streaming,
+            };
+            Some(RequestContent::ToolResult {
+                tool_use_id: tool_result.tool_use_id.to_string(),
+                is_error: tool_result.is_error,
+                content,
+                cache_control: None,
             })
-            .collect(),
-        tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => ToolChoice::Auto,
-            LanguageModelToolChoice::Any => ToolChoice::Any,
-            LanguageModelToolChoice::None => ToolChoice::None,
-        }),
-    }
-}
-
-/// Estimate tokens using tiktoken. Used as a fallback when the API is unavailable,
-/// or by providers (like Zed Cloud) that don't have direct Anthropic API access.
-pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Result<u64> {
-    let messages = request.messages;
-    let mut tokens_from_images = 0;
-    let mut string_messages = Vec::with_capacity(messages.len());
-
-    for message in messages {
-        let mut string_contents = String::new();
-
-        for content in message.content {
-            match content {
-                MessageContent::Text(text) => {
-                    string_contents.push_str(&text);
-                }
-                MessageContent::Thinking { .. } => {
-                    // Thinking blocks are not included in the input token count.
-                }
-                MessageContent::RedactedThinking(_) => {
-                    // Thinking blocks are not included in the input token count.
-                }
-                MessageContent::Image(image) => {
-                    tokens_from_images += image.estimate_tokens();
-                }
-                MessageContent::ToolUse(_tool_use) => {
-                    // TODO: Estimate token usage from tool uses.
-                }
-                MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                    LanguageModelToolResultContent::Text(text) => {
-                        string_contents.push_str(text);
-                    }
-                    LanguageModelToolResultContent::Image(image) => {
-                        tokens_from_images += image.estimate_tokens();
-                    }
-                },
-            }
-        }
-
-        if !string_contents.is_empty() {
-            string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(string_contents),
-                name: None,
-                function_call: None,
-            });
         }
     }
-
-    // Tiktoken doesn't yet support these models, so we manually use the
-    // same tokenizer as GPT-4.
-    tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-        .map(|tokens| (tokens + tokens_from_images) as u64)
 }
 
 pub fn into_anthropic(
@@ -326,7 +193,9 @@ pub fn into_anthropic(
                 AnthropicModelMode::Thinking { budget_tokens } => {
                     Some(Thinking::Enabled { budget_tokens })
                 }
-                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive),
+                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
+                    display: Some(AdaptiveThinkingDisplay::Summarized),
+                }),
                 AnthropicModelMode::Default => None,
             }
         } else {

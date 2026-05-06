@@ -52,19 +52,20 @@ class ZedAgent(BaseInstalledAgent):
         return "zed"
 
     async def _detect_workdir(self, environment: BaseEnvironment) -> str:
-        """Detect the repo working directory inside the container.
+        """Detect the working directory inside the container.
 
         Checks, in order:
           1. Explicit ``EVAL_CLI_WORKDIR`` extra-env override
-          2. ``/app``      (SWE-bench Pro)
-          3. ``/testbed``  (SWE-bench Verified)
-          4. ``/repo``
-          5. First git repo found under ``/`` (max depth 3)
+          2. Well-known dirs with a ``.git`` subdirectory (SWE-bench style)
+          3. First git repo found under ``/`` (max depth 3)
+          4. Well-known dirs that exist at all (terminal-bench style)
+          5. The container's default working directory (``pwd``)
         """
         override = self._extra_env.get("EVAL_CLI_WORKDIR")
         if override:
             return override
 
+        # First: try to find a git repo (SWE-bench, etc.)
         result = await self.exec_as_agent(
             environment,
             command=(
@@ -75,13 +76,29 @@ class ZedAgent(BaseInstalledAgent):
                 '| head -1 | sed "s|/.git$||"'
             ),
         )
-        workdir = result.stdout.strip()
-        if not workdir:
-            raise RuntimeError(
-                "Could not find a git repository in the container. "
-                "Set EVAL_CLI_WORKDIR explicitly via --ae EVAL_CLI_WORKDIR=/path/to/repo"
-            )
-        return workdir
+        workdir = (result.stdout or "").strip()
+        if workdir:
+            return workdir
+
+        # Fallback: use the first well-known directory that exists,
+        # even without .git (terminal-bench containers aren't git repos).
+        result = await self.exec_as_agent(
+            environment,
+            command=(
+                "for d in /app /testbed /repo /root /home; do "
+                '  if [ -d "$d" ]; then echo "$d"; exit 0; fi; '
+                "done; "
+                "pwd"
+            ),
+        )
+        workdir = (result.stdout or "").strip()
+        if workdir:
+            return workdir
+
+        raise RuntimeError(
+            "Could not detect a working directory in the container. "
+            "Set EVAL_CLI_WORKDIR explicitly via --ae EVAL_CLI_WORKDIR=/path/to/repo"
+        )
 
     async def install(self, environment: BaseEnvironment) -> None:
         # Detect the package manager and install base dependencies.
@@ -426,12 +443,18 @@ class ZedAgent(BaseInstalledAgent):
             env=env,
         )
 
+        # Only generate a patch if the workdir is a git repo
+        # (SWE-bench style). Terminal-bench containers aren't git repos.
         await self.exec_as_agent(
             environment,
             command=(
+                'if [ -d ".git" ]; then '
                 "git add -A && "
                 "git diff --cached HEAD > /logs/agent/patch.diff && "
-                'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"'
+                'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"; '
+                "else "
+                'echo "No git repo found, skipping patch generation"; '
+                "fi"
             ),
             cwd=workdir,
         )

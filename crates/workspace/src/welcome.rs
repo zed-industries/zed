@@ -1,15 +1,14 @@
 use crate::{
-    NewFile, Open, OpenMode, PathList, SerializedWorkspaceLocation, ToggleWorkspaceSidebar,
-    Workspace, WorkspaceId,
+    NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
+    ToggleWorkspaceSidebar, Workspace,
     item::{Item, ItemEvent},
     persistence::WorkspaceDb,
 };
 use agent_settings::AgentSettings;
-use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, Styled, Task, Window, actions,
+    ParentElement, Render, Styled, Task, TaskExt, Window, actions,
 };
 use gpui::{WeakEntity, linear_color_stop, linear_gradient};
 use menu::{SelectNext, SelectPrevious};
@@ -242,14 +241,7 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
-    recent_workspaces: Option<
-        Vec<(
-            WorkspaceId,
-            SerializedWorkspaceLocation,
-            PathList,
-            DateTime<Utc>,
-        )>,
-    >,
+    recent_workspaces: Option<Vec<RecentWorkspace>>,
 }
 
 impl WelcomePage {
@@ -271,7 +263,7 @@ impl WelcomePage {
             cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_workspaces_on_disk(fs.as_ref())
+                    .recent_project_workspaces(fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();
@@ -310,14 +302,11 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some((_workspace_id, location, paths, _timestamp)) =
-                recent_workspaces.get(action.index)
-            {
-                let is_local = matches!(location, SerializedWorkspaceLocation::Local);
+            if let Some(workspace) = recent_workspaces.get(action.index) {
+                let is_local = matches!(workspace.location, SerializedWorkspaceLocation::Local);
 
                 if is_local {
-                    let paths = paths.clone();
-                    let paths = paths.paths().to_vec();
+                    let paths = workspace.paths.paths().to_vec();
                     self.workspace
                         .update(cx, |workspace, cx| {
                             workspace
@@ -433,8 +422,13 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (_, loc, paths, _))| {
-                self.render_recent_project(index, first_section_entries + index, loc, paths)
+            .map(|(index, workspace)| {
+                self.render_recent_project(
+                    index,
+                    first_section_entries + index,
+                    &workspace.location,
+                    &workspace.identity_paths,
+                )
             })
             .collect::<Vec<_>>();
 

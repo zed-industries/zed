@@ -7,13 +7,10 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::AsyncApp;
-use similar::DiffableStr;
 use std::ops::Range;
 use std::sync::Arc;
-use zeta_prompt::udiff;
 use zeta_prompt::{
-    ZetaFormat, encode_patch_as_output_for_format, format_zeta_prompt, multi_region,
-    output_end_marker_for_format, resolve_cursor_region,
+    ZetaFormat, format_expected_output, format_zeta_prompt, multi_region, resolve_cursor_region,
 };
 
 fn resolved_excerpt_ranges_for_format(
@@ -50,7 +47,14 @@ pub async fn run_format_prompt(
             let (editable_range, context_range) =
                 resolved_excerpt_ranges_for_format(prompt_inputs, zeta_format);
 
-            let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
+            let include_diagnostics = matches!(zeta_format, ZetaFormat::V0420Diagnostics);
+
+            let prompt = TeacherPrompt::format_prompt(
+                example,
+                editable_range,
+                context_range,
+                include_diagnostics,
+            );
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output: None,
@@ -67,8 +71,14 @@ pub async fn run_format_prompt(
             let (editable_range, context_range) =
                 resolved_excerpt_ranges_for_format(prompt_inputs, zeta_format);
 
-            let prompt =
-                TeacherMultiRegionPrompt::format_prompt(example, editable_range, context_range);
+            let include_diagnostics = matches!(zeta_format, ZetaFormat::V0420Diagnostics);
+
+            let prompt = TeacherMultiRegionPrompt::format_prompt(
+                example,
+                editable_range,
+                context_range,
+                include_diagnostics,
+            );
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output: None,
@@ -88,17 +98,17 @@ pub async fn run_format_prompt(
                 .into_iter()
                 .next()
                 .and_then(|(expected_patch, expected_cursor_offset)| {
-                    zeta2_output_for_patch(
+                    format_expected_output(
                         prompt_inputs,
+                        zeta_format,
                         &expected_patch,
                         expected_cursor_offset,
-                        zeta_format,
                     )
                     .ok()
                 });
 
             let rejected_output = example.spec.rejected_patch.as_ref().and_then(|patch| {
-                zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()
+                format_expected_output(prompt_inputs, zeta_format, patch, None).ok()
             });
 
             example.prompt = prompt.map(|prompt| ExamplePrompt {
@@ -116,126 +126,6 @@ pub async fn run_format_prompt(
     Ok(())
 }
 
-pub fn zeta2_output_for_patch(
-    input: &zeta_prompt::ZetaPromptInput,
-    patch: &str,
-    cursor_offset: Option<usize>,
-    version: ZetaFormat,
-) -> Result<String> {
-    let (context, editable_range, _, _) = resolve_cursor_region(input, version);
-    let mut old_editable_region = context[editable_range].to_string();
-
-    if !old_editable_region.ends_with_newline() {
-        old_editable_region.push('\n');
-    }
-
-    if let Some(encoded_output) =
-        encode_patch_as_output_for_format(version, &old_editable_region, patch, cursor_offset)?
-    {
-        return Ok(encoded_output);
-    }
-
-    let (result, first_hunk_offset) =
-        udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable_region).with_context(
-            || {
-                format!(
-                    "Patch:\n```\n{}```\n\nEditable region:\n```\n{}```",
-                    patch, old_editable_region
-                )
-            },
-        )?;
-
-    if version == ZetaFormat::V0317SeedMultiRegions {
-        let cursor_in_new = cursor_offset.map(|cursor_offset| {
-            let hunk_start = first_hunk_offset.unwrap_or(0);
-            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
-        });
-        return multi_region::encode_from_old_and_new_v0317(
-            &old_editable_region,
-            &result,
-            cursor_in_new,
-            zeta_prompt::CURSOR_MARKER,
-            multi_region::V0317_END_MARKER,
-        );
-    }
-
-    if version == ZetaFormat::V0318SeedMultiRegions {
-        let cursor_in_new = cursor_offset.map(|cursor_offset| {
-            let hunk_start = first_hunk_offset.unwrap_or(0);
-            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
-        });
-        return multi_region::encode_from_old_and_new_v0318(
-            &old_editable_region,
-            &result,
-            cursor_in_new,
-            zeta_prompt::CURSOR_MARKER,
-            multi_region::V0318_END_MARKER,
-        );
-    }
-
-    if version == ZetaFormat::V0327SingleFile {
-        let cursor_in_new = cursor_offset.map(|cursor_offset| {
-            let hunk_start = first_hunk_offset.unwrap_or(0);
-            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
-        });
-        return multi_region::encode_from_old_and_new_v0318(
-            &old_editable_region,
-            &result,
-            cursor_in_new,
-            zeta_prompt::CURSOR_MARKER,
-            multi_region::V0327_END_MARKER,
-        );
-    }
-
-    if version == ZetaFormat::V0316SeedMultiRegions {
-        let cursor_in_new = cursor_offset.map(|cursor_offset| {
-            let hunk_start = first_hunk_offset.unwrap_or(0);
-            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
-        });
-        return multi_region::encode_from_old_and_new_v0316(
-            &old_editable_region,
-            &result,
-            cursor_in_new,
-            zeta_prompt::CURSOR_MARKER,
-            multi_region::V0316_END_MARKER,
-        );
-    }
-
-    if version == ZetaFormat::V0306SeedMultiRegions {
-        let cursor_in_new = cursor_offset.map(|cursor_offset| {
-            let hunk_start = first_hunk_offset.unwrap_or(0);
-            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
-        });
-        return multi_region::encode_from_old_and_new(
-            &old_editable_region,
-            &result,
-            cursor_in_new,
-            zeta_prompt::CURSOR_MARKER,
-            zeta_prompt::seed_coder::END_MARKER,
-            zeta_prompt::seed_coder::NO_EDITS,
-        );
-    }
-
-    let mut result = result;
-    if let Some(cursor_offset) = cursor_offset {
-        // The cursor_offset is relative to the start of the hunk's new text (context + additions).
-        // We need to add where the hunk context matched in the editable region to compute
-        // the actual cursor position in the result.
-        let hunk_start = first_hunk_offset.unwrap_or(0);
-        let offset = result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()));
-        result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
-    }
-
-    if let Some(end_marker) = output_end_marker_for_format(version) {
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push_str(end_marker);
-    }
-
-    Ok(result)
-}
-
 pub struct TeacherPrompt;
 
 impl TeacherPrompt {
@@ -251,15 +141,20 @@ impl TeacherPrompt {
         example: &Example,
         editable_range: Range<usize>,
         context_range: Range<usize>,
+        include_diagnostics: bool,
     ) -> String {
         let edit_history = Self::format_edit_history(&example.spec.edit_history);
         let context = Self::format_context(example);
         let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
+        let diagnostics = include_diagnostics
+            .then(|| Self::format_diagnostics(example))
+            .map(|diagnostics| format!("# 4. Diagnostics\n\n{diagnostics}"));
 
         let prompt_template = crate::prompt_assets::get_prompt("teacher.md");
         let prompt = prompt_template
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
+            .replace("{{diagnostics}}", diagnostics.as_deref().unwrap_or(""))
             .replace("{{cursor_excerpt}}", &cursor_excerpt);
 
         prompt
@@ -417,6 +312,27 @@ impl TeacherPrompt {
         let region = &text[start..end];
         Ok(region.strip_suffix('\n').unwrap_or(region).to_string())
     }
+
+    fn format_diagnostics(example: &Example) -> String {
+        example
+            .prompt_inputs
+            .as_ref()
+            .map(|prompt_inputs| {
+                prompt_inputs
+                    .active_buffer_diagnostics
+                    .iter()
+                    .map(|diagnostic| {
+                        format!(
+                            "*{}*:\n```\n{}\n```\n",
+                            &diagnostic.message, &diagnostic.snippet
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .filter(|m| !m.is_empty())
+            .unwrap_or("No Diagnostics".to_string())
+    }
 }
 
 pub struct TeacherMultiRegionPrompt;
@@ -432,15 +348,20 @@ impl TeacherMultiRegionPrompt {
         example: &Example,
         editable_range: Range<usize>,
         context_range: Range<usize>,
+        include_diagnostics: bool,
     ) -> String {
         let edit_history = Self::format_edit_history(&example.spec.edit_history);
         let context = Self::format_context(example);
         let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
+        let diagnostics = include_diagnostics
+            .then(|| TeacherPrompt::format_diagnostics(example))
+            .map(|diagnostics| format!("# 4. Diagnostics\n\n{diagnostics}"));
 
         let prompt_template = crate::prompt_assets::get_prompt("teacher_multi_region.md");
         let prompt = prompt_template
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
+            .replace("{{diagnostics}}", diagnostics.as_deref().unwrap_or(""))
             .replace("{{cursor_excerpt}}", &cursor_excerpt);
 
         prompt
@@ -1023,6 +944,7 @@ mod tests {
             },
             editable_range,
             context_range,
+            false,
         );
 
         assert!(prompt.contains(TeacherPrompt::EDITABLE_REGION_START));

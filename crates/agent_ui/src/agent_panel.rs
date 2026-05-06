@@ -10,7 +10,7 @@ use std::{
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
@@ -29,11 +29,10 @@ use zed_actions::{
     assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
-use crate::DEFAULT_THREAD_TITLE;
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
-use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
+use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -61,13 +60,12 @@ use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
-    Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Task, TaskExt, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
-use release_channel::ReleaseChannel;
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
@@ -75,8 +73,8 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle,
-    Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
+    Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -89,9 +87,6 @@ const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
-fn agent_v2_enabled(cx: &App) -> bool {
-    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
-}
 /// Maximum number of idle threads kept in the agent panel's retained list.
 /// Set as a GPUI global to override; otherwise defaults to 5.
 pub struct MaxIdleRetainedThreads(pub usize);
@@ -353,7 +348,7 @@ pub fn init(cx: &mut App) {
                                 auto_submit: true,
                             }),
                             true,
-                            "agent_panel",
+                            "git_panel",
                             window,
                             cx,
                         );
@@ -380,7 +375,7 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
-                                "agent_panel",
+                                "git_panel",
                                 window,
                                 cx,
                             );
@@ -409,7 +404,7 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
-                                "agent_panel",
+                                "git_panel",
                                 window,
                                 cx,
                             );
@@ -709,9 +704,9 @@ pub struct AgentPanel {
     selected_agent: Agent,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
-    show_trust_workspace_message: bool,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
+    _thread_metadata_store_subscription: Subscription,
 }
 
 impl AgentPanel {
@@ -1026,6 +1021,17 @@ impl AgentPanel {
                 }
                 _ => {}
             });
+
+        let _thread_metadata_store_subscription = cx.subscribe(
+            &ThreadMetadataStore::global(cx),
+            |this, _store, event, cx| {
+                let ThreadMetadataStoreEvent::ThreadArchived(thread_id) = event;
+                if this.retained_threads.remove(thread_id).is_some() {
+                    cx.notify();
+                }
+            },
+        );
+
         let mut panel = Self {
             workspace_id,
             base_view,
@@ -1055,10 +1061,10 @@ impl AgentPanel {
             selected_agent: Agent::default(),
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
-            show_trust_workspace_message: false,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
+            _thread_metadata_store_subscription,
         };
 
         // Initial sync of agent servers from extensions
@@ -1176,14 +1182,14 @@ impl AgentPanel {
         let old_view = std::mem::replace(&mut self.base_view, BaseView::Uninitialized);
         self.retain_running_thread(old_view, cx);
         self.clear_overlay_state();
-        self.activate_draft(false, window, cx);
+        self.activate_draft(false, "agent_panel", window, cx);
         self.serialize(cx);
         cx.emit(AgentPanelEvent::ActiveViewChanged);
         cx.notify();
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.activate_draft(true, window, cx);
+        self.activate_draft(true, "agent_panel", window, cx);
     }
 
     pub fn new_external_agent_thread(
@@ -1195,11 +1201,17 @@ impl AgentPanel {
         if let Some(agent) = action.agent.clone() {
             self.selected_agent = agent;
         }
-        self.activate_draft(true, window, cx);
+        self.activate_draft(true, "agent_panel", window, cx);
     }
 
-    pub fn activate_draft(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let draft = self.ensure_draft(window, cx);
+    pub fn activate_draft(
+        &mut self,
+        focus: bool,
+        source: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
                 if focus {
@@ -1220,6 +1232,7 @@ impl AgentPanel {
 
     fn ensure_draft(
         &mut self,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ConversationView> {
@@ -1239,7 +1252,7 @@ impl AgentPanel {
             None,
             None,
             previous_content,
-            "agent_panel",
+            source,
             window,
             cx,
         );
@@ -1272,20 +1285,6 @@ impl AgentPanel {
         }
     }
 
-    pub fn create_thread(
-        &mut self,
-        source: &'static str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ThreadId {
-        let agent = self.selected_agent(cx);
-        let thread = self.create_agent_thread(agent, None, None, None, None, source, window, cx);
-        let thread_id = thread.conversation_view.read(cx).thread_id;
-        self.retained_threads
-            .insert(thread_id, thread.conversation_view);
-        thread_id
-    }
-
     pub fn activate_retained_thread(
         &mut self,
         id: ThreadId,
@@ -1302,30 +1301,6 @@ impl AgentPanel {
             window,
             cx,
         );
-    }
-
-    pub fn remove_thread(&mut self, id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
-        self.retained_threads.remove(&id);
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.delete(id, cx);
-        });
-
-        if self
-            .draft_thread
-            .as_ref()
-            .is_some_and(|d| d.read(cx).thread_id == id)
-        {
-            self.draft_thread = None;
-            self._draft_editor_observation = None;
-        }
-
-        if self.active_thread_id(cx) == Some(id) {
-            self.clear_overlay_state();
-            self.activate_draft(false, window, cx);
-            self.serialize(cx);
-            cx.emit(AgentPanelEvent::ActiveViewChanged);
-            cx.notify();
-        }
     }
 
     pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
@@ -1358,28 +1333,6 @@ impl AgentPanel {
         }
     }
 
-    pub fn clear_editor(&self, id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
-        let cv = self
-            .retained_threads
-            .get(&id)
-            .or_else(|| match &self.base_view {
-                BaseView::AgentThread { conversation_view }
-                    if conversation_view.read(cx).thread_id == id =>
-                {
-                    Some(conversation_view)
-                }
-                _ => None,
-            });
-        let Some(cv) = cv else { return };
-        let Some(tv) = cv.read(cx).root_thread_view() else {
-            return;
-        };
-        let editor = tv.read(cx).message_editor.clone();
-        editor.update(cx, |editor, cx| {
-            editor.clear(window, cx);
-        });
-    }
-
     fn new_native_agent_thread_from_summary(
         &mut self,
         action: &NewNativeAgentThreadFromSummary,
@@ -1388,17 +1341,8 @@ impl AgentPanel {
     ) {
         let session_id = action.from_session_id.clone();
 
-        let Some(thread) = ThreadStore::global(cx)
-            .read(cx)
-            .entries()
-            .find(|t| t.id == session_id)
-        else {
+        let Some(content) = Self::initial_content_for_thread_summary(session_id.clone(), cx) else {
             log::error!("No session found for summarization with id {}", session_id);
-            return;
-        };
-
-        let Some(parent_session_id) = thread.parent_session_id else {
-            log::error!("Session {} has no parent session", session_id);
             return;
         };
 
@@ -1409,10 +1353,7 @@ impl AgentPanel {
                     None,
                     None,
                     None,
-                    Some(AgentInitialContent::ThreadSummary {
-                        session_id: parent_session_id,
-                        title: Some(thread.title),
-                    }),
+                    Some(content),
                     true,
                     "agent_panel",
                     window,
@@ -1422,6 +1363,21 @@ impl AgentPanel {
             })
         })
         .detach_and_log_err(cx);
+    }
+
+    fn initial_content_for_thread_summary(
+        session_id: acp::SessionId,
+        cx: &App,
+    ) -> Option<AgentInitialContent> {
+        let thread = ThreadStore::global(cx)
+            .read(cx)
+            .entries()
+            .find(|t| t.id == session_id)?;
+
+        Some(AgentInitialContent::ThreadSummary {
+            session_id: thread.id,
+            title: Some(thread.title),
+        })
     }
 
     fn external_thread(
@@ -1495,6 +1451,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.focus(&self.focus_handle, cx);
         self.agent_panel_menu_handle.toggle(window, cx);
     }
 
@@ -1981,26 +1938,6 @@ impl AgentPanel {
             }
         }
         false
-    }
-
-    /// active thread plus any background threads that are still running or
-    /// completed but unseen.
-    pub fn parent_threads(&self, cx: &App) -> Vec<Entity<ThreadView>> {
-        let mut views = Vec::new();
-
-        if let Some(server_view) = self.active_conversation_view() {
-            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
-                views.push(thread_view);
-            }
-        }
-
-        for server_view in self.retained_threads.values() {
-            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
-                views.push(thread_view);
-            }
-        }
-
-        views
     }
 
     fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
@@ -2618,7 +2555,7 @@ impl Panel for AgentPanel {
 impl AgentPanel {
     fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.base_view, BaseView::Uninitialized) {
-            self.activate_draft(false, window, cx);
+            self.activate_draft(false, "agent_panel", window, cx);
         }
     }
 
@@ -2753,7 +2690,7 @@ impl AgentPanel {
                     .map(|r| r.read(cx).title_editor.clone())
                 {
                     if is_generating_title {
-                        Label::new(DEFAULT_THREAD_TITLE)
+                        Label::new(server_view_ref.title(cx))
                             .color(Color::Muted)
                             .truncate()
                             .with_animation(
@@ -3213,7 +3150,6 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
-        let agent_v2_enabled = agent_v2_enabled(cx);
         let is_empty_state = !self.active_thread_has_messages(cx);
 
         let is_in_history_or_config = self.is_overlay_open();
@@ -3235,7 +3171,7 @@ impl AgentPanel {
                 }))
         };
 
-        let use_v2_empty_toolbar = agent_v2_enabled && is_empty_state && !is_in_history_or_config;
+        let use_v2_empty_toolbar = is_empty_state && !is_in_history_or_config;
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -3575,38 +3511,6 @@ impl AgentPanel {
         }
     }
 
-    fn render_workspace_trust_message(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        if !self.show_trust_workspace_message {
-            return None;
-        }
-
-        let description = "To protect your system, third-party code—like MCP servers—won't run until you mark this workspace as safe.";
-
-        Some(
-            Callout::new()
-                .icon(IconName::Warning)
-                .severity(Severity::Warning)
-                .border_position(ui::BorderPosition::Bottom)
-                .title("You're in Restricted Mode")
-                .description(description)
-                .actions_slot(
-                    Button::new("open-trust-modal", "Configure Project Trust")
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .on_click({
-                            cx.listener(move |this, _, window, cx| {
-                                this.workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace
-                                            .show_worktree_trust_security_modal(true, window, cx)
-                                    })
-                                    .log_err();
-                            })
-                        }),
-                ),
-        )
-    }
-
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
@@ -3656,7 +3560,6 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_workspace_trust_message(cx))
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
                 VisibleSurface::Uninitialized => parent,
@@ -4670,7 +4573,7 @@ mod tests {
         )]);
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent = Agent::Stub;
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
         cx.run_until_parked();
 
@@ -5043,6 +4946,89 @@ mod tests {
                 "reopening an already-visible session should keep the thread usable"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_initial_content_for_thread_summary_uses_own_session_id(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let source_session_id = acp::SessionId::new("source-thread-session");
+        let source_title: SharedString = "Source Thread Title".into();
+        let db_thread = agent::DbThread {
+            title: source_title.clone(),
+            messages: Vec::new(),
+            updated_at: Utc::now(),
+            detailed_summary: None,
+            initial_project_snapshot: None,
+            cumulative_token_usage: Default::default(),
+            request_token_usage: HashMap::default(),
+            model: None,
+            profile: None,
+            imported: false,
+            subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
+        };
+
+        let thread_store = cx.update(|cx| ThreadStore::global(cx));
+        thread_store
+            .update(cx, |store, cx| {
+                store.save_thread(
+                    source_session_id.clone(),
+                    db_thread,
+                    PathList::default(),
+                    cx,
+                )
+            })
+            .await
+            .expect("saving source thread should succeed");
+        cx.run_until_parked();
+
+        thread_store.read_with(cx, |store, _cx| {
+            let entry = store
+                .thread_from_session_id(&source_session_id)
+                .expect("saved thread should be listed in the store");
+            assert!(
+                entry.parent_session_id.is_none(),
+                "saved thread is a root thread with no parent session"
+            );
+        });
+
+        let content = cx
+            .update(|cx| {
+                AgentPanel::initial_content_for_thread_summary(source_session_id.clone(), cx)
+            })
+            .expect("initial content should be produced for a root thread");
+
+        match content {
+            AgentInitialContent::ThreadSummary { session_id, title } => {
+                assert_eq!(
+                    session_id, source_session_id,
+                    "thread-summary mention should use the source thread's own session id"
+                );
+                assert_eq!(title, Some(source_title.clone()));
+            }
+            _ => panic!("expected AgentInitialContent::ThreadSummary"),
+        }
+
+        // Unknown session ids should still produce no content.
+        let missing = cx.update(|cx| {
+            AgentPanel::initial_content_for_thread_summary(
+                acp::SessionId::new("does-not-exist"),
+                cx,
+            )
+        });
+        assert!(
+            missing.is_none(),
+            "unknown session ids should not produce initial content"
+        );
     }
 
     #[gpui::test]
@@ -5682,7 +5668,7 @@ mod tests {
 
         // Create a draft with the default NativeAgent.
         panel.update_in(cx, |panel, window, cx| {
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
 
         let first_draft_id = panel.read_with(cx, |panel, cx| {
@@ -5700,7 +5686,7 @@ mod tests {
         };
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent = custom_agent.clone();
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
 
         panel.read_with(cx, |panel, cx| {
@@ -5724,7 +5710,7 @@ mod tests {
         });
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
 
         panel.read_with(cx, |panel, _cx| {
@@ -5772,7 +5758,7 @@ mod tests {
         // Create a draft using the Stub agent, which connects synchronously.
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent = Agent::Stub;
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
         cx.run_until_parked();
 
@@ -7018,6 +7004,44 @@ mod tests {
             assert_eq!(
                 text, "Existing work in workspace B",
                 "destination panel's content should be preserved"
+            );
+        });
+    }
+
+    /// Regression test: NewThread must produce a connected thread even when
+    /// the PromptStore fails to initialize (e.g. LMDB permission error).
+    /// Before the fix, `NativeAgentServer::connect` propagated the
+    /// PromptStore error with `?`, which put every new ConversationView
+    /// into LoadError and made it impossible to start any native-agent
+    /// thread.
+    #[gpui::test]
+    async fn test_new_thread_with_prompt_store_error(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        // NativeAgentServer::connect needs a global Fs.
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|_, cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        // Dispatch NewThread, which goes through the real NativeAgentServer
+        // path. In tests the PromptStore LMDB open fails with
+        // "Permission denied"; the fix (.log_err() instead of ?) lets
+        // the connection succeed anyway.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_conversation_view().is_some(),
+                "panel should have a conversation view after NewThread"
+            );
+            assert!(
+                panel.active_agent_thread(cx).is_some(),
+                "panel should have an active, connected agent thread"
             );
         });
     }

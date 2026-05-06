@@ -1,5 +1,5 @@
 use crate::AcpThread;
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
@@ -48,6 +48,10 @@ pub trait AgentConnection {
     fn agent_id(&self) -> AgentId;
 
     fn telemetry_id(&self) -> SharedString;
+
+    fn agent_version(&self) -> Option<SharedString> {
+        None
+    }
 
     fn new_session(
         self: Rc<Self>,
@@ -318,7 +322,7 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+    fn watch(&self, _cx: &mut App) -> Option<async_channel::Receiver<SessionListUpdate>> {
         None
     }
 
@@ -954,7 +958,7 @@ mod test_support {
 
         fn truncate(
             &self,
-            _session_id: &agent_client_protocol::SessionId,
+            _session_id: &acp::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
