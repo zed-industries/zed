@@ -11048,16 +11048,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.32",
- "net",
- "smol",
-]
-
-[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22486,7 +22476,6 @@ dependencies = [
  "migrator",
  "mimalloc",
  "miniprofiler_ui",
- "nc",
  "node_runtime",
  "notifications",
  "onboarding",
