@@ -3961,17 +3961,19 @@ pub(crate) fn update_settings_file(
             return;
         };
 
-        settings_window.update(cx, |this, cx| match result {
-            Ok(()) => {
-                if this.settings_write_error.take().is_some() {
+        settings_window
+            .update(cx, |this, cx| match result {
+                Ok(()) => {
+                    if this.settings_write_error.take().is_some() {
+                        cx.notify();
+                    }
+                }
+                Err(err) => {
+                    this.settings_write_error = Some(format!("{err:#}"));
                     cx.notify();
                 }
-            }
-            Err(err) => {
-                this.settings_write_error = Some(format!("{err:#}"));
-                cx.notify();
-            }
-        });
+            })
+            .log_err();
     })
     .detach();
 }
@@ -4081,10 +4083,12 @@ impl ProjectSettingsUpdateQueue {
                 .await
                 .context("Failed to open settings file")?;
 
-            let _ = settings_window.update(cx, |this, _cx| {
-                this.project_setting_file_buffers
-                    .insert(project_path, buffer.clone());
-            });
+            settings_window
+                .update(cx, |this, _cx| {
+                    this.project_setting_file_buffers
+                        .insert(project_path, buffer.clone());
+                })
+                .log_err();
 
             buffer
         };
