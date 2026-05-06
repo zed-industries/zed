@@ -3,7 +3,8 @@ use collections::IndexMap;
 use strum::IntoEnumIterator;
 use theme_settings::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
-    ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
+    ThemeColorsContent, ThemeContent, ThemeFamilyContent, ThemeStyleContent,
+    WindowBackgroundContent,
 };
 
 use crate::ThemeMetadata;
@@ -45,15 +46,17 @@ impl VsCodeThemeConverter {
         }
     }
 
-    pub fn convert(self) -> Result<ThemeContent> {
+    pub fn convert(self) -> Result<ThemeFamilyContent> {
         let appearance = self.theme_metadata.appearance.into();
+        let name = self.theme_metadata.name.clone();
 
+        let author = self.convert_author();
         let status_colors = self.convert_status_colors()?;
         let theme_colors = self.convert_theme_colors()?;
         let syntax_theme = self.convert_syntax_theme()?;
 
-        Ok(ThemeContent {
-            name: self.theme_metadata.name,
+        let content = ThemeContent {
+            name: name.clone(),
             appearance,
             style: ThemeStyleContent {
                 window_background_appearance: Some(WindowBackgroundContent::Opaque),
@@ -63,7 +66,20 @@ impl VsCodeThemeConverter {
                 players: Vec::new(),
                 syntax: syntax_theme,
             },
+        };
+
+        Ok(ThemeFamilyContent {
+            name,
+            author,
+            themes: vec![content],
         })
+    }
+
+    fn convert_author(&self) -> String {
+        self.theme.author.as_ref().map_or_else(
+            || "Unknown".to_string(),
+            |author| format!("{author} (VSCode Imported)"),
+        )
     }
 
     fn convert_status_colors(&self) -> Result<StatusColorsContent> {
