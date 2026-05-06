@@ -56,7 +56,6 @@ pub struct WindowsWindowState {
     pub callbacks: Callbacks,
     pub input_handler: Cell<Option<PlatformInputHandler>>,
     pub ime_enabled: Cell<bool>,
-    pub is_composing: Cell<bool>,
     pub pending_surrogate: Cell<Option<u16>>,
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
     pub last_reported_capslock: Cell<Option<Capslock>>,
@@ -155,7 +154,6 @@ impl WindowsWindowState {
             callbacks,
             input_handler: Cell::new(input_handler),
             ime_enabled: Cell::new(true),
-            is_composing: Cell::new(false),
             pending_surrogate: Cell::new(pending_surrogate),
             last_reported_modifiers: Cell::new(last_reported_modifiers),
             last_reported_capslock: Cell::new(last_reported_capslock),
@@ -953,10 +951,6 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
-        if self.state.is_composing.get() {
-            return;
-        }
-
         let scale_factor = self.state.scale_factor.get();
         let caret_position = POINT {
             x: (bounds.origin.x.as_f32() * scale_factor) as i32,

@@ -103,7 +103,6 @@ impl WindowsWindowInner {
             WM_GPUI_KEYDOWN => self.handle_keydown_msg(wparam, lparam),
             WM_CHAR => self.handle_char_msg(wparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(handle),
-            WM_IME_ENDCOMPOSITION => self.handle_ime_end_composition(),
             WM_IME_COMPOSITION => self.handle_ime_composition(handle, lparam),
             WM_SETCURSOR => self.handle_set_cursor(handle, lparam),
             WM_SETTINGCHANGE => self.handle_system_settings_changed(handle, wparam, lparam),
@@ -592,15 +591,9 @@ impl WindowsWindowInner {
     }
 
     fn handle_ime_position(&self, handle: HWND) -> Option<isize> {
-        self.state.is_composing.set(true);
         if let Some(caret_position) = self.retrieve_caret_position() {
             self.update_ime_position(handle, caret_position);
         }
-        Some(0)
-    }
-
-    fn handle_ime_end_composition(&self) -> Option<isize> {
-        self.state.is_composing.set(false);
         Some(0)
     }
 
