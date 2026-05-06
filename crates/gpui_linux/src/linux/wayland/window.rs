@@ -942,12 +942,42 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
+            let marked_range = input_handler.marked_text_range();
             if let Some(selection) = input_handler.selected_text_range(true) {
-                bounds = input_handler.bounds_for_range(if selection.reversed {
-                    selection.range.start..selection.range.start
+                if let Some(marked_range) = marked_range {
+                    let (base_start, caret_offset) =
+                        if selection.range.is_empty() && selection.range.end == marked_range.end {
+                            (marked_range.start, selection.range.end)
+                        } else {
+                            (selection.range.start, selection.range.end)
+                        };
+
+                    let mut anchor_offset = base_start;
+                    if let Some(caret_bounds) =
+                        input_handler.bounds_for_range(caret_offset..caret_offset)
+                    {
+                        for offset in (base_start..caret_offset).rev() {
+                            if let Some(candidate_bounds) =
+                                input_handler.bounds_for_range(offset..offset)
+                            {
+                                if (candidate_bounds.origin.y - caret_bounds.origin.y).abs()
+                                    > px(0.1)
+                                {
+                                    anchor_offset = offset + 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    bounds = input_handler.bounds_for_range(anchor_offset..anchor_offset);
                 } else {
-                    selection.range.end..selection.range.end
-                });
+                    bounds = input_handler.bounds_for_range(if selection.reversed {
+                        selection.range.start..selection.range.start
+                    } else {
+                        selection.range.end..selection.range.end
+                    });
+                }
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
