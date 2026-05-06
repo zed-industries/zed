@@ -4498,8 +4498,7 @@ impl Repository {
                     .map_err(|err| err.to_string())
                 })
                 .shared();
-            let job_sender =
-                Repository::spawn_local_git_worker(cx.weak_entity(), state.clone(), cx);
+            let job_sender = Repository::spawn_local_git_worker(state.clone(), cx);
             let state = cx
                 .spawn(async move |_, _| {
                     let state = state.await?;
@@ -4557,8 +4556,7 @@ impl Repository {
                 project_id,
                 client: client.clone(),
             };
-            let job_sender =
-                Self::spawn_remote_git_worker(cx.weak_entity(), repository_state.clone(), cx);
+            let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
             let repository_state =
                 Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
             (job_sender, repository_state)
@@ -7789,13 +7787,12 @@ impl Repository {
     }
 
     fn spawn_local_git_worker(
-        this: WeakEntity<Repository>,
         state: Shared<Task<Result<LocalRepositoryState, String>>>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let state = state.await.map_err(|err| anyhow::anyhow!(err))?;
             if let Some(git_hosting_provider_registry) =
                 cx.update(|cx| GitHostingProviderRegistry::try_global(cx))
@@ -7844,13 +7841,12 @@ impl Repository {
     }
 
     fn spawn_remote_git_worker(
-        this: WeakEntity<Repository>,
         state: RemoteRepositoryState,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let state = RepositoryState::Remote(state);
             let mut jobs = VecDeque::new();
             loop {
