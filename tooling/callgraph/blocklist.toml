@@ -1,0 +1,195 @@
+# Blocklist of known-blocking functions.
+#
+# Each [[blocking]] entry defines a function path pattern that should not be
+# called from async contexts. Patterns use `::` separators.
+#
+# Each [[safe_wrapper]] entry defines a function whose closure argument is an
+# escape hatch — blocking calls inside it are intentional and not flagged.
+
+# --- Filesystem I/O ---
+
+[[blocking]]
+path = "std::fs::read"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::read_to_string"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::write"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::remove_file"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::remove_dir"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::remove_dir_all"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::create_dir"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::create_dir_all"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::metadata"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::symlink_metadata"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::rename"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::copy"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::hard_link"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::read_link"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::canonicalize"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::read_dir"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::fs::set_permissions"
+category = "filesystem"
+help = "use an async fs API or wrap in `smol::unblock`"
+
+# --- Thread blocking ---
+
+[[blocking]]
+path = "std::thread::sleep"
+category = "thread"
+help = "use `cx.background_executor().timer(duration).await`"
+
+[[blocking]]
+path = "std::thread::park"
+category = "thread"
+help = "use an async synchronization primitive"
+
+# --- Synchronization (std) ---
+
+[[blocking]]
+path = "std::sync::Mutex::lock"
+category = "sync-lock"
+help = "use `parking_lot::Mutex` (non-poisoning, shorter hold) or an async mutex"
+
+[[blocking]]
+path = "std::sync::RwLock::read"
+category = "sync-lock"
+help = "use an async RwLock"
+
+[[blocking]]
+path = "std::sync::RwLock::write"
+category = "sync-lock"
+help = "use an async RwLock"
+
+# --- Synchronization (parking_lot) — pedantic tier ---
+
+[[blocking]]
+path = "parking_lot::Mutex::lock"
+category = "sync-lock"
+tier = "pedantic"
+help = "consider an async mutex if held across await points"
+
+[[blocking]]
+path = "parking_lot::RwLock::read"
+category = "sync-lock"
+tier = "pedantic"
+help = "consider an async RwLock if held across await points"
+
+[[blocking]]
+path = "parking_lot::RwLock::write"
+category = "sync-lock"
+tier = "pedantic"
+help = "consider an async RwLock if held across await points"
+
+# --- Blocking network I/O ---
+
+[[blocking]]
+path = "std::net::TcpStream::connect"
+category = "network"
+help = "use `smol::net::TcpStream::connect` or an async HTTP client"
+
+[[blocking]]
+path = "std::net::TcpListener::bind"
+category = "network"
+help = "use an async networking library"
+
+[[blocking]]
+path = "std::net::UdpSocket::bind"
+category = "network"
+help = "use an async networking library"
+
+# --- Blocking process operations ---
+
+[[blocking]]
+path = "std::process::Command::output"
+category = "process"
+help = "use `smol::process::Command` or wrap in `smol::unblock`"
+
+[[blocking]]
+path = "std::process::Command::status"
+category = "process"
+help = "use `smol::process::Command` or wrap in `smol::unblock`"
+
+# --- Blocking on futures ---
+
+[[blocking]]
+path = "pollster::block_on"
+category = "blocking-future"
+help = "you are blocking on a future inside an async context — just await it"
+
+[[blocking]]
+path = "futures::executor::block_on"
+category = "blocking-future"
+help = "you are blocking on a future inside an async context — just await it"
+
+# --- Escape hatches ---
+# Closures passed to these functions are NOT flagged for blocking calls.
+
+[[safe_wrapper]]
+path = "smol::unblock"
+note = "wraps blocking work in a thread pool"
+
+[[safe_wrapper]]
+path = "std::thread::spawn"
+note = "runs on a separate OS thread"

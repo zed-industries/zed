@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Detect blocking calls inside async functions.
+#
+# Usage:
+#   script/check-async-blocking -p editor          # analyze one crate
+#   script/check-async-blocking -p editor -p project # analyze multiple crates
+#   script/check-async-blocking                     # analyze the whole workspace
+#   script/check-async-blocking --pedantic -p gpui  # include parking_lot::Mutex etc.
+#   script/check-async-blocking --output json -p fs # JSON output for CI
+
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Build the tool if not already built
+if [[ ! -f target/release/zed-callgraph ]] || \
+   [[ tooling/callgraph/src/main.rs -nt target/release/zed-callgraph ]] || \
+   [[ tooling/callgraph/src/analyzer.rs -nt target/release/zed-callgraph ]] || \
+   [[ tooling/callgraph/blocklist.toml -nt target/release/zed-callgraph ]]; then
+    echo "Building zed-callgraph..." >&2
+    cargo build -p callgraph --release --quiet
+fi
+
+exec target/release/zed-callgraph "$@"

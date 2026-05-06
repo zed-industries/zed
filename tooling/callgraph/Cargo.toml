@@ -1,0 +1,27 @@
+[package]
+name = "callgraph"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+license = "Apache-2.0"
+description = "Static analysis tool that detects blocking calls in async contexts"
+
+[[bin]]
+name = "zed-callgraph"
+path = "src/main.rs"
+
+[lib]
+path = "src/callgraph.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1"
+cargo_metadata = "0.19"
+codespan-reporting = "0.13"
+clap = { version = "4", features = ["derive"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+serde = { version = "1", features = ["derive"] }
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+toml = "0.8"

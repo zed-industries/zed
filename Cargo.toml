@@ -247,6 +247,7 @@ members = [
     # Tooling
     #
 
+    "tooling/callgraph",
     "tooling/compliance",
     "tooling/perf",
     "tooling/xtask",
@@ -283,6 +284,7 @@ bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
+callgraph = { path = "tooling/callgraph" }
 channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }

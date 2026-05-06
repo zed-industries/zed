@@ -2465,6 +2465,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "callgraph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata 0.19.2",
+ "clap",
+ "codespan-reporting",
+ "proc-macro2",
+ "serde",
+ "syn 2.0.117",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "calloop"
 version = "0.14.3"
 source = "git+https://github.com/zed-industries/calloop#eb6b4fd17b9af5ecc226546bdd04185391b3e265"

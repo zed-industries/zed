@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Run the callgraph analysis against every crate under crates/ and produce
+# a Markdown report. Crates with no findings are omitted.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+TOOL=./target/release/zed-callgraph
+REPORT=CallGraphReport.md
+TOTAL=0
+CRATE_COUNT=0
+
+{
+  echo "# Callgraph Analysis Report"
+  echo ""
+  echo "Blocking calls detected inside \`async fn\` bodies across all crates."
+  echo ""
+  echo "Generated: $(date -u '+%Y-%m-%d %H:%M UTC')"
+  echo ""
+  echo "---"
+  echo ""
+} > "$REPORT"
+
+NUM_CRATES=$(find crates -mindepth 1 -maxdepth 1 -type d | wc -l)
+I=0
+
+for crate_dir in crates/*/; do
+  crate_name=$(basename "$crate_dir")
+  I=$((I + 1))
+  # NO_COLOR prevents codespan-reporting from emitting ANSI escapes
+  human_output=$(NO_COLOR=1 $TOOL -p "$crate_name" 2>&1 || true)
+  # The tool prints "Found N blocking call(s)" to stderr on findings
+  count=$(echo "$human_output" | grep -oP 'Found \K[0-9]+' || echo 0)
+  if [ "$count" -gt 0 ] && [ "$count" != "0" ]; then
+    TOTAL=$((TOTAL + count))
+    CRATE_COUNT=$((CRATE_COUNT + 1))
+    printf "[%3d/%d] %-40s %d finding(s)\n" "$I" "$NUM_CRATES" "$crate_name" "$count" >&2
+    {
+      echo "## \`$crate_name\` — $count finding(s)"
+      echo ""
+      echo '```'
+      echo "$human_output" | grep -v '^Found '
+      echo '```'
+      echo ""
+    } >> "$REPORT"
+  else
+    printf "[%3d/%d] %-40s clean\n" "$I" "$NUM_CRATES" "$crate_name" >&2
+  fi
+done
+
+# Write summary at the top by prepending
+TMPFILE=$(mktemp)
+{
+  head -7 "$REPORT"
+  echo "**Summary**: $TOTAL finding(s) across $CRATE_COUNT crate(s)."
+  echo ""
+  tail -n +8 "$REPORT"
+} > "$TMPFILE"
+mv "$TMPFILE" "$REPORT"
+
+echo "Report written to $REPORT: $TOTAL finding(s) across $CRATE_COUNT crate(s)."
