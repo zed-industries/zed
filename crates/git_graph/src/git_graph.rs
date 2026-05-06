@@ -459,6 +459,47 @@ impl PushBranchDialogState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TagPushTarget {
+    tag_name: SharedString,
+    remote: Remote,
+}
+
+#[derive(Clone, Debug)]
+struct PushTagDialogState {
+    tag_name: SharedString,
+    available_remotes: Vec<SharedString>,
+    selected_remote: SharedString,
+}
+
+impl PushTagDialogState {
+    fn new(tag_name: SharedString, available_remotes: Vec<SharedString>) -> anyhow::Result<Self> {
+        let selected_remote = available_remotes
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))?;
+
+        Ok(Self {
+            tag_name,
+            available_remotes,
+            selected_remote,
+        })
+    }
+
+    fn select_remote(&mut self, remote_name: SharedString) {
+        self.selected_remote = remote_name;
+    }
+
+    fn push_target(&self) -> TagPushTarget {
+        TagPushTarget {
+            tag_name: self.tag_name.clone(),
+            remote: Remote {
+                name: self.selected_remote.clone(),
+            },
+        }
+    }
+}
+
 pub struct SplitState {
     left_ratio: f32,
     visible_left_ratio: f32,
@@ -2682,6 +2723,15 @@ impl GitGraph {
                     .action("Checkout Commit...", CheckoutCommit.boxed_clone())
                     .action("Cherry-Pick Commit...", CherryPickCommit.boxed_clone())
                     .action("Revert Commit...", RevertCommit.boxed_clone())
+                    .action("Drop Commit...", DropCommit.boxed_clone())
+                    .action(
+                        "Merge Commit into Current Branch...",
+                        MergeCommit.boxed_clone(),
+                    )
+                    .action(
+                        "Rebase Current Branch onto Commit...",
+                        RebaseOntoCommit.boxed_clone(),
+                    )
                     .action(
                         "Reset Current Branch to This Commit...",
                         ResetCommit.boxed_clone(),
@@ -3218,40 +3268,76 @@ impl GitGraph {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
-        let Some(remote_name) = repository
-            .read(cx)
-            .remote_upstream_url
-            .as_ref()
-            .map(|_| SharedString::from("upstream"))
-            .or_else(|| {
-                repository
-                    .read(cx)
-                    .remote_origin_url
-                    .as_ref()
-                    .map(|_| SharedString::from("origin"))
-            })
-        else {
-            let prompt = window.prompt(
-                PromptLevel::Warning,
-                "No remote configured for repository",
-                None,
-                &["Ok"],
-                cx,
-            );
-            cx.spawn(async move |_, _| {
-                prompt.await.ok();
-                anyhow::Ok(())
-            })
-            .detach();
+        let remotes_receiver =
+            repository.update(cx, |repository, _| repository.get_remotes(None, true));
+
+        self.context_menu = None;
+        self.commit_context_menu_state = None;
+
+        cx.spawn_in(window, async move |this, cx| {
+            let remotes = remotes_receiver
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+
+            if remotes.is_empty() {
+                this.update_in(cx, |_, window, cx| {
+                    let prompt = window.prompt(
+                        PromptLevel::Warning,
+                        "No remote configured for repository",
+                        None,
+                        &["Ok"],
+                        cx,
+                    );
+                    cx.spawn(async move |_, _| {
+                        prompt.await.ok();
+                        anyhow::Ok(())
+                    })
+                    .detach();
+                })?;
+                return Ok(());
+            }
+
+            let dialog_state = PushTagDialogState::new(
+                tag_name.into(),
+                remotes.into_iter().map(|remote| remote.name).collect(),
+            )?;
+
+            this.update_in(cx, |this, window, cx| {
+                let Some(workspace) = this.workspace.upgrade() else {
+                    return;
+                };
+                let graph = cx.weak_entity();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        PushTagModal::new(graph, dialog_state.clone(), window, cx)
+                    });
+                });
+            })?;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to push tag", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+    }
+
+    fn perform_push_tag(
+        &mut self,
+        target: TagPushTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
             return;
         };
-
+        let tag_name = target.tag_name.clone();
+        let remote_name = target.remote.name.clone();
         let askpass = self.askpass_delegate(format!("git push {}", remote_name), window, cx);
 
         let task = cx.spawn(async move |_, cx| {
             repository
                 .update(cx, |repository, cx| {
-                    repository.push_tag(tag_name.into(), remote_name, askpass, cx)
+                    repository.push_tag(tag_name, remote_name, askpass, cx)
                 })
                 .await
                 .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
@@ -5249,6 +5335,134 @@ impl Render for PushBranchModal {
     }
 }
 
+struct PushTagModal {
+    graph: WeakEntity<GitGraph>,
+    state: PushTagDialogState,
+    focus_handle: FocusHandle,
+}
+
+impl PushTagModal {
+    fn new(
+        graph: WeakEntity<GitGraph>,
+        state: PushTagDialogState,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            graph,
+            state,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.state.push_target();
+        if let Some(graph) = self.graph.upgrade() {
+            graph.update(cx, |graph, cx| {
+                graph.perform_push_tag(target, window, cx);
+            });
+        }
+
+        cx.emit(DismissEvent);
+    }
+
+    fn render_remote_dropdown(&self, window: &mut Window, cx: &mut Context<Self>) -> DropdownMenu {
+        let weak = cx.weak_entity();
+        let remotes = self.state.available_remotes.clone();
+        let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+            for remote_name in remotes.clone() {
+                let weak = weak.clone();
+                menu = menu.entry(remote_name.clone(), None, move |_window, cx| {
+                    if let Some(entity) = weak.upgrade() {
+                        entity.update(cx, |this, cx| {
+                            this.state.select_remote(remote_name.clone());
+                            cx.notify();
+                        });
+                    }
+                });
+            }
+            menu
+        });
+
+        DropdownMenu::new(
+            "push-tag-remote-dropdown",
+            self.state.selected_remote.clone(),
+            menu,
+        )
+        .style(DropdownStyle::Outlined)
+        .full_width(true)
+    }
+}
+
+impl EventEmitter<DismissEvent> for PushTagModal {}
+impl ModalView for PushTagModal {}
+impl Focusable for PushTagModal {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for PushTagModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("PushTagModal")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(ui::rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitCommit).size(IconSize::XSmall))
+                    .child(Label::new(format!("Push Tag ({})", self.state.tag_name))),
+            )
+            .child(
+                v_flex()
+                    .px_3()
+                    .pb_3()
+                    .w_full()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Push to Remote:").size(LabelSize::Small))
+                            .child(self.render_remote_dropdown(window, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("push-tag-cancel", "Cancel")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(
+                                        |this: &mut PushTagModal, _, window, cx| {
+                                            this.cancel(&Cancel, window, cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Button::new("push-tag-confirm", "Push")
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener(
+                                        |this: &mut PushTagModal, _, window, cx| {
+                                            this.confirm(&Confirm, window, cx);
+                                        },
+                                    )),
+                            ),
+                    ),
+            )
+    }
+}
+
 struct DeleteBranchModal {
     graph: WeakEntity<GitGraph>,
     branch_name: SharedString,
@@ -6728,6 +6942,29 @@ mod tests {
                 push_mode: PushMode::ForceWithLease,
             })
         );
+    }
+
+    #[test]
+    fn push_tag_dialog_uses_selected_remote() {
+        let mut state =
+            PushTagDialogState::new("v1.0.0".into(), vec!["origin".into(), "upstream".into()])
+                .expect("remote should be available");
+
+        assert_eq!(state.selected_remote.as_ref(), "origin");
+
+        state.select_remote("upstream".into());
+
+        let target = state.push_target();
+        assert_eq!(target.tag_name.as_ref(), "v1.0.0");
+        assert_eq!(target.remote.name.as_ref(), "upstream");
+    }
+
+    #[test]
+    fn push_tag_dialog_requires_a_remote() {
+        let error = PushTagDialogState::new("v1.0.0".into(), Vec::new())
+            .expect_err("remote should be required");
+
+        assert_eq!(error.to_string(), "No remote configured for repository");
     }
 
     /// Generates a random commit DAG suitable for testing git graph rendering.
