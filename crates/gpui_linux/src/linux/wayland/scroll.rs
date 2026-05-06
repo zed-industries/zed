@@ -252,3 +252,163 @@ fn is_kinetic_scroll_stopped(velocity: Point<Pixels>) -> bool {
     f32::from(velocity.x).abs() < KINETIC_SCROLL_STOP_VELOCITY
         && f32::from(velocity.y).abs() < KINETIC_SCROLL_STOP_VELOCITY
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_kinetic_scroll_stopped() {
+        assert!(is_kinetic_scroll_stopped(point(px(0.0), px(0.0))));
+        assert!(is_kinetic_scroll_stopped(point(px(4.9), px(4.9))));
+        assert!(is_kinetic_scroll_stopped(point(px(-4.9), px(4.9))));
+        assert!(!is_kinetic_scroll_stopped(point(px(5.0), px(0.0))));
+        assert!(!is_kinetic_scroll_stopped(point(px(0.0), px(5.0))));
+        assert!(!is_kinetic_scroll_stopped(point(px(100.0), px(100.0))));
+    }
+
+    #[test]
+    fn test_history_velocity_empty() {
+        let history = KineticScrollHistory::new();
+        let velocity = history.velocity(Instant::now());
+        assert_eq!(f32::from(velocity.x), 0.0);
+        assert_eq!(f32::from(velocity.y), 0.0);
+    }
+
+    #[test]
+    fn test_history_velocity_single_entry() {
+        let mut history = KineticScrollHistory::new();
+        let now = Instant::now();
+        history.push(now - Duration::from_millis(100), point(px(100.0), px(200.0)));
+        let velocity = history.velocity(now);
+        assert!((f32::from(velocity.x) - 1000.0).abs() < 1.0);
+        assert!((f32::from(velocity.y) - 2000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_history_velocity_multiple_entries() {
+        let mut history = KineticScrollHistory::new();
+        let now = Instant::now();
+        history.push(now - Duration::from_millis(100), point(px(50.0), px(0.0)));
+        history.push(now - Duration::from_millis(50), point(px(50.0), px(100.0)));
+        let velocity = history.velocity(now);
+        assert!((f32::from(velocity.x) - 1000.0).abs() < 1.0);
+        assert!((f32::from(velocity.y) - 1000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_history_velocity_zero_duration() {
+        let mut history = KineticScrollHistory::new();
+        let now = Instant::now();
+        history.push(now, point(px(100.0), px(200.0)));
+        let velocity = history.velocity(now);
+        assert_eq!(f32::from(velocity.x), 0.0);
+        assert_eq!(f32::from(velocity.y), 0.0);
+    }
+
+    #[test]
+    fn test_history_velocity_clamped() {
+        let mut history = KineticScrollHistory::new();
+        let now = Instant::now();
+        history.push(
+            now - Duration::from_millis(1),
+            point(px(60000.0), px(-60000.0)),
+        );
+        let velocity = history.velocity(now);
+        assert_eq!(f32::from(velocity.x), KINETIC_SCROLL_MAX_VELOCITY);
+        assert_eq!(f32::from(velocity.y), -KINETIC_SCROLL_MAX_VELOCITY);
+    }
+
+    #[test]
+    fn test_history_prunes_old_entries() {
+        let mut history = KineticScrollHistory::new();
+        let now = Instant::now();
+        history.push(now - Duration::from_millis(300), point(px(9999.0), px(9999.0)));
+        history.push(now - Duration::from_millis(100), point(px(100.0), px(100.0)));
+        let velocity = history.velocity(now);
+        assert!((f32::from(velocity.x) - 1000.0).abs() < 1.0);
+        assert!((f32::from(velocity.y) - 1000.0).abs() < 1.0);
+        assert_eq!(history.entries.len(), 1);
+    }
+
+    #[test]
+    fn test_history_clear() {
+        let mut history = KineticScrollHistory::new();
+        let now = Instant::now();
+        history.push(now, point(px(100.0), px(100.0)));
+        assert_eq!(history.entries.len(), 1);
+        history.clear();
+        assert_eq!(history.entries.len(), 0);
+    }
+
+    #[test]
+    fn test_touch_phase_sequence() {
+        let mut scroller = KineticScroller::new();
+        assert!(matches!(scroller.touch_phase(), TouchPhase::Moved));
+
+        scroller.start_finger_scroll();
+        assert!(matches!(scroller.touch_phase(), TouchPhase::Started));
+        assert!(matches!(scroller.touch_phase(), TouchPhase::Moved));
+        assert!(matches!(scroller.touch_phase(), TouchPhase::Moved));
+    }
+
+    #[test]
+    fn test_start_finger_scroll_id_increments() {
+        let mut scroller = KineticScroller::new();
+        let id_before = scroller.id;
+        scroller.start_finger_scroll();
+        assert_eq!(scroller.id, id_before + 1);
+    }
+
+    #[test]
+    fn test_start_finger_scroll_resets_stop_pending() {
+        let mut scroller = KineticScroller::new();
+        scroller.start_finger_scroll();
+        assert!(scroller.stop_finger_scroll());
+        assert!(scroller.has_pending_stop());
+        scroller.start_finger_scroll();
+        assert!(!scroller.has_pending_stop());
+    }
+
+    #[test]
+    fn test_start_finger_scroll_does_not_reset_active() {
+        let mut scroller = KineticScroller::new();
+        scroller.start_finger_scroll();
+        assert!(scroller.finger_active);
+        assert!(scroller.finger_start_pending);
+
+        scroller.touch_phase();
+        assert!(!scroller.finger_start_pending);
+
+        scroller.start_finger_scroll();
+        assert!(scroller.finger_active);
+        assert!(!scroller.finger_start_pending);
+    }
+
+    #[test]
+    fn test_stop_finger_scroll_when_inactive() {
+        let mut scroller = KineticScroller::new();
+        assert!(!scroller.stop_finger_scroll());
+        assert!(!scroller.has_pending_stop());
+    }
+
+    #[test]
+    fn test_stop_finger_scroll_when_active() {
+        let mut scroller = KineticScroller::new();
+        scroller.start_finger_scroll();
+        assert!(scroller.stop_finger_scroll());
+        assert!(scroller.has_pending_stop());
+    }
+
+    #[test]
+    fn test_record_delta_and_has_pending_stop() {
+        let mut scroller = KineticScroller::new();
+        scroller.start_finger_scroll();
+        scroller.record_delta(Instant::now(), point(px(10.0), px(20.0)));
+        assert_eq!(scroller.history.entries.len(), 1);
+        assert!(!scroller.has_pending_stop());
+
+        scroller.stop_finger_scroll();
+        assert!(scroller.has_pending_stop());
+    }
+}
