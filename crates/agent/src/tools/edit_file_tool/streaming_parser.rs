@@ -33,6 +33,7 @@ struct EditStreamState {
     old_text_done: bool,
     new_text_emitted_len: usize,
     new_text_done: bool,
+    hold_until_complete: bool,
 }
 
 /// Converts incrementally-growing tool call JSON into a stream of chunk events.
@@ -65,16 +66,36 @@ impl StreamingParser {
     pub fn push_edits(&mut self, edits: &[PartialEdit]) -> SmallVec<[EditEvent; 4]> {
         let mut events = SmallVec::new();
 
+        let mut skip_events = false;
         for (index, partial) in edits.iter().enumerate() {
             if index >= self.edit_states.len() {
                 // A new edit appeared — finalize the previous one if there was one.
-                if let Some(previous) = self.finalize_previous_edit(index) {
+                if !skip_events && let Some(previous) = self.finalize_previous_edit(index) {
                     events.extend(previous);
                 }
                 self.edit_states.push(EditStreamState::default());
             }
 
+            if skip_events {
+                continue;
+            }
+
             let state = &mut self.edit_states[index];
+
+            // Detect if model streams in new_text before old_text is done.
+            // If so, we do not emit any events until old_text is done.
+            if state.old_text_emitted_len == 0
+                && state.new_text_emitted_len == 0
+                && !state.old_text_done
+                && partial.new_text.is_some()
+            {
+                state.hold_until_complete = true;
+            }
+
+            if state.hold_until_complete {
+                skip_events = true;
+                continue;
+            }
 
             // Process old_text changes.
             if let Some(old_text) = &partial.old_text
@@ -165,6 +186,25 @@ impl StreamingParser {
             }
 
             let state = &mut self.edit_states[index];
+
+            if state.hold_until_complete {
+                state.old_text_done = true;
+                state.old_text_emitted_len = edit.old_text.len();
+                state.new_text_done = true;
+                state.new_text_emitted_len = edit.new_text.len();
+                state.hold_until_complete = false;
+                events.push(EditEvent::OldTextChunk {
+                    edit_index: index,
+                    chunk: normalize_done_chunk(edit.old_text.clone()),
+                    done: true,
+                });
+                events.push(EditEvent::NewTextChunk {
+                    edit_index: index,
+                    chunk: normalize_done_chunk(edit.new_text.clone()),
+                    done: true,
+                });
+                continue;
+            }
 
             if !state.old_text_done {
                 let start = state.old_text_emitted_len.min(edit.old_text.len());
@@ -281,6 +321,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_first_edit_with_new_text_in_first_chunk_is_held_until_finalize() {
+        let mut parser = StreamingParser::default();
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("old".into()),
+            new_text: Some("new".into()),
+        }]);
+        assert!(events.is_empty());
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("old text".into()),
+            new_text: Some("new text".into()),
+        }]);
+        assert!(events.is_empty());
+
+        let events = parser.finalize_edits(&[Edit {
+            old_text: "old text".into(),
+            new_text: "new text".into(),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[
+                EditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "old text".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "new text".into(),
+                    done: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn test_single_edit_streamed_incrementally() {
         let mut parser = StreamingParser::default();
 
@@ -394,6 +471,12 @@ mod tests {
             old_text: Some("before\n".into()),
             new_text: Some("after\n".into()),
         }]);
+        assert!(events.is_empty());
+
+        let events = parser.finalize_edits(&[Edit {
+            old_text: "before\n".into(),
+            new_text: "after\n".into(),
+        }]);
         assert_eq!(
             events.as_slice(),
             &[
@@ -405,22 +488,9 @@ mod tests {
                 EditEvent::NewTextChunk {
                     edit_index: 0,
                     chunk: "after".into(),
-                    done: false,
+                    done: true,
                 },
             ]
-        );
-
-        let events = parser.finalize_edits(&[Edit {
-            old_text: "before\n".into(),
-            new_text: "after\n".into(),
-        }]);
-        assert_eq!(
-            events.as_slice(),
-            &[EditEvent::NewTextChunk {
-                edit_index: 0,
-                chunk: "".into(),
-                done: true,
-            }]
         );
     }
 
@@ -934,22 +1004,7 @@ mod tests {
             },
         ]);
 
-        // Should finalize edit 1 (index=1) and start edit 2 (index=2)
-        assert_eq!(
-            events.as_slice(),
-            &[
-                EditEvent::NewTextChunk {
-                    edit_index: 1,
-                    chunk: "".into(),
-                    done: true,
-                },
-                EditEvent::OldTextChunk {
-                    edit_index: 2,
-                    chunk: "c".into(),
-                    done: false,
-                },
-            ]
-        );
+        assert!(events.is_empty());
 
         // Finalize
         let events = parser.finalize_edits(&[
@@ -970,8 +1025,28 @@ mod tests {
             events.as_slice(),
             &[
                 EditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "a".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "A".into(),
+                    done: true,
+                },
+                EditEvent::OldTextChunk {
+                    edit_index: 1,
+                    chunk: "b".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 1,
+                    chunk: "B".into(),
+                    done: true,
+                },
+                EditEvent::OldTextChunk {
                     edit_index: 2,
-                    chunk: "".into(),
+                    chunk: "c".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
@@ -1029,11 +1104,18 @@ mod tests {
         }]);
         assert_eq!(
             events.as_slice(),
-            &[EditEvent::NewTextChunk {
-                edit_index: 0,
-                chunk: " new text".into(),
-                done: true,
-            }]
+            &[
+                EditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "old".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "partial new text".into(),
+                    done: true,
+                },
+            ]
         );
     }
 
@@ -1045,7 +1127,7 @@ mod tests {
             old_text: Some("stable".into()),
             new_text: Some("also stable".into()),
         }]);
-        assert_eq!(events.len(), 2); // old done + new chunk
+        assert!(events.is_empty());
 
         // Push the exact same data again
         let events = parser.push_edits(&[PartialEdit {
