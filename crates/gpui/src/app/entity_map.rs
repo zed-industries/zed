@@ -1113,7 +1113,7 @@ impl Drop for LeakDetector {
                 }
             }
         }
-        // panic!("Exited with leaked handles:\n{out}");
+        panic!("Exited with leaked handles:\n{out}");
     }
 }
 
