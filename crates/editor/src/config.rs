@@ -2,10 +2,13 @@ use super::*;
 
 impl Editor {
     pub fn style(&mut self, cx: &App) -> &EditorStyle {
-        if self.style.is_none() {
-            self.style = Some(self.create_style(cx));
+        match self.style {
+            Some(ref style) => style,
+            None => {
+                let style = self.create_style(cx);
+                self.style.insert(style)
+            }
         }
-        self.style.as_ref().unwrap()
     }
 
     pub fn set_soft_wrap_mode(
@@ -165,10 +168,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_delegate_open_excerpts(&mut self, delegate: bool) {
-        self.delegate_open_excerpts = delegate;
-    }
-
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
         self.show_git_diff_gutter = Some(show_git_diff_gutter);
         cx.notify();
@@ -326,6 +325,10 @@ impl Editor {
     pub(super) fn set_number_deleted_lines(&mut self, number: bool, cx: &mut Context<Self>) {
         self.number_deleted_lines = number;
         cx.notify();
+    }
+
+    pub fn set_delegate_open_excerpts(&mut self, delegate: bool) {
+        self.delegate_open_excerpts = delegate;
     }
 
     pub(super) fn set_delegate_expand_excerpts(&mut self, delegate: bool) {

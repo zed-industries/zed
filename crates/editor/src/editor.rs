@@ -5167,7 +5167,7 @@ impl Editor {
                         .line_len(MultiBufferRow(latest.start.row))
                         == latest.start.column
                 {
-                    this.rewrap_impl(
+                    this.rewrap(
                         RewrapOptions {
                             override_language_settings: true,
                             preserve_existing_whitespace: true,

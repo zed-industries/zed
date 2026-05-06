@@ -1,20 +1,8 @@
 use super::*;
 
 impl Editor {
-    pub(super) fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only(cx) {
-            return;
-        }
-        if self.mode.is_single_line() {
-            cx.propagate();
-            return;
-        }
-
-        self.rewrap_impl(RewrapOptions::default(), cx)
-    }
-
-    pub fn rewrap_impl(&mut self, options: RewrapOptions, cx: &mut Context<Self>) {
-        if self.read_only(cx) {
+    pub fn rewrap(&mut self, options: RewrapOptions, cx: &mut Context<Self>) {
+        if self.read_only(cx) || self.mode.is_single_line() {
             return;
         }
         let buffer = self.buffer.read(cx).snapshot(cx);
