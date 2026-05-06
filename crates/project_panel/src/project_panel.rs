@@ -66,7 +66,9 @@ use ui::{
     StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
-    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    ResultExt, TakeUntilExt, TryFutureExt,
+    markdown::MarkdownInlineCode,
+    maybe,
     paths::{PathStyle, compare_paths},
     rel_path::{RelPath, RelPathBuf},
 };
@@ -2357,7 +2359,10 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{message_start} {path}?{unsaved_warning}")
+                        format!(
+                            "{message_start} {}?{unsaved_warning}",
+                            MarkdownInlineCode(path)
+                        )
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2365,7 +2370,7 @@ impl ProjectPanel {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
                             let mut paths = file_paths
                                 .iter()
-                                .map(|(_, _, path)| path.clone())
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
                                 .take(CUTOFF_POINT)
                                 .collect::<Vec<_>>();
                             paths.truncate(CUTOFF_POINT);
@@ -2376,7 +2381,10 @@ impl ProjectPanel {
                             }
                             paths
                         } else {
-                            file_paths.iter().map(|(_, _, path)| path.clone()).collect()
+                            file_paths
+                                .iter()
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
+                                .collect()
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
