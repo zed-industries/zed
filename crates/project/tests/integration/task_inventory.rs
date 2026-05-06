@@ -571,7 +571,7 @@ async fn test_templates_with_tag_filters_file_based_tasks(cx: &mut TestAppContex
         {
             "label": "global git task",
             "command": "git",
-            "tags": ["custom-git-command"],
+            "tags": [GIT_COMMAND_TASK_TAG],
         },
         {
             "label": "global untagged task",
@@ -580,7 +580,7 @@ async fn test_templates_with_tag_filters_file_based_tasks(cx: &mut TestAppContex
         {
             "label": "global similarly tagged task",
             "command": "git",
-            "tags": ["custom-git-commands"],
+            "tags": ["git-commands"],
         },
     ]))
     .unwrap();
@@ -588,7 +588,7 @@ async fn test_templates_with_tag_filters_file_based_tasks(cx: &mut TestAppContex
         {
             "label": "worktree git task",
             "command": "git",
-            "tags": ["custom-git-command"],
+            "tags": [GIT_COMMAND_TASK_TAG],
         },
         {
             "label": "worktree other task",
@@ -601,7 +601,7 @@ async fn test_templates_with_tag_filters_file_based_tasks(cx: &mut TestAppContex
         {
             "label": "other worktree git task",
             "command": "git",
-            "tags": ["custom-git-command"],
+            "tags": [GIT_COMMAND_TASK_TAG],
         },
     ]))
     .unwrap();
@@ -636,7 +636,7 @@ async fn test_templates_with_tag_filters_file_based_tasks(cx: &mut TestAppContex
     let mut labels = |worktree| {
         inventory.update(cx, |inventory, _| {
             inventory
-                .templates_with_tag("custom-git-command", worktree)
+                .templates_with_tag(GIT_COMMAND_TASK_TAG, worktree)
                 .into_iter()
                 .map(|(_, template)| template.label)
                 .collect::<Vec<_>>()

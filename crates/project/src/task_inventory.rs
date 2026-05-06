@@ -30,6 +30,8 @@ use worktree::WorktreeId;
 
 use crate::{git_store::GitStore, task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
+pub const GIT_COMMAND_TASK_TAG: &str = "git-command";
+
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
     pub task_context: SharedTaskContext,
@@ -656,6 +658,24 @@ impl Inventory {
             .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
             .chain(self.global_templates_from_settings())
             .filter(|(_, template)| template.tags.iter().any(|template_tag| template_tag == tag))
+            .collect()
+    }
+
+    /// Returns tasks with the provided tag resolved against the provided task context.
+    pub fn resolved_tasks_with_tag(
+        &self,
+        tag: &str,
+        worktree: Option<WorktreeId>,
+        task_context: &TaskContext,
+    ) -> Vec<(TaskSourceKind, ResolvedTask)> {
+        self.templates_with_tag(tag, worktree)
+            .into_iter()
+            .filter_map(|(task_source_kind, task_template)| {
+                let id_base = task_source_kind.to_id_base();
+                task_template
+                    .resolve_task(&id_base, task_context)
+                    .map(|resolved_task| (task_source_kind, resolved_task))
+            })
             .collect()
     }
 
