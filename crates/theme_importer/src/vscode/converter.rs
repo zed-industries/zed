@@ -317,7 +317,6 @@ mod tests {
     fn convert_author_boilerplate(author: Option<String>) -> ThemeFamilyContent {
         let vscode_theme = VsCodeTheme {
             author,
-            name: Some("foo".to_string()),
             ..Default::default()
         };
 
