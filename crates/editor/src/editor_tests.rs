@@ -18,8 +18,8 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Task, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
+    VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
@@ -41,7 +41,7 @@ use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffse
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project,
+    FakeFs, Project, ProjectPath,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
@@ -6865,6 +6865,40 @@ async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_convert_to_base64(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Encode a plain text selection
+    cx.set_state(indoc! {"
+        «helloˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_base64(&ConvertToBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+
+    // Decode a valid base64 selection
+    cx.set_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ»
+    "});
+
+    // Decode invalid base64 — should leave text unchanged
+    cx.set_state(indoc! {"
+        «not!!!ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «not!!!ˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8139,7 +8173,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8544,7 +8578,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8570,7 +8604,7 @@ async fn test_rewrap_line_comment_in_go(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -8598,7 +8632,7 @@ async fn test_rewrap_line_comment_in_c(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -27992,6 +28026,109 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     assert_eq!(0, breakpoints.len());
     assert_breakpoint(&breakpoints, &abs_path, vec![]);
+}
+
+#[gpui::test]
+async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let first_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (first_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(first_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    first_editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let replacement_buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("Alpha\nBeta\nGamma", None, true, cx)
+    });
+    project
+        .update(cx, |project, cx| {
+            project.save_buffer_as(
+                replacement_buffer.clone(),
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("main.rs").into(),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    let (replacement_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(replacement_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    replacement_editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let project_path = first_editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(Arc::from)
+            .unwrap()
+    });
+
+    let breakpoints = first_editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .source_breakpoints_from_path(&abs_path, cx)
+    });
+
+    assert_eq!(
+        vec![0, 1],
+        breakpoints
+            .into_iter()
+            .map(|breakpoint| breakpoint.row)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[gpui::test]

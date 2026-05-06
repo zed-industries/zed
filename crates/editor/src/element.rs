@@ -1,11 +1,11 @@
 use crate::{
-    ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
-    ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
-    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
-    CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
+    CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
+    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
+    GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
     MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
     PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
     SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
@@ -46,9 +46,9 @@ use gpui::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
     MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement, WeakEntity, Window,
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    Style, Styled, StyledText, TaskExt, TextAlign, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -555,6 +555,8 @@ impl EditorElement {
             register_action(editor, window, Editor::toggle_case);
             register_action(editor, window, Editor::convert_to_rot13);
             register_action(editor, window, Editor::convert_to_rot47);
+            register_action(editor, window, Editor::convert_to_base64);
+            register_action(editor, window, Editor::convert_from_base64);
             register_action(editor, window, Editor::delete_to_previous_word_start);
             register_action(editor, window, Editor::delete_to_previous_subword_start);
             register_action(editor, window, Editor::delete_to_next_word_end);
@@ -568,7 +570,9 @@ impl EditorElement {
             register_action(editor, window, Editor::move_line_up);
             register_action(editor, window, Editor::move_line_down);
             register_action(editor, window, Editor::transpose);
-            register_action(editor, window, Editor::rewrap);
+            register_action(editor, window, |editor, _: &crate::Rewrap, _, cx| {
+                editor.rewrap(crate::RewrapOptions::default(), cx);
+            });
             register_action(editor, window, Editor::cut);
             register_action(editor, window, Editor::kill_ring_cut);
             register_action(editor, window, Editor::kill_ring_yank);
@@ -1262,7 +1266,6 @@ impl EditorElement {
         let text_hovered = text_hitbox.is_hovered(window);
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.show_mouse_cursor(cx);
 
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.nearest_valid;
@@ -2497,12 +2500,7 @@ impl EditorElement {
             None => return HashMap::default(),
         };
 
-        let active_diagnostics_group =
-            if let ActiveDiagnostic::Group(group) = &self.editor.read(cx).active_diagnostics {
-                Some(group.group_id)
-            } else {
-                None
-            };
+        let active_diagnostics_group = self.editor.read(cx).active_diagnostic_group_id();
 
         let diagnostics_by_rows = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
@@ -6607,9 +6605,7 @@ impl EditorElement {
             }),
             |window| {
                 let editor = self.editor.read(cx);
-                if editor.mouse_cursor_hidden {
-                    window.set_window_cursor_style(CursorStyle::None);
-                } else if let SelectionDragState::ReadyToDrag {
+                if let SelectionDragState::ReadyToDrag {
                     mouse_down_time, ..
                 } = &editor.selection_drag_state
                 {
