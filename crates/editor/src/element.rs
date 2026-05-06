@@ -9929,7 +9929,6 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_default();
 
-                    #[derive(Clone, Copy)]
                     struct DiffHunkHighlightColors {
                         filled_background: Hsla,
                         hollow_background: Hsla,

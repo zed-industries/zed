@@ -299,7 +299,7 @@ pub fn refine_theme(theme: &ThemeContent) -> Theme {
     let mut theme_colors_refinement = theme_colors_refinement(
         &theme.style.colors,
         &status_colors_refinement,
-        matches!(theme.appearance, AppearanceContent::Light),
+        theme.appearance == AppearanceContent::Light,
     );
     theme::apply_theme_color_defaults(&mut theme_colors_refinement, &refined_player_colors);
     refined_theme_colors.refine(&theme_colors_refinement);
