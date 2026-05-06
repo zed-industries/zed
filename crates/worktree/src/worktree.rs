@@ -414,9 +414,13 @@ impl Worktree {
             None
         };
 
-        let root_repo_common_dir = discover_root_repo_common_dir(&abs_path, fs.as_ref())
-            .await
-            .map(SanitizedPath::from_arc);
+        let root_repo_common_dir = if visible {
+            discover_root_repo_common_dir(&abs_path, fs.as_ref())
+                .await
+                .map(SanitizedPath::from_arc)
+        } else {
+            None
+        };
 
         Ok(cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -1147,6 +1151,7 @@ impl LocalWorktree {
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
         let scanning_enabled = self.scanning_enabled;
+        let track_git_repositories = self.visible;
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_spawn({
@@ -1185,6 +1190,7 @@ impl LocalWorktree {
                     share_private_files,
                     settings,
                     watcher,
+                    track_git_repositories,
                     is_single_file,
                 };
 
@@ -3936,6 +3942,7 @@ struct BackgroundScanner {
     watcher: Arc<dyn Watcher>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    track_git_repositories: bool,
     /// Whether this is a single-file worktree (root is a file, not a directory).
     /// Used to determine if we should give up after repeated canonicalization failures.
     is_single_file: bool,
@@ -3961,7 +3968,7 @@ impl BackgroundScanner {
         // If the worktree root does not contain a git repository, then find
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
-        let repo = if scanning_enabled {
+        let repo = if scanning_enabled && self.track_git_repositories {
             let (ignores, exclude, repo) =
                 discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
             let mut state = self.state.lock().await;
@@ -3989,6 +3996,7 @@ impl BackgroundScanner {
 
         let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo
             && scanning_enabled
+            && self.track_git_repositories
         {
             maybe!(async {
                 self.state
@@ -4015,6 +4023,7 @@ impl BackgroundScanner {
         let mut global_gitignore_events = if let Some(global_gitignore_path) =
             &global_gitignore_file
             && scanning_enabled
+            && self.track_git_repositories
         {
             let is_file = self.fs.is_file(&global_gitignore_path).await;
             self.state.lock().await.snapshot.global_gitignore = if is_file {
@@ -4352,14 +4361,16 @@ impl BackgroundScanner {
 
                 let mut dot_git_paths = None;
 
-                for ancestor in abs_path.as_path().ancestors() {
-                    if is_dot_git(ancestor, self.fs.as_ref()).await {
-                        let path_in_git_dir = abs_path
-                            .as_path()
-                            .strip_prefix(ancestor)
-                            .expect("stripping off the ancestor");
-                        dot_git_paths = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
-                        break;
+                if self.track_git_repositories {
+                    for ancestor in abs_path.as_path().ancestors() {
+                        if is_dot_git(ancestor, self.fs.as_ref()).await {
+                            let path_in_git_dir = abs_path
+                                .as_path()
+                                .strip_prefix(ancestor)
+                                .expect("stripping off the ancestor");
+                            dot_git_paths = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
+                            break;
+                        }
                     }
                 }
 
@@ -4384,9 +4395,10 @@ impl BackgroundScanner {
                     }
                 }
 
-                if abs_path
-                    .as_path()
-                    .ends_with(Path::new(DOT_GIT).join(REPO_EXCLUDE))
+                if self.track_git_repositories
+                    && abs_path
+                        .as_path()
+                        .ends_with(Path::new(DOT_GIT).join(REPO_EXCLUDE))
                 {
                     if let Some(repository) = snapshot.git_repositories.values().find(|repo| {
                         repo.common_dir_abs_path.join(REPO_EXCLUDE) == abs_path.as_path()
@@ -4437,7 +4449,9 @@ impl BackgroundScanner {
                     continue;
                 };
 
-                if abs_path.file_name() == Some(OsStr::new(GITIGNORE)) {
+                if self.track_git_repositories
+                    && abs_path.file_name() == Some(OsStr::new(GITIGNORE))
+                {
                     for (_, repo) in snapshot
                         .git_repositories
                         .iter()
@@ -4774,29 +4788,33 @@ impl BackgroundScanner {
                 continue;
             };
 
-            if child_name == DOT_GIT {
-                let mut state = self.state.lock().await;
-                state
-                    .insert_git_repository(
-                        child_path.clone(),
-                        self.fs.as_ref(),
-                        self.watcher.as_ref(),
-                    )
-                    .await;
-            } else if child_name == GITIGNORE {
-                match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
-                    Ok(ignore) => {
-                        let ignore = Arc::new(ignore);
-                        ignore_stack = ignore_stack
-                            .append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
-                        new_ignore = Some(ignore);
-                    }
-                    Err(error) => {
-                        log::error!(
-                            "error loading .gitignore file {:?} - {:?}",
-                            child_name,
-                            error
-                        );
+            if self.track_git_repositories {
+                if child_name == DOT_GIT {
+                    let mut state = self.state.lock().await;
+                    state
+                        .insert_git_repository(
+                            child_path.clone(),
+                            self.fs.as_ref(),
+                            self.watcher.as_ref(),
+                        )
+                        .await;
+                } else if child_name == GITIGNORE {
+                    match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
+                        Ok(ignore) => {
+                            let ignore = Arc::new(ignore);
+                            ignore_stack = ignore_stack.append(
+                                IgnoreKind::Gitignore(job.abs_path.clone()),
+                                ignore.clone(),
+                            );
+                            new_ignore = Some(ignore);
+                        }
+                        Err(error) => {
+                            log::error!(
+                                "error loading .gitignore file {:?} - {:?}",
+                                child_name,
+                                error
+                            );
+                        }
                     }
                 }
             }
@@ -5004,11 +5022,12 @@ impl BackgroundScanner {
         )
         .await;
 
-        let mut new_ancestor_repo = if relative_paths.iter().any(|path| path.is_empty()) {
-            Some(discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await)
-        } else {
-            None
-        };
+        let mut new_ancestor_repo =
+            if self.track_git_repositories && relative_paths.iter().any(|path| path.is_empty()) {
+                Some(discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await)
+            } else {
+                None
+            };
 
         let mut state = self.state.lock().await;
         let doing_recursive_update = scan_queue_tx.is_some();
@@ -5054,7 +5073,8 @@ impl BackgroundScanner {
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
-                            || (fs_entry.path.is_empty()
+                            || (self.track_git_repositories
+                                && fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
                             state
