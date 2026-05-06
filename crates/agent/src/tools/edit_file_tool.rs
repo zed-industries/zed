@@ -1,7 +1,3 @@
-pub(super) mod reindent;
-pub(super) mod streaming_fuzzy_matcher;
-pub(super) mod streaming_parser;
-
 use super::deserialize_maybe_stringified;
 pub(crate) use super::edit_session::PartialEdit;
 pub use super::edit_session::{Edit, EditSessionOutput as EditFileToolOutput};
@@ -283,16 +279,19 @@ mod tests {
     use crate::{
         ContextServerRegistry, Templates, ToolInputSender, WriteFileTool, WriteFileToolInput,
     };
+    use acp_thread::Diff;
     use fs::Fs as _;
     use futures::StreamExt as _;
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{AppContext as _, TestAppContext, UpdateGlobal};
+    use language::language_settings::FormatOnSave;
     use language_model::fake_provider::FakeLanguageModel;
+    use project::ProjectPath;
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::Settings;
     use settings::SettingsStore;
     use util::path;
-    use util::rel_path::rel_path;
+    use util::rel_path::{RelPath, rel_path};
 
     #[gpui::test]
     async fn test_streaming_edit_create_file(cx: &mut TestAppContext) {

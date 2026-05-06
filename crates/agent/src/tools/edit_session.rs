@@ -1,11 +1,10 @@
-use super::edit_file_tool::{
-    reindent::{Reindenter, compute_indent_delta},
-    streaming_fuzzy_matcher::StreamingFuzzyMatcher,
-    streaming_parser::{EditEvent, StreamingParser, WriteEvent},
-};
+mod reindent;
+mod streaming_fuzzy_matcher;
+mod streaming_parser;
+
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
-use crate::{Thread, ToolCallEventStream, thread::AgentTool};
+use crate::{AgentTool, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
 use agent_client_protocol::schema::{ToolCallLocation, ToolCallUpdateFields};
@@ -17,12 +16,15 @@ use language::{Buffer, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
+use reindent::{Reindenter, compute_indent_delta};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use streaming_diff::{CharOperation, StreamingDiff};
+use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
+use streaming_parser::{EditEvent, StreamingParser, WriteEvent};
 use text::ToOffset;
 use ui::SharedString;
 use util::rel_path::RelPath;
