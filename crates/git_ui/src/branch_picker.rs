@@ -271,7 +271,7 @@ impl BranchList {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
-                .delete_at(picker.delegate.selected_index, window, cx, false)
+                .delete_at(picker.delegate.selected_index, false, window, cx)
         })
     }
 
@@ -284,7 +284,7 @@ impl BranchList {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
-                .delete_at(picker.delegate.selected_index, window, cx, true)
+                .delete_at(picker.delegate.selected_index, true, window, cx)
         })
     }
 
@@ -607,9 +607,9 @@ impl BranchListDelegate {
     fn delete_at(
         &self,
         idx: usize,
+        force: bool,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
-        force: bool,
     ) {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
@@ -1150,9 +1150,9 @@ impl PickerDelegate for BranchListDelegate {
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.delegate.delete_at(
                                 entry_ix,
+                                this.delegate.modifiers.alt,
                                 window,
                                 cx,
-                                this.delegate.modifiers.alt,
                             );
                         })),
                 )
@@ -1759,7 +1759,7 @@ mod tests {
             branch_list.picker.update(cx, |picker, cx| {
                 assert_eq!(picker.delegate.matches.len(), 4);
                 let branch_to_delete = picker.delegate.matches.get(1).unwrap().name().to_string();
-                picker.delegate.delete_at(1, window, cx, false);
+                picker.delegate.delete_at(1, false, window, cx);
                 branch_to_delete
             })
         });
@@ -1845,7 +1845,7 @@ mod tests {
                     .iter()
                     .position(|entry| entry.name() == branch_to_delete)
                     .unwrap();
-                picker.delegate.delete_at(branch_index, window, cx, false);
+                picker.delegate.delete_at(branch_index, false, window, cx);
             })
         });
         cx.run_until_parked();
@@ -1923,7 +1923,7 @@ mod tests {
                     .iter()
                     .position(|entry| entry.name() == branch_to_delete)
                     .unwrap();
-                picker.delegate.delete_at(branch_index, window, cx, false);
+                picker.delegate.delete_at(branch_index, false, window, cx);
             })
         });
         cx.run_until_parked();
@@ -2008,7 +2008,7 @@ mod tests {
                     .iter()
                     .position(|entry| entry.name() == branch_to_delete)
                     .unwrap();
-                picker.delegate.delete_at(branch_index, window, cx, true);
+                picker.delegate.delete_at(branch_index, true, window, cx);
             })
         });
         cx.run_until_parked();
@@ -2077,7 +2077,7 @@ mod tests {
             branch_list.picker.update(cx, |picker, cx| {
                 assert_eq!(picker.delegate.matches.len(), 4);
                 let branch_to_delete = picker.delegate.matches.get(1).unwrap().name().to_string();
-                picker.delegate.delete_at(1, window, cx, false);
+                picker.delegate.delete_at(1, false, window, cx);
                 branch_to_delete
             })
         });
