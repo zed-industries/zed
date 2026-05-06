@@ -27,6 +27,7 @@ pub struct HistoryManager {
 pub struct HistoryManagerEntry {
     pub id: WorkspaceId,
     pub path: SmallVec<[PathBuf; 2]>,
+    pub is_pinned: bool,
 }
 
 struct GlobalHistoryManager(Entity<HistoryManager>);
@@ -49,12 +50,9 @@ impl HistoryManager {
                 .unwrap_or_default()
                 .into_iter()
                 .rev()
-                .filter_map(|workspace| {
-                    if matches!(workspace.location, SerializedWorkspaceLocation::Local) {
-                        Some(HistoryManagerEntry::new(
-                            workspace.workspace_id,
-                            &workspace.paths,
-                        ))
+                .filter_map(|(id, location, paths, _timestamp, is_pinned)| {
+                    if matches!(location, SerializedWorkspaceLocation::Local) {
+                        Some(HistoryManagerEntry::new(id, &paths, is_pinned))
                     } else {
                         None
                     }
@@ -80,10 +78,11 @@ impl HistoryManager {
     pub fn update_history(
         &mut self,
         id: WorkspaceId,
-        entry: HistoryManagerEntry,
+        mut entry: HistoryManagerEntry,
         cx: &mut Context<'_, HistoryManager>,
     ) {
         if let Some(pos) = self.history.iter().position(|e| e.id == id) {
+            entry.is_pinned = self.history[pos].is_pinned;
             self.history.remove(pos);
         }
         self.history.push(entry);
@@ -134,11 +133,15 @@ impl HistoryManager {
 }
 
 impl HistoryManagerEntry {
-    pub fn new(id: WorkspaceId, paths: &PathList) -> Self {
+    pub fn new(id: WorkspaceId, paths: &PathList, is_pinned: bool) -> Self {
         let path = paths
             .ordered_paths()
             .map(|path| path.compact())
             .collect::<SmallVec<[PathBuf; 2]>>();
-        Self { id, path }
+        Self {
+            id,
+            path,
+            is_pinned,
+        }
     }
 }

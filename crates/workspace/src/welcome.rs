@@ -1,10 +1,11 @@
 use crate::{
-    NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
-    ToggleWorkspaceSidebar, Workspace,
+    NewFile, Open, OpenMode, PathList, SerializedWorkspaceLocation, ToggleWorkspaceSidebar,
+    Workspace, WorkspaceId,
     item::{Item, ItemEvent},
     persistence::WorkspaceDb,
 };
 use agent_settings::AgentSettings;
+use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -241,7 +242,15 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
-    recent_workspaces: Option<Vec<RecentWorkspace>>,
+    recent_workspaces: Option<
+        Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+            bool,
+        )>,
+    >,
 }
 
 impl WelcomePage {
@@ -302,11 +311,14 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some(workspace) = recent_workspaces.get(action.index) {
-                let is_local = matches!(workspace.location, SerializedWorkspaceLocation::Local);
+            if let Some((_workspace_id, location, paths, _timestamp, _pinned)) =
+                recent_workspaces.get(action.index)
+            {
+                let is_local = matches!(location, SerializedWorkspaceLocation::Local);
 
                 if is_local {
-                    let paths = workspace.paths.paths().to_vec();
+                    let paths = paths.clone();
+                    let paths = paths.paths().to_vec();
                     self.workspace
                         .update(cx, |workspace, cx| {
                             workspace
@@ -422,13 +434,8 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, workspace)| {
-                self.render_recent_project(
-                    index,
-                    first_section_entries + index,
-                    &workspace.location,
-                    &workspace.identity_paths,
-                )
+            .map(|(index, (_, loc, paths, _, _))| {
+                self.render_recent_project(index, first_section_entries + index, loc, paths)
             })
             .collect::<Vec<_>>();
 

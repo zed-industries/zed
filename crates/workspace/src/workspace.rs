@@ -84,15 +84,15 @@ pub use pane_group::{
     ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
     SplitDirection,
 };
+use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
-    RecentWorkspace, WorkspaceDb, delete_unloaded_items,
+    WorkspaceDb, delete_unloaded_items,
     model::{
         DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
     },
-    read_serialized_multi_workspaces,
+    read_serialized_multi_workspaces, resolve_worktree_workspaces,
 };
-use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
@@ -6857,13 +6857,11 @@ impl Workspace {
                 let center_group = build_serialized_pane_group(&self.center.root, window, cx);
                 let docks = build_serialized_docks(self, window, cx);
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
-                let identity_paths_hint = self.project_group_key(cx).path_list().clone();
 
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
                     location,
                     paths,
-                    identity_paths: Some(identity_paths_hint),
                     center_group,
                     window_bounds,
                     display: Default::default(),
@@ -6944,7 +6942,7 @@ impl Workspace {
         if let Some(manager) = HistoryManager::global(cx) {
             let paths = PathList::new(&self.root_paths(cx));
             manager.update(cx, |this, cx| {
-                this.update_history(id, HistoryManagerEntry::new(id, &paths), cx);
+                this.update_history(id, HistoryManagerEntry::new(id, &paths, false), cx);
             });
         }
     }
@@ -8949,7 +8947,7 @@ pub async fn last_opened_workspace_location(
         .await
         .log_err()
         .flatten()
-        .map(|workspace| (workspace.workspace_id, workspace.location, workspace.paths))
+        .map(|(id, location, paths, _timestamp, _pinned)| (id, location, paths))
 }
 
 pub async fn last_session_workspace_locations(
@@ -9070,7 +9068,7 @@ pub async fn apply_restored_multiworkspace_state(
                     && let Some(common_dir) =
                         project::discover_root_repo_common_dir(path, fs.as_ref()).await
                 {
-                    let main_path = project::repo_identity_path(&common_dir);
+                    let main_path = common_dir.parent().unwrap_or(&common_dir);
                     resolved_paths.push(main_path.to_path_buf());
                 } else {
                     resolved_paths.push(path.to_path_buf());
