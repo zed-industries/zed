@@ -1,13 +1,13 @@
 use askpass::EncryptedPassword;
-use collections::{BTreeMap, HashMap, IndexSet};
+use collections::{BTreeMap, HashMap, HashSet, IndexSet};
 use editor::Editor;
 use futures::channel::oneshot;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
     repository::{
-        AskPassDelegate, Branch, CommitDiff, CommitFile, DropCommitSupport, InitialGraphCommitData,
-        LogOrder, LogSource, PushMode, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs,
+        AskPassDelegate, Branch, CommitDiff, CommitFile, InitialGraphCommitData, LogOrder,
+        LogSource, PushMode, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs,
         UpstreamTracking,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
@@ -325,7 +325,6 @@ impl RefNameKind {
 #[derive(Clone)]
 struct CommitContextMenuState {
     row_index: usize,
-    drop_support: DropCommitSupport,
 }
 
 #[derive(Clone, Copy)]
@@ -733,6 +732,7 @@ struct CommitEntry {
 
 type ActiveLaneIdx = usize;
 
+#[derive(Debug, PartialEq, Eq)]
 enum AllCommitCount {
     NotLoaded,
     Loaded(usize),
@@ -870,10 +870,19 @@ impl GraphData {
     }
 
     fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
+        let existing_commits = self
+            .commits
+            .iter()
+            .map(|commit| commit.data.sha)
+            .collect::<HashSet<_>>();
         self.commits.reserve(commits.len());
         self.lines.reserve(commits.len() / 2);
 
         for commit in commits.iter() {
+            if existing_commits.contains(&commit.sha) {
+                continue;
+            }
+
             let commit_row = self.commits.len();
 
             let commit_lane = self
@@ -977,7 +986,9 @@ impl GraphData {
                 color_idx: commit_color.0 as usize,
             }));
         }
+    }
 
+    fn mark_fully_loaded(&mut self) {
         self.max_commit_count = AllCommitCount::Loaded(self.commits.len());
     }
 }
@@ -1504,6 +1515,7 @@ impl GitGraph {
             {
                 match event {
                     GitGraphEvent::FullyLoaded => {
+                        self.graph_data.mark_fully_loaded();
                         if let Some(pending_sha_index) =
                             self.pending_select_sha.take().and_then(|oid| {
                                 repository
@@ -1514,6 +1526,7 @@ impl GitGraph {
                         {
                             self.select_entry(pending_sha_index, ScrollStrategy::Nearest, cx);
                         }
+                        cx.notify();
                     }
                     GitGraphEvent::LoadingError => {
                         // todo(git_graph): Wire this up with the UI
@@ -2403,20 +2416,33 @@ impl GitGraph {
         let Some(context_state) = self.commit_context_menu_state.as_ref() else {
             return;
         };
-        if context_state.row_index != commit.index || !context_state.drop_support.can_drop {
+        if context_state.row_index != commit.index {
             return;
         }
 
-        let confirm = self.prompt_confirmation(
-            PromptLevel::Warning,
-            format!("Drop commit {}?", commit.sha),
-            Some("This rewrites history on the current branch.".into()),
-            "Drop Commit",
-            window,
-            cx,
-        );
+        let support_receiver = repository.update(cx, |repository, _| {
+            repository.drop_commit_support(commit.sha.to_string())
+        });
 
         cx.spawn_in(window, async move |this, cx| {
+            let drop_support = support_receiver
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+            if !drop_support.can_drop {
+                return Ok(());
+            }
+
+            let confirm = this.update_in(cx, |this, window, cx| {
+                this.prompt_confirmation(
+                    PromptLevel::Warning,
+                    format!("Drop commit {}?", commit.sha),
+                    Some("This rewrites history on the current branch.".into()),
+                    "Drop Commit",
+                    window,
+                    cx,
+                )
+            })?;
+
             if !confirm.await? {
                 return Ok(());
             }
@@ -2605,37 +2631,12 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(commit) = self.graph_data.commits.get(entry_idx) else {
-            return;
-        };
-        let Some(repository) = self.get_repository(cx) else {
-            return;
-        };
-
-        let sha = commit.data.sha.to_string();
-        let receiver = repository.update(cx, |repository, _| repository.drop_commit_support(sha));
-
-        cx.spawn_in(window, async move |this, cx| {
-            let drop_support = receiver
-                .await
-                .map_err(|_| anyhow::anyhow!("Operation was canceled"))
-                .and_then(|result| result)
-                .unwrap_or_else(|error| DropCommitSupport {
-                    can_drop: false,
-                    reason: Some(SharedString::from(error.to_string())),
-                });
-
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.commit_context_menu_state = Some(CommitContextMenuState {
-                    row_index: entry_idx,
-                    drop_support,
-                });
-                if let Some(context_menu) = this.build_commit_context_menu(entry_idx, window, cx) {
-                    this.set_context_menu(context_menu, position, entry_idx, window, cx);
-                }
-            });
-        })
-        .detach();
+        self.commit_context_menu_state = Some(CommitContextMenuState {
+            row_index: entry_idx,
+        });
+        if let Some(context_menu) = self.build_commit_context_menu(entry_idx, window, cx) {
+            self.set_context_menu(context_menu, position, entry_idx, window, cx);
+        }
     }
 
     fn build_commit_context_menu(
@@ -2759,8 +2760,6 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_entry(row_index, ScrollStrategy::Nearest, cx);
-
         match &ref_kind {
             RefNameKind::Branch(_) => {
                 self.deploy_branch_context_menu(position, row_index, ref_kind, window, cx);
@@ -2786,35 +2785,25 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(repository) = self.get_repository(cx) else {
-            return;
-        };
-        let branch_task = self.resolve_branch(ref_kind, repository, cx);
-
-        cx.spawn_in(window, async move |this, cx| {
-            let branch = branch_task.await?;
-            this.update_in(cx, |this, window, cx| {
-                if let Some(context_menu) = this.build_branch_context_menu(branch, window, cx) {
-                    this.set_context_menu(context_menu, position, row_index, window, cx);
-                }
-            })?;
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to open branch menu", window, cx, |error, _, _| {
-            Some(error.to_string())
-        });
+        if let Some(context_menu) = self.build_branch_context_menu(ref_kind, window, cx) {
+            self.set_context_menu(context_menu, position, row_index, window, cx);
+        }
     }
 
     fn build_branch_context_menu(
         &self,
-        branch: Branch,
+        ref_kind: RefNameKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<ContextMenu>> {
-        let branch_name: SharedString = branch.name().to_string().into();
+        let branch_name = ref_kind
+            .branch_lookup_name()
+            .unwrap_or_else(|| ref_kind.display_name());
+        let branch = self.resolve_branch_from_snapshot(&ref_kind, cx);
         let focus_handle = self.focus_handle.clone();
         let weak = cx.weak_entity();
-        let is_remote = branch.is_remote();
+        let is_remote = branch.as_ref().is_some_and(Branch::is_remote);
+        let is_cached_branch = branch.is_some();
 
         Some(ContextMenu::build(window, cx, {
             let branch_name_for_checkout = branch_name.clone();
@@ -2838,7 +2827,7 @@ impl GitGraph {
                             }
                         });
 
-                let context_menu = if is_remote {
+                let context_menu = if is_remote || !is_cached_branch {
                     context_menu
                 } else {
                     context_menu.entry("Rename Branch...", None, {
@@ -2854,32 +2843,36 @@ impl GitGraph {
                     })
                 };
 
-                let context_menu = context_menu.entry(
-                    if is_remote {
-                        "Delete Remote-Tracking Branch..."
-                    } else {
-                        "Delete Branch..."
-                    },
-                    None,
-                    {
-                        let branch_name = branch_name_for_delete.clone();
-                        let weak = weak.clone();
-                        move |window, cx| {
-                            if let Some(entity) = weak.upgrade() {
-                                entity.update(cx, |this, cx| {
-                                    this.delete_branch(
-                                        branch_name.to_string(),
-                                        is_remote,
-                                        window,
-                                        cx,
-                                    );
-                                });
+                let context_menu = if is_cached_branch {
+                    context_menu.entry(
+                        if is_remote {
+                            "Delete Remote-Tracking Branch..."
+                        } else {
+                            "Delete Branch..."
+                        },
+                        None,
+                        {
+                            let branch_name = branch_name_for_delete.clone();
+                            let weak = weak.clone();
+                            move |window, cx| {
+                                if let Some(entity) = weak.upgrade() {
+                                    entity.update(cx, |this, cx| {
+                                        this.delete_branch(
+                                            branch_name.to_string(),
+                                            is_remote,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
                             }
-                        }
-                    },
-                );
+                        },
+                    )
+                } else {
+                    context_menu
+                };
 
-                let context_menu = if is_remote {
+                let context_menu = if is_remote || !is_cached_branch {
                     context_menu
                 } else {
                     context_menu.entry("Push Branch...", None, {
@@ -3095,25 +3088,18 @@ impl GitGraph {
         })
     }
 
-    fn resolve_branch(
-        &self,
-        ref_kind: RefNameKind,
-        repository: Entity<Repository>,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Branch>> {
+    fn resolve_branch_from_snapshot(&self, ref_kind: &RefNameKind, cx: &App) -> Option<Branch> {
         let branch_name = ref_kind
             .branch_lookup_name()
             .unwrap_or_else(|| ref_kind.display_name());
-        let receiver = repository.update(cx, |repository, _| repository.branches());
-
-        cx.spawn(async move |_, _| {
-            let branches = receiver
-                .await
-                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
-            branches
-                .into_iter()
+        self.get_repository(cx).and_then(|repository| {
+            repository
+                .read(cx)
+                .snapshot()
+                .branch_list
+                .iter()
                 .find(|branch| branch.name() == branch_name.as_ref())
-                .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found", branch_name))
+                .cloned()
         })
     }
 
@@ -5610,11 +5596,17 @@ impl Render for GitGraph {
             self.search(query, cx);
         }
         let (commit_count, is_loading) = match self.graph_data.max_commit_count {
-            AllCommitCount::Loaded(count) => (count, true),
+            AllCommitCount::Loaded(count) => (count, false),
             AllCommitCount::NotLoaded => {
                 let (commit_count, is_loading) = if let Some(repository) = self.get_repository(cx) {
                     repository.update(cx, |repository, cx| {
                         // Start loading the graph data if we haven't started already
+                        let loaded_count = self.graph_data.commits.len();
+                        let range = if loaded_count == 0 {
+                            0..usize::MAX
+                        } else {
+                            loaded_count..loaded_count
+                        };
                         let GraphDataResponse {
                             commits,
                             is_loading,
@@ -5622,11 +5614,11 @@ impl Render for GitGraph {
                         } = repository.graph_data(
                             self.log_source.clone(),
                             self.log_order,
-                            0..usize::MAX,
+                            range,
                             cx,
                         );
-                        self.graph_data.add_commits(&commits);
-                        (commits.len(), is_loading)
+                        self.graph_data.add_commits(commits);
+                        (self.graph_data.commits.len(), is_loading)
                     })
                 } else {
                     (0, false)
@@ -6438,6 +6430,136 @@ mod tests {
             git_ui::init(cx);
             project_panel::init(cx);
             init(cx);
+        });
+    }
+
+    #[test]
+    fn graph_data_marks_fully_loaded_only_after_final_event() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let commits = generate_random_commit_dag(&mut rng, 1, false);
+        let mut graph = GraphData::new(1);
+
+        graph.add_commits(&commits);
+        assert_eq!(graph.max_commit_count, AllCommitCount::NotLoaded);
+
+        graph.mark_fully_loaded();
+        assert_eq!(graph.max_commit_count, AllCommitCount::Loaded(1));
+    }
+
+    #[gpui::test]
+    async fn test_commit_context_menu_deploys_synchronously(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.insert_branches(Path::new("/project/.git"), &["main"]);
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 3, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.deploy_entry_context_menu(point(px(10.), px(10.)), 0, window, cx);
+            assert!(graph.context_menu.is_some());
+            assert!(graph._commit_diff_task.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ref_context_menu_uses_cached_branch_without_selecting_row(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.insert_branches(Path::new("/project/.git"), &["main", "origin/main"]);
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 3, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            let main = RefNameKind::Branch("main".into());
+            let main_branch = graph
+                .resolve_branch_from_snapshot(&main, cx)
+                .expect("main branch should resolve from cached snapshot");
+            assert!(!main_branch.is_remote());
+
+            let remote = RefNameKind::Branch("origin/main".into());
+            let remote_branch = graph
+                .resolve_branch_from_snapshot(&remote, cx)
+                .expect("remote branch should resolve from cached snapshot");
+            assert!(remote_branch.is_remote());
+
+            graph.deploy_ref_context_menu(point(px(10.), px(10.)), 0, main, window, cx);
+            assert!(graph.context_menu.is_some());
+            assert_eq!(graph.selected_entry_idx, None);
+            assert!(graph._commit_diff_task.is_none());
         });
     }
 
