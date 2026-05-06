@@ -64,6 +64,7 @@ menu.workspace = true
 multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
+picker.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
 proptest = { workspace = true, optional = true }

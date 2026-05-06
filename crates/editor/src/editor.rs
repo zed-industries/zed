@@ -33,6 +33,7 @@ pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
 mod lsp_ext;
+mod lsp_navigation_picker;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
@@ -115,7 +116,7 @@ use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionDiscardReason,
     EditPredictionGranularity, SuggestionDisplayType,
 };
-use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
+use editor_settings::{GoToDefinitionFallback, LspNavigationView, Minimap as MinimapSettings};
 use element::{LineWithInvisibles, PositionMap, layout_line};
 use futures::{
     FutureExt,
@@ -18058,12 +18059,17 @@ impl Editor {
 
     pub fn go_to_definition(
         &mut self,
-        _: &GoToDefinition,
+        action: &GoToDefinition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        let definition =
-            self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx);
+        let definition = self.go_to_definition_of_kind(
+            GotoDefinitionKind::Symbol,
+            false,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        );
         let fallback_strategy = EditorSettings::get_global(cx).go_to_definition_fallback;
         cx.spawn_in(window, async move |editor, cx| {
             if definition.await? == Navigated::Yes {
@@ -18085,71 +18091,114 @@ impl Editor {
 
     pub fn go_to_declaration(
         &mut self,
-        _: &GoToDeclaration,
+        action: &GoToDeclaration,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Declaration, false, window, cx)
+        self.go_to_definition_of_kind(
+            GotoDefinitionKind::Declaration,
+            false,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        )
     }
 
     pub fn go_to_declaration_split(
         &mut self,
-        _: &GoToDeclaration,
+        action: &GoToDeclarationSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Declaration, true, window, cx)
+        self.go_to_definition_of_kind(
+            GotoDefinitionKind::Declaration,
+            true,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        )
     }
 
     pub fn go_to_implementation(
         &mut self,
-        _: &GoToImplementation,
+        action: &GoToImplementation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, false, window, cx)
+        self.go_to_definition_of_kind(
+            GotoDefinitionKind::Implementation,
+            false,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        )
     }
 
     pub fn go_to_implementation_split(
         &mut self,
-        _: &GoToImplementationSplit,
+        action: &GoToImplementationSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Implementation, true, window, cx)
+        self.go_to_definition_of_kind(
+            GotoDefinitionKind::Implementation,
+            true,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        )
     }
 
     pub fn go_to_type_definition(
         &mut self,
-        _: &GoToTypeDefinition,
+        action: &GoToTypeDefinition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Type, false, window, cx)
+        self.go_to_definition_of_kind(
+            GotoDefinitionKind::Type,
+            false,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        )
     }
 
     pub fn go_to_definition_split(
         &mut self,
-        _: &GoToDefinitionSplit,
+        action: &GoToDefinitionSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, true, window, cx)
+        self.go_to_definition_of_kind(
+            GotoDefinitionKind::Symbol,
+            true,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        )
     }
 
     pub fn go_to_type_definition_split(
         &mut self,
-        _: &GoToTypeDefinitionSplit,
+        action: &GoToTypeDefinitionSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
-        self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, window, cx)
+        self.go_to_definition_of_kind(
+            GotoDefinitionKind::Type,
+            true,
+            action.always_open_multibuffer,
+            window,
+            cx,
+        )
     }
 
     fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
         split: bool,
+        force_multibuffer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
@@ -18187,6 +18236,7 @@ impl Editor {
                             .collect::<Vec<_>>(),
                         nav_entry,
                         split,
+                        force_multibuffer,
                         window,
                         cx,
                     )
@@ -18282,6 +18332,7 @@ impl Editor {
         definitions: Vec<HoverLink>,
         origin: Option<NavigationEntry>,
         split: bool,
+        force_multibuffer: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Navigated>> {
@@ -18387,6 +18438,20 @@ impl Editor {
 
                 let opened = workspace
                     .update_in(cx, |workspace, window, cx| {
+                        let nav_view = EditorSettings::get_global(cx).lsp_navigation_view;
+                        if !force_multibuffer && nav_view == LspNavigationView::Picker {
+                            let header_title: SharedString =
+                                format!("{title} ({num_locations} results)").into();
+                            lsp_navigation_picker::open(
+                                workspace,
+                                locations,
+                                header_title,
+                                split,
+                                window,
+                                cx,
+                            );
+                            return;
+                        }
                         let allow_preview = PreviewTabsSettings::get_global(cx)
                             .enable_preview_multibuffer_from_code_navigation;
                         if let Some((target_editor, target_pane)) =
@@ -19006,7 +19071,7 @@ impl Editor {
                             });
                         });
                     }
-                    Navigated::No
+                    Navigated::Yes
                 });
             }
 
@@ -19029,18 +19094,32 @@ impl Editor {
                 } else {
                     format!("References to {target}")
                 };
-                let allow_preview = PreviewTabsSettings::get_global(cx)
-                    .enable_preview_multibuffer_from_code_navigation;
-                Self::open_locations_in_multibuffer(
-                    workspace,
-                    locations,
-                    title,
-                    false,
-                    allow_preview,
-                    MultibufferSelectionMode::First,
-                    window,
-                    cx,
-                );
+                let nav_view = EditorSettings::get_global(cx).lsp_navigation_view;
+                if !always_open_multibuffer && nav_view == LspNavigationView::Picker {
+                    let header_title: SharedString =
+                        format!("{title} ({num_locations} results)").into();
+                    lsp_navigation_picker::open(
+                        workspace,
+                        locations,
+                        header_title,
+                        false,
+                        window,
+                        cx,
+                    );
+                } else {
+                    let allow_preview = PreviewTabsSettings::get_global(cx)
+                        .enable_preview_multibuffer_from_code_navigation;
+                    Self::open_locations_in_multibuffer(
+                        workspace,
+                        locations,
+                        title,
+                        false,
+                        allow_preview,
+                        MultibufferSelectionMode::First,
+                        window,
+                        cx,
+                    );
+                }
                 Navigated::Yes
             })
         }))

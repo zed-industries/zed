@@ -260,8 +260,8 @@ impl Editor {
                     .collect();
                 let nav_entry = self.navigation_entry(mb_anchor, cx);
                 let split = Self::is_alt_pressed(&modifiers, cx);
-                let navigate_task =
-                    self.navigate_to_hover_links(None, links, nav_entry, split, window, cx);
+                let navigate_task = self
+                    .navigate_to_hover_links(None, links, nav_entry, split, false, window, cx);
                 self.select(SelectPhase::End, window, cx);
                 return navigate_task;
             }
@@ -282,12 +282,18 @@ impl Editor {
         let navigate_task = if point.as_valid().is_some() {
             let split = Self::is_alt_pressed(&modifiers, cx);
             match (modifiers.shift, split) {
-                (true, true) => {
-                    self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
+                (true, true) => self.go_to_type_definition_split(
+                    &GoToTypeDefinitionSplit::default(),
+                    window,
+                    cx,
+                ),
+                (true, false) => {
+                    self.go_to_type_definition(&GoToTypeDefinition::default(), window, cx)
                 }
-                (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
-                (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
-                (false, false) => self.go_to_definition(&GoToDefinition, window, cx),
+                (false, true) => {
+                    self.go_to_definition_split(&GoToDefinitionSplit::default(), window, cx)
+                }
+                (false, false) => self.go_to_definition(&GoToDefinition::default(), window, cx),
             }
         } else {
             Task::ready(Ok(Navigated::No))

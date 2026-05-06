@@ -194,6 +194,19 @@ pub struct EditorSettingsContent {
     /// Default: center
     pub go_to_definition_scroll_strategy: Option<GoToDefinitionScrollStrategy>,
 
+    /// How to present multiple LSP navigation results
+    /// (Go to Definition, Go to Declaration, Go to Type Definition,
+    /// Go to Implementation, Find All References).
+    ///
+    /// 1. Open all results in a multibuffer: `multibuffer` (default)
+    /// 2. Open results in a compact picker with type-to-filter and a side preview pane: `picker`
+    ///
+    /// Per-keybinding override is available via the `always_open_multibuffer: true`
+    /// payload on each of the LSP nav actions.
+    ///
+    /// Default: multibuffer
+    pub lsp_navigation_view: Option<LspNavigationView>,
+
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
 
@@ -799,6 +812,32 @@ pub enum GoToDefinitionFallback {
     /// Looks up references of the same symbol instead.
     #[default]
     FindAllReferences,
+}
+
+/// How to present multiple LSP navigation results.
+///
+/// Default: multibuffer
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LspNavigationView {
+    /// Open all results in a multibuffer (existing behavior).
+    #[default]
+    Multibuffer,
+    /// Open results in a compact picker with type-to-filter and a side preview pane.
+    Picker,
 }
 
 /// How to scroll the target into view when navigating to a definition or reference.
