@@ -1,6 +1,13 @@
 use super::*;
 
 impl Editor {
+    pub fn style(&mut self, cx: &App) -> &EditorStyle {
+        if self.style.is_none() {
+            self.style = Some(self.create_style(cx));
+        }
+        self.style.as_ref().unwrap()
+    }
+
     pub fn set_soft_wrap_mode(
         &mut self,
         mode: language_settings::SoftWrap,
@@ -228,13 +235,6 @@ impl Editor {
                 SoftWrap::Bounded(settings.preferred_line_length)
             }
         }
-    }
-
-    pub(super) fn style(&mut self, cx: &App) -> &EditorStyle {
-        if self.style.is_none() {
-            self.style = Some(self.create_style(cx));
-        }
-        self.style.as_ref().unwrap()
     }
 
     // Called by the element. This method is not designed to be called outside of the editor
