@@ -1226,16 +1226,41 @@ impl PlatformInputHandler {
     }
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
+        let marked_range = self.handler.marked_text_range(window, cx);
         let selection = self.handler.selected_text_range(true, window, cx)?;
-        self.handler.bounds_for_range(
-            if selection.reversed {
-                selection.range.start..selection.range.start
+
+        if let Some(marked_range) = marked_range {
+            let (base_start, caret_offset) =
+                if selection.range.is_empty() && selection.range.end == marked_range.end {
+                    (marked_range.start, selection.range.end)
+                } else {
+                    (selection.range.start, selection.range.end)
+                };
+
+            let mut anchor_offset = base_start;
+            if let Some(caret_bounds) =
+                self.handler
+                    .bounds_for_range(caret_offset..caret_offset, window, cx)
+            {
+                for i in (base_start..caret_offset).rev() {
+                    if let Some(b) = self.handler.bounds_for_range(i..i, window, cx) {
+                        if (b.origin.y - caret_bounds.origin.y).abs() > px(0.1) {
+                            anchor_offset = i + 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            self.handler
+                .bounds_for_range(anchor_offset..anchor_offset, window, cx)
+        } else {
+            let offset = if selection.reversed {
+                selection.range.start
             } else {
-                selection.range.end..selection.range.end
-            },
-            window,
-            cx,
-        )
+                selection.range.end
+            };
+            self.handler.bounds_for_range(offset..offset, window, cx)
+        }
     }
 
     #[allow(unused)]
