@@ -11,7 +11,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use fs::MTime;
-use futures::future::try_join_all;
+use futures::{channel::oneshot, future::try_join_all};
 use git::status::GitSummary;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
@@ -22,22 +22,24 @@ use language::{
     SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{MultiBufferOffset, PathKey};
+use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
+use rope::TextSummary;
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cmp::{self, Ordering},
+    num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::{BufferId, BufferSnapshot, Selection};
+use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt, rel_path::RelPath};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
@@ -1871,6 +1873,7 @@ impl SearchableItem for Editor {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
 
+        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             let mut ranges = Vec::new();
 
@@ -1879,38 +1882,70 @@ impl SearchableItem for Editor {
             } else {
                 search_within_ranges
             };
-
+            let num_cpus = executor.num_cpus();
             for range in search_within_ranges {
                 for (search_buffer, search_range, deleted_hunk_anchor) in
                     buffer.range_to_buffer_ranges_with_deleted_hunks(range)
                 {
-                    ranges.extend(
-                        query
-                            .search(
-                                search_buffer,
-                                Some(search_range.start.0..search_range.end.0),
-                            )
-                            .await
-                            .into_iter()
-                            .filter_map(|match_range| {
-                                if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
-                                    let start = search_buffer
-                                        .anchor_after(search_range.start + match_range.start);
-                                    let end = search_buffer
-                                        .anchor_before(search_range.start + match_range.end);
-                                    Some(
-                                        deleted_hunk_anchor.with_diff_base_anchor(start)
-                                            ..deleted_hunk_anchor.with_diff_base_anchor(end),
-                                    )
-                                } else {
-                                    let start = search_buffer
-                                        .anchor_after(search_range.start + match_range.start);
-                                    let end = search_buffer
-                                        .anchor_before(search_range.start + match_range.end);
-                                    buffer.buffer_anchor_range_to_anchor_range(start..end)
-                                }
-                            }),
-                    );
+                    let query = query.clone();
+
+                    let mut results = Vec::new();
+                    executor
+                        .scoped(|scope| {
+                            for search_range in chunk_search_range(
+                                search_buffer.text.clone(),
+                                &query,
+                                num_cpus as u32,
+                                search_range,
+                            ) {
+                                let query = query.clone();
+                                let buffer = buffer.clone();
+
+                                let (tx, rx) = oneshot::channel();
+                                results.push(rx);
+                                scope.spawn(async move {
+                                    let chunk_result = query
+                                        .search(
+                                            search_buffer,
+                                            Some(search_range.start..search_range.end),
+                                        )
+                                        .await
+                                        .into_iter()
+                                        .filter_map(|match_range| {
+                                            if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
+                                                let start = search_buffer.anchor_after(
+                                                    search_range.start + match_range.start,
+                                                );
+                                                let end = search_buffer.anchor_before(
+                                                    search_range.start + match_range.end,
+                                                );
+                                                Some(
+                                                    deleted_hunk_anchor.with_diff_base_anchor(start)
+                                                        ..deleted_hunk_anchor
+                                                            .with_diff_base_anchor(end),
+                                                )
+                                            } else {
+                                                let start = search_buffer.anchor_after(
+                                                    search_range.start + match_range.start,
+                                                );
+                                                let end = search_buffer.anchor_before(
+                                                    search_range.start + match_range.end,
+                                                );
+                                                buffer.anchor_range_in_buffer(start..end)
+                                            }
+                                        })
+                                        .collect::<Vec<_>>();
+                                    _ = tx.send(chunk_result);
+                                });
+                            }
+                        })
+                        .await;
+
+                    for rx in results {
+                        if let Ok(results) = rx.await {
+                            ranges.extend(results);
+                        }
+                    }
                 }
             }
 
@@ -2109,6 +2144,48 @@ fn deserialize_path_key(path_key: proto::PathKey) -> Option<PathKey> {
     })
 }
 
+fn chunk_search_range(
+    buffer: BufferSnapshot,
+    query: &SearchQuery,
+    num_cpus: u32,
+    initial_range: Range<BufferOffset>,
+) -> Box<dyn Iterator<Item = Range<usize>> + 'static> {
+    let range = initial_range.to_offset(&buffer);
+    if range.is_empty() {
+        return Box::new(std::iter::empty());
+    }
+
+    let summary: TextSummary = buffer.text_summary_for_range(initial_range);
+    let num_chunks = if !query.is_regex() && !query.as_str().contains('\n') {
+        NonZeroU32::new(summary.lines.row.saturating_add(1).min(num_cpus.max(1)))
+    } else {
+        NonZeroU32::new(1)
+    };
+
+    let Some(num_chunks) = num_chunks else {
+        return Box::new(std::iter::empty());
+    };
+
+    let mut chunk_start = range.start;
+    let rope = buffer.as_rope().clone();
+    let range_end = range.end;
+    let average_chunk_length = summary.len.div_ceil(num_chunks.get() as usize);
+    Box::new(std::iter::from_fn(move || {
+        if chunk_start >= range_end {
+            return None;
+        }
+        let candidate_position = chunk_start + average_chunk_length;
+        let adjusted = rope.ceil_char_boundary(candidate_position);
+        let mut as_point = rope.offset_to_point(adjusted);
+        as_point.row += 1;
+        as_point.column = 0;
+        let end_offset = buffer.point_to_offset(as_point).min(range_end);
+        let ret = chunk_start..end_offset;
+        chunk_start = end_offset;
+        Some(ret)
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
@@ -2132,6 +2209,115 @@ mod tests {
             local_root: None,
         });
         assert_eq!(path_for_file(&file, 0, false, cx), None);
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_multi_line(cx: &mut App) {
+        let text = "line one\nline two\nline three\nline four\nline five\nline six\n";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "line", 4, 0..text.len());
+
+        assert_chunks_are_contiguous(&chunks, 0..text.len());
+        assert!(
+            chunks.len() <= 4,
+            "got {} chunks, expected <= num_cpus (4)",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            let end = chunk.end;
+            assert!(
+                end == text.len() || text.as_bytes()[end - 1] == b'\n',
+                "chunk ending at {end} is not a line boundary",
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_single_line(cx: &mut App) {
+        let text = "hello world hello again";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "hello", 4, 0..text.len());
+        assert_chunks_are_contiguous(&chunks, 0..text.len());
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_empty_range(cx: &mut App) {
+        let buffer = cx.new(|cx| Buffer::local("hello world", cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "hello", 4, 5..5);
+        assert!(chunks.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_does_not_start_at_zero(cx: &mut App) {
+        let line = "abcdefghij\n";
+        let text = line.repeat(20);
+        let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let start = line.len() * 7;
+        let end = line.len() * 14;
+        let chunks = chunk_search_range_for_test(&snapshot, "abc", 4, start..end);
+
+        assert_chunks_are_contiguous(&chunks, start..end);
+    }
+
+    fn chunk_search_range_for_test(
+        snapshot: &language::BufferSnapshot,
+        query: &str,
+        num_cpus: u32,
+        range: Range<usize>,
+    ) -> Vec<Range<usize>> {
+        let query = SearchQuery::text(
+            query,
+            false,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .unwrap();
+        chunk_search_range(
+            snapshot.text.clone(),
+            &query,
+            num_cpus,
+            BufferOffset(range.start)..BufferOffset(range.end),
+        )
+        .collect()
+    }
+
+    #[track_caller]
+    fn assert_chunks_are_contiguous(chunks: &[Range<usize>], expected: Range<usize>) {
+        assert!(!chunks.is_empty(), "expected at least one chunk");
+        assert_eq!(
+            chunks.first().unwrap().start,
+            expected.start,
+            "first chunk does not start at {}",
+            expected.start
+        );
+        assert_eq!(
+            chunks.last().unwrap().end,
+            expected.end,
+            "last chunk does not end at {}",
+            expected.end
+        );
+        for chunk in chunks {
+            assert!(chunk.start < chunk.end, "empty chunk: {:?}", chunk);
+        }
+        for window in chunks.windows(2) {
+            assert_eq!(
+                window[0].end, window[1].start,
+                "gap or overlap between chunks {:?} and {:?}",
+                window[0], window[1],
+            );
+        }
     }
 
     async fn deserialize_editor(
