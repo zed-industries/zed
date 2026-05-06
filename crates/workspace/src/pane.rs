@@ -94,6 +94,10 @@ pub enum SaveIntent {
     SaveAs,
     /// prompt "you have unsaved changes" before writing
     Close,
+    /// like `Close`, but skips hot-exit serialization; used when the workspace
+    /// is being replaced by a new project, where session-DB content would not
+    /// be restored under the new workspace id
+    CloseReplace,
     /// write all dirty files, don't prompt on conflict
     Overwrite,
     /// skip all save-related behavior
@@ -2371,7 +2375,7 @@ impl Pane {
                 }
             }
         } else if is_dirty && (can_save || can_save_as) {
-            if save_intent == SaveIntent::Close {
+            if matches!(save_intent, SaveIntent::Close | SaveIntent::CloseReplace) {
                 let will_autosave = cx.update(|_window, cx| {
                     item.can_autosave(cx)
                         && item.workspace_settings(cx).autosave.should_save_on_close()

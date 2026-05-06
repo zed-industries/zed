@@ -3305,9 +3305,14 @@ impl Workspace {
                 }
             }
 
+            let save_intent = if close_intent == CloseIntent::ReplaceWindow {
+                SaveIntent::CloseReplace
+            } else {
+                SaveIntent::Close
+            };
             let save_result = this
                 .update_in(cx, |this, window, cx| {
-                    this.save_all_internal(SaveIntent::Close, window, cx)
+                    this.save_all_internal(save_intent, window, cx)
                 })?
                 .await;
 
@@ -3507,6 +3512,10 @@ impl Workspace {
             } else {
                 dirty_items
             };
+
+            if save_intent == SaveIntent::CloseReplace && !dirty_items.is_empty() {
+                workspace.update(cx, |_, cx| cx.emit(Event::Activate))?;
+            }
 
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) = cx.update(|_, cx| {
@@ -11507,6 +11516,47 @@ mod tests {
         let task = workspace.update_in(cx, |w, window, cx| {
             w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
         });
+        assert!(task.await.unwrap());
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/55726:
+    // when the workspace is being *replaced* (not closed/quit), dirty serializable
+    // items must still be prompted rather than silently hot-exit'd.
+    #[gpui::test]
+    async fn test_replace_window_prompts_for_serializable_dirty_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        // Unlike CloseWindow (which uses hot-exit), ReplaceWindow must prompt
+        // because the new workspace will have a different id and the serialized
+        // content would not be restored.
+        assert!(
+            cx.has_pending_prompt(),
+            "expected a save prompt when replacing workspace with serializable dirty item"
+        );
+        cx.simulate_prompt_answer("Don't Save");
         assert!(task.await.unwrap());
     }
 
