@@ -2290,7 +2290,7 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             action_log.clone(),
-            language_registry.clone(),
+            language_registry,
         ));
         (edit_tool, project, action_log, fs, thread)
     }
