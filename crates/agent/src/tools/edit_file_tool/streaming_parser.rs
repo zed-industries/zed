@@ -108,6 +108,7 @@ impl StreamingParser {
 
             // Process new_text changes.
             if let Some(new_text) = &partial.new_text
+                && state.old_text_done
                 && !state.new_text_done
             {
                 let safe_end = safe_emit_end_for_edit_text(new_text);
@@ -727,6 +728,37 @@ mod tests {
                 chunk: "text".into(),
                 done: false,
             }]
+        );
+    }
+
+    #[test]
+    fn test_new_text_before_old_text_is_buffered() {
+        let mut parser = StreamingParser::default();
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: None,
+            new_text: Some("new".into()),
+        }]);
+        assert!(events.is_empty());
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("old".into()),
+            new_text: Some("new".into()),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[
+                EditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "old".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "new".into(),
+                    done: false,
+                },
+            ]
         );
     }
 
