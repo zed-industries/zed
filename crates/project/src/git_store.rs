@@ -1495,13 +1495,6 @@ impl GitStore {
                 else {
                     return;
                 };
-                if !worktree.read(cx).is_visible() {
-                    log::debug!(
-                        "not adding repositories for local worktree {:?} because it's not visible",
-                        worktree.read(cx).abs_path()
-                    );
-                    return;
-                }
                 self.update_repositories_from_worktree(
                     *worktree_id,
                     project_environment.clone(),

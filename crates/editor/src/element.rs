@@ -570,7 +570,9 @@ impl EditorElement {
             register_action(editor, window, Editor::move_line_up);
             register_action(editor, window, Editor::move_line_down);
             register_action(editor, window, Editor::transpose);
-            register_action(editor, window, Editor::rewrap);
+            register_action(editor, window, |editor, _: &crate::Rewrap, _, cx| {
+                editor.rewrap(crate::RewrapOptions::default(), cx);
+            });
             register_action(editor, window, Editor::cut);
             register_action(editor, window, Editor::kill_ring_cut);
             register_action(editor, window, Editor::kill_ring_yank);
