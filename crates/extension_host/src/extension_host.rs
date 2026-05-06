@@ -19,7 +19,7 @@ use extension::{
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
-use fs::{Fs, RemoveOptions};
+use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::join_all;
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
@@ -726,41 +726,67 @@ impl ExtensionStore {
                 }
             });
 
-            let mut response = http_client
-                .get(url.as_ref(), Default::default(), true)
-                .await
-                .context("downloading extension")?;
+            cx.background_spawn(async move {
+                let mut response = http_client
+                    .get(url.as_ref(), Default::default(), true)
+                    .await
+                    .context("downloading extension")?;
 
-            fs.remove_dir(
-                &extension_dir,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
+                let content_length = response
+                    .headers()
+                    .get(http_client::http::header::CONTENT_LENGTH)
+                    .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+
+                let mut body = BufReader::new(response.body_mut());
+                let mut tar_gz_bytes = Vec::new();
+                body.read_to_end(&mut tar_gz_bytes).await?;
+
+                if let Some(content_length) = content_length {
+                    let actual_len = tar_gz_bytes.len();
+                    if content_length != actual_len {
+                        bail!(
+                            "downloaded extension size {actual_len} \
+                        does not match content length {content_length}"
+                        );
+                    }
+                }
+
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+                let archive = Archive::new(decompressed_bytes);
+
+                let remove_dir = || {
+                    fs.remove_dir(
+                        &extension_dir,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                };
+
+                match tempfile::tempdir_in(paths::temp_dir()).or_else(|_| tempfile::tempdir()) {
+                    Ok(temp_dir) => {
+                        archive.unpack(temp_dir.path()).await?;
+                        remove_dir().await?;
+                        fs.rename(
+                            temp_dir.path(),
+                            &extension_dir,
+                            RenameOptions {
+                                overwrite: true,
+                                ignore_if_exists: true,
+                                create_parents: true,
+                            },
+                        )
+                        .await
+                    }
+                    Err(_) => {
+                        remove_dir().await?;
+                        archive.unpack(extension_dir).await.map_err(Into::into)
+                    }
+                }
+            })
             .await?;
 
-            let content_length = response
-                .headers()
-                .get(http_client::http::header::CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
-
-            let mut body = BufReader::new(response.body_mut());
-            let mut tar_gz_bytes = Vec::new();
-            body.read_to_end(&mut tar_gz_bytes).await?;
-
-            if let Some(content_length) = content_length {
-                let actual_len = tar_gz_bytes.len();
-                if content_length != actual_len {
-                    bail!(concat!(
-                        "downloaded extension size {actual_len} ",
-                        "does not match content length {content_length}"
-                    ));
-                }
-            }
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(extension_dir).await?;
             this.update(cx, |this, cx| this.reload(Some(extension_id.clone()), cx))?
                 .await;
 
