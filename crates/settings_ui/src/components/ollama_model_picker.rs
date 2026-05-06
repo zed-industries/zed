@@ -5,7 +5,6 @@ use gpui::{AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Tas
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, prelude::*};
-use util::ResultExt;
 
 use crate::{
     SettingField, SettingsFieldMetadata, SettingsUiFile, render_picker_trigger_button,
@@ -193,7 +192,7 @@ pub fn render_ollama_model_picker(
                                 );
                             },
                         )
-                        .log_err();
+                        .detach_and_log_err(cx);
                     },
                     cx,
                 );

@@ -4,7 +4,6 @@ use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
 use settings::{AudioInputDeviceName, AudioOutputDeviceName, SettingsStore};
 use std::str::FromStr;
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition, IntoElement};
-use util::ResultExt;
 
 use crate::{SettingField, SettingsFieldMetadata, SettingsUiFile, update_settings_file};
 
@@ -125,7 +124,7 @@ fn render_settings_audio_device_dropdown<T: AsRef<Option<String>> + From<Option<
                     (field.write)(settings, value, app);
                 },
             )
-            .log_err();
+            .detach_and_log_err(cx);
         },
         window,
         cx,

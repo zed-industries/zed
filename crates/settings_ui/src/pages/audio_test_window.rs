@@ -169,7 +169,7 @@ impl Render for AudioTestWindow {
                             settings.audio.get_or_insert_default().input_audio_device = value;
                         },
                     )
-                    .log_err();
+                    .detach_and_log_err(cx);
                 },
                 window,
                 cx,
@@ -198,7 +198,7 @@ impl Render for AudioTestWindow {
                         settings.audio.get_or_insert_default().output_audio_device = value;
                     },
                 )
-                .log_err();
+                .detach_and_log_err(cx);
             },
             window,
             cx,

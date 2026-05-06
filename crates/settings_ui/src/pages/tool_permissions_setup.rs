@@ -1,7 +1,8 @@
 use agent::{AgentTool, TerminalTool, ToolPermissionDecision};
 use agent_settings::AgentSettings;
 use gpui::{
-    Focusable, HighlightStyle, ScrollHandle, StyledText, TextStyleRefinement, point, prelude::*,
+    Focusable, HighlightStyle, ScrollHandle, StyledText, Task, TextStyleRefinement, point,
+    prelude::*,
 };
 use settings::{Settings as _, ToolPermissionMode};
 use shell_command_parser::extract_commands;
@@ -1009,34 +1010,45 @@ fn render_user_pattern_row(
             if let Some(new_pattern) = new_pattern {
                 let new_pattern = new_pattern.trim().to_string();
                 if !new_pattern.is_empty() && new_pattern != pattern_for_update {
-                    let updated = update_pattern(
+                    let Some(update_task) = update_pattern(
                         &tool_id_for_update,
                         rule_type,
                         &pattern_for_update,
                         new_pattern.clone(),
                         window,
                         cx,
-                    );
-
-                    let validation_error = if !updated {
-                        Some(
-                            "A pattern with that name already exists in this rule list."
-                                .to_string(),
-                        )
-                    } else {
-                        match regex::Regex::new(&new_pattern) {
-                            Err(err) => Some(format!(
-                                "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
-                            )),
-                            Ok(_) => None,
-                        }
+                    ) else {
+                        settings_window
+                            .update(cx, |this, cx| {
+                                this.regex_validation_error = Some(
+                                    "A pattern with that name already exists in this rule list."
+                                        .to_string(),
+                                );
+                                cx.notify();
+                            })
+                            .log_err();
+                        return;
                     };
-                    settings_window
-                        .update(cx, |this, cx| {
-                            this.regex_validation_error = validation_error;
-                            cx.notify();
-                        })
-                        .log_err();
+
+                    cx.spawn({
+                        let new_pattern = new_pattern.clone();
+                        let settings_window = settings_window.clone();
+                        async move |cx| {
+                            update_task.await?;
+                            let validation_error = match regex::Regex::new(&new_pattern) {
+                                Err(err) => Some(format!(
+                                    "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
+                                )),
+                                Ok(_) => None,
+                            };
+                            settings_window.update(cx, |this, cx| {
+                                this.regex_validation_error = validation_error;
+                                cx.notify();
+                            })?;
+                            anyhow::Ok(())
+                        }
+                    })
+                    .detach_and_log_err(cx);
                 }
             }
         })
@@ -1059,25 +1071,36 @@ fn render_add_pattern_input(
         .with_buffer_font()
         .display_clear_button()
         .display_confirm_button()
-        .clear_on_confirm()
-        .on_confirm(move |pattern, window, cx| {
-                    if let Some(pattern) = pattern {
+        .on_confirm_with_editor(move |pattern, editor, window, cx| {
+            if let Some(pattern) = pattern {
                 let trimmed = pattern.trim().to_string();
                 if !trimmed.is_empty() {
-                    save_pattern(&tool_id_owned, rule_type, trimmed.clone(), window, cx);
-
-                    let validation_error = match regex::Regex::new(&trimmed) {
-                        Err(err) => Some(format!(
-                            "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
-                        )),
-                        Ok(_) => None,
-                    };
-                    settings_window
-                        .update(cx, |this, cx| {
-                            this.regex_validation_error = validation_error;
-                            cx.notify();
-                        })
-                        .log_err();
+                    let update_task = save_pattern(&tool_id_owned, rule_type, trimmed.clone(), window, cx);
+                    window.spawn(cx, {
+                        let trimmed = trimmed.clone();
+                        let settings_window = settings_window.clone();
+                        async move |cx| {
+                            update_task.await?;
+                            let validation_error = match regex::Regex::new(&trimmed) {
+                                Err(err) => Some(format!(
+                                    "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
+                                )),
+                                Ok(_) => None,
+                            };
+                            cx.update(|window, cx| {
+                                settings_window.update(cx, |this, cx| {
+                                    this.regex_validation_error = validation_error;
+                                    cx.notify();
+                                })?;
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text("", window, cx);
+                                });
+                                anyhow::Ok(())
+                            })??;
+                            anyhow::Ok(())
+                        }
+                    })
+                    .detach_and_log_err(cx);
                 }
             }
         })
@@ -1258,7 +1281,7 @@ fn save_pattern(
     pattern: String,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> Task<anyhow::Result<()>> {
     let tool_name = tool_name.to_string();
 
     update_settings_file(
@@ -1292,7 +1315,7 @@ fn save_pattern(
                 rules_list.0.push(rule);
             }
         },
-    );
+    )
 }
 
 fn update_pattern(
@@ -1302,7 +1325,7 @@ fn update_pattern(
     new_pattern: String,
     window: &mut Window,
     cx: &mut App,
-) -> bool {
+) -> Option<Task<anyhow::Result<()>>> {
     let settings = AgentSettings::get_global(cx);
     if let Some(tool_rules) = settings.tool_permissions.tools.get(tool_name) {
         let patterns = match rule_type {
@@ -1311,14 +1334,15 @@ fn update_pattern(
             ToolPermissionMode::Confirm => &tool_rules.always_confirm,
         };
         if patterns.iter().any(|r| r.pattern == new_pattern) {
-            return false;
+            return None;
         }
     }
 
     let tool_name = tool_name.to_string();
     let old_pattern = old_pattern.to_string();
+    let new_pattern_for_update = new_pattern.clone();
 
-    update_settings_file(
+    Some(update_settings_file(
         SettingsUiFile::User,
         Some("agent.tool_permissions"),
         window,
@@ -1338,18 +1362,16 @@ fn update_pattern(
                 };
 
                 if let Some(list) = rules_list {
-                    let already_exists = list.0.iter().any(|r| r.pattern == new_pattern);
+                    let already_exists = list.0.iter().any(|r| r.pattern == new_pattern_for_update);
                     if !already_exists {
                         if let Some(rule) = list.0.iter_mut().find(|r| r.pattern == old_pattern) {
-                            rule.pattern = new_pattern;
+                            rule.pattern = new_pattern_for_update;
                         }
                     }
                 }
             }
         },
-    );
-
-    true
+    ))
 }
 
 fn delete_pattern(
@@ -1386,7 +1408,8 @@ fn delete_pattern(
                 }
             }
         },
-    );
+    )
+    .detach_and_log_err(cx);
 }
 
 fn set_global_default_permission(mode: ToolPermissionMode, window: &mut Window, cx: &mut App) {
@@ -1403,7 +1426,8 @@ fn set_global_default_permission(mode: ToolPermissionMode, window: &mut Window, 
                 .get_or_insert_default()
                 .default = Some(mode);
         },
-    );
+    )
+    .detach_and_log_err(cx);
 }
 
 fn set_default_mode(tool_name: &str, mode: ToolPermissionMode, window: &mut Window, cx: &mut App) {
@@ -1426,7 +1450,8 @@ fn set_default_mode(tool_name: &str, mode: ToolPermissionMode, window: &mut Wind
                 .or_default();
             tool_rules.default = Some(mode);
         },
-    );
+    )
+    .detach_and_log_err(cx);
 }
 
 macro_rules! tool_config_page_fn {
