@@ -29,7 +29,16 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
+    cell::RefCell,
+    ffi::c_void,
+    fmt::Display,
+    num::NonZeroU32,
+    ptr::NonNull,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
@@ -285,6 +294,8 @@ pub struct X11WindowState {
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
+    a11y_active: Arc<AtomicBool>,
+    accesskit_adapter: Option<accesskit_unix::Adapter>,
 }
 
 impl X11WindowState {
@@ -801,6 +812,8 @@ impl X11WindowState {
                 decorations: WindowDecorations::Server,
                 last_insets: [0, 0, 0, 0],
                 edge_constraints: None,
+                a11y_active: Arc::new(AtomicBool::new(false)),
+                accesskit_adapter: None,
                 counter_id: sync_request_counter,
                 last_sync_counter: None,
             })
@@ -1276,6 +1289,9 @@ impl X11WindowStatePtr {
         if let Some(mut fun) = callback {
             fun(focus);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
+        }
+        if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
+            adapter.update_window_focus_state(focus);
         }
     }
 
@@ -1888,5 +1904,73 @@ impl PlatformWindow for X11Window {
     fn play_system_bell(&self) {
         // Volume 0% means don't increase or decrease from system volume
         let _ = self.0.xcb.bell(0);
+    }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let a11y_active = self.0.state.borrow().a11y_active.clone();
+        let a11y_active_for_activation = a11y_active.clone();
+        let a11y_active_for_deactivation = a11y_active.clone();
+
+        let activation_handler = TrivialActivationHandler {
+            callback: callbacks.activation,
+            a11y_active: a11y_active_for_activation,
+        };
+        let action_handler = TrivialActionHandler(callbacks.action);
+        let deactivation_handler = TrivialDeactivationHandler {
+            callback: callbacks.deactivation,
+            a11y_active: a11y_active_for_deactivation,
+        };
+
+        let adapter =
+            accesskit_unix::Adapter::new(activation_handler, action_handler, deactivation_handler);
+
+        self.0.state.borrow_mut().accesskit_adapter = Some(adapter);
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        let mut state = self.0.state.borrow_mut();
+        if let Some(adapter) = state.accesskit_adapter.as_mut() {
+            adapter.update_if_active(|| tree_update);
+        }
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        // X11 could report window bounds, but for now it's a no-op
+    }
+
+    fn is_a11y_active(&self) -> bool {
+        self.0.state.borrow().a11y_active.load(Ordering::SeqCst)
+    }
+}
+
+struct TrivialActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    a11y_active: Arc<AtomicBool>,
+}
+
+impl accesskit::ActivationHandler for TrivialActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        self.a11y_active.store(true, Ordering::SeqCst);
+        (self.callback)()
+    }
+}
+
+struct TrivialActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+
+impl accesskit::ActionHandler for TrivialActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        (self.0)(request);
+    }
+}
+
+struct TrivialDeactivationHandler {
+    callback: Box<dyn Fn() + Send + 'static>,
+    a11y_active: Arc<AtomicBool>,
+}
+
+impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
+    fn deactivate_accessibility(&mut self) {
+        self.a11y_active.store(false, Ordering::SeqCst);
+        (self.callback)();
     }
 }

@@ -671,6 +671,13 @@ impl Interactivity {
     }
 }
 
+fn debug_assert_interactivity_has_id(interactivity: &Interactivity) {
+    debug_assert!(
+        interactivity.element_id.is_some(),
+        "Accessibility properties require an `.id()`, since nodes with no ID do not appear in the accessibility tree."
+    );
+}
+
 /// A trait for elements that want to use the standard GPUI event handlers that don't
 /// require any state.
 pub trait InteractiveElement: Sized {
@@ -1170,6 +1177,132 @@ pub trait InteractiveElement: Sized {
         self.interactivity().focus_visible_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
+
+    /// Set the accessible role for this element.
+    fn role(mut self, role: accesskit::Role) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().override_role = Some(role);
+        self
+    }
+
+    /// Set the accessible label for this element.
+    fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_label = Some(label.into());
+        self
+    }
+
+    /// Set the selected state for this element.
+    fn aria_selected(mut self, selected: bool) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_selected = Some(selected);
+        self
+    }
+
+    /// Set the expanded state for this element.
+    fn aria_expanded(mut self, expanded: bool) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_expanded = Some(expanded);
+        self
+    }
+
+    /// Set the toggled state for this element.
+    fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_toggled = Some(toggled);
+        self
+    }
+
+    /// Set the numeric value for this element.
+    fn aria_numeric_value(mut self, value: f64) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the minimum numeric value for this element.
+    fn aria_min_numeric_value(mut self, value: f64) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_min_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the maximum numeric value for this element.
+    fn aria_max_numeric_value(mut self, value: f64) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_max_numeric_value = Some(value);
+        self
+    }
+
+    /// Set the orientation of this element.
+    fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_orientation = Some(orientation);
+        self
+    }
+
+    /// Set the heading level of this element.
+    fn aria_level(mut self, level: usize) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_level = Some(level);
+        self
+    }
+
+    /// Set the position in set of this element.
+    fn aria_position_in_set(mut self, position: usize) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_position_in_set = Some(position);
+        self
+    }
+
+    /// Set the size of set for this element.
+    fn aria_size_of_set(mut self, size: usize) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_size_of_set = Some(size);
+        self
+    }
+
+    /// Set the row index for this element.
+    fn aria_row_index(mut self, index: usize) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_row_index = Some(index);
+        self
+    }
+
+    /// Set the column index for this element.
+    fn aria_column_index(mut self, index: usize) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_column_index = Some(index);
+        self
+    }
+
+    /// Set the row count for this element.
+    fn aria_row_count(mut self, count: usize) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_row_count = Some(count);
+        self
+    }
+
+    /// Set the column count for this element.
+    fn aria_column_count(mut self, count: usize) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity().aria_column_count = Some(count);
+        self
+    }
+
+    /// Register a handler for an accessibility action on this element.
+    /// The handler is called when a screen reader requests the given action.
+    fn on_a11y_action(
+        mut self,
+        action: accesskit::Action,
+        listener: impl FnMut(&crate::A11yActionRequest, &mut crate::Window, &mut crate::App) + 'static,
+    ) -> Self {
+        debug_assert_interactivity_has_id(self.interactivity());
+        self.interactivity()
+            .a11y_action_listeners
+            .push((action, Box::new(listener)));
+        self
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
@@ -1474,6 +1607,22 @@ impl Element for Div {
         self.interactivity.source_location()
     }
 
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        if self.interactivity.element_id.is_some() {
+            Some(
+                self.interactivity
+                    .override_role
+                    .unwrap_or(accesskit::Role::GenericContainer),
+            )
+        } else {
+            None
+        }
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.interactivity.write_a11y_info(node);
+    }
+
     #[stacksafe]
     fn request_layout(
         &mut self,
@@ -1710,6 +1859,25 @@ pub struct Interactivity {
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
 
+    pub(crate) a11y_action_listeners:
+        Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
+    pub(crate) override_role: Option<accesskit::Role>,
+    pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_selected: Option<bool>,
+    pub(crate) aria_expanded: Option<bool>,
+    pub(crate) aria_toggled: Option<accesskit::Toggled>,
+    pub(crate) aria_numeric_value: Option<f64>,
+    pub(crate) aria_min_numeric_value: Option<f64>,
+    pub(crate) aria_max_numeric_value: Option<f64>,
+    pub(crate) aria_orientation: Option<accesskit::Orientation>,
+    pub(crate) aria_level: Option<usize>,
+    pub(crate) aria_position_in_set: Option<usize>,
+    pub(crate) aria_size_of_set: Option<usize>,
+    pub(crate) aria_row_index: Option<usize>,
+    pub(crate) aria_column_index: Option<usize>,
+    pub(crate) aria_row_count: Option<usize>,
+    pub(crate) aria_column_count: Option<usize>,
+
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
@@ -1830,6 +1998,14 @@ impl Interactivity {
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
+            
+            if let Some(global_id) = global_id {
+                let node_id = global_id.accesskit_node_id();
+                window.a11y.focus_ids.insert(node_id, focus_handle.id);
+                if focus_handle.is_focused(window) {
+                    window.a11y.nodes.set_focus(node_id);
+                }
+            }
         }
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -2054,6 +2230,19 @@ impl Interactivity {
                                         }
 
                                         self.paint_keyboard_listeners(window, cx);
+
+                                        if let Some(global_id) = global_id {
+                                            if !self.a11y_action_listeners.is_empty() {
+                                                let node_id = global_id.accesskit_node_id();
+                                                for (action, listener) in
+                                                    self.a11y_action_listeners.drain(..)
+                                                {
+                                                    window
+                                                        .on_a11y_action(node_id, action, listener);
+                                                }
+                                            }
+                                        }
+
                                         f(&style, window, cx);
 
                                         if let Some(_hitbox) = hitbox {
@@ -2857,6 +3046,63 @@ impl Interactivity {
 
         style
     }
+
+    pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        if let Some(label) = &self.aria_label {
+            node.set_label(label.to_string());
+        }
+        if let Some(selected) = self.aria_selected {
+            node.set_selected(selected);
+        }
+        if let Some(expanded) = self.aria_expanded {
+            node.set_expanded(expanded);
+        }
+        if let Some(toggled) = self.aria_toggled {
+            node.set_toggled(toggled);
+        }
+        if let Some(value) = self.aria_numeric_value {
+            node.set_numeric_value(value);
+        }
+        if let Some(value) = self.aria_min_numeric_value {
+            node.set_min_numeric_value(value);
+        }
+        if let Some(value) = self.aria_max_numeric_value {
+            node.set_max_numeric_value(value);
+        }
+        if let Some(orientation) = self.aria_orientation {
+            node.set_orientation(orientation);
+        }
+        if let Some(level) = self.aria_level {
+            node.set_level(level);
+        }
+        if let Some(position) = self.aria_position_in_set {
+            node.set_position_in_set(position);
+        }
+        if let Some(size) = self.aria_size_of_set {
+            node.set_size_of_set(size);
+        }
+        if let Some(index) = self.aria_row_index {
+            node.set_row_index(index);
+        }
+        if let Some(index) = self.aria_column_index {
+            node.set_column_index(index);
+        }
+        if let Some(count) = self.aria_row_count {
+            node.set_row_count(count);
+        }
+        if let Some(count) = self.aria_column_count {
+            node.set_column_count(count);
+        }
+        if !self.click_listeners.is_empty() {
+            node.add_action(accesskit::Action::Click);
+        }
+        if self.tracked_focus_handle.is_some() || self.focusable {
+            node.add_action(accesskit::Action::Focus);
+        }
+        for (action, _) in &self.a11y_action_listeners {
+            node.add_action(*action);
+        }
+    }
 }
 
 /// The per-frame state of an interactive element. Used for tracking stateful interactions like clicks
@@ -3261,6 +3507,14 @@ where
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         self.element.source_location()
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        self.element.a11y_role()
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        self.element.write_a11y_info(node);
     }
 
     fn request_layout(

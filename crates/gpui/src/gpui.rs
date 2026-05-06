@@ -75,6 +75,8 @@ mod seal {
     pub trait Sealed {}
 }
 
+pub use accesskit::{Orientation, Role, Toggled};
+pub use window::a11y::A11yActionRequest;
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;

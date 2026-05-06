@@ -3,7 +3,10 @@ use std::{
     ffi::c_void,
     ptr::NonNull,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use collections::{FxHashSet, HashMap};
@@ -122,6 +125,8 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
+    a11y_active: Arc<AtomicBool>,
+    accesskit_adapter: Option<accesskit_unix::Adapter>,
 }
 
 pub enum WaylandSurfaceState {
@@ -395,6 +400,8 @@ impl WaylandWindowState {
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
+            a11y_active: Arc::new(AtomicBool::new(false)),
+            accesskit_adapter: None,
         })
     }
 
@@ -1044,6 +1051,9 @@ impl WaylandWindowStatePtr {
             fun(focus);
             self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
+        if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
+            adapter.update_window_focus_state(focus);
+        }
     }
 
     pub fn set_hovered(&self, focus: bool) {
@@ -1511,6 +1521,74 @@ impl PlatformWindow for WaylandWindow {
         if let Some(bell) = state.globals.system_bell.as_ref() {
             bell.ring(surface);
         }
+    }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let a11y_active = self.borrow().a11y_active.clone();
+        let a11y_active_for_activation = a11y_active.clone();
+        let a11y_active_for_deactivation = a11y_active.clone();
+
+        let activation_handler = TrivialActivationHandler {
+            callback: callbacks.activation,
+            a11y_active: a11y_active_for_activation,
+        };
+        let action_handler = TrivialActionHandler(callbacks.action);
+        let deactivation_handler = TrivialDeactivationHandler {
+            callback: callbacks.deactivation,
+            a11y_active: a11y_active_for_deactivation,
+        };
+
+        let adapter =
+            accesskit_unix::Adapter::new(activation_handler, action_handler, deactivation_handler);
+
+        self.borrow_mut().accesskit_adapter = Some(adapter);
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        let mut state = self.borrow_mut();
+        if let Some(adapter) = state.accesskit_adapter.as_mut() {
+            adapter.update_if_active(|| tree_update);
+        }
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        // Wayland doesn't expose window position, so this is a no-op
+    }
+
+    fn is_a11y_active(&self) -> bool {
+        self.borrow().a11y_active.load(Ordering::SeqCst)
+    }
+}
+
+struct TrivialActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    a11y_active: Arc<AtomicBool>,
+}
+
+impl accesskit::ActivationHandler for TrivialActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        self.a11y_active.store(true, Ordering::SeqCst);
+        (self.callback)()
+    }
+}
+
+struct TrivialActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+
+impl accesskit::ActionHandler for TrivialActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        (self.0)(request);
+    }
+}
+
+struct TrivialDeactivationHandler {
+    callback: Box<dyn Fn() + Send + 'static>,
+    a11y_active: Arc<AtomicBool>,
+}
+
+impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
+    fn deactivate_accessibility(&mut self) {
+        self.a11y_active.store(false, Ordering::SeqCst);
+        (self.callback)();
     }
 }
 

@@ -7,17 +7,18 @@ use crate::{
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -57,8 +58,10 @@ use std::{
 };
 use uuid::Uuid;
 
+pub(crate) mod a11y;
 mod prompts;
 
+use self::a11y::{A11y, ROOT_NODE_ID};
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -1020,6 +1023,7 @@ pub struct Window {
     captured_hitbox: Option<HitboxId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
+    pub(crate) a11y: A11y,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1565,6 +1569,38 @@ impl Window {
             })
         });
 
+        {
+            let initial_tree = accesskit::TreeUpdate {
+                nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
+                tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+                tree_id: accesskit::TreeId::ROOT,
+                focus: ROOT_NODE_ID,
+            };
+            let (action_sender, action_receiver) =
+                async_channel::unbounded::<accesskit::ActionRequest>();
+
+            platform_window.a11y_init(crate::A11yCallbacks {
+                activation: Box::new(move || Some(initial_tree.clone())),
+                action: Box::new(move |request| {
+                    action_sender.send_blocking(request).log_err();
+                }),
+                deactivation: Box::new(|| {}),
+            });
+
+            let mut async_cx = cx.to_async();
+            cx.foreground_executor()
+                .spawn(async move {
+                    while let Ok(request) = action_receiver.recv().await {
+                        handle
+                            .update(&mut async_cx, |_, window, cx| {
+                                window.handle_a11y_action(request, cx);
+                            })
+                            .log_err();
+                    }
+                })
+                .detach();
+        }
+
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
         }
@@ -1631,6 +1667,7 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
+            a11y: A11y::new(),
         })
     }
 
@@ -2596,6 +2633,8 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
+        self.a11y.begin_frame();
+
         let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
         let root_size = {
             #[cfg(any(feature = "inspector", debug_assertions))]
@@ -2662,6 +2701,9 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        let tree_update = self.a11y.end_frame();
+        self.platform_window.a11y_tree_update(tree_update);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -5190,6 +5232,89 @@ impl Window {
     /// with the window, for others it's just a simple global function call.
     pub fn play_system_bell(&self) {
         self.platform_window.play_system_bell()
+    }
+
+    /// Check if accessibility is currently active for this window.
+    pub fn is_a11y_active(&self) -> bool {
+        self.platform_window.is_a11y_active()
+    }
+
+    /// Register a listener for an accessibility action on a specific node.
+    /// The listener will be called when a screen reader requests the given
+    /// action on the node identified by `node_id`.
+    pub fn on_a11y_action(
+        &mut self,
+        node_id: accesskit::NodeId,
+        action: accesskit::Action,
+        listener: impl FnMut(&a11y::A11yActionRequest, &mut Window, &mut App) + 'static,
+    ) {
+        self.a11y
+            .action_listeners
+            .entry(node_id)
+            .or_default()
+            .push((action, Box::new(listener)));
+    }
+
+    pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
+        // Take listeners out temporarily so the closures can borrow Window
+        // mutably, then restore them afterward.
+        if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {
+            let a11y_request = a11y::A11yActionRequest::from_accesskit(&request);
+            let mut matched = false;
+            for (action, listener) in &mut listeners {
+                if *action == request.action {
+                    listener(&a11y_request, self, cx);
+                    matched = true;
+                }
+            }
+            self.a11y.action_listeners.insert(request.target_node, listeners);
+            if matched {
+                return;
+            }
+        }
+
+        // Fall back to built-in action handling.
+        match request.action {
+            accesskit::Action::Click => {
+                if let Some(bounds) = self.a11y.node_bounds.get(&request.target_node).copied() {
+                    let center = bounds.center();
+                    let mouse_down = PlatformInput::MouseDown(MouseDownEvent {
+                        button: MouseButton::Left,
+                        position: center,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    });
+                    let mouse_up = PlatformInput::MouseUp(MouseUpEvent {
+                        button: MouseButton::Left,
+                        position: center,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    });
+                    self.dispatch_event(mouse_down, cx);
+                    self.dispatch_event(mouse_up, cx);
+                }
+            }
+            accesskit::Action::Focus => {
+                if let Some(focus_id) = self.a11y.focus_ids.get(&request.target_node).copied() {
+                    if self.focus_enabled {
+                        self.focus = Some(focus_id);
+                        self.clear_pending_keystrokes();
+                        self.refresh();
+                    }
+                }
+            }
+            accesskit::Action::Blur => {
+                self.blur();
+            }
+            _ => {
+                log::debug!(
+                    "Unhandled a11y action: {:?} on {:?}",
+                    request.action,
+                    request.target_node
+                );
+            }
+        }
     }
 
     /// Toggles the inspector mode on this window.

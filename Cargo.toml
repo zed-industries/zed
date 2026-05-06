@@ -495,6 +495,8 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
+accesskit = "0.24.0"
+accesskit_unix = "0.21.0"
 agent-client-protocol = { version = "=0.11.1", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }

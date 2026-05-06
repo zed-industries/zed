@@ -794,6 +794,14 @@ impl Element for InteractiveText {
         None
     }
 
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        Some(accesskit::Role::Label)
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        node.set_label(self.text.text.to_string());
+    }
+
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,

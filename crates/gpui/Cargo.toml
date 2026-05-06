@@ -45,6 +45,7 @@ path = "src/gpui.rs"
 doctest = false
 
 [dependencies]
+accesskit.workspace = true
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { workspace = true, optional = true }
@@ -175,6 +176,8 @@ cbindgen = { version = "0.28.0", default-features = false }
 
 
 
+
+
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
@@ -250,3 +253,7 @@ path = "examples/list_example.rs"
 [[example]]
 name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"
+
+[[example]]
+name = "a11y"
+path = "examples/a11y.rs"
