@@ -3954,6 +3954,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_file_tool_new_and_old_text_appear_together(
+        cx: &mut TestAppContext,
+    ) {
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "old_content"})).await;
+        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({
+            "mode": "edit",
+            "path": "root/file.txt"
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "mode": "edit",
+            "path": "root/file.txt",
+            "edits": [{"new_text": "new_content", "old_text": "old"}]
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "mode": "edit",
+            "path": "root/file.txt",
+            "edits": [{"new_text": "new_content", "old_text": "old_content"}]
+        }));
+        cx.run_until_parked();
+
+        sender.send_full(json!({
+            "mode": "edit",
+            "path": "root/file.txt",
+            "edits": [{"new_text": "new_content", "old_text": "old_content"}]
+        }));
+        cx.run_until_parked();
+
+        let result = task.await;
+        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new_content");
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_file_tool_new_text_before_old_text(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "old_content"})).await;

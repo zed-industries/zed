@@ -732,6 +732,57 @@ mod tests {
     }
 
     #[test]
+    fn test_new_text_and_old_text_appearing_together_does_not_finalize_old_text() {
+        let mut parser = StreamingParser::default();
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("ol".into()),
+            new_text: Some("new".into()),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "ol".into(),
+                done: false,
+            }]
+        );
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("old".into()),
+            new_text: Some("new".into()),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "d".into(),
+                done: false,
+            }]
+        );
+
+        let events = parser.finalize_edits(&[Edit {
+            old_text: "old".into(),
+            new_text: "new".into(),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[
+                EditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "new".into(),
+                    done: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn test_new_text_before_empty_old_text_is_buffered() {
         let mut parser = StreamingParser::default();
 
@@ -769,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_text_before_complete_old_text_streams_when_old_text_arrives() {
+    fn test_new_text_before_old_text_waits_for_finalize_to_stream_new_text() {
         let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
@@ -784,18 +835,11 @@ mod tests {
         }]);
         assert_eq!(
             events.as_slice(),
-            &[
-                EditEvent::OldTextChunk {
-                    edit_index: 0,
-                    chunk: "old".into(),
-                    done: true,
-                },
-                EditEvent::NewTextChunk {
-                    edit_index: 0,
-                    chunk: "new".into(),
-                    done: false,
-                },
-            ]
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "old".into(),
+                done: false,
+            }]
         );
 
         let events = parser.finalize_edits(&[Edit {
@@ -804,11 +848,18 @@ mod tests {
         }]);
         assert_eq!(
             events.as_slice(),
-            &[EditEvent::NewTextChunk {
-                edit_index: 0,
-                chunk: "".into(),
-                done: true,
-            }]
+            &[
+                EditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "new".into(),
+                    done: true,
+                },
+            ]
         );
     }
 
