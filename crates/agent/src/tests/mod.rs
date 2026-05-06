@@ -9,7 +9,7 @@ use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
 use collections::IndexMap;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use feature_flags::FeatureFlagAppExt as _;
+use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag};
 use fs::{FakeFs, Fs};
 use futures::{
     FutureExt as _, StreamExt,
@@ -1413,6 +1413,68 @@ async fn test_profiles(cx: &mut TestAppContext) {
         .map(|tool| tool.name.clone())
         .collect();
     assert_eq!(tool_names, vec![InfiniteTool::NAME]);
+}
+
+#[gpui::test]
+async fn test_existing_thread_picks_up_lsp_tools_after_feature_flag_is_enabled(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, cx| {
+        thread.add_default_tools(Rc::new(FakeThreadEnvironment::default()), cx);
+    });
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "default_profile": "test-profile",
+                "profiles": {
+                    "test-profile": {
+                        "name": "Test Profile",
+                        "tools": {
+                            RenameTool::NAME: true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        cx.update_flags(
+            false,
+            vec![<LspToolFeatureFlag as feature_flags::FeatureFlag>::NAME.to_string()],
+        );
+    });
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["rename a symbol"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let mut pending_completions = fake_model.pending_completions();
+    assert_eq!(pending_completions.len(), 1);
+    let completion = pending_completions.pop().unwrap();
+    let tool_names: Vec<String> = completion
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect();
+    assert!(
+        tool_names.contains(&RenameTool::NAME.to_string()),
+        "existing threads should pick up LSP tools when the feature flag becomes enabled; got tools: {tool_names:?}"
+    );
 }
 
 #[gpui::test]
