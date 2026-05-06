@@ -5539,6 +5539,7 @@ dependencies = [
  "unicode-width",
  "unindent",
  "url",
+ "urlencoding",
  "util",
  "uuid",
  "vim_mode_setting",

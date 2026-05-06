@@ -766,8 +766,12 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
         && let Some(workspace) = Workspace::for_window(window, cx)
     {
         workspace.update(cx, |workspace, cx| {
+            let path_text = uri.path();
+            let decoded_url = urlencoding::decode(path_text)
+                .map(|decoded| decoded.into_owned())
+                .unwrap_or_else(|_| path_text.to_string());
             let task = workspace.open_abs_path(
-                PathBuf::from(uri.path()),
+                PathBuf::from(&decoded_url),
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()
