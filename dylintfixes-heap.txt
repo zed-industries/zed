@@ -1,0 +1,1205 @@
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/theme/src/icon_theme.rs:429:29
+    |
+429 |             collapsed: Some("icons/file_icons/folder.svg".into()),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("icons/file_icons/folder.svg")`
+    |
+    = note: the literal is 27 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/theme/src/icon_theme.rs:430:28
+    |
+430 |             expanded: Some("icons/file_icons/folder_open.svg".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("icons/file_icons/folder_open.svg")`
+    |
+    = note: the literal is 32 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/theme/src/icon_theme.rs:434:29
+    |
+434 |             collapsed: Some("icons/file_icons/chevron_right.svg".into()),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("icons/file_icons/chevron_right.svg")`
+    |
+    = note: the literal is 34 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/theme/src/icon_theme.rs:435:28
+    |
+435 |             expanded: Some("icons/file_icons/chevron_down.svg".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("icons/file_icons/chevron_down.svg")`
+    |
+    = note: the literal is 33 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:708:44
+    |
+708 | ...                   full_path: "/worktrees/my-project/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/my-project/zed")`
+    |
+    = note: the literal is 25 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:727:44
+    |
+727 | ...                   full_path: "/worktrees/my-project/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/my-project/zed")`
+    |
+    = note: the literal is 25 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:730:51
+    |
+730 | ...                   branch_name: Some("fix-very-long-branch-name-here".into()),
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("fix-very-long-branch-name-here")`
+    |
+    = note: the literal is 30 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:749:51
+    |
+749 | ...                   branch_name: Some("sidebar-show-branch-name".into()),
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("sidebar-show-branch-name")`
+    |
+    = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:765:37
+    |
+765 | ...                   "very-long-worktree-name-that-should-truncate".into(),
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("very-long-worktree-name-that-should-truncate")`
+    |
+    = note: the literal is 44 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:767:44
+    |
+767 | ...                   full_path: "/worktrees/very-long-worktree-name/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/very-long-worktree-name/zed")`
+    |
+    = note: the literal is 38 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:784:44
+    |
+784 | ...                   full_path: "/worktrees/jade-glen/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/jade-glen/zed")`
+    |
+    = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:802:48
+    |
+802 | ...                   full_path: "/worktrees/jade-glen/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/jade-glen/zed")`
+    |
+    = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:809:48
+    |
+809 | ...                   full_path: "/worktrees/fawn-otter/zed-slides".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/fawn-otter/zed-slides")`
+    |
+    = note: the literal is 32 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:828:48
+    |
+828 | ...                   full_path: "/worktrees/jade-glen/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/jade-glen/zed")`
+    |
+    = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:835:48
+    |
+835 | ...                   full_path: "/worktrees/fawn-otter/zed-slides".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/fawn-otter/zed-slides")`
+    |
+    = note: the literal is 32 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:854:44
+    |
+854 | ...                   full_path: "/worktrees/jade-glen/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/jade-glen/zed")`
+    |
+    = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:875:44
+    |
+875 | ...                   full_path: "/worktrees/jade-glen/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/jade-glen/zed")`
+    |
+    = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/ai/thread_item.rs:893:44
+    |
+893 | ...                   full_path: "/worktrees/my-worktree/zed".into(),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("/worktrees/my-worktree/zed")`
+    |
+    = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/toggle.rs:716:42
+    |
+716 | ...                   Some("Receive notifications when new messages arrive.".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Receive notifications when new messages arrive.")`
+    |
+    = note: the literal is 47 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/toggle.rs:727:42
+    |
+727 | ...                   Some("Receive notifications when new messages arrive.".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Receive notifications when new messages arrive.")`
+    |
+    = note: the literal is 47 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/toggle.rs:743:42
+    |
+743 | ...                   Some("This uses the default switch color.".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("This uses the default switch color.")`
+    |
+    = note: the literal is 35 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/toggle.rs:754:42
+    |
+754 | ...                   Some("This uses the accent color scheme.".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("This uses the accent color scheme.")`
+    |
+    = note: the literal is 34 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/toggle.rs:770:38
+    |
+770 | ...                   Some("This field is disabled and cannot be toggled.".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("This field is disabled and cannot be toggled.")`
+    |
+    = note: the literal is 45 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/ui/src/components/toggle.rs:800:42
+    |
+800 | ...                   Some("Enable advanced configuration options.".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Enable advanced configuration options.")`
+    |
+    = note: the literal is 38 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/project/src/git_store.rs:4978:33
+     |
+4978 | ...                   Err("Git graph is not supported for collab yet".into())
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Git graph is not supported for collab yet")`
+     |
+     = note: the literal is 41 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/workspace/src/workspace.rs:9247:53
+     |
+9247 | ...                   ErrorCode::SignedOut => "Please sign in to continue.".into(),
+     |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Please sign in to continue.")`
+     |
+     = note: the literal is 27 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/workspace/src/workspace.rs:9248:59
+     |
+9248 |   ...                   ErrorCode::UpgradeRequired => concat!(
+     |  _____________________________________________________^
+9249 | | ...                       "Your are running an unsupported version of Zed. ",
+9250 | | ...                       "Please update to continue."
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/workspace/src/workspace.rs:9253:57
+     |
+9253 |   ...                   ErrorCode::NoSuchChannel => concat!(
+     |  ___________________________________________________^
+9254 | | ...                       "No matching channel was found. ",
+9255 | | ...                       "Please check the link and try again."
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/workspace/src/workspace.rs:9258:53
+     |
+9258 |   ...                   ErrorCode::Forbidden => concat!(
+     |  _______________________________________________^
+9259 | | ...                       "This channel is private, and you do not have access. ",
+9260 | | ...                       "Please ask someone to add you and try again."
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/workspace/src/workspace.rs:9264:33
+     |
+9264 | ...                   "Please check your internet connection and try again.".into()
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Please check your internet connection and try again.")`
+     |
+     = note: the literal is 52 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/editor/src/editor.rs:9275:21
+     |
+9275 |                     SharedString::from("Right-click for more options"),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Right-click for more options")`
+     |
+     = note: the literal is 28 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/editor/src/editor.rs:9564:13
+     |
+9564 |             SharedString::from("No executable code is associated with this line.")
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("No executable code is associated with this line.")`
+     |
+     = note: the literal is 48 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/editor/src/editor.rs:9570:13
+     |
+9570 |             SharedString::from("Right-click for more options")
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Right-click for more options")`
+     |
+     = note: the literal is 28 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/copilot_ui/src/sign_in.rs:636:27
+    |
+636 |         let start_label = "To use Copilot for edit predictions, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot subscription.".into();
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("To use Copilot for edit predictions, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot subscription.")`
+    |
+    = note: the literal is 144 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/copilot_ui/src/sign_in.rs:637:31
+    |
+637 |         let no_status_label = "Copilot requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different edit predictions provider.".into();
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Copilot requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different edit predictions provider.")`
+    |
+    = note: the literal is 152 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+warning: `remote_connection` (lib) generated 1 warning (run `cargo fix --lib -p remote_connection` to apply 1 suggestion)
+warning: this `SharedString` construction heap-allocates on every call
+  --> crates/git_ui/src/clone.rs:21:22
+   |
+21 |         prompt: Some("Select as Repository Destination".into()),
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Select as Repository Destination")`
+   |
+   = note: the literal is 32 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/git_ui/src/git_panel.rs:6573:41
+     |
+6573 | ...                   SharedString::from("zed-industries-community-examples"),
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("zed-industries-community-examples")`
+     |
+     = note: the literal is 33 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/git_ui/src/git_panel.rs:6584:41
+     |
+6584 | ...                   SharedString::from("zed-industries-community-examples"),
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("zed-industries-community-examples")`
+     |
+     = note: the literal is 33 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/git_ui/src/worktree_picker.rs:293:18
+    |
+293 |             Some("Worktree creation is not supported in collaborative projects".into())
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Worktree creation is not supported in collaborative projects")`
+    |
+    = note: the literal is 60 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/git_ui/src/worktree_picker.rs:295:18
+    |
+295 |             Some("Requires a Git repository in the project".into())
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Requires a Git repository in the project")`
+    |
+    = note: the literal is 40 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/language_models/src/provider/anthropic.rs:521:63
+    |
+521 |                     ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic".into(),
+    |                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Zed's agent with Anthropic")`
+    |
+    = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/language_models/src/provider/google.rs:463:63
+    |
+463 |                     ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Google AI".into(),
+    |                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Zed's agent with Google AI")`
+    |
+    = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/open_path_prompt/src/open_path_prompt.rs:850:17
+    |
+850 |                 SharedString::from("No such file or directory")
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("No such file or directory")`
+    |
+    = note: the literal is 25 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+warning: `search` (lib) generated 3 warnings (run `cargo fix --lib -p search` to apply 3 suggestions)
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_servers/src/acp.rs:1444:17
+     |
+1444 |                 "Loading sessions is not supported by this agent.".into()
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Loading sessions is not supported by this agent.")`
+     |
+     = note: the literal is 48 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_servers/src/acp.rs:1490:17
+     |
+1490 |                 "Resuming sessions is not supported by this agent.".into()
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Resuming sessions is not supported by this agent.")`
+     |
+     = note: the literal is 49 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_servers/src/acp.rs:1532:17
+     |
+1532 |                 "Closing sessions is not supported by this agent.".into()
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Closing sessions is not supported by this agent.")`
+     |
+     = note: the literal is 48 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+  --> crates/agent/src/tools/diagnostics_tool.rs:84:13
+   |
+84 |             "Check project diagnostics".into()
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Check project diagnostics")`
+   |
+   = note: the literal is 25 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/languages/src/css.rs:131:28
+    |
+131 |         LanguageServerName("vscode-css-language-server".into())
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("vscode-css-language-server")`
+    |
+    = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/languages/src/lib.rs:248:28
+    |
+248 |         LanguageServerName("tailwindcss-language-server".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("tailwindcss-language-server")`
+    |
+    = note: the literal is 27 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/languages/src/lib.rs:252:28
+    |
+252 |         LanguageServerName("tailwindcss-intellisense-css".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("tailwindcss-intellisense-css")`
+    |
+    = note: the literal is 28 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/languages/src/lib.rs:261:28
+    |
+261 |         LanguageServerName("typescript-language-server".into()),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("typescript-language-server")`
+    |
+    = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/rules_library/src/rules_library.rs:200:14
+    |
+200 |         Some("No rules found matching your search.".into())
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("No rules found matching your search.")`
+    |
+    = note: the literal is 36 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/recent_projects/src/recent_projects.rs:1250:13
+     |
+1250 |             "Recently opened projects will show up here".into()
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Recently opened projects will show up here")`
+     |
+     = note: the literal is 42 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+warning: `recent_projects` (lib) generated 8 warnings (run `cargo fix --lib -p recent_projects` to apply 8 suggestions)
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:181:24
+    |
+181 |             return Err(SharedString::from("Model Name cannot be empty"));
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Model Name cannot be empty")`
+    |
+    = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:191:34
+    |
+191 |                     .map_err(|_| SharedString::from("Max Completion Tokens must be a number"))?,
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Max Completion Tokens must be a number")`
+    |
+    = note: the literal is 38 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:198:34
+    |
+198 |                     .map_err(|_| SharedString::from("Max Output Tokens must be a number"))?,
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Max Output Tokens must be a number")`
+    |
+    = note: the literal is 34 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:205:30
+    |
+205 |                 .map_err(|_| SharedString::from("Max Tokens must be a number"))?,
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Max Tokens must be a number")`
+    |
+    = note: the literal is 27 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:225:32
+    |
+225 |         return Task::ready(Err("Provider Name cannot be empty".into()));
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Provider Name cannot be empty")`
+    |
+    = note: the literal is 29 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:237:13
+    |
+237 |             "Provider Name is already taken by another provider".into()
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Provider Name is already taken by another provider")`
+    |
+    = note: the literal is 50 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:257:44
+    |
+257 |                     return Task::ready(Err("Model Names must be unique".into()));
+    |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Model Names must be unique")`
+    |
+    = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/agent_configuration/add_llm_provider_modal.rs:269:26
+    |
+269 |             .map_err(|_| SharedString::from("Failed to write API key to keychain"))?;
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Failed to write API key to keychain")`
+    |
+    = note: the literal is 35 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:1235:21
+     |
+1235 | /                     "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+1236 | |                         .into(),
+     | |_______________________________^ help: use the zero-cost static constructor: `SharedString::new_static("You reached your free usage limit. Upgrade to Zed Pro for more prompts.")`
+     |
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:1262:21
+     |
+1262 |                     "Context too large for the model's context window.".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Context too large for the model's context window.")`
+     |
+     = note: the literal is 49 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:1290:21
+     |
+1290 |                     "Request could not be completed after multiple attempts.".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Request could not be completed after multiple attempts.")`
+     |
+     = note: the literal is 55 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:1295:21
+     |
+1295 |                     "Model reached its maximum output length.".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Model reached its maximum output length.")`
+     |
+     = note: the literal is 40 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:5011:17
+     |
+5011 | /                 SharedString::new(
+5012 | |                     "Rating the thread sends all of your current conversation to the Zed team.",
+5013 | |                 )
+     | |_________________^ help: use the zero-cost static constructor: `SharedString::new_static("Rating the thread sends all of your current conversation to the Zed team.")`
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:6774:17
+     |
+6774 |                 "Always for selected commands".into()
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Always for selected commands")`
+     |
+     = note: the literal is 28 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:8325:17
+     |
+8325 | /                 "The request could not be completed after multiple attempts. \
+8326 | |                 Try again in a moment."
+8327 | |                     .into(),
+     | |___________________________^
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:8334:17
+     |
+8334 | /                 "The model stopped because it reached its maximum output length. \
+8335 | |                 You can ask it to continue where it left off."
+8336 | |                     .into(),
+     | |___________________________^
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/agent_ui/src/conversation_view/thread_view.rs:8343:17
+     |
+8343 |                 "Select a model from the model picker below to get started.".into(),
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Select a model from the model picker below to get started.")`
+     |
+     = note: the literal is 58 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/conversation_view.rs:837:21
+    |
+837 |                     "External agents are not yet supported in shared projects.".into(),
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("External agents are not yet supported in shared projects.")`
+    |
+    = note: the literal is 57 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/conversation_view.rs:913:29
+    |
+913 | ...                   "Loading or resuming sessions is not supported by this agent.".into()
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Loading or resuming sessions is not supported by this agent.")`
+    |
+    = note: the literal is 60 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/agent_ui/src/profile_selector.rs:436:13
+    |
+436 |             "No profiles match your search.".into()
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("No profiles match your search.")`
+    |
+    = note: the literal is 30 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/debugger_ui/src/new_process_modal.rs:976:20
+    |
+976 |             label: "Attach New Session Setup".into(),
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Attach New Session Setup")`
+    |
+    = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/debugger_ui/src/session/running/console.rs:490:33
+    |
+490 | ...                   "split-button-left-confirm-button".into(),
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("split-button-left-confirm-button")`
+    |
+    = note: the literal is 32 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/debugger_ui/src/session/running/console.rs:511:49
+    |
+511 | ...                   ElementId::Name("split-button-right-confirm-button".into()),
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("split-button-right-confirm-button")`
+    |
+    = note: the literal is 33 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1594:21
+     |
+1594 |                     "Claude Agent support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Claude Agent support is built-in to Zed!")`
+     |
+     = note: the literal is 40 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1595:21
+     |
+1595 |                     "https://zed.dev/docs/ai/external-agents#claude-agent".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/ai/external-agents#claude-agent")`
+     |
+     = note: the literal is 52 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1600:21
+     |
+1600 |                     "Codex CLI support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Codex CLI support is built-in to Zed!")`
+     |
+     = note: the literal is 37 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1601:21
+     |
+1601 |                     "https://zed.dev/docs/ai/external-agents#codex-cli".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/ai/external-agents#codex-cli")`
+     |
+     = note: the literal is 49 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1606:21
+     |
+1606 |                     "Gemini CLI support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Gemini CLI support is built-in to Zed!")`
+     |
+     = note: the literal is 38 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1607:21
+     |
+1607 |                     "https://zed.dev/docs/ai/external-agents#gemini-cli".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/ai/external-agents#gemini-cli")`
+     |
+     = note: the literal is 50 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1612:21
+     |
+1612 |                     "Basedpyright (Python language server) support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Basedpyright (Python language server) support is built-in to Zed!")`
+     |
+     = note: the literal is 65 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1613:21
+     |
+1613 |                     "https://zed.dev/docs/languages/python#basedpyright".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/python#basedpyright")`
+     |
+     = note: the literal is 50 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1618:21
+     |
+1618 |                     "Ruff (linter for Python) support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Ruff (linter for Python) support is built-in to Zed!")`
+     |
+     = note: the literal is 52 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1619:21
+     |
+1619 |                     "https://zed.dev/docs/languages/python#code-formatting--linting".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/python#code-formatting--linting")`
+     |
+     = note: the literal is 62 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1624:21
+     |
+1624 |                     "Tailwind CSS support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Tailwind CSS support is built-in to Zed!")`
+     |
+     = note: the literal is 40 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1625:21
+     |
+1625 |                     "https://zed.dev/docs/languages/tailwindcss".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/tailwindcss")`
+     |
+     = note: the literal is 42 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1630:21
+     |
+1630 |                     "Ty (Python language server) support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Ty (Python language server) support is built-in to Zed!")`
+     |
+     = note: the literal is 55 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1631:21
+     |
+1631 |                     "https://zed.dev/docs/languages/python".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/python")`
+     |
+     = note: the literal is 37 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1636:21
+     |
+1636 | /                     "Zed comes with basic Git support—more features are coming in the future."
+1637 | |                         .into(),
+     | |_______________________________^ help: use the zero-cost static constructor: `SharedString::new_static("Zed comes with basic Git support—more features are coming in the future.")`
+     |
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1638:21
+     |
+1638 |                     "https://zed.dev/docs/git".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/git")`
+     |
+     = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1643:21
+     |
+1643 |                     "Shell support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Shell support is built-in to Zed!")`
+     |
+     = note: the literal is 33 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1644:21
+     |
+1644 |                     "https://zed.dev/docs/languages/bash".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/bash")`
+     |
+     = note: the literal is 35 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1649:21
+     |
+1649 |                     "C support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("C support is built-in to Zed!")`
+     |
+     = note: the literal is 29 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1650:21
+     |
+1650 |                     "https://zed.dev/docs/languages/c".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/c")`
+     |
+     = note: the literal is 32 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1655:21
+     |
+1655 |                     "C++ support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("C++ support is built-in to Zed!")`
+     |
+     = note: the literal is 31 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1656:21
+     |
+1656 |                     "https://zed.dev/docs/languages/cpp".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/cpp")`
+     |
+     = note: the literal is 34 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1661:21
+     |
+1661 |                     "Go support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Go support is built-in to Zed!")`
+     |
+     = note: the literal is 30 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1662:21
+     |
+1662 |                     "https://zed.dev/docs/languages/go".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/go")`
+     |
+     = note: the literal is 33 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1667:21
+     |
+1667 |                     "Python support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Python support is built-in to Zed!")`
+     |
+     = note: the literal is 34 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1668:21
+     |
+1668 |                     "https://zed.dev/docs/languages/python".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/python")`
+     |
+     = note: the literal is 37 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1673:21
+     |
+1673 |                     "React support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("React support is built-in to Zed!")`
+     |
+     = note: the literal is 33 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1674:21
+     |
+1674 |                     "https://zed.dev/docs/languages/typescript".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/typescript")`
+     |
+     = note: the literal is 41 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1679:21
+     |
+1679 |                     "Rust support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Rust support is built-in to Zed!")`
+     |
+     = note: the literal is 32 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1680:21
+     |
+1680 |                     "https://zed.dev/docs/languages/rust".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/rust")`
+     |
+     = note: the literal is 35 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1685:21
+     |
+1685 |                     "Typescript support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Typescript support is built-in to Zed!")`
+     |
+     = note: the literal is 38 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1686:21
+     |
+1686 |                     "https://zed.dev/docs/languages/typescript".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/languages/typescript")`
+     |
+     = note: the literal is 41 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1691:21
+     |
+1691 |                     "Zed supports linking to a source line on GitHub and others.".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Zed supports linking to a source line on GitHub and others.")`
+     |
+     = note: the literal is 59 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1692:21
+     |
+1692 |                     "https://zed.dev/docs/git#git-integrations".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/git#git-integrations")`
+     |
+     = note: the literal is 41 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1697:21
+     |
+1697 |                     "Vim support is built-in to Zed!".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Vim support is built-in to Zed!")`
+     |
+     = note: the literal is 31 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/extensions_ui/src/extensions_ui.rs:1698:21
+     |
+1698 |                     "https://zed.dev/docs/vim".into(),
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://zed.dev/docs/vim")`
+     |
+     = note: the literal is 24 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/repl/src/outputs.rs:330:49
+    |
+330 | ...                   ElementId::Name("open-full-error-in-buffer-traceback".into()),
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("open-full-error-in-buffer-traceback")`
+    |
+    = note: the literal is 35 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/auto_update_ui/src/auto_update_ui.rs:214:22
+    |
+214 |             heading: "Introducing Parallel Agents".into(),
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Introducing Parallel Agents")`
+    |
+    = note: the literal is 27 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/auto_update_ui/src/auto_update_ui.rs:215:26
+    |
+215 |             description: "Run multiple threads of your favorite agents simultaneously across projects in a new workspace layout, tailored for agentic workflows.".into(),
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Run multiple threads of your favorite agents simultaneously across projects in a new workspace layout, tailored for agentic workflows.")`
+    |
+    = note: the literal is 134 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/auto_update_ui/src/auto_update_ui.rs:217:17
+    |
+217 |                 "Use your favorite agents in parallel".into(),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Use your favorite agents in parallel")`
+    |
+    = note: the literal is 36 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/auto_update_ui/src/auto_update_ui.rs:218:17
+    |
+218 |                 "Optionally isolate agents using worktrees".into(),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Optionally isolate agents using worktrees")`
+    |
+    = note: the literal is 41 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/auto_update_ui/src/auto_update_ui.rs:219:17
+    |
+219 |                 "Combine multiple projects in one window".into(),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Combine multiple projects in one window")`
+    |
+    = note: the literal is 39 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/settings_ui/src/components/ollama_model_picker.rs:169:13
+    |
+169 |             "ollama_model_picker_trigger".into(),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("ollama_model_picker_trigger")`
+    |
+    = note: the literal is 27 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/settings_ui/src/page_data.rs:1308:35
+     |
+1308 |                 description: Some("Customize keybindings in the keymap editor.".into()),
+     |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Customize keybindings in the keymap editor.")`
+     |
+     = note: the literal is 43 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/settings_ui/src/page_data.rs:7317:35
+     |
+7317 |                 description: Some("Test your microphone and speaker setup".into()),
+     |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Test your microphone and speaker setup")`
+     |
+     = note: the literal is 38 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/settings_ui/src/page_data.rs:7419:35
+     |
+7419 |                 description: Some("Set up regex patterns to auto-allow, auto-deny, or always request confirmation, for specific tool inputs.".into()),
+     |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Set up regex patterns to auto-allow, auto-deny, or always request confirmation, for specific tool inputs.")`
+     |
+     = note: the literal is 105 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/settings_ui/src/page_data.rs:9494:31
+     |
+9494 |             description: Some("Set up different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Set up different edit prediction providers in complement to Zed's built-in Zeta model.")`
+     |
+     = note: the literal is 86 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/settings_ui/src/pages/audio_input_output_setup.rs:108:9
+    |
+108 |         "input-audio-device-dropdown".into()
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("input-audio-device-dropdown")`
+    |
+    = note: the literal is 27 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/settings_ui/src/pages/audio_input_output_setup.rs:110:9
+    |
+110 |         "output-audio-device-dropdown".into()
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("output-audio-device-dropdown")`
+    |
+    = note: the literal is 28 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+  --> crates/settings_ui/src/pages/edit_prediction_provider_setup.rs:37:36
+   |
+37 |                     dashboard_url: "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://platform.inceptionlabs.ai/dashboard/api-keys")`
+   |
+   = note: the literal is 52 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+  --> crates/settings_ui/src/pages/edit_prediction_provider_setup.rs:52:36
+   |
+52 |                     dashboard_url: "https://console.mistral.ai/codestral".into(),
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("https://console.mistral.ai/codestral")`
+   |
+   = note: the literal is 36 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+  --> crates/settings_ui/src/pages/edit_prediction_provider_setup.rs:77:30
+   |
+77 |                     message: "The API key sent as Authorization: Bearer {key}.".into(),
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("The API key sent as Authorization: Bearer {key}.")`
+   |
+   = note: the literal is 48 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/settings_ui/src/settings_ui.rs:4241:13
+     |
+4241 |             "font_family_picker_trigger".into(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("font_family_picker_trigger")`
+     |
+     = note: the literal is 26 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+    --> crates/settings_ui/src/settings_ui.rs:4346:13
+     |
+4346 |             "icon_theme_picker_trigger".into(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("icon_theme_picker_trigger")`
+     |
+     = note: the literal is 25 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+warning: `component_preview` (lib) generated 2 warnings (run `cargo fix --lib -p component_preview` to apply 2 suggestions)
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/onboarding/src/basics_page.rs:253:22
+    |
+253 |                 Some("Help improve Zed by sending anonymous usage data".into()),
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Help improve Zed by sending anonymous usage data")`
+    |
+    = note: the literal is 48 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/onboarding/src/basics_page.rs:293:21
+    |
+293 | /                     "Help fix Zed by sending crash reports so we can fix critical issues fast"
+294 | |                         .into(),
+    | |_______________________________^ help: use the zero-cost static constructor: `SharedString::new_static("Help fix Zed by sending crash reports so we can fix critical issues fast")`
+    |
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/onboarding/src/basics_page.rs:398:14
+    |
+398 |         Some("Coming from Neovim? Use our first-class implementation of Vim Mode".into()),
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Coming from Neovim? Use our first-class implementation of Vim Mode")`
+    |
+    = note: the literal is 66 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here
+--
+
+warning: this `SharedString` construction heap-allocates on every call
+   --> crates/onboarding/src/basics_page.rs:439:14
+    |
+439 |         Some("Automatically mark all new projects as trusted to unlock all Zed's features".into()),
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use the zero-cost static constructor: `SharedString::new_static("Automatically mark all new projects as trusted to unlock all Zed's features")`
+    |
+    = note: the literal is 75 bytes, which exceeds `SmolStr`'s 23-byte inline capacity, so `SmolStr::from` allocates an `Arc<str>` here

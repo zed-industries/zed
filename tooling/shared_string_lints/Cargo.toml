@@ -1,0 +1,27 @@
+[package]
+name = "shared_string_lints"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Dylint lints for catching wasteful gpui::SharedString constructions in zed."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "54482290b5f32e6c6b57cc9e0a17153f432b0036" }
+dylint_linting = "5.0"
+
+[dev-dependencies]
+dylint_testing = "5.0"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+# Keep this crate out of the zed workspace. It pins its own nightly toolchain
+# (see `rust-toolchain.toml`) to match `clippy_utils`.
+[workspace]
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(dylint_lib, values(any()))"]
