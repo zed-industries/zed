@@ -43,11 +43,11 @@ use std::{
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
-    HeaderResizeInfo, HighlightedLabel, RedistributableColumnsState, ScrollableHandle, Table,
-    TableInteractionState, TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar,
-    bind_redistributable_columns, prelude::*, render_redistributable_columns_resize_handles,
-    render_table_header, table_row::TableRow,
+    ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry,
+    DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, RedistributableColumnsState,
+    ScrollableHandle, Table, TableInteractionState, TableRenderContext, TableResizeBehavior,
+    Tooltip, WithScrollbar, bind_redistributable_columns, prelude::*,
+    render_redistributable_columns_resize_handles, render_table_header, table_row::TableRow,
 };
 use workspace::{
     Workspace,
@@ -281,6 +281,8 @@ actions!(
     [
         /// Copies the SHA of the selected commit to the clipboard.
         CopyCommitSha,
+        /// Copies the tag(s) of the selected commit to the clipboard.
+        CopyCommitTags,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
         /// Focuses the search field.
@@ -1888,6 +1890,30 @@ impl GitGraph {
         self.copy_commit_sha(selected_entry_index, cx);
     }
 
+    fn copy_commit_tags(&mut self, entry_index: usize, cx: &mut Context<Self>) {
+        let Some(commit) = self.graph_data.commits.get(entry_index) else {
+            return;
+        };
+        let tag_names = commit.data.tag_names();
+
+        if tag_names.is_empty() {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(tag_names.join(" ")));
+    }
+
+    fn copy_selected_commit_tags(
+        &mut self,
+        _: &CopyCommitTags,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_entry_index) = self.selected_entry_idx else {
+            return;
+        };
+        self.copy_commit_tags(selected_entry_index, cx);
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -1899,6 +1925,13 @@ impl GitGraph {
             return;
         };
         let short_sha = commit.data.sha.display_short();
+        let tag_names = commit.data.tag_names();
+        let copy_tag_label = if tag_names.len() > 1 {
+            "Copy Tags"
+        } else {
+            "Copy Tag"
+        };
+        let copy_tag_disabled = tag_names.is_empty();
 
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
@@ -1919,6 +1952,14 @@ impl GitGraph {
                     window.handler_for(&git_graph, move |this, _window, cx| {
                         this.copy_commit_sha(index, cx);
                     }),
+                )
+                .item(
+                    ContextMenuEntry::new(copy_tag_label)
+                        .action(CopyCommitTags.boxed_clone())
+                        .disabled(copy_tag_disabled)
+                        .handler(window.handler_for(&git_graph, move |this, _window, cx| {
+                            this.copy_commit_tags(index, cx);
+                        })),
                 )
         });
         self.set_context_menu(context_menu, position, index, window, cx);
@@ -3243,6 +3284,7 @@ impl Render for GitGraph {
                 this.open_selected_commit_view(window, cx);
             }))
             .on_action(cx.listener(Self::copy_selected_commit_sha))
+            .on_action(cx.listener(Self::copy_selected_commit_tags))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.search_state
