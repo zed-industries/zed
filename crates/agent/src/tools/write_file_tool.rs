@@ -348,14 +348,12 @@ mod tests {
         // Now the path grows and mode appears
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "write"
         }));
         cx.run_until_parked();
 
         // Send final
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "write",
             "content": "new content"
         }));
 
@@ -380,13 +378,11 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write",
             "content": "Hello, "
         }));
         cx.run_until_parked();
@@ -394,7 +390,6 @@ mod tests {
         // Final with full content
         sender.send_full(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write",
             "content": "Hello, World!"
         }));
 
@@ -422,11 +417,9 @@ mod tests {
         sender.send_partial(json!({"path": "root/dir/new.txt"}));
         sender.send_partial(json!({
             "path": "root/dir/new.txt",
-            "mode": "write"
         }));
         sender.send_full(json!({
             "path": "root/dir/new.txt",
-            "mode": "write",
             "content": "streamed content"
         }));
 
@@ -803,14 +796,12 @@ mod tests {
         // Transition to BufferResolved
         sender.send_partial(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write"
         }));
         cx.run_until_parked();
 
         // Stream content incrementally
         sender.send_partial(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write",
             "content": "line 1\n"
         }));
         cx.run_until_parked();
@@ -827,7 +818,6 @@ mod tests {
         // Stream more content
         sender.send_partial(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write",
             "content": "line 1\nline 2\n"
         }));
         cx.run_until_parked();
@@ -836,7 +826,6 @@ mod tests {
         // Stream final chunk
         sender.send_partial(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write",
             "content": "line 1\nline 2\nline 3\n"
         }));
         cx.run_until_parked();
@@ -848,7 +837,6 @@ mod tests {
         // Send final input
         sender.send_full(json!({
             "path": "root/dir/new_file.txt",
-            "mode": "write",
             "content": "line 1\nline 2\nline 3\n"
         }));
 
@@ -878,7 +866,6 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "write"
         }));
         cx.run_until_parked();
 
@@ -895,7 +882,6 @@ mod tests {
         // Stream first content chunk
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "write",
             "content": "new line 1\n"
         }));
         cx.run_until_parked();
@@ -908,7 +894,6 @@ mod tests {
         // Send final input
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "write",
             "content": "new line 1\nnew line 2\n"
         }));
 
@@ -940,7 +925,6 @@ mod tests {
         // Transition to BufferResolved
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "write"
         }));
         cx.run_until_parked();
 
@@ -958,7 +942,6 @@ mod tests {
         // First content partial replaces old content
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "write",
             "content": "new line 1\n"
         }));
         cx.run_until_parked();
@@ -967,7 +950,6 @@ mod tests {
         // Subsequent content partials append
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "write",
             "content": "new line 1\nnew line 2\n"
         }));
         cx.run_until_parked();
@@ -979,7 +961,6 @@ mod tests {
         // Send final input with complete content
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "write",
             "content": "new line 1\nnew line 2\nnew line 3\n"
         }));
 
@@ -1038,18 +1019,11 @@ mod tests {
         let task = cx.update(|cx| write_tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "mode": "write"
-        }));
-        cx.run_until_parked();
-
-        sender.send_partial(json!({
-            "mode": "write",
             "content": "new_content"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "mode": "write",
             "content": "new_content",
             "path": "root"
         }));
@@ -1057,7 +1031,6 @@ mod tests {
 
         // Send final.
         sender.send_full(json!({
-            "mode": "write",
             "content": "new_content",
             "path": "root/file.txt"
         }));

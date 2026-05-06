@@ -509,14 +509,12 @@ mod tests {
         // Path is NOT yet complete because mode hasn't appeared — no buffer open yet
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
         // Now send the final complete input
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
         }));
 
@@ -580,20 +578,17 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "line 1"}]
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "line 1", "new_text": "modified line 1"},
                 {"old_text": "line 5"}
@@ -604,7 +599,6 @@ mod tests {
         // Send final complete input
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "line 1", "new_text": "modified line 1"},
                 {"old_text": "line 5", "new_text": "modified line 5"}
@@ -632,7 +626,6 @@ mod tests {
         // Send final immediately with no partials (simulates non-streaming path)
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
         }));
 
@@ -660,14 +653,12 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
         // First edit starts streaming (old_text only, still in progress)
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "line 1"}]
         }));
         cx.run_until_parked();
@@ -693,7 +684,6 @@ mod tests {
         // should be applied immediately during streaming
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "line 1", "new_text": "MODIFIED 1"},
                 {"old_text": "line 5"}
@@ -719,7 +709,6 @@ mod tests {
         // Send final complete input
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "line 1", "new_text": "MODIFIED 1"},
                 {"old_text": "line 5", "new_text": "MODIFIED 5"}
@@ -751,14 +740,12 @@ mod tests {
         // Setup: description + path + mode
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
         // Edit 1 in progress
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "aaa", "new_text": "AAA"}]
         }));
         cx.run_until_parked();
@@ -766,7 +753,6 @@ mod tests {
         // Edit 2 appears — edit 1 is now complete and should be applied
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "aaa", "new_text": "AAA"},
                 {"old_text": "ccc", "new_text": "CCC"}
@@ -788,7 +774,6 @@ mod tests {
         // Edit 3 appears — edit 2 is now complete and should be applied
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "aaa", "new_text": "AAA"},
                 {"old_text": "ccc", "new_text": "CCC"},
@@ -810,7 +795,6 @@ mod tests {
         // Send final
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "aaa", "new_text": "AAA"},
                 {"old_text": "ccc", "new_text": "CCC"},
@@ -836,14 +820,12 @@ mod tests {
         // Setup
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
         // Edit 1 (valid) in progress — not yet complete (no second edit)
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "line 1", "new_text": "MODIFIED"}
             ]
@@ -854,7 +836,6 @@ mod tests {
         // Edit 1 should be applied. Edit 2 is still in-progress (last edit).
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "line 1", "new_text": "MODIFIED"},
                 {"old_text": "nonexistent text that does not appear anywhere in the file at all", "new_text": "whatever"}
@@ -880,7 +861,6 @@ mod tests {
         // resolution which should fail (old_text doesn't exist in the file).
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "line 1", "new_text": "MODIFIED"},
                 {"old_text": "nonexistent text that does not appear anywhere in the file at all", "new_text": "whatever"},
@@ -926,13 +906,11 @@ mod tests {
         // Setup + single edit that stays in-progress (no second edit to prove completion)
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "hello world", "new_text": "goodbye world"}]
         }));
         cx.run_until_parked();
@@ -956,7 +934,6 @@ mod tests {
         // Send final — the edit is applied during finalization
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "hello world", "new_text": "goodbye world"}]
         }));
 
@@ -982,13 +959,11 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
         }));
         cx.run_until_parked();
@@ -996,7 +971,6 @@ mod tests {
         // Send the final complete input
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
         }));
 
@@ -1975,7 +1949,6 @@ mod tests {
         // Setup: resolve the buffer
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
@@ -1986,7 +1959,6 @@ mod tests {
         // Edit 3 exists only to mark edit 2 as "complete" during streaming.
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "bbb\nccc", "new_text": "XXX\nccc\nddd"},
                 {"old_text": "ccc\nddd", "new_text": "ZZZ"},
@@ -1998,7 +1970,6 @@ mod tests {
         // Send the final input with all three edits.
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [
                 {"old_text": "bbb\nccc", "new_text": "XXX\nccc\nddd"},
                 {"old_text": "ccc\nddd", "new_text": "ZZZ"},
@@ -2023,7 +1994,6 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
@@ -2034,7 +2004,6 @@ mod tests {
         //   partial 2: old_text = "hello\nworld" (fixer corrected the escape)
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "hello\\"}]
         }));
         cx.run_until_parked();
@@ -2042,7 +2011,6 @@ mod tests {
         // Now the fixer corrects it to the real newline.
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "hello\nworld"}]
         }));
         cx.run_until_parked();
@@ -2050,7 +2018,6 @@ mod tests {
         // Send final.
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": [{"old_text": "hello\nworld", "new_text": "HELLO\nWORLD"}]
         }));
 
@@ -2071,13 +2038,11 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "mode": "edit"
         }));
         cx.run_until_parked();
 
         sender.send_full(json!({
             "path": "root/file.txt",
-            "mode": "edit",
             "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
         }));
 
@@ -2141,24 +2106,16 @@ mod tests {
         let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "mode": "edit"
-        }));
-        cx.run_until_parked();
-
-        sender.send_partial(json!({
-            "mode": "edit",
             "edits": [{"old_text": "old_content"}]
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "mode": "edit",
             "edits": [{"old_text": "old_content", "new_text": "new_content"}]
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "mode": "edit",
             "edits": [{"old_text": "old_content", "new_text": "new_content"}],
             "path": "root"
         }));
@@ -2166,7 +2123,6 @@ mod tests {
 
         // Send final.
         sender.send_full(json!({
-            "mode": "edit",
             "edits": [{"old_text": "old_content", "new_text": "new_content"}],
             "path": "root/file.txt"
         }));
@@ -2207,7 +2163,6 @@ mod tests {
 
         sender.send_full(json!({
             "path": "root/file.rs",
-            "mode": "edit",
             "edits": [{"old_text": old_text, "new_text": new_text}]
         }));
 
@@ -2247,7 +2202,6 @@ mod tests {
 
         sender.send_full(json!({
             "path": "root/file.rs",
-            "mode": "edit",
             "edits": [{"old_text": old_text, "new_text": new_text}]
         }));
 
