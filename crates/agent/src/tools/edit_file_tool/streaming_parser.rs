@@ -114,7 +114,6 @@ impl StreamingParser {
 
             // Process new_text changes.
             if let Some(new_text) = &partial.new_text
-                && state.old_text_done
                 && !state.new_text_done
             {
                 let safe_end = safe_emit_end_for_edit_text(new_text);
