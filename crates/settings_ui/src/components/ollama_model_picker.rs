@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use fuzzy::StringMatch;
-use gpui::{AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Task, Window, px};
+use gpui::{
+    AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Task, TaskExt, Window, px,
+};
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, prelude::*};

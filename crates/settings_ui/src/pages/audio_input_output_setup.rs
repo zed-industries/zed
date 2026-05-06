@@ -1,6 +1,6 @@
 use audio::{AudioDeviceInfo, AvailableAudioDevices};
 use cpal::DeviceId;
-use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
+use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, TaskExt, Window};
 use settings::{AudioInputDeviceName, AudioOutputDeviceName, SettingsStore};
 use std::str::FromStr;
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition, IntoElement};

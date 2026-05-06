@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{AnyElement, ElementId, Entity, Focusable, Task, TextStyleRefinement};
+use gpui::{AnyElement, ElementId, Entity, Focusable, Task, TaskExt, TextStyleRefinement};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
@@ -340,8 +340,8 @@ fn confirm_input(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
-    let new_value = (!new_value.is_empty()).then_some(new_value);
+    let input_text = editor.read_with(cx, |editor, cx| editor.text(cx));
+    let new_value = (!input_text.is_empty()).then_some(input_text.clone());
 
     if let Some(confirm) = confirm {
         confirm(new_value, window, cx);
@@ -359,7 +359,9 @@ fn confirm_input(
                     task.await?;
                     cx.update(|window, cx| {
                         editor.update(cx, |editor, cx| {
-                            editor.set_text("", window, cx);
+                            if editor.text(cx) == input_text {
+                                editor.set_text("", window, cx);
+                            }
                         })?;
                         anyhow::Ok(())
                     })??;
