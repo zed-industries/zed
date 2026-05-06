@@ -34,6 +34,7 @@ use agent_skills::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
@@ -299,10 +300,17 @@ impl NativeAgent {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
             }
 
-            let watch_global_skills = cx.spawn({
-                let fs = fs.clone();
-                async move |this, cx| Self::watch_global_skills_directory(this, fs, cx).await
-            });
+            // Only watch the global skills directory when the user has the
+            // "skills" feature flag. Without the flag this resolves to a no-op
+            // task so the field is always populated.
+            let watch_global_skills = if cx.has_flag::<SkillsFeatureFlag>() {
+                cx.spawn({
+                    let fs = fs.clone();
+                    async move |this, cx| Self::watch_global_skills_directory(this, fs, cx).await
+                })
+            } else {
+                Task::ready(())
+            };
 
             Self {
                 sessions: HashMap::default(),
@@ -601,32 +609,48 @@ impl NativeAgent {
             })
             .collect::<Vec<_>>();
 
+        // Skills are gated behind the "skills" feature flag. Without it we
+        // skip all on-disk lookups so users see no behavior change.
+        let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
         // Load global skills
-        let global_skills_dir = paths::skills_dir().clone();
-        let global_skills_fs = fs.clone();
-        let global_skills_task = cx.background_spawn(async move {
-            load_skills_from_directory(&global_skills_fs, &global_skills_dir, SkillSource::Global)
+        let global_skills_task = if skills_enabled {
+            let global_skills_dir = paths::skills_dir().clone();
+            let global_skills_fs = fs.clone();
+            cx.background_spawn(async move {
+                load_skills_from_directory(
+                    &global_skills_fs,
+                    &global_skills_dir,
+                    SkillSource::Global,
+                )
                 .await
-        });
+            })
+        } else {
+            Task::ready(Vec::new())
+        };
 
         // Load project-local skills from each worktree
-        let project_skills_tasks: Vec<_> = worktrees
-            .iter()
-            .map(|worktree| {
-                let worktree_id = worktree.read(cx).id();
-                let abs_path = worktree.read(cx).abs_path();
-                let skills_dir = abs_path.join(project_skills_relative_path());
-                let fs = fs.clone();
-                cx.background_spawn(async move {
-                    load_skills_from_directory(
-                        &fs,
-                        &skills_dir,
-                        SkillSource::ProjectLocal { worktree_id },
-                    )
-                    .await
+        let project_skills_tasks: Vec<_> = if skills_enabled {
+            worktrees
+                .iter()
+                .map(|worktree| {
+                    let worktree_id = worktree.read(cx).id();
+                    let abs_path = worktree.read(cx).abs_path();
+                    let skills_dir = abs_path.join(project_skills_relative_path());
+                    let fs = fs.clone();
+                    cx.background_spawn(async move {
+                        load_skills_from_directory(
+                            &fs,
+                            &skills_dir,
+                            SkillSource::ProjectLocal { worktree_id },
+                        )
+                        .await
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            Vec::new()
+        };
         let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
             prompt_store.read_with(cx, |prompt_store, cx| {
                 let prompts = prompt_store.default_prompt_metadata();
@@ -828,12 +852,13 @@ impl NativeAgent {
                 state.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
+                let skills_enabled = _cx.has_flag::<SkillsFeatureFlag>();
                 let skills_prefix = RelPath::unix(project_skills_relative_path()).unwrap();
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
                         .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
-                        || path.starts_with(skills_prefix)
+                        || (skills_enabled && path.starts_with(skills_prefix))
                 }) {
                     state.project_context_needs_refresh.send(()).ok();
                 }
@@ -2458,6 +2483,9 @@ mod internal_tests {
     #[gpui::test]
     async fn test_global_skills_load_and_reload(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+        });
         let fs = FakeFs::new(cx.executor());
         let skills_dir = paths::skills_dir();
         let initial_skill_dir = skills_dir.join("my-skill");

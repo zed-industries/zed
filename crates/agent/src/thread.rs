@@ -9,7 +9,9 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag, UpdatePlanToolFeatureFlag};
+use feature_flags::{
+    FeatureFlagAppExt as _, LspToolFeatureFlag, SkillsFeatureFlag, UpdatePlanToolFeatureFlag,
+};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
@@ -1578,7 +1580,7 @@ impl Thread {
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
-        if !self.skills.is_empty() {
+        if cx.has_flag::<SkillsFeatureFlag>() && !self.skills.is_empty() {
             self.add_tool(SkillTool::new(self.skills.clone(), self.project.clone()));
         }
 
