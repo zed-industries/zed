@@ -561,6 +561,105 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_templates_with_tag_filters_file_based_tasks(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_1 = WorktreeId::from_usize(1);
+    let worktree_2 = WorktreeId::from_usize(2);
+
+    let global_tasks = serde_json::to_string(&json!([
+        {
+            "label": "global git task",
+            "command": "git",
+            "tags": ["custom-git-command"],
+        },
+        {
+            "label": "global untagged task",
+            "command": "echo",
+        },
+        {
+            "label": "global similarly tagged task",
+            "command": "git",
+            "tags": ["custom-git-commands"],
+        },
+    ]))
+    .unwrap();
+    let worktree_1_tasks = serde_json::to_string(&json!([
+        {
+            "label": "worktree git task",
+            "command": "git",
+            "tags": ["custom-git-command"],
+        },
+        {
+            "label": "worktree other task",
+            "command": "echo",
+            "tags": ["other-tag"],
+        },
+    ]))
+    .unwrap();
+    let worktree_2_tasks = serde_json::to_string(&json!([
+        {
+            "label": "other worktree git task",
+            "command": "git",
+            "tags": ["custom-git-command"],
+        },
+    ]))
+    .unwrap();
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Global(tasks_file()),
+                Some(&global_tasks),
+            )
+            .unwrap();
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id: worktree_1,
+                    path: rel_path(".zed"),
+                }),
+                Some(&worktree_1_tasks),
+            )
+            .unwrap();
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id: worktree_2,
+                    path: rel_path(".zed"),
+                }),
+                Some(&worktree_2_tasks),
+            )
+            .unwrap();
+    });
+
+    let mut labels = |worktree| {
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .templates_with_tag("custom-git-command", worktree)
+                .into_iter()
+                .map(|(_, template)| template.label)
+                .collect::<Vec<_>>()
+        })
+    };
+
+    assert_eq!(labels(None), vec!["global git task"]);
+    assert_eq!(
+        labels(Some(worktree_1)),
+        vec!["worktree git task", "global git task"]
+    );
+    assert_eq!(
+        labels(Some(worktree_2)),
+        vec!["other worktree git task", "global git task"]
+    );
+    assert_eq!(
+        inventory.update(cx, |inventory, _| inventory
+            .templates_with_tag("missing-tag", Some(worktree_1))),
+        Vec::new()
+    );
+}
+
+#[gpui::test]
 async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));

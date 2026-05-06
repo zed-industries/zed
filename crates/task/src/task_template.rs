@@ -89,7 +89,7 @@ pub enum DebugArgsRequest {
     Attach(AttachRequest),
 }
 
-/// Events that can trigger a task.
+/// What to do with the terminal pane and tab, after the command was started.
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskHook {
@@ -1109,10 +1109,11 @@ mod tests {
     #[test]
     fn test_git_variables_resolution() {
         let task = TaskTemplate {
-            label: "Show $ZED_GIT_SHA_SHORT in $ZED_GIT_REPO_NAME".to_string(),
+            label: "Show $ZED_GIT_SHA_SHORT in $ZED_GIT_REPOSITORY_NAME".to_string(),
             command: "git".to_string(),
             args: vec!["show".to_string(), "$ZED_GIT_SHA".to_string()],
-            cwd: Some("$ZED_GIT_REPO_PATH".to_string()),
+            cwd: Some("$ZED_GIT_REPOSITORY_PATH".to_string()),
+            env: HashMap::from_iter([("COMMIT".to_string(), "$ZED_GIT_SHA".to_string())]),
             ..TaskTemplate::default()
         };
         let context = TaskContext {
@@ -1122,8 +1123,11 @@ mod tests {
                     "abcdef1234567890abcdef1234567890abcdef12".to_string(),
                 ),
                 (VariableName::GitShaShort, "abcdef1".to_string()),
-                (VariableName::GitRepoName, "zed".to_string()),
-                (VariableName::GitRepoPath, "/Users/example/zed".to_string()),
+                (VariableName::GitRepositoryName, "zed".to_string()),
+                (
+                    VariableName::GitRepositoryPath,
+                    "/Users/example/zed".to_string(),
+                ),
             ]),
             ..TaskContext::default()
         };
@@ -1139,13 +1143,17 @@ mod tests {
             ]
         );
         assert_eq!(task.resolved.cwd, Some(PathBuf::from("/Users/example/zed")));
+        assert_eq!(
+            task.resolved.env.get("COMMIT"),
+            Some(&"abcdef1234567890abcdef1234567890abcdef12".to_string())
+        );
         assert_substituted_variables(
             &task,
             vec![
                 VariableName::GitSha,
                 VariableName::GitShaShort,
-                VariableName::GitRepoName,
-                VariableName::GitRepoPath,
+                VariableName::GitRepositoryName,
+                VariableName::GitRepositoryPath,
             ],
         );
     }

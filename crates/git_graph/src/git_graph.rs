@@ -65,7 +65,7 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
-const CUSTOM_GIT_COMMAND_TASK_TAG: &str = "custom-git-command";
+const GIT_COMMAND_TASK_TAG: &str = "git-command";
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
@@ -2040,18 +2040,22 @@ impl GitGraph {
             .read(cx)
             .work_directory_abs_path
             .to_path_buf();
-        let repo_name = repository_path
+        let repository_name = repository_path
             .file_name()
             .and_then(|name| name.to_str())
             .map(ToString::to_string);
-        let repo_path = repository_path.to_string_lossy().into_owned();
 
-        let mut task_variables = TaskVariables::default();
-        task_variables.insert(VariableName::GitSha, commit_sha.to_string());
-        task_variables.insert(VariableName::GitShaShort, commit_sha.display_short());
-        task_variables.insert(VariableName::GitRepoPath, repo_path);
-        if let Some(repo_name) = repo_name {
-            task_variables.insert(VariableName::GitRepoName, repo_name);
+        let mut task_variables = TaskVariables::from_iter([
+            (VariableName::GitSha, commit_sha.to_string()),
+            (VariableName::GitShaShort, commit_sha.display_short()),
+            (
+                VariableName::GitRepositoryPath,
+                repository_path.to_string_lossy().into_owned(),
+            ),
+        ]);
+
+        if let Some(repository_name) = repository_name {
+            task_variables.insert(VariableName::GitRepositoryName, repository_name);
         }
 
         Some(TaskContext {
@@ -2067,10 +2071,12 @@ impl GitGraph {
             .read(cx)
             .worktree_ids_for_repository(self.repo_id)
             .collect::<Vec<_>>();
+
         worktree_ids.sort();
 
         let workspace = self.workspace.upgrade()?;
         let project = workspace.read(cx).project().clone();
+
         worktree_ids.into_iter().find(|worktree_id| {
             project
                 .read(cx)
@@ -2085,19 +2091,24 @@ impl GitGraph {
         cx: &App,
     ) -> Vec<(TaskSourceKind, ResolvedTask)> {
         let worktree_id = self.worktree_id_for_repository(cx);
+
         let Some(workspace) = self.workspace.upgrade() else {
             return Vec::new();
         };
+
         let project = workspace.read(cx).project().clone();
-        let Some(task_inventory) = project.read_with(cx, |project, cx| {
+
+        let task_inventory = project.read_with(cx, |project, cx| {
             project.task_store().read(cx).task_inventory().cloned()
-        }) else {
+        });
+
+        let Some(task_inventory) = task_inventory else {
             return Vec::new();
         };
 
         task_inventory
             .read(cx)
-            .templates_with_tag(CUSTOM_GIT_COMMAND_TASK_TAG, worktree_id)
+            .templates_with_tag(GIT_COMMAND_TASK_TAG, worktree_id)
             .into_iter()
             .filter_map(|(task_source_kind, task_template)| {
                 let id_base = task_source_kind.to_id_base();
@@ -2138,8 +2149,8 @@ impl GitGraph {
         let Some(commit) = self.graph_data.commits.get(index) else {
             return;
         };
-        let commit_sha = commit.data.sha;
-        let short_sha = commit_sha.display_short();
+        let sha = commit.data.sha;
+        let sha_short = sha.display_short();
         let tag_names = commit.data.tag_names();
         let copy_tag_label = "Copy Tag";
         let copy_tag_label: SharedString = match tag_names.as_slice() {
@@ -2149,16 +2160,16 @@ impl GitGraph {
         };
         let copy_tag_disabled = tag_names.is_empty();
         let git_tasks = self
-            .git_task_context(commit_sha, cx)
+            .git_task_context(sha, cx)
             .map(|task_context| self.git_context_menu_tasks(&task_context, cx))
             .unwrap_or_default();
 
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
         let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
-            let mut context_menu = context_menu
+            context_menu
                 .context(focus_handle)
-                .header(format!("Commit {short_sha}"))
+                .header(format!("Commit {sha_short}"))
                 .entry(
                     "View Commit",
                     Some(OpenCommitView.boxed_clone()),
@@ -2180,28 +2191,29 @@ impl GitGraph {
                         .handler(window.handler_for(&git_graph, move |this, window, cx| {
                             this.copy_commit_tag(index, window, cx);
                         })),
-                );
+                )
+                .when(!git_tasks.is_empty(), |mut menu| {
+                    menu = menu.separator().header("Custom Git Commands");
 
-            if !git_tasks.is_empty() {
-                context_menu = context_menu.separator().header("Custom Git Commands");
-                for (task_source_kind, resolved_task) in git_tasks {
-                    let label = resolved_task.display_label().to_string();
-                    context_menu = context_menu.entry(
-                        label,
-                        None,
-                        window.handler_for(&git_graph, move |this, window, cx| {
-                            this.schedule_git_task(
-                                task_source_kind.clone(),
-                                resolved_task.clone(),
-                                window,
-                                cx,
-                            );
-                        }),
-                    );
-                }
-            }
+                    for (task_source_kind, resolved_task) in git_tasks {
+                        let label = resolved_task.display_label().to_string();
 
-            context_menu
+                        menu = menu.entry(
+                            label,
+                            None,
+                            window.handler_for(&git_graph, move |this, window, cx| {
+                                this.schedule_git_task(
+                                    task_source_kind.clone(),
+                                    resolved_task.clone(),
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        );
+                    }
+
+                    menu
+                })
         });
         self.set_context_menu(context_menu, position, index, window, cx);
     }
@@ -4006,8 +4018,8 @@ mod tests {
     use git::Oid;
     use git::repository::InitialGraphCommitData;
     use gpui::{TestAppContext, UpdateGlobal};
-    use project::Project;
     use project::git_store::{GitStoreEvent, RepositoryEvent};
+    use project::{Project, task_store::TaskSettingsLocation};
     use rand::prelude::*;
     use serde_json::json;
     use settings::{SettingsStore, ThemeSettingsContent};
@@ -4025,6 +4037,105 @@ mod tests {
             project_panel::init(cx);
             init(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_git_context_menu_tasks_resolve_custom_git_command_tag(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let task_inventory = project.read_with(cx, |project, cx| {
+            project
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("should have a task inventory")
+        });
+        task_inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Global(Path::new("/tasks.json")),
+                    Some(
+                        &serde_json::to_string(&json!([
+                            {
+                                "label": "Global $ZED_GIT_SHA_SHORT",
+                                "command": "git",
+                                "args": ["show", "$ZED_GIT_SHA"],
+                                "tags": ["custom-git-command"],
+                            },
+                            {
+                                "label": "Global untagged",
+                                "command": "git",
+                                "args": ["status"],
+                            },
+                        ]))
+                        .unwrap(),
+                    ),
+                )
+                .unwrap();
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let commit_sha = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12").unwrap();
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let task_context = git_graph
+            .read_with(&*cx, |graph, cx| graph.git_task_context(commit_sha, cx))
+            .expect("should build Git task context");
+        let tasks = git_graph.read_with(&*cx, |graph, cx| {
+            graph.git_context_menu_tasks(&task_context, cx)
+        });
+
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|(_, task)| task.resolved_label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Global abcdef1"]
+        );
+        assert_eq!(tasks[0].1.resolved.command, Some("git".to_string()));
+        assert_eq!(
+            tasks[0].1.resolved.args,
+            vec![
+                "show".to_string(),
+                "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            ]
+        );
+        assert_eq!(
+            tasks[0].1.resolved.cwd,
+            Some(Path::new("/project").to_path_buf())
+        );
     }
 
     /// Generates a random commit DAG suitable for testing git graph rendering.

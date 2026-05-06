@@ -644,7 +644,8 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
-    /// Returns all file-based task templates (worktree and global) with the provided tag.
+    /// Returns global task templates and task templates for the provided
+    /// worktree that have the provided tag.
     pub fn templates_with_tag(
         &self,
         tag: &str,
