@@ -31,6 +31,8 @@ pub enum WriteEvent {
 struct EditStreamState {
     old_text_emitted_len: usize,
     old_text_done: bool,
+    old_text_seen: bool,
+    new_text_seen_before_old_text: bool,
     new_text_emitted_len: usize,
     new_text_done: bool,
 }
@@ -75,13 +77,17 @@ impl StreamingParser {
             }
 
             let state = &mut self.edit_states[index];
+            if partial.new_text.is_some() && !state.old_text_seen && partial.old_text.is_none() {
+                state.new_text_seen_before_old_text = true;
+            }
 
             // Process old_text changes.
             if let Some(old_text) = &partial.old_text
                 && !state.old_text_done
             {
-                if partial.new_text.is_some() {
-                    // new_text appeared, so old_text is done — emit everything.
+                state.old_text_seen = true;
+                if partial.new_text.is_some() && !state.new_text_seen_before_old_text {
+                    // new_text appeared after old_text, so old_text is done — emit everything.
                     let start = state.old_text_emitted_len.min(old_text.len());
                     let chunk = normalize_done_chunk(old_text[start..].to_string());
                     state.old_text_done = true;
@@ -742,21 +748,34 @@ mod tests {
         assert!(events.is_empty());
 
         let events = parser.push_edits(&[PartialEdit {
-            old_text: Some("old".into()),
+            old_text: Some("ol".into()),
             new_text: Some("new".into()),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "ol".into(),
+                done: false,
+            }]
+        );
+
+        let events = parser.finalize_edits(&[Edit {
+            old_text: "old".into(),
+            new_text: "new".into(),
         }]);
         assert_eq!(
             events.as_slice(),
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "old".into(),
+                    chunk: "d".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
                     edit_index: 0,
                     chunk: "new".into(),
-                    done: false,
+                    done: true,
                 },
             ]
         );
