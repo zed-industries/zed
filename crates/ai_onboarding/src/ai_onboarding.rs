@@ -17,9 +17,7 @@ use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement, TaskExt};
-use ui::{
-    Divider, List, ListBulletItem, RegisterComponent, Tooltip, Vector, VectorName, prelude::*,
-};
+use ui::{Divider, RegisterComponent, Tooltip, Vector, VectorName, prelude::*};
 
 #[derive(PartialEq)]
 pub enum SignInStatus {
@@ -162,12 +160,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(
-                List::new()
-                    .child(ListBulletItem::new("Unlimited edit predictions"))
-                    .child(ListBulletItem::new("$20 of tokens in Zed agent"))
-                    .child(ListBulletItem::new("No credit card required")),
-            )
+            .child(PlanDefinitions.sign_in_upsell())
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
