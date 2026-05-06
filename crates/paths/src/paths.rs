@@ -6,7 +6,7 @@ use std::sync::{LazyLock, OnceLock};
 
 use util::paths::SanitizedPath;
 pub use util::paths::home_dir;
-use util::rel_path::{RelPath, RelPathBuf};
+use util::rel_path::RelPath;
 
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
@@ -14,47 +14,33 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 /// The application name, used to derive platform-specific data, config, cache,
 /// and state directory paths.
 ///
-/// Forks should change this value to avoid colliding with Zed's user data.
+/// Forks should change both this and [`APP_NAME_LOWERCASE`] to avoid colliding
+/// with Zed's user data.
 pub const APP_NAME: &str = "Zed";
 
-const _: () = {
-    assert!(!APP_NAME.is_empty(), "APP_NAME must not be empty");
-    let bytes = APP_NAME.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        assert!(
-            bytes[i] != b'/' && bytes[i] != b'\\',
-            "APP_NAME must not contain path separators",
-        );
-        assert!(
-            bytes[i] >= 0x20,
-            "APP_NAME must not contain control characters",
-        );
-        i += 1;
-    }
-};
-
-/// Returns the lowercased form of [`APP_NAME`], for use in XDG-style paths on
+/// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
-fn app_name_lowercase() -> String {
-    app_name_lowercase_for(APP_NAME)
-}
-
-fn app_name_lowercase_for(app_name: &str) -> String {
-    app_name.to_lowercase()
-}
-
-fn ipc_socket_name_for_app(app_name: &str, release_channel_name: &str) -> String {
-    format!(
-        "{}-{}.sock",
-        app_name_lowercase_for(app_name),
-        release_channel_name
-    )
-}
-
-pub fn ipc_socket_name(release_channel_name: &str) -> String {
-    ipc_socket_name_for_app(APP_NAME, release_channel_name)
-}
+pub const APP_NAME_LOWERCASE: &str = {
+    assert!(!APP_NAME.is_empty(), "APP_NAME must not be empty");
+    const BYTES: [u8; APP_NAME.len()] = {
+        let input = APP_NAME.as_bytes();
+        let mut output = [0u8; APP_NAME.len()];
+        let mut i = 0;
+        while i < input.len() {
+            let byte = input[i];
+            assert!(byte.is_ascii(), "APP_NAME must be ASCII");
+            assert!(
+                byte != b'/' && byte != b'\\',
+                "APP_NAME must not contain path separators",
+            );
+            assert!(byte >= 0x20, "APP_NAME must not contain control characters");
+            output[i] = byte.to_ascii_lowercase();
+            i += 1;
+        }
+        output
+    };
+    unsafe { std::str::from_utf8_unchecked(&BYTES) }
+};
 
 /// A custom data directory override, set only by `set_custom_data_dir`.
 /// This is used to override the default data directory location.
@@ -75,29 +61,19 @@ static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// On Windows, this is `%APPDATA%\Zed`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-fn remote_server_dir_name(app_name: &str, suffix: &str) -> String {
-    format!(".{}{}", app_name.to_lowercase(), suffix)
-}
-
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
-    static CACHED: LazyLock<RelPathBuf> = LazyLock::new(|| {
-        RelPath::unix(&remote_server_dir_name(APP_NAME, "_server"))
-            .expect("remote server directory name must be a valid relative path")
-            .to_rel_path_buf()
-    });
-    CACHED.as_rel_path()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
+    *CACHED
 }
 
 // Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
-    static CACHED: LazyLock<RelPathBuf> = LazyLock::new(|| {
-        RelPath::unix(&remote_server_dir_name(APP_NAME, "_wsl_server"))
-            .expect("remote WSL server directory name must be a valid relative path")
-            .to_rel_path_buf()
-    });
-    CACHED.as_rel_path()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
+    *CACHED
 }
 
 /// Sets a custom directory for all user data, overriding the default data directory.
@@ -153,9 +129,9 @@ pub fn config_dir() -> &'static PathBuf {
             } else {
                 dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
-            .join(app_name_lowercase())
+            .join(APP_NAME_LOWERCASE)
         } else {
-            home_dir().join(".config").join(app_name_lowercase())
+            home_dir().join(".config").join(APP_NAME_LOWERCASE)
         }
     })
 }
@@ -175,7 +151,7 @@ pub fn data_dir() -> &'static PathBuf {
             } else {
                 dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
-            .join(app_name_lowercase())
+            .join(APP_NAME_LOWERCASE)
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
@@ -199,7 +175,7 @@ pub fn state_dir() -> &'static PathBuf {
             } else {
                 dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
             }
-            .join(app_name_lowercase());
+            .join(APP_NAME_LOWERCASE);
         } else {
             // Windows
             return dirs::data_local_dir()
@@ -231,10 +207,10 @@ pub fn temp_dir() -> &'static PathBuf {
             } else {
                 dirs::cache_dir().expect("failed to determine XDG_CACHE_HOME directory")
             }
-            .join(app_name_lowercase());
+            .join(APP_NAME_LOWERCASE);
         }
 
-        home_dir().join(".cache").join(app_name_lowercase())
+        home_dir().join(".cache").join(APP_NAME_LOWERCASE)
     })
 }
 
@@ -628,44 +604,4 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
     GLOBAL_GITIGNORE_PATH
         .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn remote_server_dir_names_preserve_upstream_names() {
-        assert_eq!(remote_server_dir_relative().as_unix_str(), ".zed_server");
-        assert_eq!(
-            remote_wsl_server_dir_relative().as_unix_str(),
-            ".zed_wsl_server"
-        );
-    }
-
-    #[test]
-    fn remote_server_dir_names_are_derived_from_app_name() {
-        assert_eq!(remote_server_dir_name("Zed", "_server"), ".zed_server");
-        assert_eq!(
-            remote_server_dir_name("ZedFork", "_server"),
-            ".zedfork_server"
-        );
-        assert_eq!(
-            remote_server_dir_name("ZedFork", "_wsl_server"),
-            ".zedfork_wsl_server"
-        );
-    }
-
-    #[test]
-    fn ipc_socket_name_preserves_upstream_name() {
-        assert_eq!(ipc_socket_name_for_app("Zed", "stable"), "zed-stable.sock");
-    }
-
-    #[test]
-    fn ipc_socket_name_is_derived_from_app_name() {
-        assert_eq!(
-            ipc_socket_name_for_app("ZedFork", "preview"),
-            "zedfork-preview.sock"
-        );
-    }
 }

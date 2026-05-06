@@ -895,8 +895,9 @@ mod linux {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| paths::data_dir().clone());
 
-            let sock_path = data_dir.join(paths::ipc_socket_name(
-                release_channel::RELEASE_CHANNEL_NAME.as_str(),
+            let sock_path = data_dir.join(format!(
+                "zed-{}.sock",
+                *release_channel::RELEASE_CHANNEL_NAME
             ));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
