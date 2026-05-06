@@ -20,8 +20,8 @@ use gpui::{
     DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, PromptLevel, ScrollStrategy,
     ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, uniform_list,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, point, prelude::*, px,
+    uniform_list,
 };
 use language::line_diff;
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -1672,6 +1672,12 @@ impl GitGraph {
 
     fn has_context_menu(&self) -> bool {
         self.context_menu.is_some()
+    }
+
+    fn clear_context_menu(&mut self, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        self.commit_context_menu_state = None;
+        cx.notify();
     }
 
     /// Checks whether a ref name from git's `%D` decoration
@@ -5899,6 +5905,7 @@ impl Render for GitGraph {
             .key_context("GitGraph")
             .track_focus(&self.focus_handle)
             .size_full()
+            .relative()
             .bg(cx.theme().colors().editor_background)
             .on_action(cx.listener(|this, _: &OpenCommitView, window, cx| {
                 this.open_selected_commit_view(window, cx);
@@ -5971,14 +5978,30 @@ impl Render for GitGraph {
                     .child(self.render_search_bar(cx))
                     .child(div().flex_1().child(content)),
             )
+            .children(self.context_menu.as_ref().map(|_| {
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.clear_context_menu(cx);
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, _, _, cx| {
+                            this.clear_context_menu(cx);
+                        }),
+                    )
+            }))
             .children(self.context_menu.as_ref().map(|context_menu| {
-                deferred(
-                    anchored()
-                        .position(context_menu.position)
-                        .anchor(Anchor::TopLeft)
-                        .child(context_menu.menu.clone()),
-                )
-                .with_priority(1)
+                anchored()
+                    .position(context_menu.position)
+                    .anchor(Anchor::TopLeft)
+                    .child(context_menu.menu.clone())
             }))
             .on_action(cx.listener(|_, _: &buffer_search::Deploy, window, cx| {
                 window.dispatch_action(Box::new(FocusSearch), cx);
@@ -6612,12 +6635,13 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let scroll_event = ScrollWheelEvent {
+            position: point(px(900.), px(120.)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-100.))),
+            ..Default::default()
+        };
+
         git_graph.update_in(cx, |graph, window, cx| {
-            let scroll_event = ScrollWheelEvent {
-                position: point(px(10.), px(10.)),
-                delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-100.))),
-                ..Default::default()
-            };
             let initial_offset = graph.table_interaction_state.read(cx).scroll_offset();
 
             graph.handle_graph_scroll(&scroll_event, window, cx);
@@ -6629,11 +6653,23 @@ mod tests {
 
             graph.deploy_entry_context_menu(point(px(10.), px(10.)), 0, window, cx);
             assert!(graph.context_menu.is_some());
+        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
 
-            graph.handle_graph_scroll(&scroll_event, window, cx);
+        let offset_before_blocked_scroll = git_graph.read_with(&*cx, |graph, cx| {
+            graph.table_interaction_state.read(cx).scroll_offset()
+        });
+
+        cx.simulate_event(scroll_event);
+        git_graph.read_with(&*cx, |graph, cx| {
             assert_eq!(
                 graph.table_interaction_state.read(cx).scroll_offset(),
-                scrolled_offset
+                offset_before_blocked_scroll
             );
             assert!(graph.context_menu.is_some());
         });
