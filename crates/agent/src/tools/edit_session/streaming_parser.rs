@@ -34,6 +34,7 @@ struct EditStreamState {
     new_text_emitted_len: usize,
     new_text_done: bool,
     hold_until_complete: bool,
+    buffer_new_text_until_old_text_done: bool,
 }
 
 /// Converts incrementally-growing tool call JSON into a stream of chunk events.
@@ -85,14 +86,21 @@ impl StreamingParser {
 
             let state = &mut self.edit_states[index];
 
-            // If new_text appears before any old_text chunk has been emitted, hold the edit
-            // until it is complete so old_text and new_text can be emitted atomically.
             if state.old_text_emitted_len == 0
                 && state.new_text_emitted_len == 0
                 && !state.old_text_done
                 && partial.new_text.is_some()
+                && !state.buffer_new_text_until_old_text_done
             {
-                state.hold_until_complete = true;
+                if partial
+                    .old_text
+                    .as_ref()
+                    .is_some_and(|old_text| !old_text.is_empty())
+                {
+                    state.hold_until_complete = true;
+                } else {
+                    state.buffer_new_text_until_old_text_done = true;
+                }
             }
 
             if state.hold_until_complete {
@@ -103,7 +111,7 @@ impl StreamingParser {
             if let Some(old_text) = &partial.old_text
                 && !state.old_text_done
             {
-                if partial.new_text.is_some() {
+                if partial.new_text.is_some() && !state.buffer_new_text_until_old_text_done {
                     // new_text appeared after old_text, so old_text is done — emit everything.
                     let start = state.old_text_emitted_len.min(old_text.len());
                     let chunk = normalize_done_chunk(old_text[start..].to_string());
@@ -203,6 +211,7 @@ impl StreamingParser {
                 state.new_text_done = true;
                 state.new_text_emitted_len = edit.new_text.len();
                 state.hold_until_complete = false;
+                state.buffer_new_text_until_old_text_done = false;
                 events.push(EditEvent::OldTextChunk {
                     edit_index: index,
                     chunk: normalize_done_chunk(edit.old_text.clone()),
@@ -286,6 +295,7 @@ impl StreamingParser {
             state.new_text_done = true;
             state.new_text_emitted_len = new_text.len();
             state.hold_until_complete = false;
+            state.buffer_new_text_until_old_text_done = false;
             events.push(EditEvent::OldTextChunk {
                 edit_index: previous_index,
                 chunk: normalize_done_chunk(old_text.to_string()),
@@ -299,22 +309,27 @@ impl StreamingParser {
             return Some(events);
         }
 
-        // If old_text was never finalized, finalize it now with an empty done chunk.
         if !state.old_text_done {
+            let old_text = old_text.unwrap_or_default();
+            let start = state.old_text_emitted_len.min(old_text.len());
             state.old_text_done = true;
+            state.old_text_emitted_len = old_text.len();
             events.push(EditEvent::OldTextChunk {
                 edit_index: previous_index,
-                chunk: String::new(),
+                chunk: normalize_done_chunk(old_text[start..].to_string()),
                 done: true,
             });
         }
 
-        // Emit a done event for new_text if not already finalized.
         if !state.new_text_done {
+            let new_text = new_text.unwrap_or_default();
+            let start = state.new_text_emitted_len.min(new_text.len());
             state.new_text_done = true;
+            state.new_text_emitted_len = new_text.len();
+            state.buffer_new_text_until_old_text_done = false;
             events.push(EditEvent::NewTextChunk {
                 edit_index: previous_index,
-                chunk: String::new(),
+                chunk: normalize_done_chunk(new_text[start..].to_string()),
                 done: true,
             });
         }
@@ -838,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_text_before_old_text_waits_for_finalize_to_stream_new_text() {
+    fn test_new_text_before_old_text_buffers_new_text_but_streams_old_text() {
         let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
@@ -851,7 +866,14 @@ mod tests {
             old_text: Some("old".into()),
             new_text: Some("new".into()),
         }]);
-        assert!(events.is_empty());
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "old".into(),
+                done: false,
+            }]
+        );
 
         let events = parser.finalize_edits(&[Edit {
             old_text: "old".into(),
@@ -862,7 +884,7 @@ mod tests {
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "old".into(),
+                    chunk: "".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
@@ -1002,21 +1024,28 @@ mod tests {
 
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("stable".into()),
-            new_text: Some("also stable".into()),
+            new_text: None,
         }]);
-        assert!(events.is_empty());
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "stable".into(),
+                done: false,
+            }]
+        );
 
         // Push the exact same data again
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("stable".into()),
-            new_text: Some("also stable".into()),
+            new_text: None,
         }]);
         assert!(events.is_empty());
 
         // And again
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("stable".into()),
-            new_text: Some("also stable".into()),
+            new_text: None,
         }]);
         assert!(events.is_empty());
     }
