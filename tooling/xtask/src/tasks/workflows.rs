@@ -88,11 +88,6 @@ pub(crate) struct GenerateWorkflowArgs {
     #[arg(value_parser = parse_ref)]
     /// The Git SHA to use when invoking this
     pub(crate) sha: Option<GitSha>,
-
-    #[arg(long)]
-    /// Whether to cleanup all generated workflow files first.
-    /// Useful to ensure that workflow files do not become stale.
-    cleanup: bool,
 }
 
 enum WorkflowSource {
@@ -223,9 +218,8 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         anyhow::bail!("xtask workflows must be ran from the project root");
     }
 
-    if args.cleanup {
-        WorkflowType::remove_generated_workflows()?;
-    }
+    // Remove all previously generated workflows to ensure these do not become stale.
+    WorkflowType::remove_generated_workflows()?;
 
     let workflows = [
         WorkflowFile::zed(after_release::after_release),

@@ -8,6 +8,13 @@ pub const LINUX_MEDIUM: Runner = Runner("namespace-profile-4x8-ubuntu-2204");
 pub const LINUX_X86_BUNDLER: Runner = Runner("namespace-profile-32x64-ubuntu-2004");
 pub const LINUX_ARM_BUNDLER: Runner = Runner("namespace-profile-8x32-ubuntu-2004-arm-m4");
 
+// Runners with `script/install-linux` already configured
+pub const LINUX_XL_ZED: Runner = Runner("namespace-profile-16x32-ubuntu-2204");
+pub const LINUX_LARGE_ZED: Runner = Runner("namespace-profile-8x16-ubuntu-2204");
+pub const LINUX_MEDIUM_ZED: Runner = Runner("namespace-profile-4x8-ubuntu-2204");
+pub const LINUX_X86_BUNDLER_ZED: Runner = Runner("namespace-profile-32x64-ubuntu-2004");
+pub const LINUX_ARM_BUNDLER_ZED: Runner = Runner("namespace-profile-8x32-ubuntu-2004-arm-m4");
+
 // Larger Ubuntu runner with glibc 2.39 for extension bundling
 pub const LINUX_LARGE_RAM: Runner = Runner("namespace-profile-8x32-ubuntu-2404");
 
