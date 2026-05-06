@@ -1110,6 +1110,7 @@
           "diagnostics": true,
           "apply_code_action": true,
           "edit_file": true,
+          "write_file": true,
           "fetch": true,
           "find_path": true,
           "find_references": true,

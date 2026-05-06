@@ -3305,9 +3305,30 @@ impl Workspace {
                 }
             }
 
+            // Hot-exit silently writes dirty buffers to the DB; only allow it
+            // if the workspace will be reachable again, either via session
+            // restore or by reopening its folder paths. Otherwise prompt, so
+            // we don't orphan the buffers.
+            let allow_hot_exit_serialization = close_intent == CloseIntent::Quit
+                || save_last_workspace
+                || this
+                    .read_with(cx, |workspace, cx| {
+                        workspace
+                            .project
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .next()
+                            .is_some()
+                    })
+                    .unwrap_or(false);
             let save_result = this
                 .update_in(cx, |this, window, cx| {
-                    this.save_all_internal(SaveIntent::Close, window, cx)
+                    this.save_all_internal(
+                        SaveIntent::Close,
+                        allow_hot_exit_serialization,
+                        window,
+                        cx,
+                    )
                 })?
                 .await;
 
@@ -3328,6 +3349,7 @@ impl Workspace {
     fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all_internal(
             action.save_intent.unwrap_or(SaveIntent::SaveAll),
+            true,
             window,
             cx,
         )
@@ -3425,12 +3447,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        self.save_all_internal(SaveIntent::Close, window, cx)
+        self.save_all_internal(SaveIntent::Close, true, window, cx)
     }
 
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
+        allow_hot_exit_serialization: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
@@ -3457,23 +3480,27 @@ impl Workspace {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let mut serialize_tasks = Vec::new();
                 let mut remaining_dirty_items = Vec::new();
-                workspace.update_in(cx, |workspace, window, cx| {
-                    for (pane, item) in dirty_items {
-                        if let Some(task) = item
-                            .to_serializable_item_handle(cx)
-                            .and_then(|handle| handle.serialize(workspace, true, window, cx))
-                        {
-                            serialize_tasks.push((pane, item, task));
-                        } else {
+                if allow_hot_exit_serialization {
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        for (pane, item) in dirty_items {
+                            if let Some(task) = item
+                                .to_serializable_item_handle(cx)
+                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                            {
+                                serialize_tasks.push((pane, item, task));
+                            } else {
+                                remaining_dirty_items.push((pane, item));
+                            }
+                        }
+                    })?;
+
+                    for (pane, item, task) in serialize_tasks {
+                        if task.await.log_err().is_none() {
                             remaining_dirty_items.push((pane, item));
                         }
                     }
-                })?;
-
-                for (pane, item, task) in serialize_tasks {
-                    if task.await.log_err().is_none() {
-                        remaining_dirty_items.push((pane, item));
-                    }
+                } else {
+                    remaining_dirty_items = dirty_items;
                 }
 
                 if !remaining_dirty_items.is_empty() {
@@ -11473,7 +11500,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_window_with_serializable_items(cx: &mut TestAppContext) {
+    async fn test_close_window_with_worktrees_hot_exits(cx: &mut TestAppContext) {
         init_test(cx);
 
         // Register TestItem as a serializable item
@@ -11510,8 +11537,163 @@ mod tests {
         assert!(task.await.unwrap());
     }
 
+    // See https://github.com/zed-industries/zed/issues/55726.
+    //
+    // macOS only: on Linux/Windows, closing the last window sets
+    // `save_last_workspace`, which preserves the session (same as `Quit`),
+    // so hot-exit is safe there.
+    #[cfg(target_os = "macos")]
     #[gpui::test]
-    async fn test_close_window_with_failing_serialization(cx: &mut TestAppContext) {
+    async fn test_close_window_without_worktrees_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "closing a no-folder workspace with a dirty serializable item should prompt, \
+             since the workspace will not be reachable after close"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_quit_without_worktrees_hot_exits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::Quit, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            !cx.has_pending_prompt(),
+            "quitting should hot-exit silently; the session restore on next \
+             launch will bring the dirty buffer back"
+        );
+        assert!(task.await.unwrap());
+    }
+
+    // See https://github.com/zed-industries/zed/issues/55726.
+    #[gpui::test]
+    async fn test_replace_window_without_worktrees_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "replacing a workspace with a dirty serializable item should prompt, \
+             since the workspace will be detached afterwards"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_replace_window_with_worktrees_hot_exits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            !cx.has_pending_prompt(),
+            "replacing a workspace with folder paths should hot-exit silently; \
+             the buffer is recoverable by reopening the project"
+        );
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_close_window_with_failing_serialize_prompts(cx: &mut TestAppContext) {
         init_test(cx);
 
         cx.update(|cx| {
