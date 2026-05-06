@@ -1410,7 +1410,8 @@ impl PlatformWindow for WaylandWindow {
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
 
-        // Skip commit when frame was presented. Vulcan WSI will commit from presentation thread
+        // Work around a bug in old versions of wlroots where committing without a buffer attached
+        // can cause invalid synchronization that leads to graphical corruption.
         if !state.renderer_presented {
             state.surface.commit();
         }

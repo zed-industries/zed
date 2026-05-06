@@ -1106,7 +1106,7 @@ impl WgpuRenderer {
                 self.atlas.clear();
                 self.needs_redraw = true;
                 self.failed_frame_count = 0;
-                return;
+                return false;
             }
         } else {
             self.failed_frame_count = 0;
