@@ -1,4 +1,4 @@
-use gh_workflow::{ctx::Context, *};
+use gh_workflow::*;
 use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
@@ -327,27 +327,9 @@ fn create_pull_request(
     generated_token: StepOutput,
     branch_name: StepOutput,
 ) -> Step<Use> {
-    named::uses(
-        "peter-evans",
-        "create-pull-request",
-        "98357b18bf14b5342f975ff684046ec3b2a07725",
-    )
-    .with(
-        Input::default()
-            .add("title", title.to_string())
-            .add("body", body.to_string())
-            .add("commit-message", title.to_string())
-            .add("branch", branch_name.to_string())
-            .add(
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            )
-            .add("base", "main")
-            .add("delete-branch", true)
-            .add("token", generated_token.to_string())
-            .add("sign-commits", true)
-            .add("assignees", Context::github().actor().to_string()),
-    )
+    steps::CreatePrStep::new(title.to_string(), branch_name, &generated_token)
+        .with_body(body)
+        .into()
 }
 
 fn trigger_release(

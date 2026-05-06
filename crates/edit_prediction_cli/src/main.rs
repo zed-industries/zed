@@ -19,7 +19,6 @@ mod qa;
 mod reorder_patch;
 mod repair;
 mod retrieve_context;
-mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
@@ -415,16 +414,13 @@ impl std::str::FromStr for PredictionProvider {
                 let format = arg.map(ZetaFormat::parse).transpose()?.unwrap_or_default();
                 Ok(PredictionProvider::Zeta2(format))
             }
-            "teacher" => parse_teacher_args(arg),
+            "teacher" => {
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::Teacher(backend, format))
+            }
             "teacher-non-batching" | "teacher_non_batching" => {
-                let backend = arg
-                    .map(|a| a.parse())
-                    .transpose()?
-                    .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::TeacherNonBatching(
-                    backend,
-                    ZetaFormat::default(),
-                ))
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::TeacherNonBatching(backend, format))
             }
             "teacher-multi-region" | "teacher_multi_region" => {
                 let backend = arg
@@ -461,7 +457,7 @@ impl std::str::FromStr for PredictionProvider {
     }
 }
 
-fn parse_teacher_args(arg: Option<&str>) -> Result<PredictionProvider, anyhow::Error> {
+fn parse_teacher_args(arg: Option<&str>) -> Result<(TeacherBackend, ZetaFormat), anyhow::Error> {
     let mut backend = TeacherBackend::default();
     let mut format = ZetaFormat::default();
 
@@ -479,7 +475,7 @@ fn parse_teacher_args(arg: Option<&str>) -> Result<PredictionProvider, anyhow::E
         }
     }
 
-    Ok(PredictionProvider::Teacher(backend, format))
+    Ok((backend, format))
 }
 
 impl Serialize for PredictionProvider {
@@ -991,7 +987,7 @@ fn main() {
 
     match &command {
         Command::ImportBatch(import_args) => {
-            smol::block_on(async {
+            gpui::block_on(async {
                 match import_args.provider {
                     BatchProvider::Anthropic => {
                         let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
@@ -1050,7 +1046,7 @@ fn main() {
                 output_dir,
                 fresh: synth_args.fresh,
             };
-            smol::block_on(async {
+            gpui::block_on(async {
                 if let Err(e) = run_synthesize(config).await {
                     eprintln!("Error: {:?}", e);
                     std::process::exit(1);

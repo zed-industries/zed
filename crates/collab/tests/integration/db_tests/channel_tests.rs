@@ -1,6 +1,6 @@
 use super::{assert_channel_tree_matches, channel_tree, new_test_user};
 use crate::test_both_dbs;
-use collab::db::{Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId};
+use collab::db::{Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId};
 use rpc::{
     ConnectionId,
     proto::{self, reorder_channel},
@@ -36,14 +36,12 @@ async fn test_channels(db: &Arc<Database>) {
         .await
         .unwrap();
 
+    let replace_channel = db.get_channel(replace_id, a_id).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(replace_id, "", 10, a_id)
+        .get_channel_participant_details(&replace_channel, "", 10)
         .await
         .unwrap();
-    let ids = members
-        .into_iter()
-        .map(|m| UserId::from_proto(m.user_id))
-        .collect::<Vec<_>>();
+    let ids = members.into_iter().map(|m| m.user_id).collect::<Vec<_>>();
     assert_eq!(ids, &[a_id, b_id]);
 
     let rust_id = db.create_root_channel("rust", a_id).await.unwrap();
@@ -158,17 +156,17 @@ async fn test_channel_invites(db: &Arc<Database>) {
     let user_2 = new_test_user(db, "user2@example.com").await;
     let user_3 = new_test_user(db, "user3@example.com").await;
 
-    let channel_1_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
+    let channel_1_1_id = db.create_root_channel("channel_1", user_1).await.unwrap();
 
     let channel_1_2 = db.create_root_channel("channel_2", user_1).await.unwrap();
 
-    db.invite_channel_member(channel_1_1, user_2, user_1, ChannelRole::Member)
+    db.invite_channel_member(channel_1_1_id, user_2, user_1, ChannelRole::Member)
         .await
         .unwrap();
     db.invite_channel_member(channel_1_2, user_2, user_1, ChannelRole::Member)
         .await
         .unwrap();
-    db.invite_channel_member(channel_1_1, user_3, user_1, ChannelRole::Admin)
+    db.invite_channel_member(channel_1_1_id, user_3, user_1, ChannelRole::Admin)
         .await
         .unwrap();
 
@@ -180,7 +178,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .into_iter()
         .map(|channel| channel.id)
         .collect::<Vec<_>>();
-    assert_eq!(user_2_invites, &[channel_1_1, channel_1_2]);
+    assert_eq!(user_2_invites, &[channel_1_1_id, channel_1_2]);
 
     let user_3_invites = db
         .get_channels_for_user(user_3)
@@ -190,13 +188,17 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .into_iter()
         .map(|channel| channel.id)
         .collect::<Vec<_>>();
-    assert_eq!(user_3_invites, &[channel_1_1]);
+    assert_eq!(user_3_invites, &[channel_1_1_id]);
 
-    let (mut members, _) = db
-        .get_channel_participant_details(channel_1_1, "", 100, user_1)
+    let channel_1_1 = db.get_channel(channel_1_1_id, user_1).await.unwrap();
+    let (members, _) = db
+        .get_channel_participant_details(&channel_1_1, "", 100)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
     assert_eq!(
         members,
@@ -219,19 +221,24 @@ async fn test_channel_invites(db: &Arc<Database>) {
         ]
     );
 
-    db.respond_to_channel_invite(channel_1_1, user_2, true)
+    db.respond_to_channel_invite(channel_1_1_id, user_2, true)
         .await
         .unwrap();
 
-    let channel_1_3 = db
-        .create_sub_channel("channel_3", channel_1_1, user_1)
+    let channel_1_3_id = db
+        .create_sub_channel("channel_3", channel_1_1_id, user_1)
         .await
         .unwrap();
 
+    let channel_1_3 = db.get_channel(channel_1_3_id, user_1).await.unwrap();
     let (members, _) = db
-        .get_channel_participant_details(channel_1_3, "", 100, user_1)
+        .get_channel_participant_details(&channel_1_3, "", 100)
         .await
         .unwrap();
+    let members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     assert_eq!(
         members,
         &[
@@ -727,13 +734,16 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let (mut members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
+    let (members, _) = db
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
@@ -803,13 +813,16 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .is_err()
     );
 
-    let (mut members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
+    let (members, _) = db
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
@@ -840,13 +853,16 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .unwrap();
 
     // currently people invited to parent channels are not shown here
-    let (mut members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
+    let (members, _) = db
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
@@ -910,13 +926,16 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let (mut members, _) = db
-        .get_channel_participant_details(public_channel_id, "", 100, admin)
+    let public_channel = db.get_channel(public_channel_id, admin).await.unwrap();
+    let (members, _) = db
+        .get_channel_participant_details(&public_channel, "", 100)
         .await
         .unwrap();
-
+    let mut members = members
+        .into_iter()
+        .map(proto::ChannelMember::from)
+        .collect::<Vec<_>>();
     members.sort_by_key(|member| member.user_id);
-
     assert_eq!(
         members,
         &[
@@ -975,4 +994,69 @@ fn assert_channel_tree_order(actual: Vec<Channel>, expected: &[(ChannelId, &[Cha
         .map(|(id, parents, order)| (*id, *parents, *order))
         .collect::<HashSet<_>>();
     pretty_assertions::assert_eq!(actual, expected, "wrong channel ids and parent paths");
+}
+
+test_both_dbs!(
+    test_delete_channel_with_active_call,
+    test_delete_channel_with_active_call_postgres,
+    test_delete_channel_with_active_call_sqlite
+);
+
+async fn test_delete_channel_with_active_call(db: &Arc<Database>) {
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+
+    let user_1 = new_test_user(db, "user1@example.com").await;
+    let user_2 = new_test_user(db, "user2@example.com").await;
+
+    let parent_channel_id = db
+        .create_root_channel("parent_channel", user_1)
+        .await
+        .unwrap();
+    let nested_channel_id = db
+        .create_sub_channel("nested_channel", parent_channel_id, user_1)
+        .await
+        .unwrap();
+
+    db.invite_channel_member(parent_channel_id, user_2, user_1, ChannelRole::Member)
+        .await
+        .unwrap();
+
+    db.respond_to_channel_invite(parent_channel_id, user_2, true)
+        .await
+        .unwrap();
+
+    let connection_1 = ConnectionId { owner_id, id: 1 };
+    let connection_2 = ConnectionId { owner_id, id: 2 };
+
+    db.join_channel(parent_channel_id, user_1, connection_1)
+        .await
+        .unwrap();
+
+    db.join_channel(nested_channel_id, user_2, connection_2)
+        .await
+        .unwrap();
+
+    // Delete fails - participants in both parent and nested calls
+    let err = db
+        .delete_channel(parent_channel_id, user_1)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("call is in progress"), "{err}");
+
+    // Delete fails - participants in nested calls
+    db.leave_room(connection_2).await.unwrap();
+    let err = db
+        .delete_channel(parent_channel_id, user_1)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("call is in progress"), "{err}");
+
+    // Delete succeeds - no participants in calls
+    db.leave_room(connection_1).await.unwrap();
+    db.delete_channel(parent_channel_id, user_1).await.unwrap();
+
+    assert!(db.get_channel(parent_channel_id, user_1).await.is_err());
+    assert!(db.get_channel(parent_channel_id, user_2).await.is_err());
 }

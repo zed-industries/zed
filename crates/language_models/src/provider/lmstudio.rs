@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Subscription, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -380,21 +380,25 @@ impl LmStudioLanguageModel {
                         }
                     }
                     MessageContent::ToolResult(tool_result) => {
-                        let content = match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                vec![lmstudio::MessagePart::Text {
-                                    text: text.to_string(),
-                                }]
-                            }
-                            LanguageModelToolResultContent::Image(image) => {
-                                vec![lmstudio::MessagePart::Image {
-                                    image_url: lmstudio::ImageUrl {
-                                        url: image.to_base64_url(),
-                                        detail: None,
-                                    },
-                                }]
-                            }
-                        };
+                        let content: Vec<lmstudio::MessagePart> = tool_result
+                            .content
+                            .iter()
+                            .map(|part| match part {
+                                LanguageModelToolResultContent::Text(text) => {
+                                    lmstudio::MessagePart::Text {
+                                        text: text.to_string(),
+                                    }
+                                }
+                                LanguageModelToolResultContent::Image(image) => {
+                                    lmstudio::MessagePart::Image {
+                                        image_url: lmstudio::ImageUrl {
+                                            url: image.to_base64_url(),
+                                            detail: None,
+                                        },
+                                    }
+                                }
+                            })
+                            .collect();
 
                         messages.push(lmstudio::ChatMessage::Tool {
                             content: content.into(),
@@ -503,22 +507,6 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // Endpoint for this is coming soon. In the meantime, hacky estimation
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().split_whitespace().count())
-            .sum::<usize>();
-
-        let estimated_tokens = (token_count as f64 * 0.75) as u64;
-        async move { Ok(estimated_tokens) }.boxed()
     }
 
     fn stream_completion(

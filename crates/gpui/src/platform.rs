@@ -31,10 +31,10 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -212,6 +212,14 @@ pub trait Platform: 'static {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+
+    /// Hides the mouse cursor until the user moves the mouse over one of
+    /// this application's windows.
+    fn hide_cursor_until_mouse_moves(&self);
+
+    /// Returns whether the mouse cursor is currently visible.
+    fn is_cursor_visible(&self) -> bool;
+
     fn should_auto_hide_scrollbars(&self) -> bool;
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
@@ -318,22 +326,22 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
-pub struct DisplayId(pub(crate) u32);
+pub struct DisplayId(pub(crate) u64);
 
 impl DisplayId {
     /// Create a new `DisplayId` from a raw platform display identifier.
-    pub fn new(id: u32) -> Self {
+    pub fn new(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<u32> for DisplayId {
-    fn from(id: u32) -> Self {
+impl From<u64> for DisplayId {
+    fn from(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<DisplayId> for u32 {
+impl From<DisplayId> for u64 {
     fn from(id: DisplayId) -> Self {
         id.0
     }
@@ -651,6 +659,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     fn set_edited(&mut self, _edited: bool) {}
+    fn set_document_path(&self, _path: Option<&std::path::Path>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -782,6 +791,10 @@ pub trait PlatformTextSystem: Send + Sync {
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
+    /// Returns the dilation level to use for a glyph painted in the given color.
+    fn glyph_dilation_for_color(&self, _color: Hsla) -> u8 {
+        0
+    }
 }
 
 #[expect(missing_docs)]
@@ -1048,7 +1061,7 @@ impl<T> AtlasTextureList<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct AtlasTile {
@@ -1813,9 +1826,6 @@ pub enum CursorStyle {
     /// A cursor indicating that the operation will result in a context menu
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
-
-    /// Hide the cursor
-    None,
 }
 
 /// A clipboard item that should be copied to the clipboard
@@ -2001,17 +2011,21 @@ impl ImageFormat {
         }
     }
 
-    /// Returns the ImageFormat for the given mime type
+    /// Returns the ImageFormat for the given mime type, including known aliases.
     pub fn from_mime_type(mime_type: &str) -> Option<Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+            .find(|format| format.mime_type() == mime_type)
+            .or_else(|| Self::from_mime_type_alias(mime_type))
+    }
+
+    /// Non-canonical mime types that some producers use in the wild.
+    /// Unlike `mime_type()` which returns the single canonical form,
+    /// these are legacy or shortened variants we still need to recognize.
+    fn from_mime_type_alias(mime_type: &str) -> Option<Self> {
         match mime_type {
-            "image/png" => Some(Self::Png),
-            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
-            "image/webp" => Some(Self::Webp),
-            "image/gif" => Some(Self::Gif),
-            "image/svg+xml" => Some(Self::Svg),
-            "image/bmp" => Some(Self::Bmp),
-            "image/tiff" | "image/tif" => Some(Self::Tiff),
-            "image/ico" => Some(Self::Ico),
+            "image/jpg" => Some(Self::Jpeg),
+            "image/tif" => Some(Self::Tiff),
             _ => None,
         }
     }

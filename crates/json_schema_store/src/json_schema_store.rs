@@ -313,7 +313,7 @@ async fn resolve_dynamic_schema(
                 .all_lsp_adapters()
                 .into_iter()
                 .map(|adapter| adapter.name())
-                .chain(languages.available_lsp_adapter_names().into_iter())
+                .chain(languages.available_lsp_adapter_names())
                 .map(|name| name.to_string())
                 .collect();
 
@@ -352,6 +352,11 @@ async fn resolve_dynamic_schema(
                 let icon_theme_names = icon_theme_names.as_slice();
                 let theme_names = theme_names.as_slice();
 
+                let action_names = cx.all_action_names();
+                let action_documentation = cx.action_documentation();
+                let deprecations = cx.deprecated_actions_to_preferred_actions();
+                let deprecation_messages = cx.action_deprecation_messages();
+
                 let mut schema =
                     settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
                         language_names,
@@ -359,6 +364,10 @@ async fn resolve_dynamic_schema(
                         theme_names,
                         icon_theme_names,
                         lsp_adapter_names: &lsp_adapter_names,
+                        action_names,
+                        action_documentation,
+                        deprecations,
+                        deprecation_messages,
                     });
                 inject_feature_flags_schema(&mut schema);
                 schema
@@ -387,6 +396,10 @@ async fn resolve_dynamic_schema(
                     font_names: &[],
                     theme_names: &[],
                     icon_theme_names: &[],
+                    action_names: &[],
+                    action_documentation: &HashMap::default(),
+                    deprecations: &HashMap::default(),
+                    deprecation_messages: &HashMap::default(),
                 });
             inject_feature_flags_schema(&mut schema);
             schema

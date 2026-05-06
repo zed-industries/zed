@@ -3,12 +3,12 @@ use editor::Editor;
 use fuzzy_nucleo::StringMatchCandidate;
 
 use collections::HashSet;
-use git::repository::Branch;
+use git::repository::{Branch, delete_branch_flag};
 use gpui::http_client::Url;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
@@ -29,6 +29,8 @@ actions!(
     [
         /// Deletes the selected git branch or remote.
         DeleteBranch,
+        /// Force deletes the selected git branch or remote.
+        ForceDeleteBranch,
         /// Filter the list of remotes
         FilterRemotes
     ]
@@ -254,8 +256,10 @@ impl BranchList {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.picker
-            .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.modifiers = ev.modifiers;
+            cx.notify();
+        })
     }
 
     pub fn handle_delete(
@@ -267,7 +271,20 @@ impl BranchList {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
-                .delete_at(picker.delegate.selected_index, window, cx)
+                .delete_at(picker.delegate.selected_index, false, window, cx)
+        })
+    }
+
+    pub fn handle_force_delete(
+        &mut self,
+        _: &branch_picker::ForceDeleteBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .delete_at(picker.delegate.selected_index, true, window, cx)
         })
     }
 
@@ -301,6 +318,7 @@ impl Render for BranchList {
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_delete))
+            .on_action(cx.listener(Self::handle_force_delete))
             .on_action(cx.listener(Self::handle_filter))
             .child(self.picker.clone())
             .when(!self.embedded, |this| {
@@ -393,6 +411,7 @@ pub struct BranchListDelegate {
     focus_handle: FocusHandle,
     restore_selected_branch: Option<SharedString>,
     show_footer: bool,
+    hovered_delete_index: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -405,6 +424,77 @@ enum PickerState {
     CreateRemote(SharedString),
     /// When we set a new branch to create
     NewBranch,
+}
+
+fn delete_branch_command(is_remote: bool, branch_name: &str, force: bool) -> String {
+    format!(
+        "branch {} {branch_name}",
+        delete_branch_flag(is_remote, force)
+    )
+}
+
+// Git only reports "not fully merged" via localized stderr, so this
+// best-effort check may miss some locales and fall back to the raw error toast.
+fn is_unmerged_branch_delete_error(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .to_lowercase()
+        .contains("not fully merged")
+}
+
+struct DeleteBranchTooltip {
+    picker: WeakEntity<Picker<BranchListDelegate>>,
+    focus_handle: FocusHandle,
+    delete_index: usize,
+    _subscription: Subscription,
+}
+
+impl DeleteBranchTooltip {
+    fn new(
+        picker: Entity<Picker<BranchListDelegate>>,
+        focus_handle: FocusHandle,
+        delete_index: usize,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let subscription = cx.observe(&picker, |_, _, cx| cx.notify());
+        Self {
+            picker: picker.downgrade(),
+            focus_handle,
+            delete_index,
+            _subscription: subscription,
+        }
+    }
+}
+
+impl Render for DeleteBranchTooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let force_delete = self
+            .picker
+            .read_with(cx, |picker, _| {
+                picker
+                    .delegate
+                    .is_force_delete_hovering_index(self.delete_index)
+            })
+            .unwrap_or(false);
+        if force_delete {
+            Tooltip::for_action_in(
+                "Force Delete Branch",
+                &branch_picker::ForceDeleteBranch,
+                &self.focus_handle,
+                cx,
+            )
+            .into_any_element()
+        } else {
+            Tooltip::with_meta_in(
+                "Delete Branch",
+                Some(&branch_picker::DeleteBranch),
+                "Hold alt to force delete",
+                &self.focus_handle,
+                cx,
+            )
+            .into_any_element()
+        }
+    }
 }
 
 fn process_branches(branches: &Arc<[Branch]>) -> Vec<Branch> {
@@ -460,7 +550,12 @@ impl BranchListDelegate {
             focus_handle: cx.focus_handle(),
             restore_selected_branch: None,
             show_footer: false,
+            hovered_delete_index: None,
         }
+    }
+
+    fn is_force_delete_hovering_index(&self, index: usize) -> bool {
+        self.modifiers.alt && self.hovered_delete_index == Some(index)
     }
 
     fn create_branch(
@@ -509,7 +604,13 @@ impl BranchListDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn delete_at(&self, idx: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn delete_at(
+        &self,
+        idx: usize,
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
@@ -520,49 +621,75 @@ impl BranchListDelegate {
         let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |picker, cx| {
-            let is_remote;
-            let result = match &entry {
-                Entry::Branch { branch, .. } => {
-                    if branch.is_head {
-                        return Ok(());
+            let Entry::Branch { branch, .. } = &entry else {
+                log::error!("Failed to delete entry: wrong entry to delete");
+                return Ok(());
+            };
+
+            if branch.is_head {
+                return Ok(());
+            }
+
+            let is_remote = branch.is_remote();
+            let branch_name = branch.name().to_string();
+            let initial_result = repo
+                .update(cx, |repo, _| {
+                    repo.delete_branch(is_remote, branch_name.clone(), force)
+                })
+                .await?;
+
+            let (result, attempted_force) = match initial_result {
+                Ok(()) => (Ok(()), force),
+                Err(error) => {
+                    if is_remote {
+                        log::error!("Failed to delete remote branch: {error}");
+                    } else {
+                        log::error!("Failed to delete branch: {error}");
                     }
 
-                    is_remote = branch.is_remote();
-                    repo.update(cx, |repo, _| {
-                        repo.delete_branch(is_remote, branch.name().to_string())
-                    })
-                    .await?
-                }
-                _ => {
-                    log::error!("Failed to delete entry: wrong entry to delete");
-                    return Ok(());
+                    if force || !is_unmerged_branch_delete_error(&error) {
+                        (Err(error), force)
+                    } else {
+                        let answer = cx.update(|window, cx| {
+                            window.prompt(
+                                PromptLevel::Warning,
+                                &format!(
+                                    "Branch \"{}\" is not fully merged. Force delete it?",
+                                    entry.name()
+                                ),
+                                None,
+                                &["Force Delete", "Cancel"],
+                                cx,
+                            )
+                        })?;
+
+                        if answer.await != Ok(0) {
+                            return Ok(());
+                        }
+
+                        let retry = repo
+                            .update(cx, |repo, _| {
+                                repo.delete_branch(is_remote, branch_name, true)
+                            })
+                            .await?;
+
+                        if let Err(error) = &retry {
+                            log::error!("Failed to force delete branch: {error}");
+                        }
+                        (retry, true)
+                    }
                 }
             };
 
-            if let Err(e) = result {
-                if is_remote {
-                    log::error!("Failed to delete remote branch: {}", e);
-                } else {
-                    log::error!("Failed to delete branch: {}", e);
-                }
-
+            if let Err(error) = result {
                 if let Some(workspace) = workspace.upgrade() {
                     cx.update(|_window, cx| {
-                        if is_remote {
-                            show_error_toast(
-                                workspace,
-                                format!("branch -dr {}", entry.name()),
-                                e,
-                                cx,
-                            )
-                        } else {
-                            show_error_toast(
-                                workspace,
-                                format!("branch -d {}", entry.name()),
-                                e,
-                                cx,
-                            )
-                        }
+                        show_error_toast(
+                            workspace,
+                            delete_branch_command(is_remote, entry.name(), attempted_force),
+                            error,
+                            cx,
+                        )
                     })?;
                 }
 
@@ -585,6 +712,8 @@ impl BranchListDelegate {
                     picker.delegate.selected_index = picker.delegate.matches.len() - 1;
                 }
 
+                picker.delegate.hovered_delete_index = None;
+
                 cx.notify();
             })?;
 
@@ -601,7 +730,7 @@ impl PickerDelegate for BranchListDelegate {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 match self.branch_filter {
-                    BranchFilter::All | BranchFilter::Remote => "Select branch…",
+                    BranchFilter::All | BranchFilter::Remote => "Switch branch…",
                 }
             }
             PickerState::CreateRemote(_) => "Enter a name for this remote…",
@@ -627,6 +756,9 @@ impl PickerDelegate for BranchListDelegate {
         let focus_handle = self.focus_handle.clone();
         let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
 
+        let show_inline_filter =
+            self.editor_position() == PickerEditorPosition::End || !self.show_footer;
+
         v_flex()
             .when(
                 self.editor_position() == PickerEditorPosition::End,
@@ -639,34 +771,32 @@ impl PickerDelegate for BranchListDelegate {
                     .h_9()
                     .px_2p5()
                     .child(editor.clone())
-                    .when(
-                        self.editor_position() == PickerEditorPosition::End,
-                        |this| {
-                            let tooltip_label = match self.branch_filter {
-                                BranchFilter::All => "Filter Remote Branches",
-                                BranchFilter::Remote => "Show All Branches",
-                            };
+                    .when(show_inline_filter, |this| {
+                        let tooltip_label = match self.branch_filter {
+                            BranchFilter::All => "Filter Remote Branches",
+                            BranchFilter::Remote => "Show All Branches",
+                        };
 
-                            this.gap_1().justify_between().child({
-                                IconButton::new("filter-remotes", IconName::Filter)
-                                    .toggle_state(self.branch_filter == BranchFilter::Remote)
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::for_action_in(
-                                            tooltip_label,
-                                            &branch_picker::FilterRemotes,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(|_click, window, cx| {
-                                        window.dispatch_action(
-                                            branch_picker::FilterRemotes.boxed_clone(),
-                                            cx,
-                                        );
-                                    })
-                            })
-                        },
-                    ),
+                        this.gap_1().justify_between().child({
+                            IconButton::new("filter-remotes", IconName::Filter)
+                                .toggle_state(self.branch_filter == BranchFilter::Remote)
+                                .icon_size(IconSize::Small)
+                                .tooltip(move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        tooltip_label,
+                                        &branch_picker::FilterRemotes,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                })
+                                .on_click(|_click, window, cx| {
+                                    window.dispatch_action(
+                                        branch_picker::FilterRemotes.boxed_clone(),
+                                        cx,
+                                    );
+                                })
+                        })
+                    }),
             )
             .when(
                 self.editor_position() == PickerEditorPosition::Start,
@@ -979,6 +1109,7 @@ impl PickerDelegate for BranchListDelegate {
         };
 
         let focus_handle = self.focus_handle.clone();
+        let picker = cx.entity();
         let is_new_items = matches!(
             entry,
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. }
@@ -987,19 +1118,44 @@ impl PickerDelegate for BranchListDelegate {
         let is_head_branch = entry.as_branch().is_some_and(|branch| branch.is_head);
 
         let deleted_branch_icon = |entry_ix: usize| {
-            IconButton::new(("delete", entry_ix), IconName::Trash)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| {
-                    Tooltip::for_action_in(
-                        "Delete Branch",
-                        &branch_picker::DeleteBranch,
-                        &focus_handle,
-                        cx,
-                    )
-                })
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.delegate.delete_at(entry_ix, window, cx);
+            let picker = picker.clone();
+            let focus_handle = focus_handle.clone();
+            let force_delete = self.is_force_delete_hovering_index(entry_ix);
+
+            div()
+                .id(("delete-hover", entry_ix))
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    if *hovered {
+                        this.delegate.hovered_delete_index = Some(entry_ix);
+                    } else if this.delegate.hovered_delete_index == Some(entry_ix) {
+                        this.delegate.hovered_delete_index = None;
+                    }
+                    cx.notify();
                 }))
+                .child(
+                    IconButton::new(("delete", entry_ix), IconName::Trash)
+                        .icon_size(IconSize::Small)
+                        .when(force_delete, |this| this.icon_color(Color::Error))
+                        .tooltip(move |_, cx| {
+                            cx.new(|cx| {
+                                DeleteBranchTooltip::new(
+                                    picker.clone(),
+                                    focus_handle.clone(),
+                                    entry_ix,
+                                    cx,
+                                )
+                            })
+                            .into()
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.delegate.delete_at(
+                                entry_ix,
+                                this.delegate.modifiers.alt,
+                                window,
+                                cx,
+                            );
+                        })),
+                )
         };
 
         let create_from_default_button = self.default_branch.as_ref().map(|default_branch| {
@@ -1245,7 +1401,7 @@ impl PickerDelegate for BranchListDelegate {
                         },
                     )
                     .child(
-                        Button::new("select_branch", "Select")
+                        Button::new("switch_branch", "Switch")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
@@ -1479,9 +1635,9 @@ mod tests {
         (branch_list, cx)
     }
 
-    async fn init_fake_repository(
+    async fn init_fake_repository_with_fs(
         cx: &mut TestAppContext,
-    ) -> (Entity<Project>, Entity<Repository>) {
+    ) -> (Arc<FakeFs>, Entity<Project>, Entity<Repository>) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/dir"),
@@ -1504,7 +1660,14 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let repository = cx.read(|cx| project.read(cx).active_repository(cx));
 
-        (project, repository.unwrap())
+        (fs, project, repository.unwrap())
+    }
+
+    async fn init_fake_repository(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, Entity<Repository>) {
+        let (_, project, repository) = init_fake_repository_with_fs(cx).await;
+        (project, repository)
     }
 
     #[gpui::test]
@@ -1596,7 +1759,7 @@ mod tests {
             branch_list.picker.update(cx, |picker, cx| {
                 assert_eq!(picker.delegate.matches.len(), 4);
                 let branch_to_delete = picker.delegate.matches.get(1).unwrap().name().to_string();
-                picker.delegate.delete_at(1, window, cx);
+                picker.delegate.delete_at(1, false, window, cx);
                 branch_to_delete
             })
         });
@@ -1641,6 +1804,238 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_delete_unmerged_branch_prompts_for_force_delete(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, _project, repository) = init_fake_repository_with_fs(cx).await;
+
+        let branches = create_test_branches();
+        let branch_names = branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<Vec<String>>();
+        let repo = repository.clone();
+        cx.spawn(async move |mut cx| {
+            for branch in branch_names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        cx.run_until_parked();
+
+        let branch_to_delete = "feature-auth";
+        fs.with_git_state(path!("/dir/.git").as_ref(), true, |state| {
+            state
+                .branches_requiring_force_delete
+                .insert(branch_to_delete.to_string());
+        })
+        .expect("failed to mark test branch as requiring force delete");
+
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
+        let cx = &mut ctx;
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                let branch_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|entry| entry.name() == branch_to_delete)
+                    .unwrap();
+                picker.delegate.delete_at(branch_index, false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+
+        cx.simulate_prompt_answer("Force Delete");
+        cx.run_until_parked();
+
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            repo_branches
+                .iter()
+                .all(|branch| branch.name() != branch_to_delete)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete_unmerged_branch_cancel_keeps_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, _project, repository) = init_fake_repository_with_fs(cx).await;
+
+        let branches = create_test_branches();
+        let branch_names = branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<Vec<String>>();
+        let repo = repository.clone();
+        cx.spawn(async move |mut cx| {
+            for branch in branch_names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        cx.run_until_parked();
+
+        let branch_to_delete = "feature-auth";
+        fs.with_git_state(path!("/dir/.git").as_ref(), true, |state| {
+            state
+                .branches_requiring_force_delete
+                .insert(branch_to_delete.to_string());
+        })
+        .expect("failed to mark test branch as requiring force delete");
+
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
+        let cx = &mut ctx;
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        let initial_match_count = branch_list.update(cx, |branch_list, cx| {
+            branch_list
+                .picker
+                .update(cx, |picker, _| picker.delegate.matches.len())
+        });
+
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                let branch_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|entry| entry.name() == branch_to_delete)
+                    .unwrap();
+                picker.delegate.delete_at(branch_index, false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert!(!cx.has_pending_prompt());
+
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            repo_branches
+                .iter()
+                .any(|branch| branch.name() == branch_to_delete),
+            "branch should still exist after cancelling the force-delete prompt"
+        );
+
+        let final_match_count = branch_list.update(cx, |branch_list, cx| {
+            branch_list
+                .picker
+                .update(cx, |picker, _| picker.delegate.matches.len())
+        });
+        assert_eq!(
+            initial_match_count, final_match_count,
+            "picker matches should be unchanged after cancel"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_force_delete_click_deletes_branch_without_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, _project, repository) = init_fake_repository_with_fs(cx).await;
+
+        let branches = create_test_branches();
+        let branch_names = branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<Vec<String>>();
+        let repo = repository.clone();
+        cx.spawn(async move |mut cx| {
+            for branch in branch_names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        cx.run_until_parked();
+
+        let branch_to_delete = "feature-auth";
+        fs.with_git_state(path!("/dir/.git").as_ref(), true, |state| {
+            state
+                .branches_requiring_force_delete
+                .insert(branch_to_delete.to_string());
+        })
+        .expect("failed to mark test branch as requiring force delete");
+
+        let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;
+        let cx = &mut ctx;
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                picker.delegate.modifiers = Modifiers::alt();
+                let branch_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|entry| entry.name() == branch_to_delete)
+                    .unwrap();
+                picker.delegate.delete_at(branch_index, true, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(!cx.has_pending_prompt());
+
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            repo_branches
+                .iter()
+                .all(|branch| branch.name() != branch_to_delete)
+        );
+    }
+
+    #[gpui::test]
     async fn test_delete_remote_branch(cx: &mut TestAppContext) {
         init_test(cx);
         let (_project, repository) = init_fake_repository(cx).await;
@@ -1682,7 +2077,7 @@ mod tests {
             branch_list.picker.update(cx, |picker, cx| {
                 assert_eq!(picker.delegate.matches.len(), 4);
                 let branch_to_delete = picker.delegate.matches.get(1).unwrap().name().to_string();
-                picker.delegate.delete_at(1, window, cx);
+                picker.delegate.delete_at(1, false, window, cx);
                 branch_to_delete
             })
         });

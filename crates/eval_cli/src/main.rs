@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 
 use acp_thread::AgentConnection as _;
 use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context, Result};
 use clap::Parser;
 use feature_flags::FeatureFlagAppExt as _;
@@ -70,7 +70,7 @@ struct Args {
     workdir: PathBuf,
 
     /// Instruction/prompt text. If omitted, read from --instruction-file or stdin.
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     instruction: Option<String>,
 
     /// Language model to use, in `provider/model` format.

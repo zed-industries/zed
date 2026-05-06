@@ -203,25 +203,6 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 }
 
-fn collect_tiktoken_messages(
-    request: LanguageModelRequest,
-) -> Vec<tiktoken_rs::ChatCompletionRequestMessage> {
-    request
-        .messages
-        .into_iter()
-        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-            role: match message.role {
-                Role::User => "user".into(),
-                Role::Assistant => "assistant".into(),
-                Role::System => "system".into(),
-            },
-            content: Some(message.string_contents()),
-            name: None,
-            function_call: None,
-        })
-        .collect::<Vec<_>>()
-}
-
 pub struct CopilotChatLanguageModel {
     model: CopilotChatModel,
     request_limiter: RateLimiter,
@@ -318,27 +299,6 @@ impl LanguageModel for CopilotChatLanguageModel {
         self.model.max_token_count()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let model = self.model.clone();
-        cx.background_spawn(async move {
-            let messages = collect_tiktoken_messages(request);
-            // Copilot uses OpenAI tiktoken tokenizer for all it's model irrespective of the underlying provider(vendor).
-            let tokenizer_model = match model.tokenizer() {
-                Some("o200k_base") => "gpt-4o",
-                Some("cl100k_base") => "gpt-4",
-                _ => "gpt-4o",
-            };
-
-            tiktoken_rs::num_tokens_from_messages(tokenizer_model, &messages)
-                .map(|tokens| tokens as u64)
-        })
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -405,7 +365,9 @@ impl LanguageModel for CopilotChatLanguageModel {
 
                 if model.supports_adaptive_thinking() {
                     if anthropic_request.thinking.is_some() {
-                        anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
+                        anthropic_request.thinking = Some(anthropic::Thinking::Adaptive {
+                            display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
+                        });
                         anthropic_request.output_config =
                             effort.map(|effort| anthropic::OutputConfig {
                                 effort: Some(effort),
@@ -906,23 +868,40 @@ fn into_copilot_chat(
             Role::User => {
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
-                        let content = match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => text.to_string().into(),
-                            LanguageModelToolResultContent::Image(image) => {
-                                if model.supports_vision() {
-                                    ChatMessageContent::Multipart(vec![ChatMessagePart::Image {
-                                        image_url: ImageUrl {
-                                            url: image.to_base64_url(),
-                                        },
-                                    }])
-                                } else {
-                                    debug_panic!(
-                                        "This should be caught at {} level",
-                                        tool_result.tool_name
-                                    );
-                                    "[Tool responded with an image, but this model does not support vision]".to_string().into()
+                        let parts: Vec<ChatMessagePart> = tool_result
+                            .content
+                            .iter()
+                            .map(|part| match part {
+                                LanguageModelToolResultContent::Text(text) => {
+                                    ChatMessagePart::Text {
+                                        text: text.to_string(),
+                                    }
                                 }
+                                LanguageModelToolResultContent::Image(image) => {
+                                    if model.supports_vision() {
+                                        ChatMessagePart::Image {
+                                            image_url: ImageUrl {
+                                                url: image.to_base64_url(),
+                                            },
+                                        }
+                                    } else {
+                                        debug_panic!(
+                                            "This should be caught at {} level",
+                                            tool_result.tool_name
+                                        );
+                                        ChatMessagePart::Text {
+                                            text: "[Tool responded with an image, but this model does not support vision]".to_string(),
+                                        }
+                                    }
+                                }
+                            })
+                            .collect();
+
+                        let content = match parts.as_slice() {
+                            [ChatMessagePart::Text { text }] => {
+                                ChatMessageContent::Plain(text.clone())
                             }
+                            _ => ChatMessageContent::Multipart(parts),
                         };
 
                         messages.push(ChatMessage::Tool {
@@ -1126,27 +1105,39 @@ fn into_copilot_responses(
             Role::User => {
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
-                        let output = match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
+                        let output = match tool_result.content.as_slice() {
+                            [LanguageModelToolResultContent::Text(text)] => {
                                 responses::ResponseFunctionOutput::Text(text.to_string())
                             }
-                            LanguageModelToolResultContent::Image(image) => {
-                                if model.supports_vision() {
-                                    responses::ResponseFunctionOutput::Content(vec![
-                                        responses::ResponseInputContent::InputImage {
-                                            image_url: Some(image.to_base64_url()),
-                                            detail: Default::default(),
-                                        },
-                                    ])
-                                } else {
-                                    debug_panic!(
-                                        "This should be caught at {} level",
-                                        tool_result.tool_name
-                                    );
-                                    responses::ResponseFunctionOutput::Text(
-                                            "[Tool responded with an image, but this model does not support vision]".into(),
-                                        )
-                                }
+                            _ => {
+                                let parts = tool_result
+                                    .content
+                                    .iter()
+                                    .map(|part| match part {
+                                        LanguageModelToolResultContent::Text(text) => {
+                                            responses::ResponseInputContent::InputText {
+                                                text: text.to_string(),
+                                            }
+                                        }
+                                        LanguageModelToolResultContent::Image(image) => {
+                                            if model.supports_vision() {
+                                                responses::ResponseInputContent::InputImage {
+                                                    image_url: Some(image.to_base64_url()),
+                                                    detail: Default::default(),
+                                                }
+                                            } else {
+                                                debug_panic!(
+                                                    "This should be caught at {} level",
+                                                    tool_result.tool_name
+                                                );
+                                                responses::ResponseInputContent::InputText {
+                                                    text: "[Tool responded with an image, but this model does not support vision]".to_string(),
+                                                }
+                                            }
+                                        }
+                                    })
+                                    .collect();
+                                responses::ResponseFunctionOutput::Content(parts)
                             }
                         };
 

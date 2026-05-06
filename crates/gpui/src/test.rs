@@ -71,16 +71,20 @@ pub fn apply_seed_to_proptest_config(
 ///
 /// Doesn't support many features of [`run_test`], since these are provided by
 /// proptest.
-pub fn run_test_once(seed: u64, test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher)>) {
+pub fn run_test_once<R>(
+    seed: u64,
+    test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher) -> R>,
+) -> R {
     let result = panic::catch_unwind(|| {
         let dispatcher = TestDispatcher::new(seed);
         let scheduler = dispatcher.scheduler().clone();
-        test_fn(dispatcher);
+        let res = test_fn(dispatcher);
         scheduler.end_test();
+        res
     });
 
     match result {
-        Ok(()) => {}
+        Ok(r) => r,
         Err(e) => panic::resume_unwind(e),
     }
 }
@@ -207,7 +211,7 @@ pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Obser
     let (tx, rx) = async_channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {
-            let _ = pollster::block_on(tx.send(()));
+            let _ = gpui::block_on(tx.send(()));
         })
     });
     let rx = Box::pin(rx);

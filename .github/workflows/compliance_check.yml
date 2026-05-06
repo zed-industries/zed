@@ -36,7 +36,7 @@ jobs:
     - id: run-compliance-check
       name: release::add_compliance_steps::run_compliance_check
       run: |
-        cargo xtask compliance "$LATEST_TAG" --branch main --report-path "compliance-report-${GITHUB_REF_NAME}.md"
+        cargo xtask compliance version "$LATEST_TAG" --branch main --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -50,7 +50,7 @@ jobs:
         path: compliance-report-${{ github.ref_name }}.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
-      if: always()
+      if: ${{ always() }}
       run: |
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="✅ Scheduled compliance check passed for $COMPLIANCE_TAG"

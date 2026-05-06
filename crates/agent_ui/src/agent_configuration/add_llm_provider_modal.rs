@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
 use gpui::{
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task,
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task, TaskExt,
 };
 use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
@@ -157,6 +157,7 @@ impl ModelInput {
             parallel_tool_calls,
             prompt_cache_key,
             chat_completions,
+            ..
         } = ModelCapabilities::default();
 
         Self {
@@ -209,6 +210,7 @@ impl ModelInput {
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
                 chat_completions: self.capabilities.supports_chat_completions.selected(),
+                interleaved_reasoning: false,
             },
         })
     }
