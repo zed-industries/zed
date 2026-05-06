@@ -5396,8 +5396,8 @@ dependencies = [
 name = "edit_prediction_metrics"
 version = "0.1.0"
 dependencies = [
+ "imara-diff",
  "indoc",
- "language",
  "pretty_assertions",
  "serde",
  "serde_json",
