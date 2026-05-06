@@ -5550,6 +5550,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "gpui_platform",
+ "language",
+ "multi_buffer",
+ "project",
+ "release_channel",
+ "semver",
+ "settings",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
