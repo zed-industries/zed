@@ -3284,6 +3284,50 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_invisible_worktree_does_not_track_ancestor_git_repository(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".git": {},
+            "project": {
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        path!("/repo/project").as_ref(),
+        false,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.read_with(cx, |worktree, _| {
+        let local_worktree = worktree.as_local().unwrap();
+        assert!(local_worktree.repositories().is_empty());
+        assert_eq!(local_worktree.root_repo_common_dir(), None);
+    });
+}
+
+#[gpui::test]
 async fn test_linked_worktree_git_file_event_does_not_panic(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
