@@ -81,6 +81,7 @@ struct StateInner {
 /// visible text stable while content is appended to or removed from that item. A
 /// proportional pending scroll preserves the same fractional position within the item,
 /// which is useful when the whole list is being resized and each item scales similarly.
+#[derive(Clone)]
 enum PendingScroll {
     /// Preserve the same pixel offset into the item after it is remeasured.
     Absolute { item_ix: usize, offset: Pixels },
@@ -90,6 +91,7 @@ enum PendingScroll {
 
 /// Keeps track of a fractional scroll position within an item for restoration
 /// after remeasurement.
+#[derive(Clone)]
 struct PendingScrollFraction {
     /// The index of the item to scroll within.
     item_ix: usize,
@@ -389,22 +391,24 @@ impl ListState {
                         let mut cursor = state.items.cursor::<Count>(());
                         cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
 
-                        cursor.item().and_then(|item| {
-                            item.size().map(|size| {
-                                let fraction = if size.height.0 > 0.0 {
-                                    (scroll_top.offset_in_item.0 / size.height.0).clamp(0.0, 1.0)
-                                } else {
-                                    0.0
-                                };
+                        cursor
+                            .item()
+                            .and_then(|item| {
+                                item.size().map(|size| {
+                                    let fraction = if size.height.0 > 0.0 {
+                                        (scroll_top.offset_in_item.0 / size.height.0)
+                                            .clamp(0.0, 1.0)
+                                    } else {
+                                        0.0
+                                    };
 
-                                // todo!: See if we want to preserve original behavior
-                                // where we would never set this to None if item.size() returned an empty type
-                                PendingScroll::Proportional(PendingScrollFraction {
-                                    item_ix: scroll_top.item_ix,
-                                    fraction,
+                                    PendingScroll::Proportional(PendingScrollFraction {
+                                        item_ix: scroll_top.item_ix,
+                                        fraction,
+                                    })
                                 })
                             })
-                        })
+                            .or_else(|| state.pending_scroll.clone())
                     }
                 };
             }
