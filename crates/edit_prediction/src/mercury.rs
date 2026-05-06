@@ -8,7 +8,7 @@ use cloud_llm_client::EditPredictionRejectReason;
 use credentials_provider::CredentialsProvider;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, Global, SharedString, Task,
+    App, AppContext as _, Context, Entity, Global, SharedString, Task, TaskExt,
     http_client::{self, AsyncBody, HttpClient, Method, StatusCode},
 };
 use language::{ToOffset, ToPoint as _};

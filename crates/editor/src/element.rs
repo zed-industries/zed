@@ -46,9 +46,9 @@ use gpui::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
     MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement, WeakEntity, Window,
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    Style, Styled, StyledText, TaskExt, TextAlign, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{

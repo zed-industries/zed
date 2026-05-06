@@ -6,7 +6,8 @@ use client::{
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement,
-    Render, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred, div,
+    Render, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, anchored, deferred,
+    div,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;

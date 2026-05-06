@@ -65,7 +65,7 @@ use futures::{
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString,
-    Subscription, Task, WeakEntity,
+    Subscription, Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
