@@ -640,7 +640,7 @@ impl GraphData {
             let commit_lane = self
                 .parent_to_lanes
                 .get(&commit.sha)
-                .and_then(|lanes| lanes.first().copied());
+                .and_then(|lanes| lanes.iter().min().copied());
 
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
 
@@ -4049,6 +4049,74 @@ mod tests {
         Ok(())
     }
 
+    fn verify_keep_shared_parents_on_leftmost_lane(graph: &GraphData) -> Result<()> {
+        let mut active_lane_parents: Vec<Option<Oid>> = Vec::new();
+        let mut parent_to_lanes: HashMap<Oid, SmallVec<[usize; 1]>> = HashMap::default();
+
+        for (row, entry) in graph.commits.iter().enumerate() {
+            let pending_lanes = parent_to_lanes.remove(&entry.data.sha).unwrap_or_default();
+
+            if pending_lanes.len() > 1
+                && let Some(expected_lane) = pending_lanes.iter().copied().min()
+                && entry.lane != expected_lane
+            {
+                bail!(
+                    "commit {:?} at row {} uses lane {}, but shared parent should use leftmost pending lane {} from {:?}",
+                    entry.data.sha,
+                    row,
+                    entry.lane,
+                    expected_lane,
+                    pending_lanes
+                );
+            }
+
+            for lane in pending_lanes {
+                let Some(active_lane_parent) = active_lane_parents.get_mut(lane) else {
+                    bail!(
+                        "commit {:?} at row {} was pending on missing lane {}",
+                        entry.data.sha,
+                        row,
+                        lane
+                    );
+                };
+
+                if *active_lane_parent != Some(entry.data.sha) {
+                    bail!(
+                        "commit {:?} at row {} was pending on lane {}, but that lane points to {:?}",
+                        entry.data.sha,
+                        row,
+                        lane,
+                        active_lane_parent
+                    );
+                }
+
+                *active_lane_parent = None;
+            }
+
+            for (parent_index, parent) in entry.data.parents.iter().enumerate() {
+                let lane = if parent_index == 0 {
+                    entry.lane
+                } else if let Some(empty_lane) =
+                    active_lane_parents.iter().position(Option::is_none)
+                {
+                    empty_lane
+                } else {
+                    active_lane_parents.push(None);
+                    active_lane_parents.len() - 1
+                };
+
+                if lane >= active_lane_parents.len() {
+                    active_lane_parents.resize(lane + 1, None);
+                }
+
+                active_lane_parents[lane] = Some(*parent);
+                parent_to_lanes.entry(*parent).or_default().push(lane);
+            }
+        }
+
+        Ok(())
+    }
+
     fn verify_coverage(graph: &GraphData) -> Result<()> {
         let mut expected_edges: HashSet<(Oid, Oid)> = HashSet::default();
         for entry in &graph.commits {
@@ -4197,6 +4265,8 @@ mod tests {
         verify_column_correctness(graph, &oid_to_row).context("column correctness")?;
         verify_segment_continuity(graph).context("segment continuity")?;
         verify_merge_line_optimality(graph, &oid_to_row).context("merge line optimality")?;
+        verify_keep_shared_parents_on_leftmost_lane(graph)
+            .context("keep shared parents on leftmost lane")?;
         verify_coverage(graph).context("coverage")?;
         verify_line_overlaps(graph).context("line overlaps")?;
         Ok(())

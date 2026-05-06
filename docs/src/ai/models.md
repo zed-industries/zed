@@ -1,13 +1,13 @@
 ---
 title: AI Models and Pricing - Zed
-description: AI models available via Zed Pro including Claude, GPT-5.4, Gemini 3.1 Pro, and Grok. Pricing, context windows, and tool call support.
+description: AI models available via Zed Pro including Claude, GPT-5.5, Gemini 3.1 Pro, and Grok. Pricing, context windows, and tool call support.
 ---
 
 # Models
 
 Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly. To use your own API keys instead, see [LLM Providers](./llm-providers.md). For general setup, see [Configuration](./configuration.md).
 
-> **Note:** Claude Opus models and GPT-5.4 pro are not available on the [Student plan](./plans-and-usage.md#student).
+> **Note:** Claude Opus models, GPT-5.5 pro, and GPT-5.4 pro are not available on the [Student plan](./plans-and-usage.md#student).
 
 | Model                  | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
 | ---------------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
@@ -35,6 +35,11 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                        | Anthropic | Output              | $5.00                        | $5.50                   |
 |                        | Anthropic | Input - Cache Write | $1.25                        | $1.375                  |
 |                        | Anthropic | Input - Cache Read  | $0.10                        | $0.11                   |
+| GPT-5.5 pro            | OpenAI    | Input               | $30.00                       | $33.00                  |
+|                        | OpenAI    | Output              | $180.00                      | $198.00                 |
+| GPT-5.5                | OpenAI    | Input               | $5.00                        | $5.50                   |
+|                        | OpenAI    | Output              | $30.00                       | $33.00                  |
+|                        | OpenAI    | Cached Input        | $0.50                        | $0.55                   |
 | GPT-5.4 pro            | OpenAI    | Input               | $30.00                       | $33.00                  |
 |                        | OpenAI    | Output              | $180.00                      | $198.00                 |
 | GPT-5.4                | OpenAI    | Input               | $2.50                        | $2.75                   |
@@ -102,13 +107,15 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Claude Sonnet 4.5           | Anthropic | 200k                      |
 | Claude Sonnet 4.6           | Anthropic | 1M                        |
 | Claude Haiku 4.5            | Anthropic | 200k                      |
-| GPT-5.4 pro                 | OpenAI    | 400k                      |
-| GPT-5.4                     | OpenAI    | 400k                      |
-| GPT-5.3-Codex               | OpenAI    | 400k                      |
-| GPT-5.2                     | OpenAI    | 400k                      |
-| GPT-5.2-Codex               | OpenAI    | 400k                      |
-| GPT-5 mini                  | OpenAI    | 400k                      |
-| GPT-5 nano                  | OpenAI    | 400k                      |
+| GPT-5.5 pro                 | OpenAI    | 272k input / 400k total   |
+| GPT-5.5                     | OpenAI    | 272k input / 400k total   |
+| GPT-5.4 pro                 | OpenAI    | 272k input / 400k total   |
+| GPT-5.4                     | OpenAI    | 272k input / 400k total   |
+| GPT-5.3-Codex               | OpenAI    | 272k input / 400k total   |
+| GPT-5.2                     | OpenAI    | 272k input / 400k total   |
+| GPT-5.2-Codex               | OpenAI    | 272k input / 400k total   |
+| GPT-5 mini                  | OpenAI    | 272k input / 400k total   |
+| GPT-5 nano                  | OpenAI    | 272k input / 400k total   |
 | Gemini 3.1 Pro              | Google    | 200k                      |
 | Gemini 3 Flash              | Google    | 200k                      |
 | Grok 4                      | X.ai      | 128k                      |
