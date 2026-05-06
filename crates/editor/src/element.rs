@@ -10148,8 +10148,8 @@ impl Element for EditorElement {
                         };
 
                         let diff_hunk_colors = match diff_status.kind {
-                            DiffHunkStatusKind::Added => added_diff_hunk_colors,
-                            DiffHunkStatusKind::Deleted => deleted_diff_hunk_colors,
+                            DiffHunkStatusKind::Added => &added_diff_hunk_colors,
+                            DiffHunkStatusKind::Deleted => &deleted_diff_hunk_colors,
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
