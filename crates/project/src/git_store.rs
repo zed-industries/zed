@@ -34,10 +34,10 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitData, CommitDetails, CommitDiff, CommitFile, CommitOptions,
-        CreateWorktreeTarget, DiffType, FetchOptions, GitCommitTemplate, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
-        RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
-        Worktree as GitWorktree,
+        CreateWorktreeTarget, DiffType, DropCommitSupport, FetchOptions, GitCommitTemplate,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
+        UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -4943,11 +4943,162 @@ impl Repository {
                             mode: match reset_mode {
                                 ResetMode::Soft => git_reset::ResetMode::Soft.into(),
                                 ResetMode::Mixed => git_reset::ResetMode::Mixed.into(),
+                                ResetMode::Hard => {
+                                    bail!("Hard reset is not supported for collab repositories")
+                                }
                             },
                         })
                         .await?;
 
                     Ok(())
+                }
+            }
+        })
+    }
+
+    pub fn create_tag(
+        &mut self,
+        sha: String,
+        name: String,
+        message: Option<String>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let this = self.this.clone();
+        self.send_job(None, move |repo, mut cx| async move {
+            let result = match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.create_tag(sha, name, message).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            };
+            if result.is_ok() {
+                this.update(&mut cx, |this, cx| {
+                    this.initial_graph_data.clear();
+                    cx.notify();
+                })
+                .ok();
+            }
+            result
+        })
+    }
+
+    pub fn create_branch_at(&mut self, sha: String, name: String) -> oneshot::Receiver<Result<()>> {
+        let this = self.this.clone();
+        self.send_job(None, move |repo, mut cx| async move {
+            let result = match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.create_branch_at(sha, name).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            };
+            if result.is_ok() {
+                this.update(&mut cx, |this, cx| {
+                    this.initial_graph_data.clear();
+                    cx.notify();
+                })
+                .ok();
+            }
+            result
+        })
+    }
+
+    pub fn checkout_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.checkout_commit(sha).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            }
+        })
+    }
+
+    pub fn cherry_pick(
+        &mut self,
+        sha: String,
+        record_origin: bool,
+        no_commit: bool,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.cherry_pick(sha, record_origin, no_commit).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            }
+        })
+    }
+
+    pub fn revert_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.revert_commit(sha).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            }
+        })
+    }
+
+    pub fn drop_commit_support(
+        &mut self,
+        sha: String,
+    ) -> oneshot::Receiver<Result<DropCommitSupport>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.drop_commit_support(sha).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            }
+        })
+    }
+
+    pub fn drop_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.drop_commit(sha).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            }
+        })
+    }
+
+    pub fn merge_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.merge_commit(sha).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
+                }
+            }
+        })
+    }
+
+    pub fn rebase_onto(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.rebase_onto(sha).await
+                }
+                RepositoryState::Remote(_) => {
+                    bail!("Git graph commit operations are not supported for collab repositories")
                 }
             }
         })
@@ -5273,6 +5424,10 @@ impl Repository {
             debug_assert!(!has_failed, "This should always be inserted");
             &CommitDataState::Loading(None)
         })
+    }
+
+    pub fn commit_data_state(&self, sha: Oid) -> Option<&CommitDataState> {
+        self.commit_data.get(&sha)
     }
 
     fn get_handler(&mut self, cx: &mut Context<Self>) -> &mut CommitDataHandler {
