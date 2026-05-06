@@ -11,7 +11,28 @@ use util::rel_path::{RelPath, RelPathBuf};
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
-include!(concat!(env!("OUT_DIR"), "/app_name.rs"));
+/// The application name, used to derive platform-specific data, config, cache,
+/// and state directory paths.
+///
+/// Forks should change this value to avoid colliding with Zed's user data.
+pub const APP_NAME: &str = "Zed";
+
+const _: () = {
+    assert!(!APP_NAME.is_empty(), "APP_NAME must not be empty");
+    let bytes = APP_NAME.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        assert!(
+            bytes[i] != b'/' && bytes[i] != b'\\',
+            "APP_NAME must not contain path separators",
+        );
+        assert!(
+            bytes[i] >= 0x20,
+            "APP_NAME must not contain control characters",
+        );
+        i += 1;
+    }
+};
 
 /// Returns the lowercased form of [`APP_NAME`], for use in XDG-style paths on
 /// Linux/FreeBSD and the macOS `~/.config` fallback.
@@ -33,31 +54,6 @@ fn ipc_socket_name_for_app(app_name: &str, release_channel_name: &str) -> String
 
 pub fn ipc_socket_name(release_channel_name: &str) -> String {
     ipc_socket_name_for_app(APP_NAME, release_channel_name)
-}
-
-fn app_url_prefix_for_app(app_name: &str) -> String {
-    format!("{}://", app_name_lowercase_for(app_name))
-}
-
-pub fn app_url_prefix() -> String {
-    app_url_prefix_for_app(APP_NAME)
-}
-
-fn cli_url_prefix_for_app(app_name: &str) -> String {
-    format!("{}-cli://", app_name_lowercase_for(app_name))
-}
-
-pub fn cli_url_prefix() -> String {
-    cli_url_prefix_for_app(APP_NAME)
-}
-
-pub fn cli_connection_url(server_name: &str) -> String {
-    format!("{}{server_name}", cli_url_prefix())
-}
-
-pub fn strip_cli_connection_url(url: &str) -> Option<&str> {
-    let prefix = cli_url_prefix();
-    url.strip_prefix(prefix.as_str())
 }
 
 /// A custom data directory override, set only by `set_custom_data_dir`.
@@ -661,19 +657,15 @@ mod tests {
     }
 
     #[test]
-    fn cli_connection_names_preserve_upstream_names() {
+    fn ipc_socket_name_preserves_upstream_name() {
         assert_eq!(ipc_socket_name_for_app("Zed", "stable"), "zed-stable.sock");
-        assert_eq!(app_url_prefix_for_app("Zed"), "zed://");
-        assert_eq!(cli_url_prefix_for_app("Zed"), "zed-cli://");
     }
 
     #[test]
-    fn cli_connection_names_are_derived_from_app_name() {
+    fn ipc_socket_name_is_derived_from_app_name() {
         assert_eq!(
             ipc_socket_name_for_app("ZedFork", "preview"),
             "zedfork-preview.sock"
         );
-        assert_eq!(app_url_prefix_for_app("ZedFork"), "zedfork://");
-        assert_eq!(cli_url_prefix_for_app("ZedFork"), "zedfork-cli://");
     }
 }

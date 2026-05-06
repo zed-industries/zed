@@ -140,7 +140,7 @@ impl OpenRequest {
         }
 
         for url in request.urls {
-            if let Some(server_name) = paths::strip_cli_connection_url(&url) {
+            if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
                 this.kind = Some(OpenRequestKind::DockMenuAction {
@@ -148,43 +148,39 @@ impl OpenRequest {
                 });
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
-            } else if let Some(app_path) = url.strip_prefix(paths::app_url_prefix().as_str()) {
-                if let Some(file) = app_path.strip_prefix("file") {
-                    this.parse_file_path(file)
-                } else if let Some(file) = app_path.strip_prefix("ssh") {
-                    let ssh_url = "ssh:/".to_string() + file;
-                    this.parse_ssh_file_path(&ssh_url, cx)?
-                } else if let Some(extension_id) = app_path.strip_prefix("extension/") {
-                    this.kind = Some(OpenRequestKind::Extension {
-                        extension_id: extension_id.to_string(),
+            } else if let Some(file) = url.strip_prefix("zed://file") {
+                this.parse_file_path(file)
+            } else if let Some(file) = url.strip_prefix("zed://ssh") {
+                let ssh_url = "ssh:/".to_string() + file;
+                this.parse_ssh_file_path(&ssh_url, cx)?
+            } else if let Some(extension_id) = url.strip_prefix("zed://extension/") {
+                this.kind = Some(OpenRequestKind::Extension {
+                    extension_id: extension_id.to_string(),
+                });
+            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
+                if uuid::Uuid::parse_str(session_id_str).is_ok() {
+                    this.kind = Some(OpenRequestKind::SharedAgentThread {
+                        session_id: session_id_str.to_string(),
                     });
-                } else if let Some(session_id_str) = app_path.strip_prefix("agent/shared/") {
-                    if uuid::Uuid::parse_str(session_id_str).is_ok() {
-                        this.kind = Some(OpenRequestKind::SharedAgentThread {
-                            session_id: session_id_str.to_string(),
-                        });
-                    } else {
-                        log::error!("Invalid session ID in URL: {}", session_id_str);
-                    }
-                } else if let Some(agent_path) = app_path.strip_prefix("agent") {
-                    this.parse_agent_url(agent_path)
-                } else if let Some(schema_path) = app_path.strip_prefix("schemas/") {
-                    this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
-                        schema_path: schema_path.to_string(),
-                    });
-                } else if app_path == "settings" || app_path == "settings/" {
-                    this.kind = Some(OpenRequestKind::Setting { setting_path: None });
-                } else if let Some(setting_path) = app_path.strip_prefix("settings/") {
-                    this.kind = Some(OpenRequestKind::Setting {
-                        setting_path: Some(setting_path.to_string()),
-                    });
-                } else if let Some(clone_path) = app_path.strip_prefix("git/clone") {
-                    this.parse_git_clone_url(clone_path)?
-                } else if let Some(commit_path) = app_path.strip_prefix("git/commit/") {
-                    this.parse_git_commit_url(commit_path)?
                 } else {
-                    log::error!("unhandled url: {}", url);
+                    log::error!("Invalid session ID in URL: {}", session_id_str);
                 }
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
+            } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
+                this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
+                    schema_path: schema_path.to_string(),
+                });
+            } else if url == "zed://settings" || url == "zed://settings/" {
+                this.kind = Some(OpenRequestKind::Setting { setting_path: None });
+            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+                this.kind = Some(OpenRequestKind::Setting {
+                    setting_path: Some(setting_path.to_string()),
+                });
+            } else if let Some(clone_path) = url.strip_prefix("zed://git/clone") {
+                this.parse_git_clone_url(clone_path)?
+            } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
+                this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(zed_link) = parse_zed_link(&url, cx) {

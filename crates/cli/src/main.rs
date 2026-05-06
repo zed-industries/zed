@@ -539,7 +539,7 @@ fn main() -> Result<()> {
 
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
-    let url = paths::cli_connection_url(&server_name);
+    let url = format!("zed-cli://{server_name}");
 
     let open_behavior = if args.new {
         cli::OpenBehavior::AlwaysNew
@@ -896,7 +896,7 @@ mod linux {
                 .unwrap_or_else(|| paths::data_dir().clone());
 
             let sock_path = data_dir.join(paths::ipc_socket_name(
-                &release_channel::RELEASE_CHANNEL_NAME,
+                release_channel::RELEASE_CHANNEL_NAME.as_str(),
             ));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
