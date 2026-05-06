@@ -4082,14 +4082,14 @@ impl ProjectSettingsUpdateQueue {
 
         buffer.update(cx, |buffer, cx| {
             let current_text = buffer.text();
-            if let Some(new_text) = cx
+            let new_text = cx
                 .global::<SettingsStore>()
                 .new_text_for_update(current_text, |settings| update(settings, cx))
-                .log_err()
-            {
-                buffer.edit([(0..buffer.len(), new_text)], None, cx);
-            }
-        });
+                .context("Failed to update project settings text")?;
+
+            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+            anyhow::Ok(())
+        })?;
 
         buffer_store
             .update(cx, |store, cx| store.save_buffer(buffer, cx))
@@ -5294,6 +5294,35 @@ mod project_settings_update_tests {
             "Expected updated tab_size in: {}",
             text
         );
+    }
+
+    #[gpui::test]
+    async fn test_returns_error_when_settings_file_is_malformed(cx: &mut TestAppContext) {
+        let setup = init_test(cx, Some("{ invalid json")).await;
+
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id: setup.worktree_id,
+            rel_path: setup.rel_path.clone(),
+            settings_window: WeakEntity::new_invalid(),
+            project: setup.project.downgrade(),
+            worktree: setup.worktree,
+            update: Box::new(|content, _cx| {
+                content.project.all_languages.defaults.tab_size = Some(NonZeroU32::new(4).unwrap());
+            }),
+        };
+
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        cx.executor().run_until_parked();
+        update_task
+            .await
+            .expect_err("settings update should fail when settings file is malformed");
+
+        let file_content = setup
+            .fs
+            .load("/project/.zed/settings.json".as_ref())
+            .await
+            .unwrap();
+        assert_eq!(file_content, "{ invalid json");
     }
 
     #[gpui::test]
