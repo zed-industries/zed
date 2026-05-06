@@ -5308,7 +5308,13 @@ impl ThreadView {
         let has_messages = self.list_state.item_count() > 0;
         let v2_empty_state = !has_messages;
 
-        let mode = if v2_empty_state {
+        let mode = if self.editor_expanded {
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+            }
+        } else if v2_empty_state {
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
