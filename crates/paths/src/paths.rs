@@ -13,6 +13,8 @@ pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
 /// The application name, used to derive platform-specific data, config, cache,
 /// and state directory paths.
+///
+/// Forks should change this to avoid colliding with Zed's user data.
 pub const APP_NAME: &str = "Zed";
 
 /// Lowercased form of [`APP_NAME`], for use in XDG-style paths on
