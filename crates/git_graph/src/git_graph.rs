@@ -4487,6 +4487,11 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.context_menu.is_some() {
+            cx.stop_propagation();
+            return;
+        }
+
         let line_height = window.line_height();
         let delta = event.delta.pixel_delta(line_height);
 
@@ -6560,6 +6565,77 @@ mod tests {
             assert!(graph.context_menu.is_some());
             assert_eq!(graph.selected_entry_idx, None);
             assert!(graph._commit_diff_task.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_graph_scroll_is_blocked_while_context_menu_is_open(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.insert_branches(Path::new("/project/.git"), &["main"]);
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 20, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            let scroll_event = ScrollWheelEvent {
+                position: point(px(10.), px(10.)),
+                delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-100.))),
+                ..Default::default()
+            };
+            let initial_offset = graph.table_interaction_state.read(cx).scroll_offset();
+
+            graph.handle_graph_scroll(&scroll_event, window, cx);
+            let scrolled_offset = graph.table_interaction_state.read(cx).scroll_offset();
+            assert!(
+                scrolled_offset.y < initial_offset.y,
+                "scroll should move the graph when no context menu is open"
+            );
+
+            graph.deploy_entry_context_menu(point(px(10.), px(10.)), 0, window, cx);
+            assert!(graph.context_menu.is_some());
+
+            graph.handle_graph_scroll(&scroll_event, window, cx);
+            assert_eq!(
+                graph.table_interaction_state.read(cx).scroll_offset(),
+                scrolled_offset
+            );
+            assert!(graph.context_menu.is_some());
         });
     }
 
