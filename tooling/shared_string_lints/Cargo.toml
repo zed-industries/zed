@@ -1,9 +1,9 @@
 [package]
-name = "shared_string_lints"
+name = "lints"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Dylint lints for catching wasteful gpui::SharedString constructions in zed."
+description = "Dylint lints for catching bad Zed specific patterns."
 
 [lib]
 crate-type = ["cdylib"]

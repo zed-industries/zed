@@ -43,6 +43,8 @@
           cargo-nextest
           cargo-hakari
           cargo-machete
+		  cargo-dylint
+		  dylint-link
           cargo-zigbuild
           # TODO: package protobuf-language-server for editing zed.proto
           # TODO: add other tools used in our scripts
