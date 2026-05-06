@@ -18,6 +18,17 @@ use std::{
 use crate::rel_path::RelPath;
 use crate::rel_path::RelPathBuf;
 
+/// Expands a leading `~` in a path string to the user's home directory.
+pub fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        return home_dir().clone();
+    }
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        return home_dir().join(rest);
+    }
+    PathBuf::from(path)
+}
+
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
