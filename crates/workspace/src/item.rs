@@ -12,7 +12,7 @@ use client::{Client, proto};
 use futures::channel::mpsc;
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task,
+    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
     WeakEntity, Window,
 };
 use language::Capability;

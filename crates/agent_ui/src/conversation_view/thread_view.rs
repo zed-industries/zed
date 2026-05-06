@@ -13,6 +13,7 @@ use feature_flags::AcpBetaFeatureFlag;
 use crate::message_editor::SharedSessionCapabilities;
 
 use gpui::List;
+use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::{SidebarSide, update_settings_file};

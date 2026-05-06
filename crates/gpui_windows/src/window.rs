@@ -465,11 +465,12 @@ impl WindowsWindow {
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
-            // if we obtain a display_id, then this ID must be valid.
-            WindowsDisplay::new(display_id).unwrap()
+            WindowsDisplay::new(display_id)
         } else {
-            WindowsDisplay::primary_monitor().unwrap()
-        };
+            None
+        }
+        .or_else(WindowsDisplay::primary_monitor)
+        .context("failed to find any monitor")?;
         let appearance = system_appearance().unwrap_or_default();
         let mut context = WindowCreateContext {
             inner: None,

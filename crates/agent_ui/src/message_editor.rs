@@ -22,7 +22,8 @@ use editor::{
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
     AppContext, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
+    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt, TextStyle,
+    WeakEntity,
 };
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
@@ -676,7 +677,7 @@ impl MessageEditor {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).is_empty(cx)
+        self.editor.read(cx).text(cx).trim().is_empty()
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {

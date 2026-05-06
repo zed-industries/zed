@@ -15,7 +15,7 @@ use editor::{
 
 use gpui::{
     Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
+    Global, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, prelude::*,
 };
 
 use language::{Buffer, Capability, OffsetRangeExt, Point};

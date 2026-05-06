@@ -31,7 +31,7 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TaskExt, TextStyle,
     WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
     list, point, pulsating_between,
 };

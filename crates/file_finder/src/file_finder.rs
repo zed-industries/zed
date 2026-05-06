@@ -14,7 +14,7 @@ use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, WeakEntity, Window, actions, rems,
+    StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use open_path_prompt::{
     OpenPathPrompt,

@@ -413,6 +413,7 @@ fn enqueue_notification<Notif>(
 pub struct AcpConnection {
     id: AgentId,
     telemetry_id: SharedString,
+    agent_version: Option<SharedString>,
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_sessions: Rc<RefCell<HashMap<acp::SessionId, PendingAcpSession>>>,
@@ -900,12 +901,15 @@ impl AcpConnection {
             }
         });
 
-        let telemetry_id = response
-            .agent_info
+        let agent_info = response.agent_info;
+        let telemetry_id = agent_info
+            .as_ref()
             // Use the one the agent provides if we have one
-            .map(|info| info.name.into())
+            .map(|info| SharedString::from(info.name.clone()))
             // Otherwise, just use the name
             .unwrap_or_else(|| agent_id.0.clone());
+        let agent_version = agent_info
+            .and_then(|info| (!info.version.is_empty()).then(|| SharedString::from(info.version)));
 
         let session_list = if response
             .agent_capabilities
@@ -945,6 +949,7 @@ impl AcpConnection {
             agent_server_store,
             connection,
             telemetry_id,
+            agent_version,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
@@ -978,6 +983,7 @@ impl AcpConnection {
         Self {
             id: AgentId::new("test"),
             telemetry_id: "test".into(),
+            agent_version: None,
             connection,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
@@ -1317,6 +1323,10 @@ impl AgentConnection for AcpConnection {
 
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
+    }
+
+    fn agent_version(&self) -> Option<SharedString> {
+        self.agent_version.clone()
     }
 
     fn new_session(
@@ -1982,6 +1992,10 @@ pub mod test_support {
 
         fn telemetry_id(&self) -> SharedString {
             self.inner.telemetry_id()
+        }
+
+        fn agent_version(&self) -> Option<SharedString> {
+            self.inner.agent_version()
         }
 
         fn new_session(
