@@ -25,6 +25,11 @@ struct Cli {
     /// Output format: "human" or "json".
     #[arg(long, default_value = "human")]
     output: String,
+
+    /// Include test code in the analysis. By default, `#[test]` functions,
+    /// `#[cfg(test)]` modules, and files under `tests/` directories are skipped.
+    #[arg(long)]
+    include_tests: bool,
 }
 
 fn main() -> Result<()> {
@@ -36,7 +41,8 @@ fn main() -> Result<()> {
 
     let mut total_warnings = 0;
     for source_file in &source_files {
-        let analysis = callgraph::analyzer::analyze_file(source_file, &blocklist)?;
+        let analysis =
+            callgraph::analyzer::analyze_file(source_file, &blocklist, cli.include_tests)?;
         callgraph::diagnostics::emit_file_warnings(
             &analysis.warnings,
             &analysis.source,

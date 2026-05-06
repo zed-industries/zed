@@ -67,13 +67,30 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 /// Analyze a single Rust source file for blocking calls in async contexts.
-pub fn analyze_file(path: &Path, blocklist: &Blocklist) -> Result<FileAnalysis> {
+///
+/// When `include_tests` is false, files under `tests/` directories are skipped
+/// entirely, and `#[cfg(test)]` modules and `#[test]` functions within other
+/// files are ignored.
+pub fn analyze_file(
+    path: &Path,
+    blocklist: &Blocklist,
+    include_tests: bool,
+) -> Result<FileAnalysis> {
+    // Layer 1: skip entire files under tests/ directories.
+    if !include_tests && is_test_file(path) {
+        return Ok(FileAnalysis {
+            path: path.to_path_buf(),
+            source: String::new(),
+            warnings: Vec::new(),
+        });
+    }
+
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read {}", path.display()))?;
     let syntax =
         syn::parse_file(&source).with_context(|| format!("failed to parse {}", path.display()))?;
 
-    let warnings = analyze_syntax(path, &source, &syntax, blocklist);
+    let warnings = analyze_syntax(path, &source, &syntax, blocklist, include_tests);
     Ok(FileAnalysis {
         path: path.to_path_buf(),
         source,
@@ -81,11 +98,21 @@ pub fn analyze_file(path: &Path, blocklist: &Blocklist) -> Result<FileAnalysis> 
     })
 }
 
-/// Analyze source provided as a string (for testing).
-pub fn analyze_source(path: &Path, source: &str, blocklist: &Blocklist) -> Result<Vec<Warning>> {
+/// Analyze source provided as a string (for unit testing the analyzer itself).
+pub fn analyze_source(
+    path: &Path,
+    source: &str,
+    blocklist: &Blocklist,
+    include_tests: bool,
+) -> Result<Vec<Warning>> {
     let syntax =
         syn::parse_file(source).with_context(|| format!("failed to parse {}", path.display()))?;
-    Ok(analyze_syntax(path, source, &syntax, blocklist))
+    Ok(analyze_syntax(path, source, &syntax, blocklist, include_tests))
+}
+
+/// Check if a file path looks like test code (lives under a `tests/` dir).
+fn is_test_file(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == "tests")
 }
 
 fn analyze_syntax(
@@ -93,6 +120,7 @@ fn analyze_syntax(
     source: &str,
     syntax: &syn::File,
     blocklist: &Blocklist,
+    include_tests: bool,
 ) -> Vec<Warning> {
     use syn::visit::Visit;
 
@@ -105,6 +133,7 @@ fn analyze_syntax(
         in_async_context: None,
         use_map: resolve_imports(syntax),
         in_safe_wrapper: false,
+        include_tests,
         line_starts: &line_starts,
     };
     visitor.visit_file(syntax);
@@ -261,11 +290,48 @@ struct AsyncBlockingVisitor<'a> {
     in_async_context: Option<String>,
     use_map: HashMap<String, String>,
     in_safe_wrapper: bool,
+    include_tests: bool,
     line_starts: &'a [usize],
 }
 
+/// Check whether an attribute list contains a test-related attribute.
+/// Matches `#[test]`, `#[tokio::test]`, `#[gpui::test]`, and any other
+/// path ending in `test`.
+fn has_test_attribute(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        let path = attr.path();
+        let last = path.segments.last();
+        last.is_some_and(|seg| seg.ident == "test")
+    })
+}
+
+/// Check whether an attribute list contains `#[cfg(test)]`.
+fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        if !attr.path().is_ident("cfg") {
+            return false;
+        }
+        // Parse the token content inside #[cfg(...)]
+        attr.parse_args::<syn::Ident>()
+            .is_ok_and(|ident| ident == "test")
+    })
+}
+
 impl<'a> syn::visit::Visit<'_> for AsyncBlockingVisitor<'a> {
+    // Layer 2: skip #[cfg(test)] modules entirely.
+    fn visit_item_mod(&mut self, node: &syn::ItemMod) {
+        if !self.include_tests && has_cfg_test(&node.attrs) {
+            return;
+        }
+        syn::visit::visit_item_mod(self, node);
+    }
+
     fn visit_item_fn(&mut self, node: &syn::ItemFn) {
+        // Layer 3: skip #[test] / #[gpui::test] / etc. functions.
+        if !self.include_tests && has_test_attribute(&node.attrs) {
+            return;
+        }
+
         let was_async = self.in_async_context.take();
 
         if node.sig.asyncness.is_some() {
@@ -278,6 +344,10 @@ impl<'a> syn::visit::Visit<'_> for AsyncBlockingVisitor<'a> {
     }
 
     fn visit_impl_item_fn(&mut self, node: &syn::ImplItemFn) {
+        if !self.include_tests && has_test_attribute(&node.attrs) {
+            return;
+        }
+
         let was_async = self.in_async_context.take();
 
         if node.sig.asyncness.is_some() {
@@ -354,7 +424,13 @@ mod tests {
 
     fn analyze(source: &str) -> Vec<Warning> {
         let blocklist = test_blocklist();
-        analyze_source(&PathBuf::from("test.rs"), source, &blocklist)
+        analyze_source(&PathBuf::from("test.rs"), source, &blocklist, true)
+            .expect("analysis should succeed")
+    }
+
+    fn analyze_skip_tests(source: &str) -> Vec<Warning> {
+        let blocklist = test_blocklist();
+        analyze_source(&PathBuf::from("test.rs"), source, &blocklist, false)
             .expect("analysis should succeed")
     }
 
@@ -596,5 +672,85 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         let span = &warnings[0].span;
         assert_eq!(&source[span.clone()], "std::fs::read");
+    }
+
+    #[test]
+    fn skips_test_attributed_fn() {
+        let warnings = analyze_skip_tests(
+            r#"
+            #[test]
+            async fn my_test() {
+                std::fs::read("file.txt").unwrap();
+            }
+            "#,
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn skips_gpui_test_attributed_fn() {
+        let warnings = analyze_skip_tests(
+            r#"
+            #[gpui::test]
+            async fn my_test() {
+                std::fs::read("file.txt").unwrap();
+            }
+            "#,
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn skips_cfg_test_module() {
+        let warnings = analyze_skip_tests(
+            r#"
+            #[cfg(test)]
+            mod tests {
+                async fn helper() {
+                    std::fs::read("file.txt").unwrap();
+                }
+            }
+            "#,
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn include_tests_flag_overrides_skip() {
+        let warnings = analyze(
+            r#"
+            #[test]
+            async fn my_test() {
+                std::fs::read("file.txt").unwrap();
+            }
+            "#,
+        );
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn skips_test_file_path() {
+        assert!(is_test_file(Path::new("crates/fs/tests/integration/fs.rs")));
+        assert!(is_test_file(Path::new("crates/project/tests/project_tests.rs")));
+        assert!(!is_test_file(Path::new("crates/fs/src/fs.rs")));
+        assert!(!is_test_file(Path::new("crates/editor/src/editor.rs")));
+    }
+
+    #[test]
+    fn non_test_async_fn_still_flagged_when_skipping_tests() {
+        let warnings = analyze_skip_tests(
+            r#"
+            async fn production_code() {
+                std::fs::read("file.txt").unwrap();
+            }
+
+            #[test]
+            async fn my_test() {
+                std::fs::read("file.txt").unwrap();
+            }
+            "#,
+        );
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].context, "async fn `production_code`");
     }
 }
