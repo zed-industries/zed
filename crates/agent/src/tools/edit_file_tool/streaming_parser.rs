@@ -782,6 +782,44 @@ mod tests {
     }
 
     #[test]
+    fn test_first_observed_edit_with_new_text_and_partial_old_text_is_buffered() {
+        let mut parser = StreamingParser::default();
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("ol".into()),
+            new_text: Some("new".into()),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "ol".into(),
+                done: false,
+            }]
+        );
+
+        let events = parser.finalize_edits(&[Edit {
+            old_text: "old".into(),
+            new_text: "new".into(),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[
+                EditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "d".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "new".into(),
+                    done: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn test_empty_old_text_with_new_text() {
         let mut parser = StreamingParser::default();
 
