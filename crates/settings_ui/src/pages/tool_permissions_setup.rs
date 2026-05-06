@@ -1,10 +1,9 @@
 use agent::{AgentTool, TerminalTool, ToolPermissionDecision};
 use agent_settings::AgentSettings;
 use gpui::{
-    Focusable, HighlightStyle, ReadGlobal, ScrollHandle, StyledText, TextStyleRefinement, point,
-    prelude::*,
+    Focusable, HighlightStyle, ScrollHandle, StyledText, TextStyleRefinement, point, prelude::*,
 };
-use settings::{Settings as _, SettingsStore, ToolPermissionMode};
+use settings::{Settings as _, ToolPermissionMode};
 use shell_command_parser::extract_commands;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
@@ -12,7 +11,7 @@ use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::
 use util::ResultExt as _;
 use util::shell::ShellKind;
 
-use crate::{SettingsWindow, components::SettingsInputField};
+use crate::{SettingsUiFile, SettingsWindow, components::SettingsInputField, update_settings_file};
 
 const HARDCODED_RULES_DESCRIPTION: &str =
     "`rm -rf` commands are always blocked when run on `$HOME`, `~`, `.`, `..`, or `/`";
@@ -888,11 +887,12 @@ fn render_invalid_patterns_section(
                                         .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
                                         .tooltip(Tooltip::text("Delete Invalid Pattern"))
-                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                        .on_click(cx.listener(move |_, _, window, cx| {
                                             delete_pattern(
                                                 &tool_id_for_delete,
                                                 rule_type,
                                                 &pattern_for_delete,
+                                                window,
                                                 cx,
                                             );
                                         })),
@@ -995,11 +995,17 @@ fn render_user_pattern_row(
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .tooltip(Tooltip::text("Delete Pattern"))
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
+                .on_click(cx.listener(move |_, _, window, cx| {
+                    delete_pattern(
+                        &tool_id_for_delete,
+                        rule_type,
+                        &pattern_for_delete,
+                        window,
+                        cx,
+                    );
                 })),
         )
-        .on_confirm(move |new_pattern, _window, cx| {
+        .on_confirm(move |new_pattern, window, cx| {
             if let Some(new_pattern) = new_pattern {
                 let new_pattern = new_pattern.trim().to_string();
                 if !new_pattern.is_empty() && new_pattern != pattern_for_update {
@@ -1008,6 +1014,7 @@ fn render_user_pattern_row(
                         rule_type,
                         &pattern_for_update,
                         new_pattern.clone(),
+                        window,
                         cx,
                     );
 
@@ -1053,11 +1060,11 @@ fn render_add_pattern_input(
         .display_clear_button()
         .display_confirm_button()
         .clear_on_confirm()
-        .on_confirm(move |pattern, _window, cx| {
-            if let Some(pattern) = pattern {
+        .on_confirm(move |pattern, window, cx| {
+                    if let Some(pattern) = pattern {
                 let trimmed = pattern.trim().to_string();
                 if !trimmed.is_empty() {
-                    save_pattern(&tool_id_owned, rule_type, trimmed.clone(), cx);
+                    save_pattern(&tool_id_owned, rule_type, trimmed.clone(), window, cx);
 
                     let validation_error = match regex::Regex::new(&trimmed) {
                         Err(err) => Some(format!(
@@ -1108,14 +1115,14 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                 )
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
-                        menu.entry("Confirm", None, move |_, cx| {
-                            set_global_default_permission(ToolPermissionMode::Confirm, cx);
+                        menu.entry("Confirm", None, move |window, cx| {
+                            set_global_default_permission(ToolPermissionMode::Confirm, window, cx);
                         })
-                        .entry("Allow", None, move |_, cx| {
-                            set_global_default_permission(ToolPermissionMode::Allow, cx);
+                        .entry("Allow", None, move |window, cx| {
+                            set_global_default_permission(ToolPermissionMode::Allow, window, cx);
                         })
-                        .entry("Deny", None, move |_, cx| {
-                            set_global_default_permission(ToolPermissionMode::Deny, cx);
+                        .entry("Deny", None, move |window, cx| {
+                            set_global_default_permission(ToolPermissionMode::Deny, window, cx);
                         })
                     }))
                 })
@@ -1167,14 +1174,19 @@ fn render_default_mode_section(
                         let tool_id_allow = tool_id.clone();
                         let tool_id_deny = tool_id;
 
-                        menu.entry("Confirm", None, move |_, cx| {
-                            set_default_mode(&tool_id_confirm, ToolPermissionMode::Confirm, cx);
+                        menu.entry("Confirm", None, move |window, cx| {
+                            set_default_mode(
+                                &tool_id_confirm,
+                                ToolPermissionMode::Confirm,
+                                window,
+                                cx,
+                            );
                         })
-                        .entry("Allow", None, move |_, cx| {
-                            set_default_mode(&tool_id_allow, ToolPermissionMode::Allow, cx);
+                        .entry("Allow", None, move |window, cx| {
+                            set_default_mode(&tool_id_allow, ToolPermissionMode::Allow, window, cx);
                         })
-                        .entry("Deny", None, move |_, cx| {
-                            set_default_mode(&tool_id_deny, ToolPermissionMode::Deny, cx);
+                        .entry("Deny", None, move |window, cx| {
+                            set_default_mode(&tool_id_deny, ToolPermissionMode::Deny, window, cx);
                         })
                     }))
                 })
@@ -1240,35 +1252,47 @@ fn get_tool_rules(tool_name: &str, cx: &App) -> ToolRulesView {
     }
 }
 
-fn save_pattern(tool_name: &str, rule_type: ToolPermissionMode, pattern: String, cx: &mut App) {
+fn save_pattern(
+    tool_name: &str,
+    rule_type: ToolPermissionMode,
+    pattern: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let tool_name = tool_name.to_string();
 
-    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
-        let tool_permissions = settings
-            .agent
-            .get_or_insert_default()
-            .tool_permissions
-            .get_or_insert_default();
-        let tool_rules = tool_permissions
-            .tools
-            .entry(Arc::from(tool_name.as_str()))
-            .or_default();
+    update_settings_file(
+        SettingsUiFile::User,
+        Some("agent.tool_permissions"),
+        window,
+        cx,
+        move |settings, _| {
+            let tool_permissions = settings
+                .agent
+                .get_or_insert_default()
+                .tool_permissions
+                .get_or_insert_default();
+            let tool_rules = tool_permissions
+                .tools
+                .entry(Arc::from(tool_name.as_str()))
+                .or_default();
 
-        let rule = settings::ToolRegexRule {
-            pattern,
-            case_sensitive: None,
-        };
+            let rule = settings::ToolRegexRule {
+                pattern,
+                case_sensitive: None,
+            };
 
-        let rules_list = match rule_type {
-            ToolPermissionMode::Allow => tool_rules.always_allow.get_or_insert_default(),
-            ToolPermissionMode::Deny => tool_rules.always_deny.get_or_insert_default(),
-            ToolPermissionMode::Confirm => tool_rules.always_confirm.get_or_insert_default(),
-        };
+            let rules_list = match rule_type {
+                ToolPermissionMode::Allow => tool_rules.always_allow.get_or_insert_default(),
+                ToolPermissionMode::Deny => tool_rules.always_deny.get_or_insert_default(),
+                ToolPermissionMode::Confirm => tool_rules.always_confirm.get_or_insert_default(),
+            };
 
-        if !rules_list.0.iter().any(|r| r.pattern == rule.pattern) {
-            rules_list.0.push(rule);
-        }
-    });
+            if !rules_list.0.iter().any(|r| r.pattern == rule.pattern) {
+                rules_list.0.push(rule);
+            }
+        },
+    );
 }
 
 fn update_pattern(
@@ -1276,6 +1300,7 @@ fn update_pattern(
     rule_type: ToolPermissionMode,
     old_pattern: &str,
     new_pattern: String,
+    window: &mut Window,
     cx: &mut App,
 ) -> bool {
     let settings = AgentSettings::get_global(cx);
@@ -1293,85 +1318,115 @@ fn update_pattern(
     let tool_name = tool_name.to_string();
     let old_pattern = old_pattern.to_string();
 
-    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
-        let tool_permissions = settings
-            .agent
-            .get_or_insert_default()
-            .tool_permissions
-            .get_or_insert_default();
+    update_settings_file(
+        SettingsUiFile::User,
+        Some("agent.tool_permissions"),
+        window,
+        cx,
+        move |settings, _| {
+            let tool_permissions = settings
+                .agent
+                .get_or_insert_default()
+                .tool_permissions
+                .get_or_insert_default();
 
-        if let Some(tool_rules) = tool_permissions.tools.get_mut(tool_name.as_str()) {
-            let rules_list = match rule_type {
-                ToolPermissionMode::Allow => &mut tool_rules.always_allow,
-                ToolPermissionMode::Deny => &mut tool_rules.always_deny,
-                ToolPermissionMode::Confirm => &mut tool_rules.always_confirm,
-            };
+            if let Some(tool_rules) = tool_permissions.tools.get_mut(tool_name.as_str()) {
+                let rules_list = match rule_type {
+                    ToolPermissionMode::Allow => &mut tool_rules.always_allow,
+                    ToolPermissionMode::Deny => &mut tool_rules.always_deny,
+                    ToolPermissionMode::Confirm => &mut tool_rules.always_confirm,
+                };
 
-            if let Some(list) = rules_list {
-                let already_exists = list.0.iter().any(|r| r.pattern == new_pattern);
-                if !already_exists {
-                    if let Some(rule) = list.0.iter_mut().find(|r| r.pattern == old_pattern) {
-                        rule.pattern = new_pattern;
+                if let Some(list) = rules_list {
+                    let already_exists = list.0.iter().any(|r| r.pattern == new_pattern);
+                    if !already_exists {
+                        if let Some(rule) = list.0.iter_mut().find(|r| r.pattern == old_pattern) {
+                            rule.pattern = new_pattern;
+                        }
                     }
                 }
             }
-        }
-    });
+        },
+    );
 
     true
 }
 
-fn delete_pattern(tool_name: &str, rule_type: ToolPermissionMode, pattern: &str, cx: &mut App) {
+fn delete_pattern(
+    tool_name: &str,
+    rule_type: ToolPermissionMode,
+    pattern: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let tool_name = tool_name.to_string();
     let pattern = pattern.to_string();
 
-    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
-        let tool_permissions = settings
-            .agent
-            .get_or_insert_default()
-            .tool_permissions
-            .get_or_insert_default();
+    update_settings_file(
+        SettingsUiFile::User,
+        Some("agent.tool_permissions"),
+        window,
+        cx,
+        move |settings, _| {
+            let tool_permissions = settings
+                .agent
+                .get_or_insert_default()
+                .tool_permissions
+                .get_or_insert_default();
 
-        if let Some(tool_rules) = tool_permissions.tools.get_mut(tool_name.as_str()) {
-            let rules_list = match rule_type {
-                ToolPermissionMode::Allow => &mut tool_rules.always_allow,
-                ToolPermissionMode::Deny => &mut tool_rules.always_deny,
-                ToolPermissionMode::Confirm => &mut tool_rules.always_confirm,
-            };
+            if let Some(tool_rules) = tool_permissions.tools.get_mut(tool_name.as_str()) {
+                let rules_list = match rule_type {
+                    ToolPermissionMode::Allow => &mut tool_rules.always_allow,
+                    ToolPermissionMode::Deny => &mut tool_rules.always_deny,
+                    ToolPermissionMode::Confirm => &mut tool_rules.always_confirm,
+                };
 
-            if let Some(list) = rules_list {
-                list.0.retain(|r| r.pattern != pattern);
+                if let Some(list) = rules_list {
+                    list.0.retain(|r| r.pattern != pattern);
+                }
             }
-        }
-    });
+        },
+    );
 }
 
-fn set_global_default_permission(mode: ToolPermissionMode, cx: &mut App) {
-    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
-        settings
-            .agent
-            .get_or_insert_default()
-            .tool_permissions
-            .get_or_insert_default()
-            .default = Some(mode);
-    });
+fn set_global_default_permission(mode: ToolPermissionMode, window: &mut Window, cx: &mut App) {
+    update_settings_file(
+        SettingsUiFile::User,
+        Some("agent.tool_permissions"),
+        window,
+        cx,
+        move |settings, _| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .tool_permissions
+                .get_or_insert_default()
+                .default = Some(mode);
+        },
+    );
 }
 
-fn set_default_mode(tool_name: &str, mode: ToolPermissionMode, cx: &mut App) {
+fn set_default_mode(tool_name: &str, mode: ToolPermissionMode, window: &mut Window, cx: &mut App) {
     let tool_name = tool_name.to_string();
 
-    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
-        let tool_permissions = settings
-            .agent
-            .get_or_insert_default()
-            .tool_permissions
-            .get_or_insert_default();
-        let tool_rules = tool_permissions
-            .tools
-            .entry(Arc::from(tool_name.as_str()))
-            .or_default();
-        tool_rules.default = Some(mode);
-    });
+    update_settings_file(
+        SettingsUiFile::User,
+        Some("agent.tool_permissions"),
+        window,
+        cx,
+        move |settings, _| {
+            let tool_permissions = settings
+                .agent
+                .get_or_insert_default()
+                .tool_permissions
+                .get_or_insert_default();
+            let tool_rules = tool_permissions
+                .tools
+                .entry(Arc::from(tool_name.as_str()))
+                .or_default();
+            tool_rules.default = Some(mode);
+        },
+    );
 }
 
 macro_rules! tool_config_page_fn {
