@@ -35,6 +35,14 @@ pub fn ipc_socket_name(release_channel_name: &str) -> String {
     ipc_socket_name_for_app(APP_NAME, release_channel_name)
 }
 
+fn app_url_prefix_for_app(app_name: &str) -> String {
+    format!("{}://", app_name_lowercase_for(app_name))
+}
+
+pub fn app_url_prefix() -> String {
+    app_url_prefix_for_app(APP_NAME)
+}
+
 fn cli_url_prefix_for_app(app_name: &str) -> String {
     format!("{}-cli://", app_name_lowercase_for(app_name))
 }
@@ -650,5 +658,22 @@ mod tests {
             remote_server_dir_name("ZedFork", "_wsl_server"),
             ".zedfork_wsl_server"
         );
+    }
+
+    #[test]
+    fn cli_connection_names_preserve_upstream_names() {
+        assert_eq!(ipc_socket_name_for_app("Zed", "stable"), "zed-stable.sock");
+        assert_eq!(app_url_prefix_for_app("Zed"), "zed://");
+        assert_eq!(cli_url_prefix_for_app("Zed"), "zed-cli://");
+    }
+
+    #[test]
+    fn cli_connection_names_are_derived_from_app_name() {
+        assert_eq!(
+            ipc_socket_name_for_app("ZedFork", "preview"),
+            "zedfork-preview.sock"
+        );
+        assert_eq!(app_url_prefix_for_app("ZedFork"), "zedfork://");
+        assert_eq!(cli_url_prefix_for_app("ZedFork"), "zedfork-cli://");
     }
 }

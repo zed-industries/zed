@@ -126,7 +126,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             match std::fs::canonicalize(&path) {
                 Ok(path) => paths.push(path.to_string_lossy().into_owned()),
                 Err(error) => {
-                    if path.starts_with("zed://")
+                    if path.starts_with(paths::app_url_prefix().as_str())
                         || path.starts_with("http://")
                         || path.starts_with("https://")
                         || path.starts_with("file://")
