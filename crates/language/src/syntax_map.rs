@@ -1565,6 +1565,7 @@ fn get_injections(
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
+    query_cursor.set_match_limit(256);
     let mut seen_matches = HashSet::default();
 
     // Ensure that a `ParseStep` is created for every combined injection language, even
@@ -1589,12 +1590,10 @@ fn get_injections(
                 .nodes_for_capture_index(config.content_capture_ix)
                 .map(|node| node.range())
                 .collect::<Vec<_>>();
-            if content_ranges.is_empty() {
+            let (Some(first), Some(last)) = (content_ranges.first(), content_ranges.last()) else {
                 continue;
-            }
-
-            let content_range =
-                content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
+            };
+            let content_range = first.start_byte..last.end_byte;
 
             if !seen_matches.insert((mat.pattern_index, content_range.clone())) {
                 continue;
