@@ -838,6 +838,12 @@ impl App {
         self.entities.assert_no_new_leaks(snapshot)
     }
 
+    /// Disables entity leak detection for this app.
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn disable_leak_detection(&self) {
+        self.entities.disable_leak_detection();
+    }
+
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
     /// will be given 100ms to complete before exiting.
     pub fn shutdown(&mut self) {

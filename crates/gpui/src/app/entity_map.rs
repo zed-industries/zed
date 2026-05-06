@@ -79,6 +79,7 @@ impl EntityMap {
                 leak_detector: LeakDetector {
                     next_handle_id: 0,
                     entity_handles: HashMap::default(),
+                    disabled: false,
                 },
             })),
         }
@@ -108,6 +109,11 @@ impl EntityMap {
             .read()
             .leak_detector
             .assert_no_new_leaks(snapshot)
+    }
+
+    #[cfg(any(test, feature = "leak-detection"))]
+    pub fn disable_leak_detection(&self) {
+        self.ref_counts.write().leak_detector.disable();
     }
 
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
@@ -933,6 +939,7 @@ pub(crate) struct HandleId {
 pub(crate) struct LeakDetector {
     next_handle_id: u64,
     entity_handles: HashMap<EntityId, EntityLeakData>,
+    disabled: bool,
 }
 
 /// A snapshot of the set of alive entities at a point in time.
@@ -953,6 +960,11 @@ struct EntityLeakData {
 
 #[cfg(any(test, feature = "leak-detection"))]
 impl LeakDetector {
+    pub fn disable(&mut self) {
+        self.entity_handles.clear();
+        self.disabled = true;
+    }
+
     /// Records that a new handle has been created for the given entity.
     ///
     /// Returns a unique `HandleId` that must be passed to `handle_released` when
@@ -964,6 +976,10 @@ impl LeakDetector {
         entity_id: EntityId,
         type_name: Option<&'static str>,
     ) -> HandleId {
+        if self.disabled {
+            return HandleId::default();
+        }
+
         let id = gpui_util::post_inc(&mut self.next_handle_id);
         let handle_id = HandleId { id };
         let handles = self
@@ -985,6 +1001,10 @@ impl LeakDetector {
     /// This removes the handle from tracking. The `handle_id` should be the same
     /// one returned by `handle_created` when the handle was allocated.
     pub fn handle_released(&mut self, entity_id: EntityId, handle_id: HandleId) {
+        if self.disabled {
+            return;
+        }
+
         if let std::collections::hash_map::Entry::Occupied(mut data) =
             self.entity_handles.entry(entity_id)
         {
@@ -1087,7 +1107,7 @@ impl Drop for LeakDetector {
     fn drop(&mut self) {
         use std::fmt::Write;
 
-        if self.entity_handles.is_empty() || std::thread::panicking() {
+        if self.disabled || self.entity_handles.is_empty() || std::thread::panicking() {
             return;
         }
 

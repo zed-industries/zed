@@ -549,6 +549,7 @@ impl EditToolTest {
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
     let dispatcher = gpui::TestDispatcher::new(rand::random());
     let mut cx = TestAppContext::build(dispatcher, None);
+    cx.update(|cx| cx.disable_leak_detection());
     let foreground_executor = cx.foreground_executor().clone();
     let result = foreground_executor.block_test(async {
         let test = EditToolTest::new(&mut cx).await;
