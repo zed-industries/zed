@@ -19,10 +19,11 @@ use crate::vscode::VsCodeThemeConverter;
 
 const ZED_THEME_SCHEMA_URL: &str = "https://zed.dev/schema/themes/v0.2.0.json";
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeAppearanceJson {
     Light,
+    #[default]
     Dark,
 }
 
@@ -44,7 +45,7 @@ impl From<ThemeAppearanceJson> for Appearance {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ThemeMetadata {
     pub name: String,
     pub file_name: String,
