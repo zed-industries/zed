@@ -4316,7 +4316,7 @@ async fn test_jsdoc_injection_preserved_during_async_reparse(cx: &mut gpui::Test
         );
     });
     buffer.update(cx, |buf, cx| {
-        let text = buf.text().to_string();
+        let text = buf.text();
         let end = text.len();
         buf.edit([(end..end, "\n// trailing comment\n")], None, cx);
     });
@@ -4339,7 +4339,7 @@ async fn test_jsdoc_injection_preserved_during_async_reparse(cx: &mut gpui::Test
 
     let incremental_count = jsdoc_layer_count(&buffer, cx);
 
-    let fresh_text = buffer.read_with(cx, |buf, _| buf.text().to_string());
+    let fresh_text = buffer.read_with(cx, |buf, _| buf.text());
     let fresh_buffer = cx.new(|cx| {
         let buf = Buffer::local(&fresh_text, cx);
         buf.set_language_registry(registry.clone());

@@ -1029,7 +1029,7 @@ fn test_jsdoc_injection_preserved_after_edit_deep_in_comment(cx: &mut App) {
         "The person's age",
     )]);
     syntax_map.interpolate(&buffer);
-    syntax_map.reparse(javascript.clone(), &buffer);
+    syntax_map.reparse(javascript, &buffer);
 
     assert!(
         has_jsdoc_layer(&syntax_map, &buffer),
@@ -1158,7 +1158,7 @@ fn test_jsdoc_injection_with_large_file_newline_insert(cx: &mut App) {
     registry2.add(Arc::new(jsdoc_lang()));
     let mut fresh_syntax_map = SyntaxMap::new(&buffer);
     fresh_syntax_map.set_language_registry(registry2);
-    fresh_syntax_map.reparse(javascript.clone(), &buffer);
+    fresh_syntax_map.reparse(javascript, &buffer);
     let fresh_count = jsdoc_layer_count(&fresh_syntax_map, &buffer);
     assert_eq!(
         after_count, fresh_count,
@@ -1235,7 +1235,7 @@ function big(alpha, bravo, charlie, delta, echo, foxtrot, golf, hotel, india, ju
     registry2.add(Arc::new(jsdoc_lang()));
     let mut fresh_syntax_map = SyntaxMap::new(&buffer);
     fresh_syntax_map.set_language_registry(registry2);
-    fresh_syntax_map.reparse(javascript.clone(), &buffer);
+    fresh_syntax_map.reparse(javascript, &buffer);
     let fresh_count = jsdoc_layer_count(&fresh_syntax_map, &buffer);
     assert_eq!(
         after_count, fresh_count,
