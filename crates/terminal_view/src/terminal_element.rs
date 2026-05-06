@@ -538,6 +538,20 @@ impl TerminalElement {
         )
     }
 
+    /// Whether the application explicitly picked this foreground color and does not
+    /// want it adjusted for contrast: 24-bit true color (`\e[38;2;R;G;Bm`) or a
+    /// specific entry in the 256-color palette (`\e[38;5;Nm`) where N >= 16 (the
+    /// 6x6x6 cube at 16..=231 and the 24-step grayscale ramp at 232..=255).
+    /// Indices 0..=15 still go through contrast adjustment since those map to
+    /// theme-defined ANSI colors that can clash with the theme background.
+    fn is_app_chosen_exact_color(fg: &terminal::alacritty_terminal::vte::ansi::Color) -> bool {
+        matches!(
+            fg,
+            terminal::alacritty_terminal::vte::ansi::Color::Spec(_)
+                | terminal::alacritty_terminal::vte::ansi::Color::Indexed(16..=255)
+        )
+    }
+
     /// Converts the Alacritty cell styles to GPUI text styles and background color.
     fn cell_style(
         indexed: &IndexedCell,
@@ -549,13 +563,11 @@ impl TerminalElement {
         minimum_contrast: f32,
     ) -> TextRun {
         let flags = indexed.cell.flags;
-        let is_true_color = matches!(fg, terminal::alacritty_terminal::vte::ansi::Color::Spec(_));
+        let skip_contrast = Self::is_app_chosen_exact_color(&fg);
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        // Skip contrast adjustment for true-color (24-bit RGB) foregrounds — the
-        // application chose that exact color. Also skip for decorative characters.
-        if !is_true_color && !Self::is_decorative_character(indexed.c) {
+        if !skip_contrast && !Self::is_decorative_character(indexed.c) {
             fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
@@ -1817,6 +1829,55 @@ mod tests {
         assert!(!TerminalElement::is_decorative_character('1'));
         assert!(!TerminalElement::is_decorative_character('$'));
         assert!(!TerminalElement::is_decorative_character(' '));
+    }
+
+    #[test]
+    fn test_is_app_chosen_exact_color() {
+        use terminal::alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
+
+        // Indices 0..=15 are theme-overridable ANSI colors; contrast adjustment must still apply.
+        assert!(!TerminalElement::is_app_chosen_exact_color(
+            &Color::Indexed(0)
+        ));
+        assert!(!TerminalElement::is_app_chosen_exact_color(
+            &Color::Indexed(15)
+        ));
+
+        // Boundary: index 16 is the first entry of the 6x6x6 cube — application-chosen.
+        assert!(TerminalElement::is_app_chosen_exact_color(&Color::Indexed(
+            16
+        )));
+        // Interior of the cube.
+        assert!(TerminalElement::is_app_chosen_exact_color(&Color::Indexed(
+            17
+        )));
+        assert!(TerminalElement::is_app_chosen_exact_color(&Color::Indexed(
+            231
+        )));
+        // Grayscale ramp boundaries.
+        assert!(TerminalElement::is_app_chosen_exact_color(&Color::Indexed(
+            232
+        )));
+        assert!(TerminalElement::is_app_chosen_exact_color(&Color::Indexed(
+            255
+        )));
+
+        // 24-bit true color is always application-chosen.
+        assert!(TerminalElement::is_app_chosen_exact_color(&Color::Spec(
+            Rgb {
+                r: 10,
+                g: 20,
+                b: 30
+            }
+        )));
+
+        // Named colors are theme-defined and must go through contrast adjustment.
+        assert!(!TerminalElement::is_app_chosen_exact_color(&Color::Named(
+            NamedColor::Red
+        )));
+        assert!(!TerminalElement::is_app_chosen_exact_color(&Color::Named(
+            NamedColor::Foreground
+        )));
     }
 
     #[test]

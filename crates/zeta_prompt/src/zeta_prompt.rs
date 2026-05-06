@@ -30,6 +30,25 @@ fn apply_prompt_budget_margin(max_tokens: usize) -> usize {
     (max_tokens as f64 * 0.9).floor() as usize
 }
 
+/// Ensure text fits into the tokens budget; trim by line boundaries if needed.
+pub fn clamp_text_to_token_count(text: &str, max_tokens: usize) -> &str {
+    if estimate_tokens(text.len()) <= max_tokens {
+        return text;
+    }
+
+    let mut end_byte_offset = 0;
+
+    for line in text.split_inclusive('\n') {
+        if estimate_tokens(line.len() + end_byte_offset) > max_tokens {
+            break;
+        }
+
+        end_byte_offset += line.len();
+    }
+
+    &text[..end_byte_offset]
+}
+
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
@@ -247,8 +266,8 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0331SeedCoderModelPy
-        | ZetaFormat::V0318SeedMultiRegions
-        | ZetaFormat::V0420Diagnostics => 4096,
+        | ZetaFormat::V0318SeedMultiRegions => 4096,
+        ZetaFormat::V0420Diagnostics => 8192,
         ZetaFormat::V0327SingleFile => 16384,
     };
 
@@ -696,7 +715,8 @@ pub fn format_prompt_with_budget_for_format(
     let empty_files = Vec::new();
     let input_related_files = input.related_files.as_deref().unwrap_or(&empty_files);
     let filtered_related_files = if let Some(cursor_excerpt_start_row) = input.excerpt_start_row {
-        let relative_row_range = offset_range_to_row_range(&input.cursor_excerpt, context_range);
+        let relative_row_range =
+            offset_range_to_row_range(&input.cursor_excerpt, context_range.clone());
         let row_range = relative_row_range.start + cursor_excerpt_start_row
             ..relative_row_range.end + cursor_excerpt_start_row;
         filter_redundant_excerpts(
@@ -719,6 +739,7 @@ pub fn format_prompt_with_budget_for_format(
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics => {
             let mut cursor_section = String::new();
+
             write_cursor_excerpt_section_for_format(
                 format,
                 &mut cursor_section,
@@ -728,9 +749,13 @@ pub fn format_prompt_with_budget_for_format(
                 cursor_offset,
             );
 
-            if format == ZetaFormat::V0420Diagnostics {
-                cursor_section.push_str(&format_active_buffer_diagnostics(input));
-            }
+            let cursor_buffer_row = input.excerpt_start_row.map(|excerpt_start_row| {
+                excerpt_start_row
+                    + input.cursor_excerpt[..context_range.start + cursor_offset]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count() as u32
+            });
 
             let budget_with_margin = apply_prompt_budget_margin(max_tokens);
             seed_coder::assemble_fim_prompt(
@@ -739,6 +764,12 @@ pub fn format_prompt_with_budget_for_format(
                 &cursor_section,
                 &input.events,
                 related_files,
+                if format == ZetaFormat::V0420Diagnostics {
+                    &input.active_buffer_diagnostics
+                } else {
+                    &[]
+                },
+                cursor_buffer_row,
                 budget_with_margin,
             )
         }
@@ -807,24 +838,60 @@ pub fn format_prompt_with_budget_for_format(
     return Some(prompt);
 }
 
-fn format_active_buffer_diagnostics(input: &ZetaPromptInput) -> String {
+fn format_active_buffer_diagnostics_with_budget(
+    diagnostics: &[ActiveBufferDiagnostic],
+    cursor_buffer_row: Option<u32>,
+    budget: usize,
+) -> String {
+    if diagnostics.is_empty() || budget == 0 {
+        return String::new();
+    }
+
+    let mut diagnostic_indices = (0..diagnostics.len()).collect::<Vec<_>>();
+    if let Some(cursor_buffer_row) = cursor_buffer_row {
+        diagnostic_indices.sort_by_key(|index| {
+            let range = &diagnostics[*index].snippet_buffer_row_range;
+            u32::abs_diff(cursor_buffer_row, range.start)
+                + u32::abs_diff(cursor_buffer_row, range.end)
+        });
+    }
+
     let mut output = format!("{}diagnostics\n", seed_coder::FILE_MARKER);
-
-    if input.active_buffer_diagnostics.is_empty() {
-        output.push_str("No Diagnostics\n");
-        return output;
+    let header_tokens = estimate_tokens(output.len());
+    if header_tokens > budget {
+        return String::new();
     }
 
-    for diagnostic in &input.active_buffer_diagnostics {
-        writeln!(
-            output,
-            "*{}*:\n```\n{}\n```",
-            diagnostic.message, diagnostic.snippet
-        )
-        .ok();
+    let mut used_tokens = header_tokens;
+    let mut included_diagnostics = 0;
+    for diagnostic_index in diagnostic_indices.into_iter().take(10) {
+        let diagnostic = &diagnostics[diagnostic_index];
+        let snippet = clamp_text_to_token_count(&diagnostic.snippet, 256);
+
+        let diagnostic_section = format!(
+            "*{}*:\n```\n{}{}\n```\n",
+            diagnostic.message,
+            snippet,
+            if snippet.len() < diagnostic.snippet.len() {
+                "..."
+            } else {
+                ""
+            }
+        );
+        let diagnostic_tokens = estimate_tokens(diagnostic_section.len());
+        if used_tokens + diagnostic_tokens > budget {
+            break;
+        }
+        output.push_str(&diagnostic_section);
+        used_tokens += diagnostic_tokens;
+        included_diagnostics += 1;
     }
 
-    output
+    if included_diagnostics == 0 {
+        String::new()
+    } else {
+        output
+    }
 }
 
 pub fn filter_redundant_excerpts(
@@ -3363,6 +3430,7 @@ pub mod seed_coder {
         cursor_offset: usize,
         events: &[Arc<Event>],
         related_files: &[RelatedFile],
+        diagnostics: &[ActiveBufferDiagnostic],
         max_tokens: usize,
     ) -> String {
         let cursor_prefix_section =
@@ -3373,6 +3441,8 @@ pub mod seed_coder {
             &cursor_prefix_section,
             events,
             related_files,
+            diagnostics,
+            None,
             max_tokens,
         )
     }
@@ -3383,6 +3453,8 @@ pub mod seed_coder {
         cursor_prefix_section: &str,
         events: &[Arc<Event>],
         related_files: &[RelatedFile],
+        diagnostics: &[ActiveBufferDiagnostic],
+        cursor_buffer_row: Option<u32>,
         max_tokens: usize,
     ) -> String {
         let suffix_section = build_suffix_section(context, editable_range);
@@ -3399,19 +3471,30 @@ pub mod seed_coder {
             max_edit_event_count_for_format(&ZetaFormat::V0211SeedCoder),
         );
         let edit_history_tokens = estimate_tokens(edit_history_section.len() + "\n".len());
-        let budget_after_edit_history =
-            budget_after_cursor.saturating_sub(edit_history_tokens + "\n".len());
+        let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
+
+        let diagnostics_section = super::format_active_buffer_diagnostics_with_budget(
+            diagnostics,
+            cursor_buffer_row,
+            budget_after_edit_history,
+        );
+        let diagnostics_tokens = estimate_tokens(diagnostics_section.len() + "\n".len());
+        let budget_after_diagnostics = budget_after_edit_history.saturating_sub(diagnostics_tokens);
 
         let related_files_section = super::format_related_files_within_budget(
             related_files,
             FILE_MARKER,
             "",
-            budget_after_edit_history,
+            budget_after_diagnostics,
         );
 
         let mut prompt = String::new();
         prompt.push_str(&suffix_section);
         prompt.push_str(FIM_PREFIX);
+        prompt.push_str(&diagnostics_section);
+        if !diagnostics_section.is_empty() {
+            prompt.push('\n');
+        }
         prompt.push_str(&related_files_section);
         if !related_files_section.is_empty() {
             prompt.push('\n');
@@ -5206,7 +5289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_v0420_formats_diagnostics_after_cursor_file() {
+    fn test_v0420_formats_diagnostics_before_related_files() {
         let mut input = make_input(
             "prefix\neditable\nsuffix",
             7..15,
@@ -5231,17 +5314,18 @@ mod tests {
             indoc! {r#"
                 <[fim-suffix]>
                 suffix
-                <[fim-prefix]><filename>related.rs
+                <[fim-prefix]><filename>diagnostics
+                *missing semicolon*:
+                ```
+                let value = 1
+                ```
+
+                <filename>related.rs
                 fn helper() {}
 
                 <filename>test.rs
                 prefix
                 <|marker_1|>edi<|user_cursor|>table<|marker_2|>
-                <filename>diagnostics
-                *missing semicolon*:
-                ```
-                let value = 1
-                ```
                 <[fim-middle]>"#}
         );
     }
