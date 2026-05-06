@@ -27,7 +27,10 @@ pub fn into_google(
             .flat_map(|content| match content {
                 MessageContent::Text(text) => {
                     if !text.is_empty() {
-                        vec![Part::TextPart(TextPart { text })]
+                        vec![Part::TextPart(TextPart {
+                            text,
+                            thought: false,
+                        })]
                     } else {
                         vec![]
                     }
@@ -37,7 +40,7 @@ pub fn into_google(
                     signature: Some(signature),
                 } => {
                     if !signature.is_empty() {
-                        vec![Part::ThoughtPart(crate::ThoughtPart {
+                        vec![Part::ThoughtSignaturePart(crate::ThoughtSignaturePart {
                             thought: true,
                             thought_signature: signature,
                         })]
@@ -45,8 +48,18 @@ pub fn into_google(
                         vec![]
                     }
                 }
-                MessageContent::Thinking { .. } => {
-                    vec![]
+                MessageContent::Thinking {
+                    text,
+                    signature: None,
+                } => {
+                    if !text.is_empty() {
+                        vec![Part::TextPart(TextPart {
+                            text,
+                            thought: true,
+                        })]
+                    } else {
+                        vec![]
+                    }
                 }
                 MessageContent::RedactedThinking(_) => vec![],
                 MessageContent::Image(image) => {
@@ -266,7 +279,14 @@ impl GoogleEventMapper {
                     .into_iter()
                     .for_each(|part| match part {
                         Part::TextPart(text_part) => {
-                            events.push(Ok(LanguageModelCompletionEvent::Text(text_part.text)))
+                            if text_part.thought {
+                                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                    text: text_part.text,
+                                    signature: None,
+                                }))
+                            } else {
+                                events.push(Ok(LanguageModelCompletionEvent::Text(text_part.text)))
+                            }
                         }
                         Part::InlineDataPart(_) => {}
                         Part::FunctionCallPart(function_call_part) => {
@@ -294,7 +314,7 @@ impl GoogleEventMapper {
                             )));
                         }
                         Part::FunctionResponsePart(_) => {}
-                        Part::ThoughtPart(part) => {
+                        Part::ThoughtSignaturePart(part) => {
                             events.push(Ok(LanguageModelCompletionEvent::Thinking {
                                 text: "(Encrypted thought)".to_string(), // TODO: Can we populate this from thought summaries?
                                 signature: Some(part.thought_signature),
