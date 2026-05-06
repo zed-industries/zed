@@ -44,14 +44,17 @@ impl HistoryManager {
         let db = WorkspaceDb::global(cx);
         cx.spawn(async move |cx| {
             let recent_folders = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .unwrap_or_default()
                 .into_iter()
                 .rev()
-                .filter_map(|(id, location, paths, _timestamp)| {
-                    if matches!(location, SerializedWorkspaceLocation::Local) {
-                        Some(HistoryManagerEntry::new(id, &paths))
+                .filter_map(|workspace| {
+                    if matches!(workspace.location, SerializedWorkspaceLocation::Local) {
+                        Some(HistoryManagerEntry::new(
+                            workspace.workspace_id,
+                            &workspace.paths,
+                        ))
                     } else {
                         None
                     }

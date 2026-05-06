@@ -16,7 +16,7 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Render, Subscription, Task, WeakEntity, actions,
+    KeyContext, Render, Subscription, Task, TaskExt, WeakEntity, actions,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -523,7 +523,7 @@ impl NewProcessModal {
         )
         .style(ui::DropdownStyle::Outlined)
         .tab_index(0)
-        .attach(gpui::Corner::BottomLeft)
+        .attach(gpui::Anchor::BottomLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

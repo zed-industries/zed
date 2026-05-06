@@ -2,7 +2,7 @@ use super::*;
 use anyhow::Context as _;
 use rpc::{
     ErrorCode, ErrorCodeExt,
-    proto::{ChannelBufferVersion, VectorClockEntry, channel_member::Kind},
+    proto::{ChannelBufferVersion, VectorClockEntry},
 };
 use sea_orm::{ActiveValue, DbBackend, TryGetableMany};
 
@@ -260,6 +260,17 @@ impl Database {
                 .map(|channel| channel.id)
                 .chain(Some(channel_id))
                 .collect::<Vec<_>>();
+
+            let channel_has_active_participants = room_participant::Entity::find()
+                .inner_join(room::Entity)
+                .filter(room::Column::ChannelId.is_in(channels_to_remove.iter().copied()))
+                .count(&*tx)
+                .await?
+                > 0;
+
+            if channel_has_active_participants {
+                Err(anyhow!("can't delete channel while a call is in progress"))?;
+            }
 
             channel::Entity::delete_many()
                 .filter(channel::Column::Id.is_in(channels_to_remove.iter().copied()))
@@ -676,16 +687,12 @@ impl Database {
     /// Returns the details for the specified channel member.
     pub async fn get_channel_participant_details(
         &self,
-        channel_id: ChannelId,
+        channel: &Channel,
         filter: &str,
         limit: u64,
-        user_id: UserId,
-    ) -> Result<(Vec<proto::ChannelMember>, Vec<proto::User>)> {
+    ) -> Result<(Vec<channel_member::Model>, Vec<user::Model>)> {
         let members = self
             .transaction(move |tx| async move {
-                let channel = self.get_channel_internal(channel_id, &tx).await?;
-                self.check_user_is_channel_participant(&channel, user_id, &tx)
-                    .await?;
                 let mut query = channel_member::Entity::find()
                     .find_also_related(user::Entity)
                     .filter(channel_member::Column::ChannelId.eq(channel.root_id()));
@@ -715,32 +722,15 @@ impl Database {
             })
             .await?;
 
-        let mut users: Vec<proto::User> = Vec::with_capacity(members.len());
+        let mut users: Vec<user::Model> = Vec::with_capacity(members.len());
 
         let members = members
             .into_iter()
             .map(|(member, user)| {
                 if let Some(user) = user {
-                    users.push(proto::User {
-                        id: user.id.to_proto(),
-                        avatar_url: format!(
-                            "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
-                            user.github_user_id
-                        ),
-                        github_login: user.github_login,
-                        name: user.name,
-                    })
+                    users.push(user)
                 }
-                proto::ChannelMember {
-                    role: member.role.into(),
-                    user_id: member.user_id.to_proto(),
-                    kind: if member.accepted {
-                        Kind::Member
-                    } else {
-                        Kind::Invitee
-                    }
-                    .into(),
-                }
+                member
             })
             .collect();
 

@@ -1112,7 +1112,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1171,7 +1171,7 @@ fn render_default_mode_section(
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1407,13 +1407,18 @@ mod tests {
         //   2. Add it to this list with a comment explaining why it's excluded.
         const EXCLUDED_TOOLS: &[&str] = &[
             // Read-only / low-risk tools that don't call decide_permission_from_settings
+            "apply_code_action",
             "diagnostics",
             "find_path",
+            "find_references",
+            "get_code_actions",
+            "go_to_definition",
             "grep",
             "list_directory",
             "now",
             "open",
             "read_file",
+            "rename_symbol",
             "thinking",
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.

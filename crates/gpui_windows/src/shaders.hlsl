@@ -5,6 +5,8 @@ cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
     float grayscale_enhanced_contrast;
     float subpixel_enhanced_contrast;
+    uint is_bgr;
+    uint3 global_pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -420,11 +422,11 @@ float4 gradient_color(Background background,
             // checkerboard
             float size = background.gradient_angle_or_pattern_height;
             float2 relative_position = position - bounds.origin;
-            
+
             float x_index = floor(relative_position.x / size);
             float y_index = floor(relative_position.y / size);
             float should_be_colored = (x_index + y_index) % 2.0;
-            
+
             color = solid_color;
             color.a *= saturate(should_be_colored);
             break;
@@ -1157,6 +1159,9 @@ MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID,
 
 SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentInput input) {
     float3 sample = t_sprite.Sample(s_sprite, input.tile_position).rgb;
+    if (is_bgr) {
+        sample = sample.bgr;
+    }
     float3 alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, subpixel_enhanced_contrast, gamma_ratios);
 
     SubpixelSpriteFragmentOutput output;
