@@ -66,18 +66,21 @@ impl StreamingParser {
     pub fn push_edits(&mut self, edits: &[PartialEdit]) -> SmallVec<[EditEvent; 4]> {
         let mut events = SmallVec::new();
 
-        let mut skip_events = false;
         for (index, partial) in edits.iter().enumerate() {
             if index >= self.edit_states.len() {
                 // A new edit appeared — finalize the previous one if there was one.
-                if !skip_events && let Some(previous) = self.finalize_previous_edit(index) {
+                if let Some(previous) = self.finalize_previous_edit(
+                    index,
+                    edits
+                        .get(index.saturating_sub(1))
+                        .and_then(|edit| edit.old_text.as_deref()),
+                    edits
+                        .get(index.saturating_sub(1))
+                        .and_then(|edit| edit.new_text.as_deref()),
+                ) {
                     events.extend(previous);
                 }
                 self.edit_states.push(EditStreamState::default());
-            }
-
-            if skip_events {
-                continue;
             }
 
             let state = &mut self.edit_states[index];
@@ -93,7 +96,6 @@ impl StreamingParser {
             }
 
             if state.hold_until_complete {
-                skip_events = true;
                 continue;
             }
 
@@ -179,7 +181,15 @@ impl StreamingParser {
         for (index, edit) in edits.iter().enumerate() {
             if index >= self.edit_states.len() {
                 // This edit was never seen in partials — emit it fully.
-                if let Some(previous) = self.finalize_previous_edit(index) {
+                if let Some(previous) = self.finalize_previous_edit(
+                    index,
+                    edits
+                        .get(index.saturating_sub(1))
+                        .map(|edit| edit.old_text.as_str()),
+                    edits
+                        .get(index.saturating_sub(1))
+                        .map(|edit| edit.new_text.as_str()),
+                ) {
                     events.extend(previous);
                 }
                 self.edit_states.push(EditStreamState::default());
@@ -250,7 +260,12 @@ impl StreamingParser {
 
     /// When a new edit appears at `index`, finalize the edit at `index - 1`
     /// by emitting a `NewTextChunk { done: true }` if it hasn't been finalized.
-    fn finalize_previous_edit(&mut self, new_index: usize) -> Option<SmallVec<[EditEvent; 2]>> {
+    fn finalize_previous_edit(
+        &mut self,
+        new_index: usize,
+        old_text: Option<&str>,
+        new_text: Option<&str>,
+    ) -> Option<SmallVec<[EditEvent; 2]>> {
         if new_index == 0 || self.edit_states.is_empty() {
             return None;
         }
@@ -262,6 +277,27 @@ impl StreamingParser {
 
         let state = &mut self.edit_states[previous_index];
         let mut events = SmallVec::new();
+
+        if state.hold_until_complete {
+            let old_text = old_text.unwrap_or_default();
+            let new_text = new_text.unwrap_or_default();
+            state.old_text_done = true;
+            state.old_text_emitted_len = old_text.len();
+            state.new_text_done = true;
+            state.new_text_emitted_len = new_text.len();
+            state.hold_until_complete = false;
+            events.push(EditEvent::OldTextChunk {
+                edit_index: previous_index,
+                chunk: normalize_done_chunk(old_text.to_string()),
+                done: true,
+            });
+            events.push(EditEvent::NewTextChunk {
+                edit_index: previous_index,
+                chunk: normalize_done_chunk(new_text.to_string()),
+                done: true,
+            });
+            return Some(events);
+        }
 
         // If old_text was never finalized, finalize it now with an empty done chunk.
         if !state.old_text_done {
@@ -889,14 +925,7 @@ mod tests {
             old_text: Some("old".into()),
             new_text: Some("new".into()),
         }]);
-        assert_eq!(
-            events.as_slice(),
-            &[EditEvent::OldTextChunk {
-                edit_index: 0,
-                chunk: "old".into(),
-                done: false,
-            }]
-        );
+        assert!(events.is_empty());
 
         let events = parser.finalize_edits(&[Edit {
             old_text: "old".into(),
@@ -907,7 +936,7 @@ mod tests {
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "".into(),
+                    chunk: "old".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
@@ -990,7 +1019,26 @@ mod tests {
             },
         ]);
 
-        assert!(events.is_empty());
+        assert_eq!(
+            events.as_slice(),
+            &[
+                EditEvent::OldTextChunk {
+                    edit_index: 1,
+                    chunk: "b".into(),
+                    done: true,
+                },
+                EditEvent::NewTextChunk {
+                    edit_index: 1,
+                    chunk: "B".into(),
+                    done: true,
+                },
+                EditEvent::OldTextChunk {
+                    edit_index: 2,
+                    chunk: "c".into(),
+                    done: false,
+                },
+            ]
+        );
 
         // Finalize
         let events = parser.finalize_edits(&[
@@ -1011,28 +1059,8 @@ mod tests {
             events.as_slice(),
             &[
                 EditEvent::OldTextChunk {
-                    edit_index: 0,
-                    chunk: "a".into(),
-                    done: true,
-                },
-                EditEvent::NewTextChunk {
-                    edit_index: 0,
-                    chunk: "A".into(),
-                    done: true,
-                },
-                EditEvent::OldTextChunk {
-                    edit_index: 1,
-                    chunk: "b".into(),
-                    done: true,
-                },
-                EditEvent::NewTextChunk {
-                    edit_index: 1,
-                    chunk: "B".into(),
-                    done: true,
-                },
-                EditEvent::OldTextChunk {
                     edit_index: 2,
-                    chunk: "c".into(),
+                    chunk: "".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {

@@ -1858,6 +1858,15 @@ mod tests {
             "mode": "edit",
             "edits": [
                 {"old_text": "aaa", "new_text": "AAA"},
+                {"old_text": "ccc"}
+            ]
+        }));
+        cx.run_until_parked();
+        sender.send_partial(json!({
+            "path": "root/file.txt",
+            "mode": "edit",
+            "edits": [
+                {"old_text": "aaa", "new_text": "AAA"},
                 {"old_text": "ccc", "new_text": "CCC"}
             ]
         }));
@@ -1875,6 +1884,16 @@ mod tests {
         assert_eq!(buffer_text.as_deref(), Some("AAA\nbbb\nCCCccc\nddd\neee\n"));
 
         // Edit 3 appears — edit 2 is now complete and should be applied
+        sender.send_partial(json!({
+            "path": "root/file.txt",
+            "mode": "edit",
+            "edits": [
+                {"old_text": "aaa", "new_text": "AAA"},
+                {"old_text": "ccc", "new_text": "CCC"},
+                {"old_text": "eee"}
+            ]
+        }));
+        cx.run_until_parked();
         sender.send_partial(json!({
             "path": "root/file.txt",
             "mode": "edit",
@@ -2016,6 +2035,13 @@ mod tests {
         sender.send_partial(json!({
             "path": "root/file.txt",
             "mode": "edit",
+        }));
+        cx.run_until_parked();
+
+        sender.send_partial(json!({
+            "path": "root/file.txt",
+            "mode": "edit",
+            "edits": [{"old_text": "hello world"}]
         }));
         cx.run_until_parked();
 
