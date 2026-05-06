@@ -2,7 +2,7 @@ use crate::notification_window_options;
 use call::{ActiveCall, room};
 use client::User;
 use collections::HashMap;
-use gpui::{App, Size};
+use gpui::{App, Size, TaskExt};
 use std::sync::{Arc, Weak};
 
 use ui::{CollabNotification, prelude::*};

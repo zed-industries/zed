@@ -224,7 +224,6 @@
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenSettings",
       "ctrl-alt-p": "agent::ManageProfiles",
       "ctrl-alt-l": "agent::OpenRulesLibrary",
@@ -234,10 +233,8 @@
       "alt-tab": "agent::CycleFavoriteModels",
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AgentPanel` context
       "alt-l": "agent::CycleFavoriteModels",
-      "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
-      "ctrl-shift-t": "agent::CycleStartThreadIn",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
@@ -339,6 +336,24 @@
     },
   },
   {
+    "context": "AcpThread > Editor && start_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-home": "agent::ScrollOutputToTop",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && end_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-end": "agent::ScrollOutputToBottom",
+    },
+  },
+  {
     "context": "AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
@@ -364,6 +379,12 @@
     "context": "ThreadHistory",
     "bindings": {
       "backspace": "agent::RemoveSelectedThread",
+    },
+  },
+  {
+    "context": "ThreadsArchiveView",
+    "bindings": {
+      "shift-backspace": "agent::ArchiveSelectedThread",
     },
   },
   {
@@ -529,6 +550,8 @@
       "ctrl-k ctrl-b": "editor::BlameHover",
       "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "ctrl-k ctrl-c": ["editor::ToggleComments", { "advance_downwards": false }],
+      "ctrl-k ctrl-/": "editor::ToggleBlockComments",
+      "shift-alt-a": "editor::ToggleBlockComments",
       "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "f2": "editor::Rename",
@@ -598,11 +621,13 @@
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
       "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
       "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
       "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "alt-ctrl-shift-b": "branches::OpenRecent",
+      "alt-ctrl-shift-w": "git::Worktree",
       "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
       "save": "workspace::Save",
@@ -699,8 +724,9 @@
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
-      "ctrl-g": "agents_sidebar::ToggleArchive",
-      "shift-backspace": "agent::RemoveSelectedThread",
+      "ctrl-g": "agents_sidebar::ToggleThreadHistory",
+      "shift-backspace": "agent::ArchiveSelectedThread",
+      "ctrl-backspace": "agent::RemoveSelectedThread",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
@@ -722,7 +748,9 @@
   {
     "context": "Workspace && debugger_running",
     "bindings": {
-      "f5": "zed::NoAction",
+      // Unbind `f5` to avoid dispatching the `debugger::Rerun` as that is what `f5` is bound to in the `Workspace`
+      // context.
+      "f5": null,
     },
   },
   {
@@ -933,6 +961,8 @@
       "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "undo": "project_panel::Undo",
       "ctrl-z": "project_panel::Undo",
+      "redo": "project_panel::Redo",
+      "ctrl-shift-z": "project_panel::Redo",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
@@ -1041,6 +1071,8 @@
       "ctrl-shift-enter": "git::Amend",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage",
+      "shift-escape": "git::ExpandCommitEditor",
+      "alt-shift-escape": "git::ToggleFillCommitEditor",
     },
   },
   {
@@ -1181,13 +1213,14 @@
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
-      "ctrl-delete": ["terminal::SendText", "\u001bd"],
+      "ctrl-delete": ["terminal::SendText", "\u001b[3;5~"],
       // Overrides for conflicting keybindings
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
       "find": "buffer_search::Deploy",
@@ -1275,6 +1308,8 @@
       "alt-down": "markdown::ScrollDownByItem",
       "ctrl-home": "markdown::ScrollToTop",
       "ctrl-end": "markdown::ScrollToBottom",
+      "find": "buffer_search::Deploy",
+      "ctrl-f": "buffer_search::Deploy",
     },
   },
   {
@@ -1336,6 +1371,7 @@
     "context": "Welcome",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-n": "workspace::NewFile",
       "ctrl-=": ["zed::IncreaseUiFontSize", { "persist": false }],
       "ctrl-+": ["zed::IncreaseUiFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseUiFontSize", { "persist": false }],
@@ -1352,15 +1388,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem",
-    },
-  },
-  {
-    "context": "GitWorktreeSelector || (GitWorktreeSelector > Picker > Editor)",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
-      "ctrl-space": "git::WorktreeFromDefault",
-      "ctrl-shift-backspace": "git::DeleteWorktree",
     },
   },
   {
@@ -1432,7 +1459,7 @@
   {
     "context": "NotebookEditor",
     "bindings": {
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "ctrl-enter": "notebook::Run",
       "ctrl-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1444,10 +1471,18 @@
     },
   },
   {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "enter": "notebook::EnterEditMode",
+      "down": "menu::SelectNext",
+      "up": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "NotebookEditor > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "ctrl-enter": "notebook::Run",
       "ctrl-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1456,6 +1491,7 @@
       "ctrl-shift-m": "notebook::AddMarkdownBlock",
       "ctrl-shift-r": "notebook::RestartKernel",
       "ctrl-c": "notebook::InterruptKernel",
+      "escape": "notebook::EnterCommandMode",
     },
   },
   {
@@ -1489,9 +1525,29 @@
   {
     "context": "GitPicker",
     "bindings": {
-      "alt-1": "git_picker::ActivateWorktreesTab",
-      "alt-2": "git_picker::ActivateBranchesTab",
-      "alt-3": "git_picker::ActivateStashTab",
+      "alt-1": "git_picker::ActivateBranchesTab",
+      "alt-2": "git_picker::ActivateStashTab",
+    },
+  },
+  {
+    "context": "WorktreePicker || (WorktreePicker > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-backspace": "worktree_picker::DeleteWorktree",
+    },
+  },
+  {
+    "context": "GitGraph",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
     },
   },
 ]

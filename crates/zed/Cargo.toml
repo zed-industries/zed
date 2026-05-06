@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.232.0"
+version = "1.2.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -117,7 +117,7 @@ git_hosting_providers.workspace = true
 git_ui.workspace = true
 go_to_line.workspace = true
 system_specs.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["input-latency-histogram"] }
 gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
 image = { workspace = true, optional = true }
 semver.workspace = true
@@ -133,6 +133,7 @@ edit_prediction.workspace = true
 edit_prediction_ui.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
+input_latency_ui.workspace = true
 inspector_ui.workspace = true
 install_cli.workspace = true
 journal.workspace = true
@@ -228,18 +229,25 @@ zlog_settings.workspace = true
 etw_tracing.workspace = true
 windows.workspace = true
 gpui = { workspace = true, features = [
+    "input-latency-histogram",
     "windows-manifest",
 ] }
 
-[target.'cfg(target_os = "windows")'.build-dependencies]
-winresource = "0.1"
+[build-dependencies]
+windows_resources = { path = "../windows_resources" }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 gpui = { workspace = true, features = [
+    "input-latency-histogram",
     "wayland",
     "x11",
 ] }
 ashpd.workspace = true
+image.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
+image.workspace = true
+
 
 [target.'cfg(target_os = "linux")'.build-dependencies]
 pkg-config = "0.3.22"
@@ -247,7 +255,7 @@ pkg-config = "0.3.22"
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["input-latency-histogram", "test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
@@ -261,6 +269,8 @@ image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
+
+
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]

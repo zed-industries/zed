@@ -26,15 +26,6 @@ pub trait ModalView: ManagedView {
     fn render_bare(&self) -> bool {
         false
     }
-
-    /// Returns whether this [`ModalView`] is the command palette.
-    ///
-    /// This breaks the encapsulation of the [`ModalView`] trait a little bit, but there doesn't seem to be an
-    /// immediate, more elegant way to have the workspace know about the command palette (due to dependency arrow
-    /// directions).
-    fn is_command_palette(&self) -> bool {
-        false
-    }
 }
 
 trait ModalViewHandle {
@@ -42,7 +33,6 @@ trait ModalViewHandle {
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
     fn render_bare(&self, cx: &mut App) -> bool;
-    fn is_command_palette(&self, cx: &App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -60,10 +50,6 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn render_bare(&self, cx: &mut App) -> bool {
         self.read(cx).render_bare()
-    }
-
-    fn is_command_palette(&self, cx: &App) -> bool {
-        self.read(cx).is_command_palette()
     }
 }
 
@@ -202,13 +188,6 @@ impl ModalLayer {
 
     pub fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
-    }
-
-    /// Returns whether the active modal is the command palette.
-    pub fn is_active_modal_command_palette(&self, cx: &App) -> bool {
-        self.active_modal
-            .as_ref()
-            .map_or(false, |modal| modal.modal.is_command_palette(cx))
     }
 }
 

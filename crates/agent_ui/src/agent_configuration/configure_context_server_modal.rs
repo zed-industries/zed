@@ -5,11 +5,12 @@ use editor::{Editor, EditorElement, EditorStyle};
 
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    Subscription, Task, TaskExt, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity,
+    prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use parking_lot::Mutex;
 use project::{
     context_server_store::{
@@ -631,8 +632,12 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
-                                .action("Dismiss", |_, _| {})
+                            this.icon(
+                                Icon::new(IconName::ToolHammer)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .action("Dismiss", |_, _| {})
                         },
                     );
 

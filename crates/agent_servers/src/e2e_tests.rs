@@ -1,6 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::AppContext;
@@ -379,7 +379,7 @@ macro_rules! common_e2e_tests {
             async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
-                    ::agent_client_protocol::PermissionOptionId::new($allow_option_id),
+                    ::agent_client_protocol::schema::PermissionOptionId::new($allow_option_id),
                     cx,
                 )
                 .await;

@@ -19,6 +19,7 @@ use util::{
 };
 
 use crate::SettingsAssets;
+use settings_content::{ActionName, ActionWithArguments};
 use settings_json::{
     append_top_level_array_value_in_json_text, parse_json_with_comments,
     replace_top_level_array_value_in_json_text,
@@ -698,10 +699,17 @@ impl KeymapFile {
             "minItems": 2,
             "maxItems": 2
         });
-        let mut keymap_action_alternatives = vec![
-            empty_action_name.clone(),
-            empty_action_name_with_input.clone(),
-        ];
+
+        let mut keymap_deprecations = deprecations.clone();
+        keymap_deprecations.insert(NoAction.name(), "null");
+        let action_name_schema = ActionName::build_schema(
+            action_schemas.iter().map(|(name, _)| *name),
+            action_documentation,
+            &keymap_deprecations,
+            deprecation_messages,
+        );
+
+        let mut action_with_arguments_alternatives = vec![empty_action_name_with_input.clone()];
         let mut unbind_target_action_alternatives =
             vec![empty_action_name, empty_action_name_with_input];
 
@@ -731,7 +739,6 @@ impl KeymapFile {
             if let Some(description) = &description {
                 add_description(&mut plain_action, description);
             }
-            keymap_action_alternatives.push(plain_action.clone());
             if include_in_unbind_target_schema {
                 unbind_target_action_alternatives.push(plain_action);
             }
@@ -760,7 +767,7 @@ impl KeymapFile {
                     "minItems": 2,
                     "maxItems": 2
                 });
-                keymap_action_alternatives.push(action_with_input.clone());
+                action_with_arguments_alternatives.push(action_with_input.clone());
                 if include_in_unbind_target_schema {
                     unbind_target_action_alternatives.push(action_with_input);
                 }
@@ -789,7 +796,7 @@ impl KeymapFile {
                 "This action does not take input - just the action name string should be used."
                     .to_string(),
             );
-            keymap_action_alternatives.push(actions_with_empty_input);
+            action_with_arguments_alternatives.push(actions_with_empty_input);
         }
 
         if !empty_schema_unbind_target_action_names.is_empty() {
@@ -812,17 +819,22 @@ impl KeymapFile {
             unbind_target_action_alternatives.push(actions_with_empty_input);
         }
 
-        // Placing null first causes json-language-server to default assuming actions should be
-        // null, so place it last.
-        keymap_action_alternatives.push(json_schema!({
-            "type": "null"
-        }));
+        generator.definitions_mut().insert(
+            ActionName::schema_name().to_string(),
+            action_name_schema.to_value(),
+        );
+        generator.definitions_mut().insert(
+            ActionWithArguments::schema_name().to_string(),
+            json!({ "anyOf": action_with_arguments_alternatives }),
+        );
 
         generator.definitions_mut().insert(
             KeymapAction::schema_name().to_string(),
-            json!({
-                "anyOf": keymap_action_alternatives
-            }),
+            json!({ "anyOf": [
+                { "$ref": format!("#/$defs/{}", ActionName::schema_name().to_string()) },
+                { "$ref": format!("#/$defs/{}", ActionWithArguments::schema_name().to_string()) },
+                { "type": "null" }
+            ] }),
         );
         generator.definitions_mut().insert(
             UnbindTargetAction::schema_name().to_string(),

@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
+use async_lock::OnceCell;
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::{Credentials, Token};
@@ -24,7 +25,8 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, Window, actions,
+    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window,
+    actions,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -40,7 +42,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
-use smol::lock::OnceCell;
 use std::sync::LazyLock;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
@@ -48,7 +49,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -706,14 +707,6 @@ impl LanguageModel for BedrockModel {
         Some(self.model.max_output_tokens())
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        get_bedrock_tokens(request, cx)
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -926,9 +919,10 @@ pub fn into_bedrock(
                         }
                         MessageContent::ToolResult(tool_result) => {
                             messages_contain_tool_content = true;
-                            BedrockToolResultBlock::builder()
-                                .tool_use_id(tool_result.tool_use_id.to_string())
-                                .content(match tool_result.content {
+                            let mut builder = BedrockToolResultBlock::builder()
+                                .tool_use_id(tool_result.tool_use_id.to_string());
+                            for part in tool_result.content {
+                                let block = match part {
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
@@ -969,7 +963,10 @@ pub fn into_bedrock(
                                             }
                                         }
                                     }
-                                })
+                                };
+                                builder = builder.content(block);
+                            }
+                            builder
                                 .status({
                                     if tool_result.is_error {
                                         BedrockToolResultStatus::Error
@@ -1149,68 +1146,6 @@ pub fn into_bedrock(
         top_p: None,
         allow_extended_context,
     })
-}
-
-// TODO: just call the ConverseOutput.usage() method:
-// https://docs.rs/aws-sdk-bedrockruntime/latest/aws_sdk_bedrockruntime/operation/converse/struct.ConverseOutput.html#method.output
-pub fn get_bedrock_tokens(
-    request: LanguageModelRequest,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request.messages;
-            let mut tokens_from_images = 0;
-            let mut string_messages = Vec::with_capacity(messages.len());
-
-            for message in messages {
-                use language_model::MessageContent;
-
-                let mut string_contents = String::new();
-
-                for content in message.content {
-                    match content {
-                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                            string_contents.push_str(&text);
-                        }
-                        MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Image(image) => {
-                            tokens_from_images += image.estimate_tokens();
-                        }
-                        MessageContent::ToolUse(_tool_use) => {
-                            // TODO: Estimate token usage from tool uses.
-                        }
-                        MessageContent::ToolResult(tool_result) => match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                string_contents.push_str(&text);
-                            }
-                            LanguageModelToolResultContent::Image(image) => {
-                                tokens_from_images += image.estimate_tokens();
-                            }
-                        },
-                    }
-                }
-
-                if !string_contents.is_empty() {
-                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(string_contents),
-                        name: None,
-                        function_call: None,
-                    });
-                }
-            }
-
-            // Tiktoken doesn't yet support these models, so we manually use the
-            // same tokenizer as GPT-4.
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-                .map(|tokens| (tokens + tokens_from_images) as u64)
-        })
-        .boxed()
 }
 
 pub fn map_to_language_model_completion_events(

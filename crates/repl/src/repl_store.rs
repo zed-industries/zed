@@ -4,7 +4,9 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, prelude::*};
+use gpui::{
+    App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, TaskExt, prelude::*,
+};
 use jupyter_websocket_client::RemoteServer;
 use language::{Language, LanguageName};
 use project::{Fs, Project, ProjectPath, WorktreeId};
@@ -13,8 +15,8 @@ use settings::{Settings, SettingsStore};
 use util::rel_path::RelPath;
 
 use crate::kernels::{
-    Kernel, list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
-    wsl_kernel_specifications,
+    Kernel, PythonEnvKernelSpecification, list_remote_kernelspecs, local_kernel_specifications,
+    python_env_kernel_specifications, wsl_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -133,6 +135,23 @@ impl ReplStore {
             filter.show_namespace(Self::NAMESPACE);
         });
 
+        cx.notify();
+    }
+
+    pub fn mark_ipykernel_installed(
+        &mut self,
+        cx: &mut Context<Self>,
+        spec: &PythonEnvKernelSpecification,
+    ) {
+        for specs in self.kernel_specifications_for_worktree.values_mut() {
+            for kernel_spec in specs.iter_mut() {
+                if let KernelSpecification::PythonEnv(env_spec) = kernel_spec {
+                    if env_spec == spec {
+                        env_spec.has_ipykernel = true;
+                    }
+                }
+            }
+        }
         cx.notify();
     }
 
