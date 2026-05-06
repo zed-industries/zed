@@ -242,12 +242,23 @@ pub struct RelatedExcerpt {
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
     special_tokens_for_format(format).iter().any(|token| {
+        if is_user_writable_line_marker(token) {
+            return false;
+        }
+
         if let Some(line_token) = token.strip_suffix('\n') {
             input.cursor_excerpt.lines().any(|line| line == line_token)
         } else {
             input.cursor_excerpt.contains(token)
         }
     })
+}
+
+fn is_user_writable_line_marker(token: &str) -> bool {
+    matches!(
+        token,
+        "<<<<<<< CURRENT\n" | "=======\n" | ">>>>>>> UPDATED\n"
+    )
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option<String> {
@@ -5967,6 +5978,60 @@ mod tests {
         assert!(
             !prompt_input_contains_special_tokens(&input, ZetaFormat::V0131GitMergeMarkersPrefix),
             "comment containing ======= should not trigger special token detection"
+        );
+    }
+
+    #[test]
+    fn test_special_tokens_not_triggered_by_git_markers_in_docstring() {
+        // Regression test for https://github.com/zed-industries/zed/issues/55692
+        let excerpt = indoc! {r#"
+            """
+            Git Conflict Resolution Guide:
+            When you encounter merge conflicts, you'll see:
+            <<<<<<< CURRENT
+            your current changes
+            =======
+            incoming changes
+            >>>>>>> UPDATED
+            """
+
+            def resolve_conflicts():
+                # Function to help with merge conflicts
+                pass
+        "#};
+        let cursor_offset = excerpt.find("pass").expect("cursor target should exist");
+        let input = make_input(
+            excerpt,
+            cursor_offset..cursor_offset + "pass".len(),
+            cursor_offset,
+            vec![],
+            vec![],
+        );
+
+        for format in [
+            ZetaFormat::V0120GitMergeMarkers,
+            ZetaFormat::V0131GitMergeMarkersPrefix,
+            ZetaFormat::V0211Prefill,
+            ZetaFormat::V0211SeedCoder,
+            ZetaFormat::V0304SeedNoEdits,
+            ZetaFormat::V0331SeedCoderModelPy,
+            ZetaFormat::V0306SeedMultiRegions,
+        ] {
+            assert!(
+                !prompt_input_contains_special_tokens(&input, format),
+                "git conflict marker examples in source text should not trigger special token detection for {format}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_special_tokens_still_triggered_by_internal_markers() {
+        let excerpt = "fn main() {\n    <|fim_prefix|>\n}\n";
+        let input = make_input(excerpt, 0..excerpt.len(), 0, vec![], vec![]);
+
+        assert!(
+            prompt_input_contains_special_tokens(&input, ZetaFormat::V0131GitMergeMarkersPrefix),
+            "internal prompt markers should still trigger special token detection"
         );
     }
 }
