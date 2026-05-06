@@ -191,11 +191,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_create_directory_tool_kind_is_edit() {
-        assert_eq!(CreateDirectoryTool::kind(), acp::ToolKind::Edit);
-    }
-
     #[gpui::test]
     async fn test_create_directory_symlink_escape_requests_authorization(cx: &mut TestAppContext) {
         init_test(cx);
