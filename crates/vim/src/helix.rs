@@ -11,7 +11,7 @@ use editor::{
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{App, Context, Font, Hsla, Pixels, Window, WindowTextSystem};
+use gpui::{App, Context, Font, Hsla, Pixels, TaskExt, Window, WindowTextSystem};
 use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
