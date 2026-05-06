@@ -809,27 +809,13 @@ mod tests {
             old_text: Some("ol".into()),
             new_text: Some("new".into()),
         }]);
-        assert_eq!(
-            events.as_slice(),
-            &[EditEvent::OldTextChunk {
-                edit_index: 0,
-                chunk: "ol".into(),
-                done: false,
-            }]
-        );
+        assert!(events.is_empty());
 
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("old".into()),
             new_text: Some("new".into()),
         }]);
-        assert_eq!(
-            events.as_slice(),
-            &[EditEvent::OldTextChunk {
-                edit_index: 0,
-                chunk: "d".into(),
-                done: false,
-            }]
-        );
+        assert!(events.is_empty());
 
         let events = parser.finalize_edits(&[Edit {
             old_text: "old".into(),
@@ -840,7 +826,7 @@ mod tests {
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "".into(),
+                    chunk: "old".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
