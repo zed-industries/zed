@@ -8947,6 +8947,96 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_move_worktrees_to_end(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.rs": "",
+            "b.rs": "",
+            "c.rs": "",
+            "d.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [
+            "/dir/a.rs".as_ref(),
+            "/dir/b.rs".as_ref(),
+            "/dir/c.rs".as_ref(),
+            "/dir/d.rs".as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    let (a_id, b_id, c_id, d_id) = project.update(cx, |project, cx| {
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        (
+            worktrees[0].read(cx).id(),
+            worktrees[1].read(cx).id(),
+            worktrees[2].read(cx).id(),
+            worktrees[3].read(cx).id(),
+        )
+    });
+
+    // Non-contiguous selection [a, c] → group lands at end as [b, d, a, c].
+    project
+        .update(cx, |project, cx| {
+            project.move_worktrees_to_end(&[a_id, c_id], cx)
+        })
+        .expect("moving non-contiguous group to end");
+    project.update(cx, |project, cx| {
+        let order: Vec<_> = project
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect();
+        assert_eq!(order, vec![b_id, d_id, a_id, c_id]);
+    });
+
+    // Already-suffix selection [a, c] → no-op (current order is [b, d, a, c]).
+    project
+        .update(cx, |project, cx| {
+            project.move_worktrees_to_end(&[a_id, c_id], cx)
+        })
+        .expect("contiguous-suffix call should still succeed");
+    project.update(cx, |project, cx| {
+        let order: Vec<_> = project
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect();
+        assert_eq!(order, vec![b_id, d_id, a_id, c_id]);
+    });
+
+    // Single source [b] → moves to end: [d, a, c, b].
+    project
+        .update(cx, |project, cx| {
+            project.move_worktrees_to_end(&[b_id], cx)
+        })
+        .expect("moving a single source to end");
+    project.update(cx, |project, cx| {
+        let order: Vec<_> = project
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).id())
+            .collect();
+        assert_eq!(order, vec![d_id, a_id, c_id, b_id]);
+    });
+
+    // Invalid source id → error.
+    project.update(cx, |project, cx| {
+        let invalid = worktree::WorktreeId::from_usize(99_999);
+        assert!(
+            project.move_worktrees_to_end(&[invalid], cx).is_err(),
+            "moving an unknown source should error"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_move_worktree_with_invalid_source_errors(cx: &mut gpui::TestAppContext) {
     use worktree::WorktreeId;
 

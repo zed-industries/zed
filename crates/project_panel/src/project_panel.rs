@@ -7165,17 +7165,13 @@ impl Render for ProjectPanel {
                                     move |this, selections: &DraggedSelection, window, cx| {
                                         this.drag_target_entry = None;
                                         this.hover_scroll_task.take();
-                                        // A pure-root drag that contains the
-                                        // last worktree would otherwise hit
-                                        // the self-drop guard in
-                                        // `move_worktrees` and become a no-op.
-                                        // Send the group to the end — but
-                                        // only for move gestures; copy mode
-                                        // can't operate on roots and should
-                                        // continue to no-op via `drag_onto`.
-                                        let is_copy_mode = Self::is_copy_modifier_set(
-                                            &window.modifiers(),
-                                        );
+                                        let is_copy_mode =
+                                            Self::is_copy_modifier_set(&window.modifiers());
+                                        // For move drags whose root group includes the last
+                                        // worktree, route to the move-to-end path so we don't
+                                        // hit the self-drop guard in `move_worktrees`. Copy
+                                        // drags fall through to `drag_onto`, which will
+                                        // filter the roots out as a no-op.
                                         if !is_copy_mode
                                             && this.drag_includes_last_worktree(selections, cx)
                                         {

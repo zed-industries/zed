@@ -4594,8 +4594,7 @@ impl Project {
     }
 
     /// Moves multiple worktrees to the end of the worktree list, preserving
-    /// their relative order. Used for "drop on the blank area below the
-    /// project panel" gestures.
+    /// their relative order.
     pub fn move_worktrees_to_end(
         &mut self,
         sources: &[WorktreeId],
