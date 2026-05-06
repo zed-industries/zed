@@ -57,12 +57,9 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-#[path = "editor/config.rs"]
 mod config;
-#[path = "editor/diagnostics.rs"]
 mod diagnostics;
-#[path = "editor/reflow.rs"]
-mod reflow;
+mod rewrap;
 
 pub(crate) use actions::*;
 use diagnostics::{ActiveDiagnostic, GlobalDiagnosticRenderer, InlineDiagnostic};
