@@ -24,6 +24,7 @@ use futures::{
     select_biased,
 };
 use gpui::BackgroundExecutor;
+use gpui::TaskExt;
 use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,

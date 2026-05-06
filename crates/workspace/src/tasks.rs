@@ -2,7 +2,7 @@ use std::process::ExitStatus;
 
 use anyhow::Result;
 use collections::HashSet;
-use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, WeakEntity};
+use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;

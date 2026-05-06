@@ -2,7 +2,7 @@
 // It's currently not in use but is kept for future feature announcements.
 #![allow(dead_code)]
 
-use gpui::{Action, Entity, Global, Render, SharedString};
+use gpui::{Action, Entity, Global, Render, SharedString, TaskExt};
 use ui::{ButtonLike, Tooltip, prelude::*};
 use util::ResultExt;
 

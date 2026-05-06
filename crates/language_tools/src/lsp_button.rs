@@ -13,7 +13,7 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Anchor, Entity, Subscription, Task, WeakEntity, actions};
+use gpui::{Anchor, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
@@ -420,7 +420,7 @@ impl LanguageServerState {
                             let workspace_for_debug = workspace.clone();
                             let server_selector_for_debug = server_selector.clone();
                             submenu = submenu.entry("View Logs", None, move |window, cx| {
-                                lsp_log_view::open_server_trace(
+                                lsp_log_view::open(
                                     &lsp_logs_for_debug,
                                     workspace_for_debug.clone(),
                                     server_selector_for_debug.clone(),

@@ -1,2 +1,4 @@
 #[cfg(all(test, feature = "unit-eval"))]
-mod streaming_edit_file;
+mod edit_file;
+#[cfg(all(test, feature = "unit-eval"))]
+mod terminal_tool;
