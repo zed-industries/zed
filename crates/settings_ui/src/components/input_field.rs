@@ -1,18 +1,22 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{AnyElement, ElementId, Entity, Focusable, TextStyleRefinement};
+use gpui::{AnyElement, ElementId, Entity, Focusable, Task, TextStyleRefinement};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
+
+type ConfirmInput = Rc<dyn Fn(Option<String>, &mut Window, &mut App)>;
+type ConfirmInputTask =
+    Rc<dyn Fn(Option<String>, &mut Window, &mut App) -> Task<anyhow::Result<()>>>;
 
 #[derive(IntoElement)]
 pub struct SettingsInputField {
     id: Option<ElementId>,
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
-    confirm: Option<Rc<dyn Fn(Option<String>, &mut Window, &mut App)>>,
-    confirm_with_editor: Option<Rc<dyn Fn(Option<String>, Entity<Editor>, &mut Window, &mut App)>>,
+    confirm: Option<ConfirmInput>,
+    confirm_task: Option<ConfirmInputTask>,
     tab_index: Option<isize>,
     use_buffer_font: bool,
     display_confirm_button: bool,
@@ -29,7 +33,7 @@ impl SettingsInputField {
             initial_text: None,
             placeholder: None,
             confirm: None,
-            confirm_with_editor: None,
+            confirm_task: None,
             tab_index: None,
             use_buffer_font: false,
             display_confirm_button: false,
@@ -63,11 +67,11 @@ impl SettingsInputField {
         self
     }
 
-    pub fn on_confirm_with_editor(
+    pub fn on_confirm_task(
         mut self,
-        confirm: impl Fn(Option<String>, Entity<Editor>, &mut Window, &mut App) + 'static,
+        confirm: impl Fn(Option<String>, &mut Window, &mut App) -> Task<anyhow::Result<()>> + 'static,
     ) -> Self {
-        self.confirm_with_editor = Some(Rc::new(confirm));
+        self.confirm_task = Some(Rc::new(confirm));
         self
     }
 
@@ -78,6 +82,11 @@ impl SettingsInputField {
 
     pub fn display_clear_button(mut self) -> Self {
         self.display_clear_button = true;
+        self
+    }
+
+    pub fn clear_on_confirm(mut self) -> Self {
+        self.clear_on_confirm = true;
         self
     }
 
@@ -224,9 +233,9 @@ impl RenderOnce for SettingsInputField {
         let display_confirm_button = self.display_confirm_button;
         let display_clear_button = self.display_clear_button;
         let confirm_for_button = self.confirm.clone();
-        let confirm_with_editor_for_button = self.confirm_with_editor.clone();
+        let confirm_task_for_button = self.confirm_task.clone();
         let confirm_for_action = self.confirm.clone();
-        let confirm_with_editor_for_action = self.confirm_with_editor.clone();
+        let confirm_task_for_action = self.confirm_task.clone();
         let is_editor_empty = editor.read(cx).text(cx).trim().is_empty();
         let is_editor_focused = editor.read(cx).is_focused(window);
 
@@ -286,22 +295,14 @@ impl RenderOnce for SettingsInputField {
                                         let Some(editor) = weak_editor_for_button.upgrade() else {
                                             return;
                                         };
-                                        let new_value =
-                                            editor.read_with(cx, |editor, cx| editor.text(cx));
-                                        let new_value =
-                                            (!new_value.is_empty()).then_some(new_value);
-                                        if let Some(confirm) = confirm_for_button.as_ref() {
-                                            confirm(new_value, window, cx);
-                                        } else if let Some(confirm) =
-                                            confirm_with_editor_for_button.as_ref()
-                                        {
-                                            confirm(new_value, editor.clone(), window, cx);
-                                        }
-                                        if clear_on_confirm_for_button {
-                                            editor.update(cx, |editor, cx| {
-                                                editor.set_text("", window, cx);
-                                            });
-                                        }
+                                        confirm_input(
+                                            &editor,
+                                            confirm_for_button.as_ref(),
+                                            confirm_task_for_button.as_ref(),
+                                            clear_on_confirm_for_button,
+                                            window,
+                                            cx,
+                                        );
                                     }),
                             )
                         },
@@ -309,28 +310,64 @@ impl RenderOnce for SettingsInputField {
                     .when_some(self.action_slot, |this, action| this.child(action)),
             )
             .when(
-                confirm_for_action.is_some() || confirm_with_editor_for_action.is_some(),
+                confirm_for_action.is_some() || confirm_task_for_action.is_some(),
                 |this| {
                     this.on_action::<menu::Confirm>({
                         move |_, window, cx| {
                             let Some(editor) = weak_editor.upgrade() else {
                                 return;
                             };
-                            let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
-                            let new_value = (!new_value.is_empty()).then_some(new_value);
-                            if let Some(confirm) = confirm_for_action.as_ref() {
-                                confirm(new_value, window, cx);
-                            } else if let Some(confirm) = confirm_with_editor_for_action.as_ref() {
-                                confirm(new_value, editor.clone(), window, cx);
-                            }
-                            if clear_on_confirm {
-                                editor.update(cx, |editor, cx| {
-                                    editor.set_text("", window, cx);
-                                });
-                            }
+                            confirm_input(
+                                &editor,
+                                confirm_for_action.as_ref(),
+                                confirm_task_for_action.as_ref(),
+                                clear_on_confirm,
+                                window,
+                                cx,
+                            );
                         }
                     })
                 },
             )
+    }
+}
+
+fn confirm_input(
+    editor: &Entity<Editor>,
+    confirm: Option<&ConfirmInput>,
+    confirm_task: Option<&ConfirmInputTask>,
+    clear_on_confirm: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
+    let new_value = (!new_value.is_empty()).then_some(new_value);
+
+    if let Some(confirm) = confirm {
+        confirm(new_value, window, cx);
+        if clear_on_confirm {
+            editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        }
+    } else if let Some(confirm_task) = confirm_task {
+        let task = confirm_task(new_value, window, cx);
+        if clear_on_confirm {
+            let editor = editor.downgrade();
+            window
+                .spawn(cx, async move |cx| {
+                    task.await?;
+                    cx.update(|window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.set_text("", window, cx);
+                        })?;
+                        anyhow::Ok(())
+                    })??;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        } else {
+            task.detach_and_log_err(cx);
+        }
     }
 }

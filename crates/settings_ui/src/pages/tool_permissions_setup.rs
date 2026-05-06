@@ -1071,38 +1071,35 @@ fn render_add_pattern_input(
         .with_buffer_font()
         .display_clear_button()
         .display_confirm_button()
-        .on_confirm_with_editor(move |pattern, editor, window, cx| {
-            if let Some(pattern) = pattern {
-                let trimmed = pattern.trim().to_string();
-                if !trimmed.is_empty() {
-                    let update_task = save_pattern(&tool_id_owned, rule_type, trimmed.clone(), window, cx);
-                    window.spawn(cx, {
-                        let trimmed = trimmed.clone();
-                        let settings_window = settings_window.clone();
-                        async move |cx| {
-                            update_task.await?;
-                            let validation_error = match regex::Regex::new(&trimmed) {
-                                Err(err) => Some(format!(
-                                    "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
-                                )),
-                                Ok(_) => None,
-                            };
-                            cx.update(|window, cx| {
-                                settings_window.update(cx, |this, cx| {
-                                    this.regex_validation_error = validation_error;
-                                    cx.notify();
-                                })?;
-                                editor.update(cx, |editor, cx| {
-                                    editor.set_text("", window, cx);
-                                });
-                                anyhow::Ok(())
-                            })??;
-                            anyhow::Ok(())
-                        }
-                    })
-                    .detach_and_log_err(cx);
-                }
+        .clear_on_confirm()
+        .on_confirm_task(move |pattern, window, cx| {
+            let Some(pattern) = pattern else {
+                return Task::ready(Ok(()));
+            };
+
+            let trimmed = pattern.trim().to_string();
+            if trimmed.is_empty() {
+                return Task::ready(Ok(()));
             }
+
+            let update_task = save_pattern(&tool_id_owned, rule_type, trimmed.clone(), window, cx);
+            cx.spawn({
+                let settings_window = settings_window.clone();
+                async move |cx| {
+                    update_task.await?;
+                    let validation_error = match regex::Regex::new(&trimmed) {
+                        Err(err) => Some(format!(
+                            "Invalid regex: {err}. Pattern saved but will block this tool until fixed or removed."
+                        )),
+                        Ok(_) => None,
+                    };
+                    settings_window.update(cx, |this, cx| {
+                        this.regex_validation_error = validation_error;
+                        cx.notify();
+                    })?;
+                    anyhow::Ok(())
+                }
+            })
         })
         .into_any_element()
 }
