@@ -2151,9 +2151,13 @@ fn chunk_search_range(
     initial_range: Range<BufferOffset>,
 ) -> Box<dyn Iterator<Item = Range<usize>> + 'static> {
     let range = initial_range.to_offset(&buffer);
+    if range.is_empty() {
+        return Box::new(std::iter::empty());
+    }
+
     let summary: TextSummary = buffer.text_summary_for_range(initial_range);
     let num_chunks = if !query.is_regex() && !query.as_str().contains('\n') {
-        NonZeroU32::new(summary.lines.row.min(num_cpus))
+        NonZeroU32::new(summary.lines.row.saturating_add(1).min(num_cpus.max(1)))
     } else {
         NonZeroU32::new(1)
     };
@@ -2164,10 +2168,10 @@ fn chunk_search_range(
 
     let mut chunk_start = range.start;
     let rope = buffer.as_rope().clone();
-    let total_bytes = summary.len;
-    let average_chunk_length = total_bytes / (num_chunks.get() as usize);
+    let range_end = range.end;
+    let average_chunk_length = summary.len.div_ceil(num_chunks.get() as usize);
     Box::new(std::iter::from_fn(move || {
-        if chunk_start >= total_bytes {
+        if chunk_start >= range_end {
             return None;
         }
         let candidate_position = chunk_start + average_chunk_length;
@@ -2175,7 +2179,7 @@ fn chunk_search_range(
         let mut as_point = rope.offset_to_point(adjusted);
         as_point.row += 1;
         as_point.column = 0;
-        let end_offset = buffer.point_to_offset(as_point).min(total_bytes);
+        let end_offset = buffer.point_to_offset(as_point).min(range_end);
         let ret = chunk_start..end_offset;
         chunk_start = end_offset;
         Some(ret)
