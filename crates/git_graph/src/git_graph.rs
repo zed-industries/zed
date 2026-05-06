@@ -39,7 +39,7 @@ use search::{
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     ops::Range,
     rc::Rc,
     sync::{Arc, OnceLock},
@@ -1282,6 +1282,13 @@ struct GitGraphContextMenu {
     _subscription: Subscription,
 }
 
+#[derive(Clone)]
+struct RefContextMenuTarget {
+    bounds: Bounds<Pixels>,
+    row_index: usize,
+    ref_kind: RefNameKind,
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
@@ -1290,6 +1297,7 @@ pub struct GitGraph {
     workspace: WeakEntity<Workspace>,
     context_menu: Option<GitGraphContextMenu>,
     commit_context_menu_state: Option<CommitContextMenuState>,
+    ref_context_menu_targets: Rc<RefCell<Vec<RefContextMenuTarget>>>,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
     selected_entry_idx: Option<usize>,
@@ -1525,6 +1533,7 @@ impl GitGraph {
             _commit_diff_task: None,
             context_menu: None,
             commit_context_menu_state: None,
+            ref_context_menu_targets: Rc::new(RefCell::new(Vec::new())),
             table_interaction_state,
             column_widths,
             selected_entry_idx: None,
@@ -1759,12 +1768,33 @@ impl GitGraph {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let ref_kind = RefNameKind::classify(name);
+        let ref_context_menu_targets = self.ref_context_menu_targets.clone();
         let weak = cx.weak_entity();
         let chip_id = ElementId::Name(format!("ref-chip-{}-{}", row_index, name.as_ref()).into());
 
         div()
             .id(chip_id)
+            .relative()
             .child(self.render_chip(name, accent_color, is_head))
+            .child(
+                gpui::canvas(
+                    {
+                        let ref_kind = ref_kind.clone();
+                        move |bounds, _window, _cx| {
+                            ref_context_menu_targets
+                                .borrow_mut()
+                                .push(RefContextMenuTarget {
+                                    bounds,
+                                    row_index,
+                                    ref_kind: ref_kind.clone(),
+                                });
+                        }
+                    },
+                    |_bounds, _state, _window, _cx| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
             .on_mouse_down(
                 MouseButton::Right,
                 move |event: &MouseDownEvent, window, cx| {
@@ -2816,6 +2846,7 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.commit_context_menu_state = None;
         match &ref_kind {
             RefNameKind::Branch(_) => {
                 self.deploy_branch_context_menu(position, row_index, ref_kind, window, cx);
@@ -4579,7 +4610,23 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(row) = self.row_at_position(event.position.y, window, cx) {
+        let ref_target = self
+            .ref_context_menu_targets
+            .borrow()
+            .iter()
+            .rev()
+            .find(|target| target.bounds.contains(&event.position))
+            .cloned();
+
+        if let Some(target) = ref_target {
+            self.deploy_ref_context_menu(
+                event.position,
+                target.row_index,
+                target.ref_kind,
+                window,
+                cx,
+            );
+        } else if let Some(row) = self.row_at_position(event.position.y, window, cx) {
             self.deploy_entry_context_menu(event.position, row, window, cx);
         } else {
             self.clear_context_menu(cx);
@@ -5828,6 +5875,8 @@ impl Render for GitGraphAskPassModal {
 
 impl Render for GitGraph {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ref_context_menu_targets.borrow_mut().clear();
+
         // This happens when we changed branches, we should refresh our search as well
         if let QueryState::Pending(query) = &mut self.search_state.state {
             let query = std::mem::take(query);
@@ -6843,6 +6892,58 @@ mod tests {
                     .map(|state| state.row_index),
                 Some(1)
             );
+
+            for ref_kind in [
+                RefNameKind::Branch("main".into()),
+                RefNameKind::Tag("v1.0.0".into()),
+                RefNameKind::Stash("stash@{0}".into()),
+            ] {
+                graph.deploy_entry_context_menu(point(px(10.), row_height * 0.5), 0, window, cx);
+                assert_eq!(
+                    graph
+                        .commit_context_menu_state
+                        .as_ref()
+                        .map(|state| state.row_index),
+                    Some(0)
+                );
+
+                graph.ref_context_menu_targets.borrow_mut().clear();
+                graph
+                    .ref_context_menu_targets
+                    .borrow_mut()
+                    .push(RefContextMenuTarget {
+                        bounds: Bounds {
+                            origin: point(px(0.), row_height),
+                            size: gpui::size(px(100.), row_height),
+                        },
+                        row_index: 1,
+                        ref_kind,
+                    });
+
+                graph.handle_context_menu_overlay_secondary_mouse_down(
+                    &MouseDownEvent {
+                        button: MouseButton::Right,
+                        position: point(px(10.), row_height * 1.5),
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    },
+                    window,
+                    cx,
+                );
+
+                assert_eq!(
+                    graph
+                        .context_menu
+                        .as_ref()
+                        .map(|context_menu| context_menu.entry_idx),
+                    Some(1)
+                );
+                assert!(
+                    graph.commit_context_menu_state.is_none(),
+                    "ref context menus should not retain commit-only state"
+                );
+            }
         });
     }
 
