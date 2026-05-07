@@ -29,9 +29,9 @@ use gpui::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, ScrollDelta, SharedString, Size, SystemWindowTab,
-    TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowKind, WindowParams, point, px, size,
+    PromptLevel, RequestFrameOptions, ScrollDelta, SharedString, Size, SystemWindowTab, TouchPhase,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
+    WindowParams, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -3084,7 +3084,7 @@ impl ScrollGestureAxisLock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{px, point};
+    use gpui::{point, px};
 
     #[test]
     fn test_axis_lock_locks_on_first_dominant_movement() {
