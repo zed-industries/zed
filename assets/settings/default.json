@@ -2235,7 +2235,6 @@
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
-        "parser": "php",
       },
     },
     "Plain Text": {
