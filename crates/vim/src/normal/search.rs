@@ -1,5 +1,5 @@
 use editor::{Editor, EditorSettings};
-use gpui::{Action, Context, Window, actions};
+use gpui::{Action, Context, TaskExt, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};

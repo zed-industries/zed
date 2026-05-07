@@ -22,7 +22,7 @@ use futures::channel::oneshot;
 use gpui::{
     Action as _, App, ClickEvent, Context, Entity, EventEmitter, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, WeakEntity, Window, div,
+    Styled, Subscription, Task, TaskExt, WeakEntity, Window, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{

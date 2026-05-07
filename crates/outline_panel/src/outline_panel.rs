@@ -18,7 +18,7 @@ use gpui::{
     DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task, TaskExt,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
     uniform_list,
 };

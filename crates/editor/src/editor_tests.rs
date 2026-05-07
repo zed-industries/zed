@@ -18,15 +18,16 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
+    VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
     BracketPair, BracketPairConfig,
     Capability::ReadWrite,
-    DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
-    LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries, Override, Point,
+    ContextLocation, ContextProvider, DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings,
+    LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
+    LanguageToolchainStore, Override, Point,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
     },
@@ -40,7 +41,7 @@ use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffse
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project,
+    FakeFs, Project, ProjectPath,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
@@ -59,6 +60,7 @@ use std::{
     iter,
     sync::atomic::{self, AtomicUsize},
 };
+use task::TaskVariables;
 use test::build_editor_with_project;
 use unindent::Unindent;
 use util::{
@@ -6863,6 +6865,40 @@ async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_convert_to_base64(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Encode a plain text selection
+    cx.set_state(indoc! {"
+        «helloˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_base64(&ConvertToBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+
+    // Decode a valid base64 selection
+    cx.set_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ»
+    "});
+
+    // Decode invalid base64 — should leave text unchanged
+    cx.set_state(indoc! {"
+        «not!!!ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «not!!!ˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8137,7 +8173,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8542,7 +8578,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8568,7 +8604,7 @@ async fn test_rewrap_line_comment_in_go(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -8596,7 +8632,7 @@ async fn test_rewrap_line_comment_in_c(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -26845,6 +26881,99 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_code_actions_build_tasks_context_error_notifies(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    struct FailingContextProvider;
+    impl ContextProvider for FailingContextProvider {
+        fn build_context(
+            &self,
+            _: &TaskVariables,
+            _: ContextLocation<'_>,
+            _: Option<HashMap<String, String>>,
+            _: Arc<dyn LanguageToolchainStore>,
+            _: &mut gpui::App,
+        ) -> Task<anyhow::Result<TaskVariables>> {
+            Task::ready(Err(anyhow::anyhow!("Task context provider failed")))
+        }
+    }
+
+    let language = Arc::new(
+        Arc::try_unwrap(rust_lang())
+            .unwrap()
+            .with_context_provider(Some(Arc::new(FailingContextProvider))),
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/a"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(language.clone());
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let workspace = window
+        .read_with(&mut cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let worktree_id = workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(&mut cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    editor.update_in(&mut cx, |editor, window, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language.clone()), cx)
+        });
+
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor.runnables.insert(
+            buffer.read(cx).remote_id(),
+            0,
+            buffer.read(cx).version(),
+            RunnableTasks {
+                templates: Vec::new(),
+                offset: snapshot.anchor_before(MultiBufferOffset(0)),
+                column: 0,
+                extra_variables: HashMap::default(),
+                context_range: BufferOffset(0)..BufferOffset(0),
+            },
+        );
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+
+    workspace.update_in(&mut cx, |workspace, _, _| {
+        assert!(!workspace.notification_ids().is_empty());
+    });
+}
+
+#[gpui::test]
 async fn test_folding_buffers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -27897,6 +28026,109 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     assert_eq!(0, breakpoints.len());
     assert_breakpoint(&breakpoints, &abs_path, vec![]);
+}
+
+#[gpui::test]
+async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let first_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (first_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(first_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    first_editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let replacement_buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("Alpha\nBeta\nGamma", None, true, cx)
+    });
+    project
+        .update(cx, |project, cx| {
+            project.save_buffer_as(
+                replacement_buffer.clone(),
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("main.rs").into(),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    let (replacement_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(replacement_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    replacement_editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let project_path = first_editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(Arc::from)
+            .unwrap()
+    });
+
+    let breakpoints = first_editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .source_breakpoints_from_path(&abs_path, cx)
+    });
+
+    assert_eq!(
+        vec![0, 1],
+        breakpoints
+            .into_iter()
+            .map(|breakpoint| breakpoint.row)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[gpui::test]
@@ -37364,6 +37596,47 @@ fn setup_syntax_highlighting_with_theme(
             },
             window,
             cx,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.diagnostics_enabled(),
+            "diagnostics should start enabled by default"
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_diagnostics(&actions::ToggleDiagnostics, window, cx);
+        assert!(
+            !editor.diagnostics_enabled(),
+            "diagnostics should be disabled after toggle"
+        );
+    });
+
+    update_test_editor_settings(&mut cx, &|settings| {
+        settings.cursor_blink = Some(false);
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.diagnostics_enabled(),
+            "diagnostics should remain disabled after settings change"
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_diagnostics(&actions::ToggleDiagnostics, window, cx);
+        assert!(
+            editor.diagnostics_enabled(),
+            "diagnostics should be re-enabled after second toggle"
         );
     });
 }

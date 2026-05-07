@@ -3,7 +3,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
+use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -381,11 +381,14 @@ impl OllamaLanguageModel {
                     }
                 }
                 Role::Assistant => {
-                    let content = msg.string_contents();
+                    let mut text_content = String::new();
                     let mut thinking = None;
                     let mut tool_calls = Vec::new();
                     for content in msg.content.into_iter() {
                         match content {
+                            MessageContent::Text(text) => {
+                                text_content.push_str(&text);
+                            }
                             MessageContent::Thinking { text, .. } if !text.is_empty() => {
                                 thinking = Some(text)
                             }
@@ -402,7 +405,7 @@ impl OllamaLanguageModel {
                         }
                     }
                     messages.push(ChatMessage::Assistant {
-                        content,
+                        content: text_content,
                         tool_calls: Some(tool_calls),
                         images: if images.is_empty() {
                             None

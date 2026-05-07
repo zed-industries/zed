@@ -713,7 +713,6 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            new_thread_location: Default::default(),
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         };

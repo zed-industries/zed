@@ -174,6 +174,12 @@ On Linux:
 ls ~/.local/share/zed/extensions/installed
 ```
 
+On Windows:
+
+```pwsh
+Get-ChildItem "$env:LOCALAPPDATA\Zed\extensions\installed" -Name
+```
+
 Define extensions which should be installed (`true`) or never installed (`false`).
 
 ```json [settings]
@@ -801,9 +807,8 @@ List of `string` values
 
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in an editor or input box.
-- Setting: `hide_mouse`
-- Default: `on_typing_and_movement`
+- Description: Determines when the mouse cursor should be hidden in response to keyboard input.
+- Default: `on_typing_and_action`
 
 **Options**
 
@@ -823,11 +828,11 @@ List of `string` values
 }
 ```
 
-3. Hide on both typing and cursor movement:
+3. Hide on typing and on key bindings that resolve to an action:
 
 ```json [settings]
 {
-  "hide_mouse": "on_typing_and_movement"
+  "hide_mouse": "on_typing_and_action"
 }
 ```
 

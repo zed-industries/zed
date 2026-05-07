@@ -1,5 +1,4 @@
 mod db;
-mod edit_agent;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
@@ -38,7 +37,7 @@ use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
-    WeakEntity,
+    TaskExt, WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{AgentId, Project, ProjectItem, ProjectPath, Worktree};
