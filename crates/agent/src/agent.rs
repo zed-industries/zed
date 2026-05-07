@@ -45,7 +45,9 @@ use gpui::{
     WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
-use project::{AgentId, Project, ProjectItem, ProjectPath, Worktree};
+use project::{
+    AgentId, Project, ProjectItem, ProjectPath, Worktree, trusted_worktrees::TrustedWorktrees,
+};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
     WorktreeContext,
@@ -511,7 +513,7 @@ impl NativeAgent {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe(&project, Self::handle_project_event),
             cx.subscribe(
                 &context_server_store,
@@ -522,6 +524,21 @@ impl NativeAgent {
                 Self::handle_context_server_registry_event,
             ),
         ];
+        // When the user trusts a worktree (or revokes trust), project-local
+        // skills become eligible (or ineligible) for loading. Trigger a
+        // refresh so the catalog and slash-command list update without a
+        // restart. This is unconditional — a `Trusted` event for any
+        // worktree under any project is cheap to handle and keeps the
+        // logic straightforward.
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            subscriptions.push(
+                cx.subscribe(&trusted_worktrees, move |this, _, _event, _cx| {
+                    if let Some(state) = this.projects.get_mut(&project_id) {
+                        state.project_context_needs_refresh.send(()).ok();
+                    }
+                }),
+            );
+        }
 
         let (project_context_needs_refresh_tx, project_context_needs_refresh_rx) =
             watch::channel(());
@@ -633,23 +650,40 @@ impl NativeAgent {
             Task::ready(Vec::new())
         };
 
-        // Load project-local skills from each worktree
+        // Load project-local skills, but only from worktrees the user has
+        // trusted. Skills in `.agents/skills/` ship with the project; a
+        // freshly cloned untrusted repo can carry hostile descriptions or
+        // bodies, so we keep them out of the catalog and the slash-command
+        // list until trust is granted. The subscription in
+        // `register_project_with_initial_context` triggers a context
+        // refresh when a worktree's trust state changes, so newly trusted
+        // worktrees pick up their skills without restarting.
+        let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
+        let worktree_store = project.read(cx).worktree_store();
         let project_skills_tasks: Vec<_> = if skills_enabled {
             worktrees
                 .iter()
-                .map(|worktree| {
+                .filter_map(|worktree| {
                     let worktree_id = worktree.read(cx).id();
+                    let is_trusted = trusted_worktrees.as_ref().is_none_or(|trusted_worktrees| {
+                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                            trusted_worktrees.can_trust(&worktree_store, worktree_id, cx)
+                        })
+                    });
+                    if !is_trusted {
+                        return None;
+                    }
                     let abs_path = worktree.read(cx).abs_path();
                     let skills_dir = abs_path.join(project_skills_relative_path());
                     let fs = fs.clone();
-                    cx.background_spawn(async move {
+                    Some(cx.background_spawn(async move {
                         load_skills_from_directory(
                             &fs,
                             &skills_dir,
                             SkillSource::ProjectLocal { worktree_id },
                         )
                         .await
-                    })
+                    }))
                 })
                 .collect()
         } else {
@@ -2780,6 +2814,112 @@ mod internal_tests {
                 .map(|s| s.name.as_str())
                 .collect();
             assert_eq!(catalog, vec!["visible-skill"]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_skills_require_worktree_trust(cx: &mut TestAppContext) {
+        use collections::{HashMap, HashSet};
+        use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
+
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+            // The trust global isn't created by `init_test`. We need it
+            // for `Project::test_with_worktree_trust` to actually wire up
+            // trust tracking and for our subscription in
+            // `register_project_with_initial_context` to fire.
+            trusted_worktrees::init(HashMap::default(), cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: A project skill\n---\n\nbody"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        // `test_with_worktree_trust` initializes the trust system and
+        // starts every worktree as restricted, mirroring production
+        // behavior on a freshly opened folder.
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [Path::new("/project")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/project")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Untrusted: project skills are excluded from the loaded list and
+        // never make it into the catalog or slash commands.
+        agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert!(
+                state.skills.is_empty(),
+                "untrusted worktree skills should not load: {:?}",
+                state
+                    .skills
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            assert!(
+                !names.contains(&"my-skill"),
+                "untrusted skill leaked into slash commands: {names:?}"
+            );
+        });
+
+        // Granting trust should trigger a context refresh; the skill then
+        // appears in both the catalog and the slash-command list.
+        cx.update(|cx| {
+            let trusted_worktrees = TrustedWorktrees::try_get_global(cx)
+                .expect("trusted worktrees global initialized by test_with_worktree_trust");
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let names: Vec<&str> = state.skills.iter().map(|s| s.name.as_str()).collect();
+            assert_eq!(names, vec!["my-skill"]);
+            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let command_names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            assert!(
+                command_names.contains(&"my-skill"),
+                "trusted skill should appear in slash commands: {command_names:?}"
+            );
         });
     }
 
