@@ -65,9 +65,7 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Grok43 => 1_000_000,
-            Self::Grok420MultiAgent | Self::Grok420Reasoning | Self::Grok420NonReasoning => {
-                2_000_000
-            }
+            Self::Grok420Reasoning | Self::Grok420NonReasoning => 2_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
