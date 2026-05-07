@@ -10,8 +10,6 @@ pub enum Model {
     #[default]
     #[serde(rename = "grok-4.3", alias = "grok-4.3-latest")]
     Grok43,
-    #[serde(rename = "grok-4.20-multi-agent-0309")]
-    Grok420MultiAgent,
     #[serde(rename = "grok-4.20-0309-reasoning")]
     Grok420Reasoning,
     #[serde(rename = "grok-4.20-0309-non-reasoning")]
@@ -38,7 +36,6 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "grok-4.3" => Ok(Self::Grok43),
-            "grok-4.20-multi-agent-0309" => Ok(Self::Grok420MultiAgent),
             "grok-4.20-0309-reasoning" => Ok(Self::Grok420Reasoning),
             "grok-4.20-0309-non-reasoning" => Ok(Self::Grok420NonReasoning),
             _ => anyhow::bail!("invalid model id '{id}'"),
@@ -48,7 +45,6 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Self::Grok43 => "grok-4.3",
-            Self::Grok420MultiAgent => "grok-4.20-multi-agent-0309",
             Self::Grok420Reasoning => "grok-4.20-0309-reasoning",
             Self::Grok420NonReasoning => "grok-4.20-0309-non-reasoning",
             Self::Custom { name, .. } => name,
@@ -58,7 +54,6 @@ impl Model {
     pub fn display_name(&self) -> &str {
         match self {
             Self::Grok43 => "Grok 4.3",
-            Self::Grok420MultiAgent => "Grok 4.20 Multi-Agent",
             Self::Grok420Reasoning => "Grok 4.20 Reasoning",
             Self::Grok420NonReasoning => "Grok 4.20 (Non-Reasoning)",
             Self::Custom {
@@ -79,10 +74,7 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Self::Grok43
-            | Self::Grok420MultiAgent
-            | Self::Grok420Reasoning
-            | Self::Grok420NonReasoning => Some(64_000),
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => Some(64_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -91,10 +83,7 @@ impl Model {
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::Grok43
-            | Self::Grok420MultiAgent
-            | Self::Grok420Reasoning
-            | Self::Grok420NonReasoning => true,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
             Self::Custom {
                 parallel_tool_calls: Some(support),
                 ..
@@ -105,10 +94,7 @@ impl Model {
 
     pub fn requires_json_schema_subset(&self) -> bool {
         match self {
-            Self::Grok43
-            | Self::Grok420MultiAgent
-            | Self::Grok420Reasoning
-            | Self::Grok420NonReasoning => true,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
             Self::Custom { .. } => false,
         }
     }
@@ -119,10 +105,7 @@ impl Model {
 
     pub fn supports_tool(&self) -> bool {
         match self {
-            Self::Grok43
-            | Self::Grok420MultiAgent
-            | Self::Grok420Reasoning
-            | Self::Grok420NonReasoning => true,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
             Self::Custom {
                 supports_tools: Some(support),
                 ..
@@ -133,10 +116,7 @@ impl Model {
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Grok43
-            | Self::Grok420MultiAgent
-            | Self::Grok420Reasoning
-            | Self::Grok420NonReasoning => true,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
             Self::Custom {
                 supports_images: Some(support),
                 ..
