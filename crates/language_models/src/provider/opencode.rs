@@ -722,7 +722,7 @@ fn ensure_opencode_reasoning_content(request: &mut open_ai::Request) {
             reasoning_content, ..
         } = message
         {
-            if matches!(reasoning_content.as_deref(), None | Some("")) {
+            if reasoning_content.as_deref().is_none_or(str::is_empty) {
                 // Kimi models require reasoning content to be present and non-empty.
                 *reasoning_content = Some(" ".to_owned());
             }
