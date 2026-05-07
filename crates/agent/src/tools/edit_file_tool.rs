@@ -1,4 +1,3 @@
-use super::deserialize_maybe_stringified;
 pub(crate) use super::edit_session::PartialEdit;
 pub use super::edit_session::{Edit, EditSessionOutput as EditFileToolOutput};
 use super::edit_session::{
@@ -21,13 +20,16 @@ use ui::SharedString;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
-/// This is a tool for applying edits to an existing file.
+/// This is a tool for applying a single edit to an existing file.
 ///
 /// Before using this tool:
 ///
 /// 1. Use the `read_file` tool to understand the file's contents and context
 ///
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
+///
+/// Properly escape all text fields as valid JSON strings.
+/// Remember to escape special characters like newlines (`\n`) and quotes (`"`) in JSON strings.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
@@ -49,18 +51,26 @@ pub struct EditFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// List of edit operations to apply sequentially.
-    /// Each edit finds `old_text` in the file and replaces it with `new_text`.
-    #[serde(deserialize_with = "deserialize_maybe_stringified")]
-    pub edits: Vec<Edit>,
+    /// The exact text to find in the file. This will be matched using fuzzy matching
+    /// to handle minor differences in whitespace or formatting.
+    ///
+    /// Be minimal with replacements:
+    /// - For unique lines, include only those lines
+    /// - For non-unique lines, include enough context to identify them
+    pub old_text: String,
+
+    /// The text to replace the old_text with
+    pub new_text: String,
 }
 
 #[derive(Clone, Default, Debug, Deserialize)]
 struct EditFileToolPartialInput {
     #[serde(default)]
     path: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_maybe_stringified")]
-    edits: Option<Vec<PartialEdit>>,
+    #[serde(default)]
+    old_text: Option<String>,
+    #[serde(default)]
+    new_text: Option<String>,
 }
 
 pub struct EditFileTool {
@@ -142,7 +152,14 @@ impl EditFileTool {
                                     }
 
                                     if let Some(current_session) = &mut session
-                                        && let Err(error) = current_session.process_edit(parsed.edits.as_deref(), event_stream, cx)
+                                        && let Err(error) = current_session.process_edit(
+                                            Some(std::slice::from_ref(&PartialEdit {
+                                                old_text: parsed.old_text,
+                                                new_text: parsed.new_text,
+                                            })),
+                                            event_stream,
+                                            cx,
+                                        )
                                     {
                                         log::error!("Failed to process edit: {}", error);
                                         return EditSessionResult::Failed { error, session };
@@ -174,7 +191,10 @@ impl EditFileTool {
                                     }
                                 };
 
-                                return match session.finalize_edit(full_input.edits, event_stream, cx).await {
+                                return match session.finalize_edit(vec![Edit {
+                                    old_text: full_input.old_text,
+                                    new_text: full_input.new_text,
+                                }], event_stream, cx).await {
                                     Ok(()) => EditSessionResult::Completed(session),
                                     Err(error) => {
                                         log::error!("Failed to finalize edit: {}", error);
@@ -297,10 +317,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/file.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "line 2".into(),
-                            new_text: "modified line 2".into(),
-                        }],
+                        old_text: "line 2".into(),
+                        new_text: "modified line 2".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -315,120 +333,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_streaming_edit_multiple_edits(cx: &mut TestAppContext) {
-        let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
-            cx,
-            json!({"file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"}),
-        )
-        .await;
-        let result = cx
-            .update(|cx| {
-                edit_tool.clone().run(
-                    ToolInput::resolved(EditFileToolInput {
-                        path: "root/file.txt".into(),
-                        edits: vec![
-                            Edit {
-                                old_text: "line 5".into(),
-                                new_text: "modified line 5".into(),
-                            },
-                            Edit {
-                                old_text: "line 1".into(),
-                                new_text: "modified line 1".into(),
-                            },
-                        ],
-                    }),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
-            .await;
-
-        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(
-            new_text,
-            "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_streaming_edit_adjacent_edits(cx: &mut TestAppContext) {
-        let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
-            cx,
-            json!({"file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"}),
-        )
-        .await;
-        let result = cx
-            .update(|cx| {
-                edit_tool.clone().run(
-                    ToolInput::resolved(EditFileToolInput {
-                        path: "root/file.txt".into(),
-                        edits: vec![
-                            Edit {
-                                old_text: "line 2".into(),
-                                new_text: "modified line 2".into(),
-                            },
-                            Edit {
-                                old_text: "line 3".into(),
-                                new_text: "modified line 3".into(),
-                            },
-                        ],
-                    }),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
-            .await;
-
-        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(
-            new_text,
-            "line 1\nmodified line 2\nmodified line 3\nline 4\nline 5\n"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_streaming_edit_ascending_order_edits(cx: &mut TestAppContext) {
-        let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
-            cx,
-            json!({"file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"}),
-        )
-        .await;
-        let result = cx
-            .update(|cx| {
-                edit_tool.clone().run(
-                    ToolInput::resolved(EditFileToolInput {
-                        path: "root/file.txt".into(),
-                        edits: vec![
-                            Edit {
-                                old_text: "line 1".into(),
-                                new_text: "modified line 1".into(),
-                            },
-                            Edit {
-                                old_text: "line 5".into(),
-                                new_text: "modified line 5".into(),
-                            },
-                        ],
-                    }),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
-            .await;
-
-        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(
-            new_text,
-            "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
-        );
-    }
-
-    #[gpui::test]
     async fn test_streaming_edit_nonexistent_file(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(cx, json!({})).await;
         let result = cx
@@ -436,10 +340,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/nonexistent_file.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "foo".into(),
-                            new_text: "bar".into(),
-                        }],
+                        old_text: "foo".into(),
+                        new_text: "bar".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -469,10 +371,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/file.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "nonexistent text that is not in the file".into(),
-                            new_text: "replacement".into(),
-                        }],
+                        old_text: "nonexistent text that is not in the file".into(),
+                        new_text: "replacement".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -515,7 +415,7 @@ mod tests {
         // Now send the final complete input
         sender.send_full(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
+            "old_text": "line 2", "new_text": "modified line 2"
         }));
 
         let result = task.await;
@@ -557,65 +457,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_streaming_edit_with_multiple_partials(cx: &mut TestAppContext) {
-        let (edit_tool, _project, _action_log, _fs, _thread) = setup_test(
-            cx,
-            json!({"file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"}),
-        )
-        .await;
-        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
-
-        // Simulate fine-grained streaming of the JSON
-        sender.send_partial(json!({}));
-        cx.run_until_parked();
-
-        sender.send_partial(json!({
-            "path": "root/file.txt"
-        }));
-        cx.run_until_parked();
-
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-        }));
-        cx.run_until_parked();
-
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [{"old_text": "line 1"}]
-        }));
-        cx.run_until_parked();
-
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "line 1", "new_text": "modified line 1"},
-                {"old_text": "line 5"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // Send final complete input
-        sender.send_full(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "line 1", "new_text": "modified line 1"},
-                {"old_text": "line 5", "new_text": "modified line 5"}
-            ]
-        }));
-
-        let result = task.await;
-        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(
-            new_text,
-            "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
-        );
-    }
-
-    #[gpui::test]
     async fn test_streaming_no_partials_direct_final(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;
@@ -626,7 +467,7 @@ mod tests {
         // Send final immediately with no partials (simulates non-streaming path)
         sender.send_full(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
+            "old_text": "line 2", "new_text": "modified line 2"
         }));
 
         let result = task.await;
@@ -634,284 +475,6 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "line 1\nmodified line 2\nline 3\n");
-    }
-
-    #[gpui::test]
-    async fn test_streaming_incremental_edit_application(cx: &mut TestAppContext) {
-        let (edit_tool, project, _action_log, _fs, _thread) = setup_test(
-            cx,
-            json!({"file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"}),
-        )
-        .await;
-        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
-
-        // Stream description, path, mode
-        sender.send_partial(json!({}));
-        cx.run_until_parked();
-
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-        }));
-        cx.run_until_parked();
-
-        // First edit starts streaming (old_text only, still in progress)
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [{"old_text": "line 1"}]
-        }));
-        cx.run_until_parked();
-
-        // Buffer should not have changed yet — the first edit is still in progress
-        // (no second edit has appeared to prove the first is complete)
-        let buffer_text = project.update(cx, |project, cx| {
-            let project_path = project.find_project_path(&PathBuf::from("root/file.txt"), cx);
-            project_path.and_then(|pp| {
-                project
-                    .get_open_buffer(&pp, cx)
-                    .map(|buffer| buffer.read(cx).text())
-            })
-        });
-        // Buffer is open (from streaming) but edit 1 is still in-progress
-        assert_eq!(
-            buffer_text.as_deref(),
-            Some("line 1\nline 2\nline 3\nline 4\nline 5\n"),
-            "Buffer should not be modified while first edit is still in progress"
-        );
-
-        // Second edit appears — this proves the first edit is complete, so it
-        // should be applied immediately during streaming
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "line 1", "new_text": "MODIFIED 1"},
-                {"old_text": "line 5"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // First edit should now be applied to the buffer
-        let buffer_text = project.update(cx, |project, cx| {
-            let project_path = project.find_project_path(&PathBuf::from("root/file.txt"), cx);
-            project_path.and_then(|pp| {
-                project
-                    .get_open_buffer(&pp, cx)
-                    .map(|buffer| buffer.read(cx).text())
-            })
-        });
-        assert_eq!(
-            buffer_text.as_deref(),
-            Some("MODIFIED 1\nline 2\nline 3\nline 4\nline 5\n"),
-            "First edit should be applied during streaming when second edit appears"
-        );
-
-        // Send final complete input
-        sender.send_full(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "line 1", "new_text": "MODIFIED 1"},
-                {"old_text": "line 5", "new_text": "MODIFIED 5"}
-            ]
-        }));
-
-        let result = task.await;
-        let EditFileToolOutput::Success {
-            new_text, old_text, ..
-        } = result.unwrap()
-        else {
-            panic!("expected success");
-        };
-        assert_eq!(new_text, "MODIFIED 1\nline 2\nline 3\nline 4\nMODIFIED 5\n");
-        assert_eq!(
-            *old_text, "line 1\nline 2\nline 3\nline 4\nline 5\n",
-            "old_text should reflect the original file content before any edits"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_streaming_incremental_three_edits(cx: &mut TestAppContext) {
-        let (edit_tool, project, _action_log, _fs, _thread) =
-            setup_test(cx, json!({"file.txt": "aaa\nbbb\nccc\nddd\neee\n"})).await;
-        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
-
-        // Setup: description + path + mode
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-        }));
-        cx.run_until_parked();
-
-        // Edit 1 in progress
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [{"old_text": "aaa", "new_text": "AAA"}]
-        }));
-        cx.run_until_parked();
-
-        // Edit 2 appears — edit 1 is now complete and should be applied
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "aaa", "new_text": "AAA"},
-                {"old_text": "ccc"}
-            ]
-        }));
-        cx.run_until_parked();
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "mode": "edit",
-            "edits": [
-                {"old_text": "aaa", "new_text": "AAA"},
-                {"old_text": "ccc", "new_text": "CCC"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // Verify edit 1 fully applied. Edit 2's new_text is being
-        // streamed: "CCC" is inserted but the old "ccc" isn't deleted
-        // yet (StreamingDiff::finish runs when edit 3 marks edit 2 done).
-        let buffer_text = project.update(cx, |project, cx| {
-            let pp = project
-                .find_project_path(&PathBuf::from("root/file.txt"), cx)
-                .unwrap();
-            project.get_open_buffer(&pp, cx).map(|b| b.read(cx).text())
-        });
-        assert_eq!(buffer_text.as_deref(), Some("AAA\nbbb\nCCCccc\nddd\neee\n"));
-
-        // Edit 3 appears — edit 2 is now complete and should be applied
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "aaa", "new_text": "AAA"},
-                {"old_text": "ccc", "new_text": "CCC"},
-                {"old_text": "eee"}
-            ]
-        }));
-        cx.run_until_parked();
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "mode": "edit",
-            "edits": [
-                {"old_text": "aaa", "new_text": "AAA"},
-                {"old_text": "ccc", "new_text": "CCC"},
-                {"old_text": "eee", "new_text": "EEE"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // Verify edits 1 and 2 fully applied. Edit 3's new_text is being
-        // streamed: "EEE" is inserted but old "eee" isn't deleted yet.
-        let buffer_text = project.update(cx, |project, cx| {
-            let pp = project
-                .find_project_path(&PathBuf::from("root/file.txt"), cx)
-                .unwrap();
-            project.get_open_buffer(&pp, cx).map(|b| b.read(cx).text())
-        });
-        assert_eq!(buffer_text.as_deref(), Some("AAA\nbbb\nCCC\nddd\nEEEeee\n"));
-
-        // Send final
-        sender.send_full(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "aaa", "new_text": "AAA"},
-                {"old_text": "ccc", "new_text": "CCC"},
-                {"old_text": "eee", "new_text": "EEE"}
-            ]
-        }));
-
-        let result = task.await;
-        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(new_text, "AAA\nbbb\nCCC\nddd\nEEE\n");
-    }
-
-    #[gpui::test]
-    async fn test_streaming_edit_failure_mid_stream(cx: &mut TestAppContext) {
-        let (edit_tool, project, _action_log, _fs, _thread) =
-            setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;
-        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
-
-        // Setup
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-        }));
-        cx.run_until_parked();
-
-        // Edit 1 (valid) in progress — not yet complete (no second edit)
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "line 1", "new_text": "MODIFIED"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // Edit 2 appears (will fail to match) — this makes edit 1 complete.
-        // Edit 1 should be applied. Edit 2 is still in-progress (last edit).
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "line 1", "new_text": "MODIFIED"},
-                {"old_text": "nonexistent text that does not appear anywhere in the file at all", "new_text": "whatever"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        let buffer = project.update(cx, |project, cx| {
-            let pp = project
-                .find_project_path(&PathBuf::from("root/file.txt"), cx)
-                .unwrap();
-            project.get_open_buffer(&pp, cx).unwrap()
-        });
-
-        // Verify edit 1 was applied
-        let buffer_text = buffer.read_with(cx, |buffer, _cx| buffer.text());
-        assert_eq!(
-            buffer_text, "MODIFIED\nline 2\nline 3\n",
-            "First edit should be applied even though second edit will fail"
-        );
-
-        // Edit 3 appears — this makes edit 2 "complete", triggering its
-        // resolution which should fail (old_text doesn't exist in the file).
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "line 1", "new_text": "MODIFIED"},
-                {"old_text": "nonexistent text that does not appear anywhere in the file at all", "new_text": "whatever"},
-                {"old_text": "line 3", "new_text": "MODIFIED 3"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // The error from edit 2 should have propagated out of the partial loop.
-        // Drop sender to unblock recv() if the loop didn't catch it.
-        drop(sender);
-
-        let result = task.await;
-        let EditFileToolOutput::Error {
-            error,
-            diff,
-            input_path,
-        } = result.unwrap_err()
-        else {
-            panic!("expected error");
-        };
-
-        assert!(
-            error.contains("Could not find matching text for edit at index 1"),
-            "Expected error about edit 1 failing, got: {error}"
-        );
-        // Ensure that first edit was applied successfully and that we saved the buffer
-        assert_eq!(input_path, Some(PathBuf::from("root/file.txt")));
-        assert_eq!(
-            diff,
-            "@@ -1,3 +1,3 @@\n-line 1\n+MODIFIED\n line 2\n line 3\n"
-        );
     }
 
     #[gpui::test]
@@ -930,13 +493,13 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "hello world"}]
+            "old_text": "hello world"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "hello world", "new_text": "goodbye world"}]
+            "old_text": "hello world", "new_text": "goodbye world"
         }));
         cx.run_until_parked();
 
@@ -959,7 +522,7 @@ mod tests {
         // Send final — the edit is applied during finalization
         sender.send_full(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "hello world", "new_text": "goodbye world"}]
+            "old_text": "hello world", "new_text": "goodbye world"
         }));
 
         let result = task.await;
@@ -989,14 +552,14 @@ mod tests {
 
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
+            "old_text": "line 2", "new_text": "modified line 2"
         }));
         cx.run_until_parked();
 
         // Send the final complete input
         sender.send_full(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "line 2", "new_text": "modified line 2"}]
+            "old_text": "line 2", "new_text": "modified line 2"
         }));
 
         let result = task.await;
@@ -1660,10 +1223,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/test.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "original content".into(),
-                            new_text: "modified content".into(),
-                        }],
+                        old_text: "original content".into(),
+                        new_text: "modified content".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -1682,10 +1243,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/test.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "modified content".into(),
-                            new_text: "further modified content".into(),
-                        }],
+                        old_text: "modified content".into(),
+                        new_text: "further modified content".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -1757,10 +1316,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/test.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "externally modified content".into(),
-                            new_text: "new content".into(),
-                        }],
+                        old_text: "externally modified content".into(),
+                        new_text: "new content".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -1839,10 +1396,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/test.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "original content".into(),
-                            new_text: "new content".into(),
-                        }],
+                        old_text: "original content".into(),
+                        new_text: "new content".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -1921,10 +1476,8 @@ mod tests {
                 edit_tool.clone().run(
                     ToolInput::resolved(EditFileToolInput {
                         path: "root/test.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "original content".into(),
-                            new_text: "new content".into(),
-                        }],
+                        old_text: "original content".into(),
+                        new_text: "new content".into(),
                     }),
                     ToolCallEventStream::test().0,
                     cx,
@@ -1960,56 +1513,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_streaming_overlapping_edits_resolved_sequentially(cx: &mut TestAppContext) {
-        // Edit 1's replacement introduces text that contains edit 2's
-        // old_text as a substring. Because edits resolve sequentially
-        // against the current buffer, edit 2 finds a unique match in
-        // the modified buffer and succeeds.
-        let (edit_tool, _project, _action_log, _fs, _thread) =
-            setup_test(cx, json!({"file.txt": "aaa\nbbb\nccc\nddd\neee\n"})).await;
-        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
-
-        // Setup: resolve the buffer
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-        }));
-        cx.run_until_parked();
-
-        // Edit 1 replaces "bbb\nccc" with "XXX\nccc\nddd", so the
-        // buffer becomes "aaa\nXXX\nccc\nddd\nddd\neee\n".
-        // Edit 2's old_text "ccc\nddd" matches the first occurrence
-        // in the modified buffer and replaces it with "ZZZ".
-        // Edit 3 exists only to mark edit 2 as "complete" during streaming.
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "bbb\nccc", "new_text": "XXX\nccc\nddd"},
-                {"old_text": "ccc\nddd", "new_text": "ZZZ"},
-                {"old_text": "eee", "new_text": "DUMMY"}
-            ]
-        }));
-        cx.run_until_parked();
-
-        // Send the final input with all three edits.
-        sender.send_full(json!({
-            "path": "root/file.txt",
-            "edits": [
-                {"old_text": "bbb\nccc", "new_text": "XXX\nccc\nddd"},
-                {"old_text": "ccc\nddd", "new_text": "ZZZ"},
-                {"old_text": "eee", "new_text": "DUMMY"}
-            ]
-        }));
-
-        let result = task.await;
-        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(new_text, "aaa\nXXX\nZZZ\nddd\nDUMMY\n");
-    }
-
-    #[gpui::test]
     async fn test_streaming_edit_json_fixer_escape_corruption(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello\nworld\nfoo\n"})).await;
@@ -2029,21 +1532,21 @@ mod tests {
         //   partial 2: old_text = "hello\nworld" (fixer corrected the escape)
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "hello\\"}]
+            "old_text": "hello\\"
         }));
         cx.run_until_parked();
 
         // Now the fixer corrects it to the real newline.
         sender.send_partial(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "hello\nworld"}]
+            "old_text": "hello\nworld"
         }));
         cx.run_until_parked();
 
         // Send final.
         sender.send_full(json!({
             "path": "root/file.txt",
-            "edits": [{"old_text": "hello\nworld", "new_text": "HELLO\nWORLD"}]
+            "old_text": "hello\nworld", "new_text": "HELLO\nWORLD"
         }));
 
         let result = task.await;
@@ -2051,31 +1554,6 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "HELLO\nWORLD\nfoo\n");
-    }
-
-    #[gpui::test]
-    async fn test_streaming_final_input_stringified_edits_succeeds(cx: &mut TestAppContext) {
-        let (edit_tool, _project, _action_log, _fs, _thread) =
-            setup_test(cx, json!({"file.txt": "hello\nworld\n"})).await;
-        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
-
-        sender.send_partial(json!({
-            "path": "root/file.txt",
-        }));
-        cx.run_until_parked();
-
-        sender.send_full(json!({
-            "path": "root/file.txt",
-            "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
-        }));
-
-        let result = task.await;
-        let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(new_text, "HELLO\nWORLD\n");
     }
 
     // Verifies that after streaming_edit_file_tool edits a file, the action log
@@ -2095,10 +1573,8 @@ mod tests {
             edit_tool.clone().run(
                 ToolInput::resolved(EditFileToolInput {
                     path: "root/file.txt".into(),
-                    edits: vec![Edit {
-                        old_text: "line 2".into(),
-                        new_text: "modified line 2".into(),
-                    }],
+                    old_text: "line 2".into(),
+                    new_text: "modified line 2".into(),
                 }),
                 event_stream,
                 cx,
@@ -2131,24 +1607,24 @@ mod tests {
         let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
 
         sender.send_partial(json!({
-            "edits": [{"old_text": "old_content"}]
+            "old_text": "old_content"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "edits": [{"old_text": "old_content", "new_text": "new_content"}]
+            "old_text": "old_content", "new_text": "new_content"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
-            "edits": [{"old_text": "old_content", "new_text": "new_content"}],
+            "old_text": "old_content", "new_text": "new_content",
             "path": "root"
         }));
         cx.run_until_parked();
 
         // Send final.
         sender.send_full(json!({
-            "edits": [{"old_text": "old_content", "new_text": "new_content"}],
+            "old_text": "old_content", "new_text": "new_content",
             "path": "root/file.txt"
         }));
         cx.run_until_parked();
@@ -2179,21 +1655,21 @@ mod tests {
         sender.send_partial(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": "old"}]
+            "new_text": "new_content", "old_text": "old"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": "old_content"}]
+            "new_text": "new_content", "old_text": "old_content"
         }));
         cx.run_until_parked();
 
         sender.send_full(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": "old_content"}]
+            "new_text": "new_content", "old_text": "old_content"
         }));
         cx.run_until_parked();
 
@@ -2221,28 +1697,28 @@ mod tests {
         sender.send_partial(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content"}]
+            "new_text": "new_content"
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": ""}]
+            "new_text": "new_content", "old_text": ""
         }));
         cx.run_until_parked();
 
         sender.send_partial(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": "old"}]
+            "new_text": "new_content", "old_text": "old"
         }));
         cx.run_until_parked();
 
         sender.send_full(json!({
             "mode": "edit",
             "path": "root/file.txt",
-            "edits": [{"new_text": "new_content", "old_text": "old_content"}]
+            "new_text": "new_content", "old_text": "old_content"
         }));
         cx.run_until_parked();
 
@@ -2281,7 +1757,7 @@ mod tests {
 
         sender.send_full(json!({
             "path": "root/file.rs",
-            "edits": [{"old_text": old_text, "new_text": new_text}]
+            "old_text": old_text, "new_text": new_text
         }));
 
         let result = task.await;
@@ -2320,7 +1796,7 @@ mod tests {
 
         sender.send_full(json!({
             "path": "root/file.rs",
-            "edits": [{"old_text": old_text, "new_text": new_text}]
+            "old_text": old_text, "new_text": new_text
         }));
 
         let result = task.await;
@@ -2341,40 +1817,33 @@ mod tests {
     }
 
     #[test]
-    fn test_input_deserializes_double_encoded_fields() {
+    fn test_input_deserializes_flat_fields() {
         let input = serde_json::from_value::<EditFileToolInput>(json!({
             "path": "root/file.txt",
-            "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
+            "old_text": "hello\nworld",
+            "new_text": "HELLO\nWORLD"
         }))
         .expect("input should deserialize");
 
-        assert_eq!(input.edits.len(), 1);
-        assert_eq!(input.edits[0].old_text, "hello\nworld");
-        assert_eq!(input.edits[0].new_text, "HELLO\nWORLD");
+        assert_eq!(input.old_text, "hello\nworld");
+        assert_eq!(input.new_text, "HELLO\nWORLD");
 
         let input = serde_json::from_value::<EditFileToolPartialInput>(json!({
             "path": "root/file.txt",
-            "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
+            "old_text": "hello\nworld",
+            "new_text": "HELLO\nWORLD"
         }))
         .expect("input should deserialize");
 
-        let edits = input.edits.expect("edits should deserialize");
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].old_text.as_deref(), Some("hello\nworld"));
-        assert_eq!(edits[0].new_text.as_deref(), Some("HELLO\nWORLD"));
+        assert_eq!(input.old_text.as_deref(), Some("hello\nworld"));
+        assert_eq!(input.new_text.as_deref(), Some("HELLO\nWORLD"));
 
         let input = serde_json::from_value::<EditFileToolPartialInput>(json!({
             "path": "root/file.txt"
         }))
         .expect("input should deserialize");
-        assert!(input.edits.is_none());
-
-        let input = serde_json::from_value::<EditFileToolPartialInput>(json!({
-            "path": "root/file.txt",
-            "edits": null
-        }))
-        .expect("input should deserialize");
-        assert!(input.edits.is_none());
+        assert!(input.old_text.is_none());
+        assert!(input.new_text.is_none());
     }
 
     async fn setup_test_with_fs(

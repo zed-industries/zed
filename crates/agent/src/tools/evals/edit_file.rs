@@ -1028,9 +1028,8 @@ fn eval_from_pixels_constructor() {
                 message(
                     User,
                     [text(indoc::indoc! {"
-                            Introduce a new `from_pixels` constructor in Canvas and
-                            also add tests for it in the same file.
-                        "})],
+                        Introduce a new `from_pixels` constructor in Canvas.
+                    "})],
                 ),
                 message(
                     Assistant,
@@ -1052,153 +1051,11 @@ fn eval_from_pixels_constructor() {
                         input_file_content,
                     )],
                 ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_2",
-                        GrepTool::NAME,
-                        GrepToolInput {
-                            regex: "mod\\s+tests".into(),
-                            include_pattern: Some("font-kit/src/canvas.rs".into()),
-                            offset: 0,
-                            case_sensitive: false,
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result("tool_2", GrepTool::NAME, "No matches found")],
-                ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_3",
-                        GrepTool::NAME,
-                        GrepToolInput {
-                            regex: "mod\\s+tests".into(),
-                            include_pattern: Some("font-kit/src/**/*.rs".into()),
-                            offset: 0,
-                            case_sensitive: false,
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result("tool_3", GrepTool::NAME, "No matches found")],
-                ),
-                message(
-                    Assistant,
-                    [tool_use(
-                        "tool_4",
-                        GrepTool::NAME,
-                        GrepToolInput {
-                            regex: "#\\[test\\]".into(),
-                            include_pattern: Some("font-kit/src/**/*.rs".into()),
-                            offset: 0,
-                            case_sensitive: false,
-                        },
-                    )],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "tool_4",
-                        GrepTool::NAME,
-                        indoc::indoc! {"
-                                Found 6 matches:
-
-                                ## Matches in font-kit/src/loaders/core_text.rs
-
-                                ### mod test › L926-936
-                                ```
-                                mod test {
-                                    use super::Font;
-                                    use crate::properties::{Stretch, Weight};
-
-                                    #[cfg(feature = \"source\")]
-                                    use crate::source::SystemSource;
-
-                                    static TEST_FONT_POSTSCRIPT_NAME: &'static str = \"ArialMT\";
-
-                                    #[cfg(feature = \"source\")]
-                                    #[test]
-                                ```
-
-                                55 lines remaining in ancestor node. Read the file to see all.
-
-                                ### mod test › L947-951
-                                ```
-                                    }
-
-                                    #[test]
-                                    fn test_core_text_to_css_font_weight() {
-                                        // Exact matches
-                                ```
-
-                                ### mod test › L959-963
-                                ```
-                                    }
-
-                                    #[test]
-                                    fn test_core_text_to_css_font_stretch() {
-                                        // Exact matches
-                                ```
-
-                                ## Matches in font-kit/src/loaders/freetype.rs
-
-                                ### mod test › L1238-1248
-                                ```
-                                mod test {
-                                    use crate::loaders::freetype::Font;
-
-                                    static PCF_FONT_PATH: &str = \"resources/tests/times-roman-pcf/timR12.pcf\";
-                                    static PCF_FONT_POSTSCRIPT_NAME: &str = \"Times-Roman\";
-
-                                    #[test]
-                                    fn get_pcf_postscript_name() {
-                                        let font = Font::from_path(PCF_FONT_PATH, 0).unwrap();
-                                        assert_eq!(font.postscript_name().unwrap(), PCF_FONT_POSTSCRIPT_NAME);
-                                    }
-                                ```
-
-                                1 lines remaining in ancestor node. Read the file to see all.
-
-                                ## Matches in font-kit/src/sources/core_text.rs
-
-                                ### mod test › L265-275
-                                ```
-                                mod test {
-                                    use crate::properties::{Stretch, Weight};
-
-                                    #[test]
-                                    fn test_css_to_core_text_font_weight() {
-                                        // Exact matches
-                                        assert_eq!(super::css_to_core_text_font_weight(Weight(100.0)), -0.7);
-                                        assert_eq!(super::css_to_core_text_font_weight(Weight(400.0)), 0.0);
-                                        assert_eq!(super::css_to_core_text_font_weight(Weight(700.0)), 0.4);
-                                        assert_eq!(super::css_to_core_text_font_weight(Weight(900.0)), 0.8);
-
-                                ```
-
-                                27 lines remaining in ancestor node. Read the file to see all.
-
-                                ### mod test › L278-282
-                                ```
-                                    }
-
-                                    #[test]
-                                    fn test_css_to_core_text_font_stretch() {
-                                        // Exact matches
-                                ```
-                            "},
-                    )],
-                ),
             ],
             input_file_path,
             Some(input_file_content.into()),
             EvalAssertion::judge_diff(indoc::indoc! {"
                         - The diff contains a new `from_pixels` constructor
-                        - The diff contains new tests for the `from_pixels` constructor
                     "}),
         ))
     });
