@@ -14,7 +14,7 @@ use settings::Settings;
 use std::{ops::Range, sync::LazyLock};
 use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
-use util::{ResultExt, TryFutureExt as _, maybe};
+use util::{ResultExt, TryFutureExt as _, maybe, paths::PathWithPosition};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -63,7 +63,7 @@ impl RangeInEditor {
 #[derive(Debug, Clone)]
 pub enum HoverLink {
     Url(String),
-    File(ResolvedPath),
+    File(ResolvedFileTarget),
     Text(LocationLink),
     InlayHint(lsp::Location, LanguageServerId),
 }
@@ -376,7 +376,7 @@ pub fn show_link_definition(
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
-                    } else if let Some((filename_range, filename)) =
+                    } else if let Some((filename_range, file_target)) =
                         find_file(&buffer, project.clone(), anchor, cx).await
                     {
                         let range = maybe!({
@@ -385,7 +385,7 @@ pub fn show_link_definition(
                             Some(RangeInEditor::Text(range))
                         });
 
-                        Some((range, vec![HoverLink::File(filename)]))
+                        Some((range, vec![HoverLink::File(file_target)]))
                     } else if let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
                             provider.definitions(&buffer, anchor, preferred_kind, cx)
@@ -608,12 +608,49 @@ pub(crate) fn find_url_from_range(
     None
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedFileTarget {
+    pub resolved_path: ResolvedPath,
+    pub row: Option<u32>,
+    pub column: Option<u32>,
+}
+
+impl ResolvedFileTarget {
+    /// After opening a file, navigate the editor to the row/column position if present.
+    pub fn navigate_item_to_position(
+        &self,
+        item: Box<dyn crate::ItemHandle>,
+        cx: &mut AsyncWindowContext,
+    ) {
+        if let Some(row) = self.row {
+            let col = self.column.unwrap_or(0);
+            if let Some(active_editor) = item.downcast::<crate::Editor>() {
+                active_editor
+                    .downgrade()
+                    .update_in(cx, |editor, window, cx| {
+                        let row = row.saturating_sub(1);
+                        let col = col.saturating_sub(1);
+                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                            return;
+                        };
+                        let point = buffer
+                            .read(cx)
+                            .snapshot()
+                            .point_from_external_input(row, col);
+                        editor.go_to_singleton_buffer_point_silently(point, window, cx);
+                    })
+                    .log_err();
+            }
+        }
+    }
+}
+
 pub(crate) async fn find_file(
     buffer: &Entity<language::Buffer>,
     project: Option<Entity<Project>>,
     position: text::Anchor,
     cx: &mut AsyncWindowContext,
-) -> Option<(Range<text::Anchor>, ResolvedPath)> {
+) -> Option<(Range<text::Anchor>, ResolvedFileTarget)> {
     let project = project?;
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let scope = snapshot.language_scope_at(position);
@@ -636,19 +673,53 @@ pub(crate) async fn find_file(
 
     let pattern_candidates = link_pattern_file_candidates(&candidate_file_path);
 
+    // Compute the highlight range for a pattern_range within the candidate string.
+    let make_range = |pattern_range: &Range<usize>| -> Range<text::Anchor> {
+        let offset_range = range.to_offset(&snapshot);
+        let actual_start = offset_range.start + pattern_range.start;
+        let actual_end = offset_range.end - (candidate_len - pattern_range.end);
+        snapshot.anchor_before(actual_start)..snapshot.anchor_after(actual_end)
+    };
+
+    // For each candidate extracted by link_pattern_file_candidates, try resolving in order:
+    // 1. The raw candidate string
+    // 2. The path portion after stripping `:row:col` suffix
+    // 3. With language-specific file extensions appended to raw candidate
+    // 4. With language-specific file extensions appended to stripped path
     for (pattern_candidate, pattern_range) in &pattern_candidates {
+        // Try the raw candidate first.
         if let Some(existing_path) = check_path(&pattern_candidate, &project, buffer, cx).await {
-            let offset_range = range.to_offset(&snapshot);
-            let actual_start = offset_range.start + pattern_range.start;
-            let actual_end = offset_range.end - (candidate_len - pattern_range.end);
             return Some((
-                snapshot.anchor_before(actual_start)..snapshot.anchor_after(actual_end),
-                existing_path,
+                make_range(pattern_range),
+                ResolvedFileTarget {
+                    resolved_path: existing_path,
+                    row: None,
+                    column: None,
+                },
             ));
         }
-    }
-    if let Some(scope) = scope {
-        for (pattern_candidate, pattern_range) in pattern_candidates {
+
+        // Parse row:col suffix once per candidate for use in fallback attempts.
+        // This handles patterns like `file.rs:83:1`, `file.rs:83`, and `file.rs:20:in`.
+        let parsed = PathWithPosition::parse_str(pattern_candidate);
+        let parsed_path = parsed.path.to_string_lossy();
+
+        // Try resolving just the path portion (without :row:col).
+        if parsed.row.is_some() {
+            if let Some(existing_path) = check_path(&parsed_path, &project, buffer, cx).await {
+                return Some((
+                    make_range(pattern_range),
+                    ResolvedFileTarget {
+                        resolved_path: existing_path,
+                        row: parsed.row,
+                        column: parsed.column,
+                    },
+                ));
+            }
+        }
+
+        // Try with language-specific suffixes.
+        if let Some(scope) = &scope {
             for suffix in scope.path_suffixes() {
                 if pattern_candidate.ends_with(format!(".{suffix}").as_str()) {
                     continue;
@@ -658,13 +729,37 @@ pub(crate) async fn find_file(
                 if let Some(existing_path) =
                     check_path(&suffixed_candidate, &project, buffer, cx).await
                 {
-                    let offset_range = range.to_offset(&snapshot);
-                    let actual_start = offset_range.start + pattern_range.start;
-                    let actual_end = offset_range.end - (candidate_len - pattern_range.end);
                     return Some((
-                        snapshot.anchor_before(actual_start)..snapshot.anchor_after(actual_end),
-                        existing_path,
+                        make_range(pattern_range),
+                        ResolvedFileTarget {
+                            resolved_path: existing_path,
+                            row: None,
+                            column: None,
+                        },
                     ));
+                }
+            }
+
+            // Try with language-specific suffixes on the stripped path.
+            if parsed.row.is_some() {
+                for suffix in scope.path_suffixes() {
+                    if parsed_path.ends_with(&format!(".{suffix}")) {
+                        continue;
+                    }
+
+                    let suffixed_candidate = format!("{parsed_path}.{suffix}");
+                    if let Some(existing_path) =
+                        check_path(&suffixed_candidate, &project, buffer, cx).await
+                    {
+                        return Some((
+                            make_range(pattern_range),
+                            ResolvedFileTarget {
+                                resolved_path: existing_path,
+                                row: parsed.row,
+                                column: parsed.column,
+                            },
+                        ));
+                    }
                 }
             }
         }
@@ -721,7 +816,7 @@ fn surrounding_filename(
             found_start = true;
             break;
         }
-        if (ch == '"' || ch == '\'') && !inside_quotes {
+        if (ch == '"' || ch == '\'' || ch == '`') && !inside_quotes {
             found_start = true;
             inside_quotes = true;
             break;
@@ -754,7 +849,7 @@ fn surrounding_filename(
             found_end = true;
             break;
         }
-        if ch == '"' || ch == '\'' {
+        if ch == '"' || ch == '\'' || ch == '`' {
             // If we're inside quotes, we stop when we come across the next quote
             if inside_quotes {
                 found_end = true;
@@ -1576,6 +1671,16 @@ mod tests {
             (" ˇ\"常\"", Some("常")),
             (" \"ˇ常\"", Some("常")),
             ("ˇ\"常\"", Some("常")),
+            // Path with row:column suffix
+            ("fiˇle.rs:83:1", Some("file.rs:83:1")),
+            ("file.rs:83ˇ:1 foo", Some("file.rs:83:1")),
+            ("file.rs:20ˇ:in bar", Some("file.rs:20:in")),
+            // Backtick delimiters
+            ("`fˇile.txt`", Some("file.txt")),
+            ("ˇ`file.txt`", Some("file.txt")),
+            ("`fˇile.txt` and more", Some("file.txt")),
+            // Backtick with row:col
+            ("`fiˇle.rs:83:1`", Some("file.rs:83:1")),
         ];
 
         for (input, expected) in test_cases {
@@ -1869,6 +1974,274 @@ mod tests {
             assert_eq!(
                 file_path,
                 std::path::PathBuf::from(path!("/root/dir/file2.rs"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_filename_with_row_column(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Insert a new file with multiple lines
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\n"
+                    .as_bytes()
+                    .to_vec(),
+            )
+            .await;
+
+        // file2.rs:5:3 should be highlighted and clickable
+        cx.set_state(indoc! {"
+            Go to file2.rs:5:3 for the fix.ˇ
+        "});
+
+        let screen_coord = cx.pixel_position(indoc! {"
+            Go to filˇe2.rs:5:3 for the fix.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
+            Go to «file2.rs:5:3ˇ» for the fix.
+        "},
+        );
+
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.update_workspace(|workspace, window, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            {
+                let editor = active_editor.read(cx);
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                let file = buffer.read(cx).file().unwrap();
+                let file_path = file.as_local().unwrap().abs_path(cx);
+                assert_eq!(
+                    file_path,
+                    std::path::PathBuf::from(path!("/root/dir/file2.rs"))
+                );
+            }
+
+            // Check that the cursor is at row 5, column 3 (0-indexed: row 4, col 2)
+            let (count, snapshot) = active_editor.update(cx, |editor, cx| {
+                (editor.selections.count(), editor.snapshot(window, cx))
+            });
+            assert_eq!(count, 1);
+            let selections = active_editor
+                .read(cx)
+                .selections
+                .newest::<language::Point>(&snapshot.display_snapshot);
+            assert_eq!(
+                selections.head().row,
+                4,
+                "Expected cursor on row 5 (0-indexed: 4)"
+            );
+            assert_eq!(
+                selections.head().column,
+                2,
+                "Expected cursor on column 3 (0-indexed: 2)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_filename_with_row_only(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "line 1\nline 2\nline 3\nline 4\nline 5\n"
+                    .as_bytes()
+                    .to_vec(),
+            )
+            .await;
+
+        // file2.rs:3 should be highlighted and clickable
+        cx.set_state(indoc! {"
+            Go to file2.rs:3 please.ˇ
+        "});
+
+        let screen_coord = cx.pixel_position(indoc! {"
+            Go to filˇe2.rs:3 please.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
+            Go to «file2.rs:3ˇ» please.
+        "},
+        );
+
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+
+        cx.update_workspace(|workspace, window, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            let (count, snapshot) = active_editor.update(cx, |editor, cx| {
+                (editor.selections.count(), editor.snapshot(window, cx))
+            });
+            assert_eq!(count, 1);
+            let selections = active_editor
+                .read(cx)
+                .selections
+                .newest::<language::Point>(&snapshot.display_snapshot);
+            assert_eq!(
+                selections.head().row,
+                2,
+                "Expected cursor on row 3 (0-indexed: 2)"
+            );
+            assert_eq!(selections.head().column, 0, "Expected cursor on column 0");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_filename_with_non_numeric_suffix(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "line 1\nline 2\nline 3\n".as_bytes().to_vec(),
+            )
+            .await;
+
+        // file2.rs:2:in should resolve to file2.rs line 2 (like Ruby backtraces)
+        cx.set_state(indoc! {"
+            Error at file2.rs:2:in 'method'ˇ
+        "});
+
+        let screen_coord = cx.pixel_position(indoc! {"
+            Error at filˇe2.rs:2:in 'method'
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
+            Error at «file2.rs:2:inˇ» 'method'
+        "},
+        );
+
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+
+        cx.update_workspace(|workspace, window, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            let (count, snapshot) = active_editor.update(cx, |editor, cx| {
+                (editor.selections.count(), editor.snapshot(window, cx))
+            });
+            assert_eq!(count, 1);
+            let selections = active_editor
+                .read(cx)
+                .selections
+                .newest::<language::Point>(&snapshot.display_snapshot);
+            assert_eq!(
+                selections.head().row,
+                1,
+                "Expected cursor on row 2 (0-indexed: 1)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_markdown_link_with_row_column(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "line 1\nline 2\nline 3\nline 4\nline 5\n"
+                    .as_bytes()
+                    .to_vec(),
+            )
+            .await;
+
+        // Markdown link [text](file2.rs:3:2) should highlight only the inner link,
+        // not the surrounding markdown syntax.
+        cx.set_state(indoc! {"
+            See [here](file2.rs:3:2) for details.ˇ
+        "});
+
+        let screen_coord = cx.pixel_position(indoc! {"
+            See [here](filˇe2.rs:3:2) for details.
+        "});
+
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+        cx.assert_editor_text_highlights(
+            HighlightKey::HoveredLinkState,
+            indoc! {"
+            See [here](«file2.rs:3:2ˇ») for details.
+        "},
+        );
+
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+
+        cx.update_workspace(|workspace, window, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            {
+                let editor = active_editor.read(cx);
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+                let file = buffer.read(cx).file().unwrap();
+                let file_path = file.as_local().unwrap().abs_path(cx);
+                assert_eq!(
+                    file_path,
+                    std::path::PathBuf::from(path!("/root/dir/file2.rs"))
+                );
+            }
+
+            // Check cursor is at row 3, column 2 (0-indexed: row 2, col 1)
+            let (count, snapshot) = active_editor.update(cx, |editor, cx| {
+                (editor.selections.count(), editor.snapshot(window, cx))
+            });
+            assert_eq!(count, 1);
+            let selections = active_editor
+                .read(cx)
+                .selections
+                .newest::<language::Point>(&snapshot.display_snapshot);
+            assert_eq!(
+                selections.head().row,
+                2,
+                "Expected cursor on row 3 (0-indexed: 2)"
+            );
+            assert_eq!(
+                selections.head().column,
+                1,
+                "Expected cursor on column 2 (0-indexed: 1)"
             );
         });
     }

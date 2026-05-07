@@ -476,10 +476,12 @@ impl ThemeSettings {
         }
         let status_color_refinement = status_colors_refinement(&theme_overrides.status);
 
-        base_theme.styles.colors.refine(&theme_colors_refinement(
+        let theme_color_refinement = theme_colors_refinement(
             &theme_overrides.colors,
             &status_color_refinement,
-        ));
+            base_theme.appearance.is_light(),
+        );
+        base_theme.styles.colors.refine(&theme_color_refinement);
         base_theme.styles.status.refine(&status_color_refinement);
         merge_player_colors(&mut base_theme.styles.player, &theme_overrides.players);
         merge_accent_colors(&mut base_theme.styles.accents, &theme_overrides.accents);
