@@ -21,19 +21,10 @@ pub struct WordSegmentRange {
     pub end: usize,
 }
 
-/// Configuration for fine-grained word segmentation.
-///
-/// When this is disabled, callers preserve the existing `CharClassifier`-only
-/// behavior.
-pub struct WordSegmenterConfig {
-    /// The resolved ICU4X `WordSegmenter`, or `None` when construction fails.
-    segmenter: Option<WordSegmenter>,
-}
-
 #[derive(Default)]
 struct CachedWordSegmenter {
     enabled: bool,
-    config: Option<WordSegmenterConfig>,
+    segmenter: Option<WordSegmenter>,
     line: String,
     segments: Vec<WordSegmentRange>,
 }
@@ -44,9 +35,9 @@ impl CachedWordSegmenter {
             return Vec::new();
         }
 
-        if self.config.is_none() || self.enabled != enabled {
+        if self.segmenter.is_none() || self.enabled != enabled {
             self.enabled = enabled;
-            self.config = Some(WordSegmenterConfig::new());
+            self.segmenter = WordSegmenter::try_new_auto(WordBreakOptions::default()).ok();
             self.line.clear();
             self.segments.clear();
         }
@@ -54,61 +45,40 @@ impl CachedWordSegmenter {
         if self.line != line {
             self.line.clear();
             self.line.push_str(line);
-            self.segments = self
-                .config
-                .as_ref()
-                .map_or_else(Vec::new, |config| config.word_segments_for_line(line));
+            self.segments = self.segmenter.as_ref().map_or_else(Vec::new, |segmenter| {
+                word_segments_for_line(segmenter, line)
+            });
         }
 
         self.segments.clone()
     }
 }
 
-impl WordSegmenterConfig {
-    /// Build a config using ICU4X's default automatic word segmentation.
-    pub fn new() -> Self {
-        let options = WordBreakOptions::default();
-        let segmenter = WordSegmenter::try_new_auto(options).ok();
+/// Return word-like segment ranges for a single line of text.
+///
+/// - First splits the line with Zed's existing `CharClassifier`.
+/// - Word ranges are split again with ICU4X when ICU4X finds multiple word-like subsegments;
+///   other ranges are returned unchanged.
+/// - Ranges are byte offsets relative to the start of `line`.
+fn word_segments_for_line(segmenter: &WordSegmenter, line: &str) -> Vec<WordSegmentRange> {
+    let mut result = Vec::new();
+    let borrowed = segmenter.as_borrowed();
 
-        Self { segmenter }
+    for base_range in classifier_word_ranges(line) {
+        let segment = &line[base_range.clone()];
+        result.extend(
+            icu_word_segments_for_range(&borrowed, segment, base_range.clone()).unwrap_or_else(
+                || {
+                    vec![WordSegmentRange {
+                        start: base_range.start,
+                        end: base_range.end,
+                    }]
+                },
+            ),
+        );
     }
 
-    /// Returns `true` when ICU4X segmentation is active.
-    pub fn is_enabled(&self) -> bool {
-        self.segmenter.is_some()
-    }
-
-    /// Return word-like segment ranges for a single line of text.
-    ///
-    /// - Returns an empty vector if ICU4X segmenter construction failed.
-    /// - First splits the line with Zed's existing `CharClassifier`.
-    /// - Word ranges are split again with ICU4X when ICU4X finds multiple
-    ///   word-like subsegments; other ranges are returned unchanged.
-    /// - Ranges are byte offsets relative to the start of `line`.
-    pub fn word_segments_for_line(&self, line: &str) -> Vec<WordSegmentRange> {
-        let Some(segmenter) = self.segmenter.as_ref() else {
-            return Vec::new();
-        };
-
-        let mut result = Vec::new();
-        let borrowed = segmenter.as_borrowed();
-
-        for base_range in classifier_word_ranges(line) {
-            let segment = &line[base_range.clone()];
-            result.extend(
-                icu_word_segments_for_range(&borrowed, segment, base_range.clone()).unwrap_or_else(
-                    || {
-                        vec![WordSegmentRange {
-                            start: base_range.start,
-                            end: base_range.end,
-                        }]
-                    },
-                ),
-            );
-        }
-
-        result
-    }
+    result
 }
 
 fn icu_word_segments_for_range(
@@ -413,12 +383,25 @@ pub fn next_word_end_with_segmenter(
 mod tests {
     use super::*;
 
+    fn make_segmenter() -> WordSegmenter {
+        WordSegmenter::try_new_auto(WordBreakOptions::default())
+            .expect("ICU4X word segmenter data must be embedded")
+    }
+
+    fn segment_line(line: &str) -> Vec<WordSegmentRange> {
+        word_segments_for_line(&make_segmenter(), line)
+    }
+
+    fn segment_words<'a>(line: &'a str, segments: &[WordSegmentRange]) -> Vec<&'a str> {
+        segments
+            .iter()
+            .map(|segment| &line[segment.start..segment.end])
+            .collect()
+    }
+
     #[test]
     fn test_zh_cn_enabled() {
-        let config = WordSegmenterConfig::new();
-        assert!(config.is_enabled());
-
-        let segments = config.word_segments_for_line("这是一个测试");
+        let segments = segment_line("这是一个测试");
         // Should produce at least one word-like segment
         assert!(!segments.is_empty());
 
@@ -430,20 +413,10 @@ mod tests {
         }
     }
 
-    fn segment_words<'a>(line: &'a str, segments: &[WordSegmentRange]) -> Vec<&'a str> {
-        segments
-            .iter()
-            .map(|segment| &line[segment.start..segment.end])
-            .collect()
-    }
-
     #[test]
     fn test_ja_segmentation() {
-        let config = WordSegmenterConfig::new();
-        assert!(config.is_enabled());
-
         let line = "これはテストです";
-        let segments = config.word_segments_for_line(line);
+        let segments = segment_line(line);
         assert_eq!(
             segment_words(line, &segments),
             ["これ", "は", "テスト", "です"]
@@ -458,8 +431,7 @@ mod tests {
 
     #[test]
     fn test_ascii_text_word_segments() {
-        let config = WordSegmenterConfig::new();
-        let segments = config.word_segments_for_line("hello world");
+        let segments = segment_line("hello world");
         // Should find "hello" and "world" as word-like segments
         assert!(segments.len() >= 2);
 
@@ -470,9 +442,8 @@ mod tests {
 
     #[test]
     fn test_mixed_code_and_cjk() {
-        let config = WordSegmenterConfig::new();
         let line = "let message = \"这是一个测试\";";
-        let segments = config.word_segments_for_line(line);
+        let segments = segment_line(line);
 
         // Should find word-like segments for both code identifiers and CJK text
         let words = segment_words(line, &segments);
@@ -485,9 +456,8 @@ mod tests {
 
     #[test]
     fn test_chinese_sentence_keeps_final_word_before_punctuation() {
-        let config = WordSegmenterConfig::new();
         let line = "源代码控制系统以及问题追踪或协作系统上的沟通。";
-        let segments = config.word_segments_for_line(line);
+        let segments = segment_line(line);
         let words = segment_words(line, &segments);
 
         assert!(words.contains(&"沟通"));
@@ -496,8 +466,7 @@ mod tests {
 
     #[test]
     fn test_find_word_segment_at_offset() {
-        let config = WordSegmenterConfig::new();
-        let segments = config.word_segments_for_line("これはテストです");
+        let segments = segment_line("これはテストです");
 
         if !segments.is_empty() {
             // Test that we can find the segment containing the start of the first segment
@@ -514,9 +483,8 @@ mod tests {
 
     #[test]
     fn test_find_word_segment_at_offset_before_punctuation() {
-        let config = WordSegmenterConfig::new();
-        let line = "的完整详细信息。";
-        let segments = config.word_segments_for_line(line);
+        let line = "完整详细信息。";
+        let segments = segment_line(line);
         let words = segment_words(line, &segments);
         let segment_index = words
             .iter()
