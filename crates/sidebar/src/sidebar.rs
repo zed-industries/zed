@@ -149,6 +149,10 @@ impl ActiveEntry {
         matches!(self, ActiveEntry::Thread { thread_id: active_thread_id, .. } if active_thread_id == thread_id)
     }
 
+    fn is_active_terminal(&self, terminal_id: TerminalId) -> bool {
+        matches!(self, ActiveEntry::Terminal { terminal_id: active_terminal_id, .. } if *active_terminal_id == terminal_id)
+    }
+
     fn matches_entry(&self, entry: &ListEntry) -> bool {
         match (self, entry) {
             (
@@ -267,6 +271,58 @@ enum ListEntry {
     Terminal(TerminalEntry),
 }
 
+#[derive(Clone)]
+enum ActivatableEntry {
+    Thread {
+        metadata: ThreadMetadata,
+        workspace: ThreadEntryWorkspace,
+    },
+    Terminal {
+        terminal_id: TerminalId,
+        workspace: Entity<Workspace>,
+    },
+}
+
+impl ActivatableEntry {
+    fn from_list_entry(entry: &ListEntry) -> Option<Self> {
+        match entry {
+            ListEntry::Thread(thread) => Some(Self::Thread {
+                metadata: thread.metadata.clone(),
+                workspace: thread.workspace.clone(),
+            }),
+            ListEntry::Terminal(terminal) => Some(Self::Terminal {
+                terminal_id: terminal.id,
+                workspace: terminal.workspace.clone(),
+            }),
+            ListEntry::ProjectHeader { .. } => None,
+        }
+    }
+
+    fn project_location(&self, cx: &App) -> (PathList, ProjectGroupKey) {
+        match self {
+            Self::Thread {
+                workspace: ThreadEntryWorkspace::Open(workspace),
+                ..
+            } => (
+                PathList::new(&workspace.read(cx).root_paths(cx)),
+                workspace.read(cx).project_group_key(cx),
+            ),
+            Self::Thread {
+                workspace:
+                    ThreadEntryWorkspace::Closed {
+                        folder_paths,
+                        project_group_key,
+                    },
+                ..
+            } => (folder_paths.clone(), project_group_key.clone()),
+            Self::Terminal { workspace, .. } => (
+                PathList::new(&workspace.read(cx).root_paths(cx)),
+                workspace.read(cx).project_group_key(cx),
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 impl ListEntry {
     fn session_id(&self) -> Option<&acp::SessionId> {
@@ -367,6 +423,25 @@ fn root_repository_snapshots(
 
 fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
+}
+
+fn workspace_has_agent_panel_terminals(workspace: &Entity<Workspace>, cx: &App) -> bool {
+    workspace
+        .read(cx)
+        .panel::<AgentPanel>(cx)
+        .is_some_and(|panel| !panel.read(cx).terminals(cx).is_empty())
+}
+
+fn workspace_contains_worktree_path(
+    workspace: &Entity<Workspace>,
+    worktree_path: &Path,
+    cx: &App,
+) -> bool {
+    let project = workspace.read(cx).project().clone();
+    project
+        .read(cx)
+        .visible_worktrees(cx)
+        .any(|worktree| worktree.read(cx).abs_path().as_ref() == worktree_path)
 }
 
 #[derive(Clone)]
@@ -3146,6 +3221,66 @@ impl Sidebar {
         }
     }
 
+    /// Find the neighbor thread in the sidebar (by display position).
+    /// Look below first, then above, for the nearest thread that isn't
+    /// the one being archived. We capture both the neighbor's metadata
+    /// (for activation) and its workspace paths (for the workspace
+    /// removal fallback).
+    fn neighboring_activatable_entry(&self, current_position: usize) -> Option<ActivatableEntry> {
+        let after = self
+            .contents
+            .entries
+            .get(current_position.checked_add(1)?..)?;
+        let before = self.contents.entries.get(..current_position)?;
+        after
+            .iter()
+            .chain(before.iter().rev())
+            .find_map(ActivatableEntry::from_list_entry)
+    }
+
+    fn activate_entry(
+        &mut self,
+        entry: &ActivatableEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match entry {
+            ActivatableEntry::Thread { metadata, .. } => {
+                let Some(workspace) = self.multi_workspace.upgrade().and_then(|multi_workspace| {
+                    multi_workspace
+                        .read(cx)
+                        .workspace_for_paths(metadata.folder_paths(), None, cx)
+                }) else {
+                    return false;
+                };
+
+                self.active_entry = Some(ActiveEntry::Thread {
+                    thread_id: metadata.thread_id,
+                    session_id: metadata.session_id.clone(),
+                    workspace: workspace.clone(),
+                });
+                self.activate_workspace(&workspace, window, cx);
+                Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
+                true
+            }
+            ActivatableEntry::Terminal {
+                terminal_id,
+                workspace,
+            } => {
+                if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+                    return false;
+                }
+                let Some(workspace) = self
+                    .find_workspace_in_current_window(cx, |candidate, _| candidate == workspace)
+                else {
+                    return false;
+                };
+                self.activate_terminal(&workspace, *terminal_id, false, window, cx);
+                true
+            }
+        }
+    }
+
     fn activate_terminal(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -3189,18 +3324,43 @@ impl Sidebar {
         &mut self,
         workspace: &Entity<Workspace>,
         terminal_id: TerminalId,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let is_active = self
+            .active_entry
+            .as_ref()
+            .is_some_and(|entry| entry.is_active_terminal(terminal_id));
+        let neighbor = self
+            .contents
+            .entries
+            .iter()
+            .position(|entry| matches!(entry, ListEntry::Terminal(terminal) if terminal.id == terminal_id))
+            .and_then(|position| {
+                self.neighboring_activatable_entry(position)
+            });
+
         // Closing from the sidebar must not steal focus, since the row's
         // workspace may not be the active workspace.
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.close_terminal(terminal_id, cx);
+                    panel.close_terminal(terminal_id, window, cx);
                 });
             }
         });
+
+        if is_active {
+            self.active_entry = None;
+            if neighbor
+                .as_ref()
+                .is_some_and(|neighbor| self.activate_entry(neighbor, window, cx))
+            {
+                return;
+            }
+            self.sync_active_entry_from_active_workspace(cx);
+        }
+        self.update_entries(cx);
     }
 
     fn archive_thread(
@@ -3276,15 +3436,20 @@ impl Sidebar {
                                 )
                         })
                     })
+                    .filter(|root| {
+                        !workspaces.iter().any(|workspace| {
+                            workspace_has_agent_panel_terminals(workspace, cx)
+                                && workspace_contains_worktree_path(
+                                    workspace,
+                                    root.root_path.as_path(),
+                                    cx,
+                                )
+                        })
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
 
-        // Find the neighbor thread in the sidebar (by display position).
-        // Look below first, then above, for the nearest thread that isn't
-        // the one being archived. We capture both the neighbor's metadata
-        // (for activation) and its workspace paths (for the workspace
-        // removal fallback).
         let current_pos = self.contents.entries.iter().position(|entry| match entry {
             ListEntry::Thread(thread) => thread_id.map_or_else(
                 || thread.metadata.session_id.as_ref() == Some(session_id),
@@ -3292,27 +3457,8 @@ impl Sidebar {
             ),
             _ => false,
         });
-        let neighbor = current_pos.and_then(|pos| {
-            self.contents.entries[pos + 1..]
-                .iter()
-                .chain(self.contents.entries[..pos].iter().rev())
-                .find_map(|entry| match entry {
-                    ListEntry::Thread(t) if t.metadata.session_id.as_ref() != Some(session_id) => {
-                        let (workspace_paths, project_group_key) = match &t.workspace {
-                            ThreadEntryWorkspace::Open(ws) => (
-                                PathList::new(&ws.read(cx).root_paths(cx)),
-                                ws.read(cx).project_group_key(cx),
-                            ),
-                            ThreadEntryWorkspace::Closed {
-                                folder_paths,
-                                project_group_key,
-                            } => (folder_paths.clone(), project_group_key.clone()),
-                        };
-                        Some((t.metadata.clone(), workspace_paths, project_group_key))
-                    }
-                    _ => None,
-                })
-        });
+        let neighbor =
+            current_pos.and_then(|position| self.neighboring_activatable_entry(position));
 
         // Check if archiving this thread would leave its worktree workspace
         // with no threads, requiring workspace removal.
@@ -3337,6 +3483,10 @@ impl Sidebar {
             let workspace = multi_workspace
                 .read(cx)
                 .workspace_for_paths(folder_paths, None, cx)?;
+
+            if workspace_has_agent_panel_terminals(&workspace, cx) {
+                return None;
+            }
 
             let group_key = workspace.read(cx).project_group_key(cx);
             let is_linked_worktree = group_key.path_list() != folder_paths;
@@ -3428,12 +3578,12 @@ impl Sidebar {
 
             let (fallback_paths, project_group_key) = neighbor
                 .as_ref()
-                .map(|(_, paths, project_group_key)| (paths.clone(), project_group_key.clone()))
+                .map(|neighbor| neighbor.project_location(cx))
                 .unwrap_or_else(|| {
                     workspaces_to_remove
                         .first()
-                        .map(|ws| {
-                            let key = ws.read(cx).project_group_key(cx);
+                        .map(|workspace| {
+                            let key = workspace.read(cx).project_group_key(cx);
                             (key.path_list().clone(), key)
                         })
                         .unwrap_or_default()
@@ -3464,7 +3614,6 @@ impl Sidebar {
                 )
             });
 
-            let neighbor_metadata = neighbor.map(|(metadata, _, _)| metadata);
             let thread_folder_paths = thread_folder_paths.clone();
             cx.spawn_in(window, async move |this, cx| {
                 if !remove_task.await? {
@@ -3483,7 +3632,7 @@ impl Sidebar {
                     this.archive_and_activate(
                         &session_id,
                         thread_id,
-                        neighbor_metadata.as_ref(),
+                        neighbor.as_ref(),
                         thread_folder_paths.as_ref(),
                         in_flight,
                         window,
@@ -3495,7 +3644,6 @@ impl Sidebar {
             .detach_and_log_err(cx);
         } else if !close_item_tasks.is_empty() {
             let session_id = session_id.clone();
-            let neighbor_metadata = neighbor.map(|(metadata, _, _)| metadata);
             let thread_folder_paths = thread_folder_paths.clone();
             cx.spawn_in(window, async move |this, cx| {
                 for task in close_item_tasks {
@@ -3510,7 +3658,7 @@ impl Sidebar {
                     this.archive_and_activate(
                         &session_id,
                         thread_id,
-                        neighbor_metadata.as_ref(),
+                        neighbor.as_ref(),
                         thread_folder_paths.as_ref(),
                         in_flight,
                         window,
@@ -3521,13 +3669,12 @@ impl Sidebar {
             })
             .detach_and_log_err(cx);
         } else {
-            let neighbor_metadata = neighbor.map(|(metadata, _, _)| metadata);
             let in_flight = thread_id
                 .and_then(|tid| self.start_archive_worktree_task(tid, roots_to_archive, cx));
             self.archive_and_activate(
                 session_id,
                 thread_id,
-                neighbor_metadata.as_ref(),
+                neighbor.as_ref(),
                 thread_folder_paths.as_ref(),
                 in_flight,
                 window,
@@ -3556,7 +3703,7 @@ impl Sidebar {
         &mut self,
         _session_id: &acp::SessionId,
         thread_id: Option<agent_ui::ThreadId>,
-        neighbor: Option<&ThreadMetadata>,
+        neighbor: Option<&ActivatableEntry>,
         thread_folder_paths: Option<&PathList>,
         in_flight_archive: Option<(Task<()>, async_channel::Sender<()>)>,
         window: &mut Window,
@@ -3606,25 +3753,8 @@ impl Sidebar {
             return;
         }
 
-        // Try to activate the neighbor thread. If its workspace is open,
-        // tell the panel to load it and activate that workspace.
-        // `rebuild_contents` will reconcile `active_entry` once the thread
-        // finishes loading.
-
-        if let Some(metadata) = neighbor {
-            if let Some(workspace) = self.multi_workspace.upgrade().and_then(|mw| {
-                mw.read(cx)
-                    .workspace_for_paths(metadata.folder_paths(), None, cx)
-            }) {
-                self.active_entry = Some(ActiveEntry::Thread {
-                    thread_id: metadata.thread_id,
-                    session_id: metadata.session_id.clone(),
-                    workspace: workspace.clone(),
-                });
-                self.activate_workspace(&workspace, window, cx);
-                Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
-                return;
-            }
+        if neighbor.is_some_and(|neighbor| self.activate_entry(neighbor, window, cx)) {
+            return;
         }
 
         // No neighbor or its workspace isn't open — just clear the

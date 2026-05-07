@@ -1465,7 +1465,7 @@ impl AgentPanel {
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
-                    this.close_terminal(terminal_id, cx);
+                    this.close_terminal(terminal_id, window, cx);
                 }
                 TerminalEvent::BreadcrumbsChanged
                 | TerminalEvent::BlinkChanged(_)
@@ -1519,9 +1519,21 @@ impl AgentPanel {
         }
     }
 
-    pub fn close_terminal(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+    pub fn close_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let was_active = self.active_terminal_id() == Some(terminal_id);
+
         if self.terminals.remove(&terminal_id).is_none() {
             return;
+        }
+        if was_active {
+            self.base_view = BaseView::Uninitialized;
+            self.refresh_base_view_subscriptions(window, cx);
+            self.activate_draft(false, "agent_panel", window, cx);
         }
 
         cx.emit(AgentPanelEvent::EntryChanged);
