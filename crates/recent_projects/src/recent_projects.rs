@@ -29,7 +29,7 @@ use gpui::{
 };
 
 use picker::{
-    Picker, PickerDelegate,
+    Picker, PickerDelegate, ScrollBehavior,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 use project::{Worktree, git_store::Repository};
@@ -81,6 +81,15 @@ enum ProjectPickerEntry {
     OpenFolder { index: usize, positions: Vec<usize> },
     ProjectGroup(StringMatch),
     RecentProject(StringMatch),
+}
+
+fn is_selectable_entry(entry: &ProjectPickerEntry) -> bool {
+    matches!(
+        entry,
+        ProjectPickerEntry::OpenFolder { .. }
+            | ProjectPickerEntry::ProjectGroup(_)
+            | ProjectPickerEntry::RecentProject(_)
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -814,8 +823,7 @@ pub struct RecentProjectsDelegate {
     selected_index: usize,
     render_paths: bool,
     create_new_window: bool,
-    // Flag to reset index when there is a new query vs not reset index when user delete an item
-    reset_selected_match_index: bool,
+    snap_selection_to_first_non_header_match: bool,
     has_any_non_local_projects: bool,
     project_connection_options: Option<RemoteConnectionOptions>,
     focus_handle: FocusHandle,
@@ -843,7 +851,7 @@ impl RecentProjectsDelegate {
             selected_index: 0,
             create_new_window,
             render_paths,
-            reset_selected_match_index: true,
+            snap_selection_to_first_non_header_match: true,
             has_any_non_local_projects: project_connection_options.is_some(),
             project_connection_options,
             focus_handle,
@@ -1067,14 +1075,14 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         self.filtered_entries = entries;
 
-        if self.reset_selected_match_index {
+        if self.snap_selection_to_first_non_header_match {
             self.selected_index = self
                 .filtered_entries
                 .iter()
                 .position(|e| !matches!(e, ProjectPickerEntry::Header(_)))
                 .unwrap_or(0);
         }
-        self.reset_selected_match_index = true;
+        self.snap_selection_to_first_non_header_match = true;
         Task::ready(())
     }
 
@@ -2106,6 +2114,69 @@ impl RecentProjectsDelegate {
         .detach();
     }
 
+    /// Returns the new selection index after the entry at `deleted_index`
+    /// is removed.
+    ///
+    /// - Prefers the nearest entry matching `prefer_section` so the user
+    ///   stays in the same section they were navigating.
+    /// - Falls back to any other selectable entry so the picker doesn't
+    ///   land on a header.
+    fn replacement_index_after_deletion(
+        &self,
+        deleted_index: usize,
+        prefer_previous: bool,
+        prefer_section: fn(&ProjectPickerEntry) -> bool,
+    ) -> Option<usize> {
+        let replacement_index = |matches_entry: fn(&ProjectPickerEntry) -> bool| {
+            let next_index = self
+                .filtered_entries
+                .iter()
+                .enumerate()
+                .skip(deleted_index)
+                .find_map(|(index, entry)| matches_entry(entry).then_some(index));
+            let previous_index = self
+                .filtered_entries
+                .iter()
+                .enumerate()
+                .take(deleted_index.min(self.filtered_entries.len()))
+                .rev()
+                .find_map(|(index, entry)| matches_entry(entry).then_some(index));
+
+            if prefer_previous {
+                previous_index.or(next_index)
+            } else {
+                next_index.or(previous_index)
+            }
+        };
+
+        replacement_index(prefer_section).or_else(|| replacement_index(is_selectable_entry))
+    }
+
+    fn update_picker_after_recent_project_deletion(
+        picker: &mut Picker<Self>,
+        deleted_index: usize,
+        workspaces: Vec<RecentWorkspace>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let prefer_previous = picker.is_scrolled_to_end() == Some(true);
+        picker.delegate.set_workspaces(workspaces);
+        picker.delegate.snap_selection_to_first_non_header_match = false;
+        picker.update_matches_with_options(
+            picker.query(cx),
+            ScrollBehavior::PreserveOffset,
+            window,
+            cx,
+        );
+        if let Some(replacement_index) = picker.delegate.replacement_index_after_deletion(
+            deleted_index,
+            prefer_previous,
+            |entry| matches!(entry, ProjectPickerEntry::RecentProject(_)),
+        ) {
+            picker.set_selected_index(replacement_index, None, false, window, cx);
+        }
+    }
+
     fn delete_recent_project(
         &self,
         ix: usize,
@@ -2115,7 +2186,10 @@ impl RecentProjectsDelegate {
         if let Some(ProjectPickerEntry::RecentProject(selected_match)) =
             self.filtered_entries.get(ix)
         {
-            let recent_workspace = self.workspaces[selected_match.candidate_id].clone();
+            let Some(recent_workspace) = self.workspaces.get(selected_match.candidate_id).cloned()
+            else {
+                return;
+            };
             let fs = self
                 .workspace
                 .upgrade()
@@ -2133,12 +2207,9 @@ impl RecentProjectsDelegate {
                     .await
                     .unwrap_or_default();
                 this.update_in(cx, move |picker, window, cx| {
-                    picker.delegate.set_workspaces(workspaces);
-                    picker
-                        .delegate
-                        .set_selected_index(ix.saturating_sub(1), window, cx);
-                    picker.delegate.reset_selected_match_index = false;
-                    picker.update_matches(picker.query(cx), window, cx);
+                    Self::update_picker_after_recent_project_deletion(
+                        picker, ix, workspaces, window, cx,
+                    );
                     // After deleting a project, we want to update the history manager to reflect the change.
                     // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
                     if let Some(history_manager) = HistoryManager::global(cx) {
@@ -2234,7 +2305,7 @@ impl RecentProjectsDelegate {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
 
     use serde_json::json;
     use settings::SettingsStore;
@@ -2242,6 +2313,220 @@ mod tests {
     use workspace::{AppState, open_paths};
 
     use super::*;
+
+    // Test picker for the empty query:
+    //
+    //   [0] Header("Current Folders")
+    //   [1] OpenFolder(0)
+    //   [2] OpenFolder(1)
+    //   [3] Header("This Window")
+    //   [4] ProjectGroup(0)
+    //   [5] ProjectGroup(1)
+    //   [6] Header("Recent Projects")
+    //   [7..=26] RecentProject(0..=19)
+    //
+    const RECENT_PROJECT_COUNT: usize = 20;
+    const FIRST_RECENT_PROJECT: usize = 7;
+    const LAST_RECENT_PROJECT: usize = FIRST_RECENT_PROJECT + RECENT_PROJECT_COUNT - 1;
+
+    fn open_folder(index: usize) -> OpenFolderEntry {
+        OpenFolderEntry {
+            worktree_id: WorktreeId::from_usize(index),
+            name: format!("project-folder-{index}").into(),
+            path: PathBuf::from(format!("/current/project-folder-{index}")),
+            branch: None,
+            is_active: false,
+        }
+    }
+
+    fn project_group(index: usize) -> ProjectGroupKey {
+        ProjectGroupKey::new(
+            None,
+            PathList::new(&[PathBuf::from(format!("/this-window/project-{index}"))]),
+        )
+    }
+
+    fn recent_workspace(index: usize) -> RecentWorkspace {
+        let paths = PathList::new(&[PathBuf::from(format!("/recent/project-{index:02}"))]);
+        RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(index as i64),
+            location: SerializedWorkspaceLocation::Local,
+            paths: paths.clone(),
+            identity_paths: paths,
+            timestamp: Utc::now(),
+        }
+    }
+
+    fn recent_workspaces() -> Vec<RecentWorkspace> {
+        (0..RECENT_PROJECT_COUNT).map(recent_workspace).collect()
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| window.draw(cx).clear());
+    }
+
+    fn build_picker(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Picker<RecentProjectsDelegate>>,
+        &mut VisualTestContext,
+    ) {
+        init_test(cx);
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            let mut delegate = RecentProjectsDelegate::new(
+                WeakEntity::new_invalid(),
+                false,
+                cx.focus_handle(),
+                vec![open_folder(0), open_folder(1)],
+                vec![project_group(0), project_group(1)],
+                None,
+                ProjectPickerStyle::Modal,
+            );
+            delegate.set_workspaces(recent_workspaces());
+            Picker::list(delegate, window, cx)
+                .list_measure_all()
+                .show_scrollbar(true)
+                .max_height(Some(px(240.).into()))
+        });
+        draw(cx);
+        (picker, cx)
+    }
+
+    fn scroll_to_and_select(
+        picker: &Entity<Picker<RecentProjectsDelegate>>,
+        cx: &mut VisualTestContext,
+        index: usize,
+    ) -> usize {
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(index, None, true, window, cx);
+        });
+        draw(cx);
+        picker.update(cx, |picker, _| picker.logical_scroll_top_index())
+    }
+
+    fn delete_recent_project_in_picker(
+        picker: &Entity<Picker<RecentProjectsDelegate>>,
+        cx: &mut VisualTestContext,
+        index: usize,
+    ) {
+        picker.update_in(cx, |picker, window, cx| {
+            let Some(ProjectPickerEntry::RecentProject(hit)) =
+                picker.delegate.filtered_entries.get(index)
+            else {
+                panic!("expected entry at {index} to be a recent project");
+            };
+            let mut workspaces = picker.delegate.workspaces.clone();
+            workspaces.remove(hit.candidate_id);
+            RecentProjectsDelegate::update_picker_after_recent_project_deletion(
+                picker, index, workspaces, window, cx,
+            );
+        });
+    }
+
+    #[track_caller]
+    fn assert_scroll_top_is(
+        picker: &Entity<Picker<RecentProjectsDelegate>>,
+        cx: &mut VisualTestContext,
+        expected: usize,
+        phase: &str,
+    ) {
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                picker.logical_scroll_top_index(),
+                expected,
+                "scroll top should remain at {expected} ({phase})"
+            );
+            assert_selected_entry_is_recent_project(picker);
+        });
+    }
+
+    #[track_caller]
+    fn assert_pinned_to_bottom(
+        picker: &Entity<Picker<RecentProjectsDelegate>>,
+        cx: &mut VisualTestContext,
+        phase: &str,
+    ) {
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                picker.is_scrolled_to_end(),
+                Some(true),
+                "picker should remain pinned to the bottom ({phase})"
+            );
+            assert!(
+                picker.logical_scroll_top_index() > 0,
+                "picker should not jump to the top while pinned to the bottom ({phase})"
+            );
+            assert_selected_entry_is_recent_project(picker);
+        });
+    }
+
+    #[track_caller]
+    fn assert_selected_entry_is_recent_project(picker: &Picker<RecentProjectsDelegate>) {
+        assert!(matches!(
+            picker
+                .delegate
+                .filtered_entries
+                .get(picker.delegate.selected_index),
+            Some(ProjectPickerEntry::RecentProject(_))
+        ));
+    }
+
+    #[gpui::test]
+    fn deleting_top_recent_project_preserves_scroll_position(cx: &mut TestAppContext) {
+        let target = FIRST_RECENT_PROJECT;
+        let (picker, cx) = build_picker(cx);
+        let scroll_top = scroll_to_and_select(&picker, cx, target);
+        assert!(
+            scroll_top > 0,
+            "test should start scrolled away from the top"
+        );
+
+        delete_recent_project_in_picker(&picker, cx, target);
+        assert_scroll_top_is(&picker, cx, scroll_top, "after delete");
+
+        // The picker re-runs layout on the next frame; the scroll position
+        // must still be preserved after that redraw.
+        draw(cx);
+        assert_scroll_top_is(&picker, cx, scroll_top, "after redraw");
+    }
+
+    #[gpui::test]
+    fn deleting_middle_recent_project_preserves_scroll_position(cx: &mut TestAppContext) {
+        let target = FIRST_RECENT_PROJECT + RECENT_PROJECT_COUNT / 2;
+        let (picker, cx) = build_picker(cx);
+        let scroll_top = scroll_to_and_select(&picker, cx, target);
+        assert!(
+            scroll_top > 0,
+            "test should start scrolled away from the top"
+        );
+
+        delete_recent_project_in_picker(&picker, cx, target);
+        assert_scroll_top_is(&picker, cx, scroll_top, "after delete");
+
+        draw(cx);
+        assert_scroll_top_is(&picker, cx, scroll_top, "after redraw");
+    }
+
+    #[gpui::test]
+    fn deleting_last_recent_project_preserves_scroll_position(cx: &mut TestAppContext) {
+        let target = LAST_RECENT_PROJECT;
+        let (picker, cx) = build_picker(cx);
+        scroll_to_and_select(&picker, cx, target);
+
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                picker.is_scrolled_to_end(),
+                Some(true),
+                "selecting the last entry should leave the picker pinned to the bottom"
+            );
+        });
+
+        delete_recent_project_in_picker(&picker, cx, target);
+        assert_pinned_to_bottom(&picker, cx, "after delete");
+
+        draw(cx);
+        assert_pinned_to_bottom(&picker, cx, "after redraw");
+    }
 
     #[gpui::test]
     async fn test_open_dev_container_action_with_single_config(cx: &mut TestAppContext) {

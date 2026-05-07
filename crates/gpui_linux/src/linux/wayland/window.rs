@@ -117,6 +117,7 @@ pub struct WaylandWindowState {
     active: bool,
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
+    renderer_presented: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -392,6 +393,7 @@ impl WaylandWindowState {
             active: false,
             hovered: false,
             force_render_after_recovery: false,
+            renderer_presented: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -1398,7 +1400,7 @@ impl PlatformWindow for WaylandWindow {
             return;
         }
 
-        state.renderer.draw(scene);
+        state.renderer_presented = state.renderer.draw(scene);
 
         if state.renderer.needs_redraw() {
             state.force_render_after_recovery = true;
@@ -1406,8 +1408,15 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn completed_frame(&self) {
-        let state = self.borrow();
-        state.surface.commit();
+        let mut state = self.borrow_mut();
+
+        // Work around a bug in old versions of wlroots where committing without a buffer attached
+        // can cause invalid synchronization that leads to graphical corruption.
+        if !state.renderer_presented {
+            state.surface.commit();
+        }
+
+        state.renderer_presented = false;
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

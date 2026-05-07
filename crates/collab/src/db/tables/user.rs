@@ -25,6 +25,8 @@ impl From<Model> for crate::entities::User {
         crate::entities::User {
             id: user.id,
             github_login: user.github_login,
+            github_user_id: user.github_user_id,
+            name: user.name,
             admin: user.admin,
             connected_once: user.connected_once,
         }

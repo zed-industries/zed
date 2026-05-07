@@ -35,102 +35,18 @@ unsafe impl Sync for WindowsDisplay {}
 
 impl WindowsDisplay {
     pub(crate) fn new(display_id: DisplayId) -> Option<Self> {
-        let screen = available_monitors()
-            .into_iter()
-            .nth(u32::from(display_id) as _)?;
-        let info = get_monitor_info(screen).log_err()?;
+        let handle = HMONITOR(u64::from(display_id) as _);
+        let info = get_monitor_info(handle).log_err()?;
         let monitor_size = info.monitorInfo.rcMonitor;
         let work_area = info.monitorInfo.rcWork;
         let uuid = generate_uuid(&info.szDevice);
-        let scale_factor = get_scale_factor_for_monitor(screen).log_err()?;
+        let scale_factor = get_scale_factor_for_monitor(handle).log_err()?;
         let physical_size = size(
             (monitor_size.right - monitor_size.left).into(),
             (monitor_size.bottom - monitor_size.top).into(),
         );
 
         Some(WindowsDisplay {
-            handle: screen,
-            display_id,
-            scale_factor,
-            bounds: Bounds {
-                origin: logical_point(
-                    monitor_size.left as f32,
-                    monitor_size.top as f32,
-                    scale_factor,
-                ),
-                size: physical_size.to_pixels(scale_factor),
-            },
-            visible_bounds: Bounds {
-                origin: logical_point(work_area.left as f32, work_area.top as f32, scale_factor),
-                size: size(
-                    (work_area.right - work_area.left) as f32 / scale_factor,
-                    (work_area.bottom - work_area.top) as f32 / scale_factor,
-                )
-                .map(gpui::px),
-            },
-            physical_bounds: Bounds {
-                origin: point(monitor_size.left.into(), monitor_size.top.into()),
-                size: physical_size,
-            },
-            uuid,
-        })
-    }
-
-    pub fn new_with_handle(monitor: HMONITOR) -> anyhow::Result<Self> {
-        let info = get_monitor_info(monitor)?;
-        let monitor_size = info.monitorInfo.rcMonitor;
-        let work_area = info.monitorInfo.rcWork;
-        let uuid = generate_uuid(&info.szDevice);
-        let display_id = available_monitors()
-            .iter()
-            .position(|handle| handle.0 == monitor.0)
-            .unwrap();
-        let scale_factor = get_scale_factor_for_monitor(monitor)?;
-        let physical_size = size(
-            (monitor_size.right - monitor_size.left).into(),
-            (monitor_size.bottom - monitor_size.top).into(),
-        );
-
-        Ok(WindowsDisplay {
-            handle: monitor,
-            display_id: DisplayId::new(display_id as _),
-            scale_factor,
-            bounds: Bounds {
-                origin: logical_point(
-                    monitor_size.left as f32,
-                    monitor_size.top as f32,
-                    scale_factor,
-                ),
-                size: physical_size.to_pixels(scale_factor),
-            },
-            visible_bounds: Bounds {
-                origin: logical_point(work_area.left as f32, work_area.top as f32, scale_factor),
-                size: size(
-                    (work_area.right - work_area.left) as f32 / scale_factor,
-                    (work_area.bottom - work_area.top) as f32 / scale_factor,
-                )
-                .map(gpui::px),
-            },
-            physical_bounds: Bounds {
-                origin: point(monitor_size.left.into(), monitor_size.top.into()),
-                size: physical_size,
-            },
-            uuid,
-        })
-    }
-
-    fn new_with_handle_and_id(handle: HMONITOR, display_id: DisplayId) -> anyhow::Result<Self> {
-        let info = get_monitor_info(handle)?;
-        let monitor_size = info.monitorInfo.rcMonitor;
-        let work_area = info.monitorInfo.rcWork;
-        let uuid = generate_uuid(&info.szDevice);
-        let scale_factor = get_scale_factor_for_monitor(handle)?;
-        let physical_size = size(
-            (monitor_size.right - monitor_size.left).into(),
-            (monitor_size.bottom - monitor_size.top).into(),
-        );
-
-        Ok(WindowsDisplay {
             handle,
             display_id,
             scale_factor,
@@ -158,6 +74,10 @@ impl WindowsDisplay {
         })
     }
 
+    pub(crate) fn display_id_for_monitor(monitor: HMONITOR) -> DisplayId {
+        DisplayId::new(monitor.0 as u64)
+    }
+
     pub fn primary_monitor() -> Option<Self> {
         // https://devblogs.microsoft.com/oldnewthing/20070809-00/?p=25643
         const POINT_ZERO: POINT = POINT { x: 0, y: 0 };
@@ -169,7 +89,7 @@ impl WindowsDisplay {
             );
             return None;
         }
-        WindowsDisplay::new_with_handle(monitor).log_err()
+        WindowsDisplay::new(Self::display_id_for_monitor(monitor))
     }
 
     /// Check if the center point of given bounds is inside this monitor
@@ -183,7 +103,7 @@ impl WindowsDisplay {
         if monitor.is_invalid() {
             false
         } else {
-            let Ok(display) = WindowsDisplay::new_with_handle(monitor) else {
+            let Some(display) = WindowsDisplay::new(Self::display_id_for_monitor(monitor)) else {
                 return false;
             };
             display.uuid == self.uuid
@@ -193,11 +113,11 @@ impl WindowsDisplay {
     pub fn displays() -> Vec<Rc<dyn PlatformDisplay>> {
         available_monitors()
             .into_iter()
-            .enumerate()
-            .filter_map(|(id, handle)| {
-                Some(Rc::new(
-                    WindowsDisplay::new_with_handle_and_id(handle, DisplayId::new(id as _)).ok()?,
-                ) as Rc<dyn PlatformDisplay>)
+            .filter_map(|handle| {
+                Some(
+                    Rc::new(WindowsDisplay::new(Self::display_id_for_monitor(handle))?)
+                        as Rc<dyn PlatformDisplay>,
+                )
             })
             .collect()
     }
