@@ -450,6 +450,11 @@ pub fn into_deepseek(
             None
         },
         response_format: None,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => deepseek::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => deepseek::ToolChoice::Required,
+            LanguageModelToolChoice::None => deepseek::ToolChoice::None,
+        }),
         tools: request
             .tools
             .into_iter()
