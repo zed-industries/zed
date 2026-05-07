@@ -6322,7 +6322,7 @@ impl RenderOnce for PanelRepoFooter {
             .unwrap_or(true);
 
         const MAX_BRANCH_LEN: usize = 16;
-        const MAX_REPO_LEN: usize = 16;
+        const MAX_REPO_LEN: usize = 32;
         const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
         const MAX_SHORT_SHA_LEN: usize = 8;
         let branch_name = self

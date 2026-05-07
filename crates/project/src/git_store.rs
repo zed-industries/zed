@@ -4352,12 +4352,20 @@ impl RepositorySnapshot {
 
     /// This is the name that will be displayed in the repository selector for this repository.
     pub fn display_name(&self) -> SharedString {
-        self.work_directory_abs_path
+        let dir_name = self
+            .work_directory_abs_path
             .file_name()
             .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-            .into()
+            .to_string_lossy();
+        let parent_name = self
+            .work_directory_abs_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy());
+        match parent_name {
+            Some(parent) => format!("{parent}/{dir_name}").into(),
+            None => dir_name.to_string().into(),
+        }
     }
 }
 
