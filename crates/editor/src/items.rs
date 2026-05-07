@@ -101,6 +101,10 @@ impl FollowableItem for Editor {
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
 
+            let path_excerpts =
+                deserialize_path_excerpts_and_wait_for_anchors(state.path_excerpts, &buffers, cx)
+                    .await?;
+
             let editor = cx.update(|window, cx| {
                 let multibuffer = cx.new(|cx| {
                     let mut multibuffer;
@@ -108,27 +112,13 @@ impl FollowableItem for Editor {
                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
                         multibuffer = MultiBuffer::new(project.read(cx).capability());
-                        for path_with_ranges in state.path_excerpts {
-                            let Some(path_key) =
-                                path_with_ranges.path_key.and_then(deserialize_path_key)
-                            else {
-                                continue;
-                            };
-                            let Some(buffer_id) = BufferId::new(path_with_ranges.buffer_id).ok()
-                            else {
-                                continue;
-                            };
+                        for (path_key, buffer_id, ranges) in path_excerpts {
                             let Some(buffer) =
                                 buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id)
                             else {
                                 continue;
                             };
                             let buffer_snapshot = buffer.read(cx).snapshot();
-                            let ranges = path_with_ranges
-                                .ranges
-                                .into_iter()
-                                .filter_map(deserialize_excerpt_range)
-                                .collect::<Vec<_>>();
                             multibuffer.update_path_excerpts(
                                 path_key,
                                 buffer.clone(),
@@ -402,25 +392,20 @@ async fn update_editor_from_message(
             .map(|id| BufferId::new(id).map(|id| project.open_buffer_by_id(id, cx)))
             .collect::<Result<Vec<_>>>()
     })?;
-    let _inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
+    let inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
+
+    let updated_paths = deserialize_path_excerpts_and_wait_for_anchors(
+        message.updated_paths,
+        &inserted_excerpt_buffers,
+        cx,
+    )
+    .await?;
 
     // Update the editor's excerpts.
     let buffer_snapshot = this.update(cx, |editor, cx| {
         editor.buffer.update(cx, |multibuffer, cx| {
-            for path_with_excerpts in message.updated_paths {
-                let Some(path_key) = path_with_excerpts.path_key.and_then(deserialize_path_key)
-                else {
-                    continue;
-                };
-                let ranges = path_with_excerpts
-                    .ranges
-                    .into_iter()
-                    .filter_map(deserialize_excerpt_range)
-                    .collect::<Vec<_>>();
-                let Some(buffer) = BufferId::new(path_with_excerpts.buffer_id)
-                    .ok()
-                    .and_then(|buffer_id| project.read(cx).buffer_for_id(buffer_id, cx))
-                else {
+            for (path_key, buffer_id, ranges) in updated_paths {
+                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
                     continue;
                 };
 
@@ -537,6 +522,56 @@ fn serialize_excerpt_range(range: ExcerptRange<language::Anchor>) -> proto::Exce
         primary_start: Some(primary_start),
         primary_end: Some(primary_end),
     }
+}
+
+async fn deserialize_path_excerpts_and_wait_for_anchors(
+    path_excerpts: Vec<proto::PathExcerpts>,
+    buffers: &[Entity<Buffer>],
+    cx: &mut AsyncWindowContext,
+) -> Result<Vec<(PathKey, BufferId, Vec<ExcerptRange<language::Anchor>>)>> {
+    let path_excerpts = path_excerpts
+        .into_iter()
+        .filter_map(|path_with_ranges| {
+            let path_key = path_with_ranges.path_key.and_then(deserialize_path_key)?;
+            let buffer_id = BufferId::new(path_with_ranges.buffer_id).ok()?;
+            let ranges = path_with_ranges
+                .ranges
+                .into_iter()
+                .filter_map(deserialize_excerpt_range)
+                .collect::<Vec<_>>();
+            Some((path_key, buffer_id, ranges))
+        })
+        .collect::<Vec<_>>();
+
+    let wait_for_anchors = cx.update(|_, cx| {
+        buffers
+            .iter()
+            .map(|buffer| {
+                let buffer_id = buffer.read(cx).remote_id();
+                let anchors = path_excerpts
+                    .iter()
+                    .filter(|(_, id, _)| *id == buffer_id)
+                    .flat_map(|(_, _, ranges)| {
+                        ranges.iter().flat_map(|range| {
+                            [
+                                range.context.start,
+                                range.context.end,
+                                range.primary.start,
+                                range.primary.end,
+                            ]
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                buffer.update(cx, |buffer, _| buffer.wait_for_anchors(anchors))
+            })
+            .collect::<Vec<_>>()
+    })?;
+    // Without this wait, resolving these anchors later can race ahead of the
+    // leader's pending buffer ops and trip `panic_bad_anchor` on a stale
+    // snapshot.
+    try_join_all(wait_for_anchors).await?;
+
+    Ok(path_excerpts)
 }
 
 fn deserialize_excerpt_range(
