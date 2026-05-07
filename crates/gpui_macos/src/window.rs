@@ -29,9 +29,9 @@ use gpui::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
-    px, size,
+    PromptLevel, RequestFrameOptions, ScrollDelta, SharedString, Size, SystemWindowTab,
+    TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowKind, WindowParams, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -496,6 +496,7 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
+    scroll_gesture: ScrollGestureAxisLock,
     fullscreen_restore_bounds: Bounds<Pixels>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
@@ -825,6 +826,7 @@ impl MacWindow {
                 do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
+                scroll_gesture: ScrollGestureAxisLock::default(),
                 fullscreen_restore_bounds: Bounds::default(),
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
@@ -2165,8 +2167,33 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 };
             }
 
+            PlatformInput::ScrollWheel(scroll_event) if scroll_event.delta.precise() => {
+                match scroll_event.touch_phase {
+                    TouchPhase::Started | TouchPhase::Ended => {
+                        lock.scroll_gesture.reset();
+                    }
+                    TouchPhase::Moved => {
+                        if let ScrollDelta::Pixels(raw) = scroll_event.delta {
+                            lock.scroll_gesture
+                                .update(f32::from(raw.x.abs()), f32::from(raw.y.abs()));
+                        }
+                    }
+                }
+            }
+
             _ => {}
         };
+
+        // Scroll handlers are re-registered each frame, so gesture state stored in
+        // closures resets on every repaint. Filtering here, before dispatch, ensures
+        // all consumers receive a clean delta for the lifetime of the gesture.
+        if let PlatformInput::ScrollWheel(scroll_event) = &mut event {
+            if scroll_event.delta.precise() {
+                if let ScrollDelta::Pixels(ref mut pixels) = scroll_event.delta {
+                    lock.scroll_gesture.apply(pixels);
+                }
+            }
+        }
 
         match &event {
             PlatformInput::MouseDown(_) => {
@@ -2994,5 +3021,117 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
             callback();
             window_state.lock().toggle_tab_bar_callback = Some(callback);
         }
+    }
+}
+
+// macOS sends precise pixel deltas with small cross-axis noise even during
+// intentional single-axis gestures, causing visible flicker in every scroll
+// handler. Storing the lock in MacWindowState rather than in element closures
+// avoids it being discarded on every repaint-triggered closure recreation.
+#[derive(Default)]
+struct ScrollGestureAxisLock {
+    axis: Option<ScrollGestureAxis>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ScrollGestureAxis {
+    Horizontal,
+    Vertical,
+}
+
+impl ScrollGestureAxisLock {
+    const LOCK_THRESHOLD: f32 = 3.0;
+    const SWITCH_MIN: f32 = 5.0;
+    const SWITCH_RATIO: f32 = 1.5;
+
+    fn reset(&mut self) {
+        self.axis = None;
+    }
+
+    fn update(&mut self, x: f32, y: f32) {
+        match self.axis {
+            None => {
+                if x.max(y) >= Self::LOCK_THRESHOLD {
+                    self.axis = Some(if x > y {
+                        ScrollGestureAxis::Horizontal
+                    } else {
+                        ScrollGestureAxis::Vertical
+                    });
+                }
+            }
+            Some(ScrollGestureAxis::Horizontal) => {
+                if y >= Self::SWITCH_MIN && y > x * Self::SWITCH_RATIO {
+                    self.axis = Some(ScrollGestureAxis::Vertical);
+                }
+            }
+            Some(ScrollGestureAxis::Vertical) => {
+                if x >= Self::SWITCH_MIN && x > y * Self::SWITCH_RATIO {
+                    self.axis = Some(ScrollGestureAxis::Horizontal);
+                }
+            }
+        }
+    }
+
+    fn apply(&self, pixels: &mut Point<Pixels>) {
+        match self.axis {
+            Some(ScrollGestureAxis::Horizontal) => pixels.y = px(0.),
+            Some(ScrollGestureAxis::Vertical) => pixels.x = px(0.),
+            None => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{px, point};
+
+    #[test]
+    fn test_axis_lock_locks_on_first_dominant_movement() {
+        let mut lock = ScrollGestureAxisLock::default();
+        lock.update(10.0, 1.0);
+        assert_eq!(lock.axis, Some(ScrollGestureAxis::Horizontal));
+    }
+
+    #[test]
+    fn test_axis_lock_below_threshold_stays_undecided() {
+        let mut lock = ScrollGestureAxisLock::default();
+        lock.update(1.0, 0.5);
+        assert_eq!(lock.axis, None);
+    }
+
+    #[test]
+    fn test_axis_lock_apply_zeroes_cross_axis() {
+        let mut lock = ScrollGestureAxisLock::default();
+        lock.update(10.0, 1.0);
+        let mut pixels = point(px(10.0), px(2.0));
+        lock.apply(&mut pixels);
+        assert_eq!(pixels.y, px(0.0));
+        assert_eq!(pixels.x, px(10.0));
+    }
+
+    #[test]
+    fn test_axis_lock_noise_does_not_switch() {
+        let mut lock = ScrollGestureAxisLock::default();
+        lock.update(10.0, 1.0);
+        lock.update(10.0, 2.0);
+        assert_eq!(lock.axis, Some(ScrollGestureAxis::Horizontal));
+    }
+
+    #[test]
+    fn test_axis_lock_deliberate_switch() {
+        let mut lock = ScrollGestureAxisLock::default();
+        lock.update(10.0, 1.0);
+        assert_eq!(lock.axis, Some(ScrollGestureAxis::Horizontal));
+        lock.update(1.0, 8.0);
+        assert_eq!(lock.axis, Some(ScrollGestureAxis::Vertical));
+    }
+
+    #[test]
+    fn test_axis_lock_reset_clears_state() {
+        let mut lock = ScrollGestureAxisLock::default();
+        lock.update(10.0, 1.0);
+        lock.reset();
+        assert_eq!(lock.axis, None);
     }
 }
