@@ -81,7 +81,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    CloseActiveItem, CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
+    CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
     ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemEvent,
@@ -1443,17 +1443,6 @@ impl AgentPanel {
                 );
             },
         );
-        // Listen on `TerminalView` for user-driven item closes.
-        let item_subscription = cx.subscribe_in(
-            &terminal_view,
-            window,
-            move |this, terminal_view, event: &ItemEvent, window, cx| {
-                if let ItemEvent::CloseItem = event {
-                    let focus = terminal_view.focus_handle(cx).contains_focused(window, cx);
-                    this.close_terminal(terminal_id, focus, window, cx);
-                }
-            },
-        );
         let view_subscription = cx.subscribe_in(
             &terminal_view,
             window,
@@ -1475,10 +1464,7 @@ impl AgentPanel {
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
-                    let focus = this.terminals.get(&terminal_id).is_some_and(|terminal| {
-                        terminal.view.focus_handle(cx).contains_focused(window, cx)
-                    });
-                    this.close_terminal(terminal_id, focus, window, cx);
+                    this.close_terminal(terminal_id, cx);
                 }
                 TerminalEvent::BreadcrumbsChanged
                 | TerminalEvent::BlinkChanged(_)
@@ -1495,7 +1481,6 @@ impl AgentPanel {
             created_at: Utc::now(),
             has_notification: false,
             _subscriptions: vec![
-                item_subscription,
                 view_subscription,
                 terminal_subscription,
                 title_editor_subscription,
@@ -1533,37 +1518,9 @@ impl AgentPanel {
         }
     }
 
-    // TODO: have sidebar choose next active thread
-    pub fn close_terminal(
-        &mut self,
-        terminal_id: TerminalId,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn close_terminal(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         if self.terminals.remove(&terminal_id).is_none() {
             return;
-        }
-
-        let was_active = self.active_terminal_id() == Some(terminal_id);
-        if was_active {
-            if let Some(next_terminal_id) = self
-                .terminals
-                .iter()
-                .max_by_key(|(terminal_id, terminal)| (terminal.created_at, **terminal_id))
-                .map(|(terminal_id, _)| *terminal_id)
-            {
-                self.set_base_view(
-                    BaseView::Terminal {
-                        terminal_id: next_terminal_id,
-                    },
-                    focus,
-                    window,
-                    cx,
-                );
-            } else {
-                self.activate_draft(focus, "agent_panel", window, cx);
-            }
         }
 
         cx.emit(AgentPanelEvent::EntryChanged);
@@ -1781,6 +1738,10 @@ impl AgentPanel {
             BaseView::Terminal { terminal_id } => Some(*terminal_id),
             _ => None,
         }
+    }
+
+    pub fn has_terminal(&self, terminal_id: TerminalId) -> bool {
+        self.terminals.contains_key(&terminal_id)
     }
 
     pub fn terminals(&self, cx: &App) -> Vec<AgentPanelTerminalInfo> {
@@ -4114,17 +4075,6 @@ impl Render for AgentPanel {
             .key_context(self.key_context())
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                 this.new_thread(action, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &CloseActiveItem, window, cx| {
-                if matches!(this.visible_surface(), VisibleSurface::Terminal(_))
-                    && let Some(terminal_id) = this.active_terminal_id()
-                {
-                    this.close_terminal(terminal_id, true, window, cx);
-                } else {
-                    // Don't swallow the action: let it bubble up to the workspace
-                    // handler so the active center pane's item gets closed.
-                    cx.propagate();
-                }
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_configuration(window, cx);

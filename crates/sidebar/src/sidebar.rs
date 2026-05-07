@@ -28,6 +28,7 @@ use gpui::{
     Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
     WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
+use itertools::Itertools;
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
@@ -309,7 +310,7 @@ impl From<TerminalEntry> for ListEntry {
 struct SidebarContents {
     entries: Vec<ListEntry>,
     notified_threads: HashSet<agent_ui::ThreadId>,
-    terminals_with_notifications: HashSet<TerminalId>,
+    notified_terminals: HashSet<TerminalId>,
     project_header_indices: Vec<usize>,
     has_open_projects: bool,
 }
@@ -800,13 +801,11 @@ impl Sidebar {
         cx.subscribe_in(
             agent_panel,
             window,
-            |this, _agent_panel, event: &AgentPanelEvent, _window, cx| match event {
-                AgentPanelEvent::ActiveViewChanged => {
-                    this.sync_active_entry_from_panel(_agent_panel, cx);
-                    this.update_entries(cx);
-                }
-                AgentPanelEvent::ActiveViewFocused | AgentPanelEvent::EntryChanged => {
-                    this.sync_active_entry_from_panel(_agent_panel, cx);
+            |this, agent_panel, event: &AgentPanelEvent, _window, cx| match event {
+                AgentPanelEvent::ActiveViewChanged
+                | AgentPanelEvent::ActiveViewFocused
+                | AgentPanelEvent::EntryChanged => {
+                    this.sync_active_entry_from_panel(agent_panel, cx);
                     this.update_entries(cx);
                 }
                 AgentPanelEvent::ThreadInteracted { thread_id } => {
@@ -1067,7 +1066,7 @@ impl Sidebar {
 
         let mut entries = Vec::new();
         let mut notified_threads = previous.notified_threads;
-        let mut terminals_with_notifications: HashSet<TerminalId> = HashSet::new();
+        let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
@@ -1135,7 +1134,7 @@ impl Sidebar {
                 .iter()
                 .flat_map(|workspace| terminal_entries_for_workspace(workspace, cx))
                 .collect();
-            terminals_with_notifications.extend(
+            notified_terminals.extend(
                 terminals
                     .iter()
                     .filter_map(|terminal| terminal.has_notification.then_some(terminal.id)),
@@ -1481,7 +1480,7 @@ impl Sidebar {
         self.contents = SidebarContents {
             entries,
             notified_threads,
-            terminals_with_notifications,
+            notified_terminals,
             project_header_indices,
             has_open_projects,
         };
@@ -3190,7 +3189,7 @@ impl Sidebar {
         &mut self,
         workspace: &Entity<Workspace>,
         terminal_id: TerminalId,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Closing from the sidebar must not steal focus, since the row's
@@ -3198,7 +3197,7 @@ impl Sidebar {
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.close_terminal(terminal_id, false, window, cx);
+                    panel.close_terminal(terminal_id, cx);
                 });
             }
         });
@@ -3799,12 +3798,11 @@ impl Sidebar {
             }
         }
 
-        let mut row_entries = terminals
+        let row_entries = terminals
             .into_iter()
             .map(ListEntry::Terminal)
             .chain(threads.into_iter().map(ListEntry::Thread))
-            .collect::<Vec<_>>();
-        row_entries.sort_by_key(|right| std::cmp::Reverse(display_time(right)));
+            .sorted_by_key(|right| std::cmp::Reverse(display_time(right)));
 
         for entry in row_entries {
             if let ListEntry::Thread(thread) = &entry {
@@ -5186,8 +5184,7 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn has_notifications(&self, _cx: &App) -> bool {
-        !self.contents.notified_threads.is_empty()
-            || !self.contents.terminals_with_notifications.is_empty()
+        !self.contents.notified_threads.is_empty() || !self.contents.notified_terminals.is_empty()
     }
 
     fn is_threads_list_view_active(&self) -> bool {
