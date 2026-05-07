@@ -17767,6 +17767,28 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.go_to_singleton_buffer_range_impl(range, true, window, cx);
+    }
+
+    /// Like `go_to_singleton_buffer_point`, but does not push a navigation
+    /// history entry. Useful when the caller already recorded one (e.g. when
+    /// a file was just opened and we only need to move the cursor).
+    pub fn go_to_singleton_buffer_point_silently(
+        &mut self,
+        point: Point,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_singleton_buffer_range_impl(point..point, false, window, cx);
+    }
+
+    fn go_to_singleton_buffer_range_impl(
+        &mut self,
+        range: Range<Point>,
+        record_nav_history: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let multibuffer = self.buffer().read(cx);
         if !multibuffer.is_singleton() {
             return;
@@ -17777,7 +17799,7 @@ impl Editor {
                 self.cursor_top_offset(cx),
                 cx,
             ))
-            .nav_history(true),
+            .nav_history(record_nav_history),
             window,
             cx,
             |s| s.select_anchor_ranges([anchor_range]),
@@ -18240,12 +18262,14 @@ impl Editor {
         cx.spawn_in(window, async move |_, cx| {
             let result = find_file(&buffer, project, buffer_position, cx).await;
 
-            if let Some((_, path)) = result {
-                workspace
+            if let Some((_, file_target)) = result {
+                let item = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.open_resolved_path(path, window, cx)
+                        workspace.open_resolved_path(file_target.resolved_path.clone(), window, cx)
                     })?
                     .await?;
+
+                file_target.navigate_item_to_position(item, cx);
             }
             anyhow::Ok(())
         })
@@ -18276,8 +18300,8 @@ impl Editor {
                     first_url_or_file = Some(Either::Left(url));
                     None
                 }
-                HoverLink::File(path) => {
-                    first_url_or_file = Some(Either::Right(path));
+                HoverLink::File(file_target) => {
+                    first_url_or_file = Some(Either::Right(file_target));
                     None
                 }
             })
@@ -18411,18 +18435,25 @@ impl Editor {
                         })?;
                         Ok(Navigated::Yes)
                     }
-                    Some(Either::Right(path)) => {
+                    Some(Either::Right(file_target)) => {
                         // TODO(andrew): respect preview tab settings
                         //               `enable_keep_preview_on_code_navigation` and
                         //               `enable_preview_file_from_code_navigation`
                         let Some(workspace) = workspace else {
                             return Ok(Navigated::No);
                         };
-                        workspace
+                        let item = workspace
                             .update_in(cx, |workspace, window, cx| {
-                                workspace.open_resolved_path(path, window, cx)
+                                workspace.open_resolved_path(
+                                    file_target.resolved_path.clone(),
+                                    window,
+                                    cx,
+                                )
                             })?
                             .await?;
+
+                        file_target.navigate_item_to_position(item, cx);
+
                         Ok(Navigated::Yes)
                     }
                     None => Ok(Navigated::No),

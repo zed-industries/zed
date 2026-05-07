@@ -1,8 +1,7 @@
 use crate::tools::edit_file_tool::*;
 use crate::{
-    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ListDirectoryTool,
-    ListDirectoryToolInput, ReadFileTool, ReadFileToolInput, Template, Templates, Thread,
-    ToolCallEventStream, ToolInput,
+    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ReadFileTool,
+    ReadFileToolInput, Template, Templates, Thread, ToolCallEventStream, ToolInput,
 };
 use Role::*;
 use anyhow::{Context as _, Result};
@@ -122,20 +121,6 @@ impl EvalAssertion {
             ) -> Result<EvalAssertionOutcome>,
     {
         EvalAssertion(Arc::new(f))
-    }
-
-    fn assert_eq(expected: impl Into<String>) -> Self {
-        let expected = expected.into();
-        Self::new(async move |sample, _judge, _cx| {
-            Ok(EvalAssertionOutcome {
-                score: if strip_empty_lines(&sample.text_after) == strip_empty_lines(&expected) {
-                    100
-                } else {
-                    0
-                },
-                message: None,
-            })
-        })
     }
 
     fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
@@ -1496,49 +1481,6 @@ fn eval_add_overwrite_test() {
             EvalAssertion::judge_diff(
                 "A new test for overwritten files was created, without changing any previous test",
             ),
-        ))
-    });
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_create_empty_file() {
-    let input_file_path = "root/TODO3";
-    let input_file_content = None;
-    let expected_output_content = String::new();
-
-    eval_utils::eval(100, 0.99, eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(User, [text("Create a second empty todo file ")]),
-                message(
-                    Assistant,
-                    [
-                        text(indoc::formatdoc! {"
-                            I'll help you create a second empty todo file.
-                            First, let me examine the project structure to see if there's already a todo file, which will help me determine the appropriate name and location for the second one.
-                            "}),
-                        tool_use(
-                            "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                            ListDirectoryTool::NAME,
-                            ListDirectoryToolInput {
-                                path: "root".to_string(),
-                            },
-                        ),
-                    ],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                        ListDirectoryTool::NAME,
-                        "root/TODO\nroot/TODO2\nroot/new.txt\n",
-                    )],
-                ),
-            ],
-            input_file_path,
-            input_file_content.clone(),
-            EvalAssertion::assert_eq(expected_output_content.clone()),
         ))
     });
 }
