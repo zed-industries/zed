@@ -37,9 +37,9 @@ use crate::completion_provider::AgentContextSource;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
-    InlineAssistant, LoadThreadFromClipboard, NewAgentPanelTerminal, NewThread,
-    OpenActiveThreadAsMarkdown, OpenAgentDiff, ResetTrialEndUpsell, ResetTrialUpsell,
-    ShowAllSidebarThreadMetadata, ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
+    InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata, ShowThreadMetadata,
+    ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
     ui::EndTrialUpsell,
@@ -243,17 +243,6 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.new_external_agent_thread(action, window, cx);
-                        });
-                    }
-                })
-                .register_action(|workspace, _: &NewAgentPanelTerminal, window, cx| {
-                    if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
-                        return;
-                    }
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| {
-                            panel.new_terminal(Some(workspace), window, cx);
                         });
                     }
                 })
@@ -4089,9 +4078,6 @@ impl Render for AgentPanel {
             .key_context(self.key_context())
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                 this.new_thread(action, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &NewAgentPanelTerminal, window, cx| {
-                this.new_terminal(None, window, cx);
             }))
             .on_action(cx.listener(|this, _: &CloseActiveItem, window, cx| {
                 if matches!(this.visible_surface(), VisibleSurface::Terminal(_))

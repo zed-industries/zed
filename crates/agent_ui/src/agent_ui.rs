@@ -87,8 +87,6 @@ actions!(
     [
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Opens a new terminal in the agent panel.
-        NewAgentPanelTerminal,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
         /// Toggles the profile or mode selector for switching between agent profiles.
@@ -541,7 +539,6 @@ fn update_command_palette_filter(cx: &mut App) {
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
         .provider;
-    let agent_panel_terminal_enabled = cx.has_flag::<AgentPanelTerminalFeatureFlag>();
 
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
@@ -558,7 +555,6 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<PreviousEditPrediction>(),
             TypeId::of::<ToggleEditPrediction>(),
         ];
-        let agent_panel_terminal_actions = [TypeId::of::<NewAgentPanelTerminal>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -569,7 +565,6 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_namespace("edit_prediction");
 
             filter.hide_action_types(&edit_prediction_actions);
-            filter.hide_action_types(&agent_panel_terminal_actions);
             filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         } else {
             if agent_enabled {
@@ -580,12 +575,6 @@ fn update_command_palette_filter(cx: &mut App) {
                 filter.hide_namespace("agent");
                 filter.hide_namespace("agents");
                 filter.hide_namespace("assistant");
-            }
-
-            if agent_enabled && agent_panel_terminal_enabled {
-                filter.show_action_types(&agent_panel_terminal_actions);
-            } else {
-                filter.hide_action_types(&agent_panel_terminal_actions);
             }
 
             match edit_prediction_provider {

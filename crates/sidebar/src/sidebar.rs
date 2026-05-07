@@ -986,7 +986,7 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
-    fn open_workspace_and_create_draft(
+    fn open_workspace_and_create_entry(
         &mut self,
         project_group_key: &ProjectGroupKey,
         window: &mut Window,
@@ -1018,7 +1018,7 @@ impl Sidebar {
         cx.spawn_in(window, async move |this, cx| {
             let workspace = task.await?;
             this.update_in(cx, |this, window, cx| {
-                this.create_new_thread(&workspace, window, cx);
+                this.create_new_entry(&workspace, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1795,9 +1795,9 @@ impl Sidebar {
                                 this.set_group_expanded(&key, true, cx);
                                 this.selection = None;
                                 if let Some(workspace) = this.workspace_for_group(&key, cx) {
-                                    this.create_new_thread(&workspace, window, cx);
+                                    this.create_new_entry(&workspace, window, cx);
                                 } else {
-                                    this.open_workspace_and_create_draft(&key, window, cx);
+                                    this.open_workspace_and_create_entry(&key, window, cx);
                                 }
                             },
                         ))
@@ -4373,7 +4373,7 @@ impl Sidebar {
             if let Some(workspace) = self.workspace_for_group(&key, cx) {
                 self.create_new_entry(&workspace, window, cx);
             } else {
-                self.open_workspace_and_create_draft(&key, window, cx);
+                self.open_workspace_and_create_entry(&key, window, cx);
             }
         } else if let Some(workspace) = self.active_workspace(cx) {
             self.create_new_entry(&workspace, window, cx);
