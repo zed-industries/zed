@@ -29,7 +29,8 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    Skill, SkillLoadError, SkillSource, load_skills_from_directory, project_skills_relative_path,
+    Skill, SkillLoadError, SkillSource, global_skills_dir, load_skills_from_directory,
+    project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -332,16 +333,16 @@ impl NativeAgent {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) {
-        let skills_dir = paths::skills_dir();
+        let skills_dir = global_skills_dir();
 
         // If the skills directory doesn't exist yet, don't watch.
         // (Re-checking when it appears is out of scope; the user can restart.)
-        if !fs.is_dir(skills_dir).await {
+        if !fs.is_dir(&skills_dir).await {
             return;
         }
 
         let (mut events, _watcher) = fs
-            .watch(skills_dir, std::time::Duration::from_millis(500))
+            .watch(&skills_dir, std::time::Duration::from_millis(500))
             .await;
 
         while let Some(changed_paths) = events.next().await {
@@ -615,7 +616,7 @@ impl NativeAgent {
 
         // Load global skills
         let global_skills_task = if skills_enabled {
-            let global_skills_dir = paths::skills_dir().clone();
+            let global_skills_dir = global_skills_dir();
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
                 load_skills_from_directory(
@@ -2342,29 +2343,57 @@ impl TerminalHandle for AcpTerminalHandle {
 }
 
 /// Merge global and project-local skills.
-/// Name conflicts produce errors - NO OVERRIDES ALLOWED.
+/// Project-local skills override global skills with the same name.
 fn merge_skills(
     global: Vec<Result<Skill, SkillLoadError>>,
     project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
 ) -> (Vec<Skill>, Vec<SkillLoadError>) {
     let mut skills = Vec::new();
     let mut errors = Vec::new();
-    let mut seen_names: HashMap<String, PathBuf> = HashMap::default();
+    let mut seen_names: HashMap<String, (usize, SkillSource, PathBuf)> = HashMap::default();
 
     for result in global.into_iter().chain(project) {
         match result {
             Ok(skill) => {
-                if let Some(existing_path) = seen_names.get(&skill.name) {
-                    errors.push(SkillLoadError {
-                        path: skill.skill_file_path.clone(),
-                        message: format!(
-                            "Skill name '{}' conflicts with skill at '{}'",
-                            skill.name,
-                            existing_path.display()
-                        ),
-                    });
+                if let Some((existing_index, existing_source, existing_path)) =
+                    seen_names.get(&skill.name).cloned()
+                {
+                    match (&existing_source, &skill.source) {
+                        (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
+                            log::warn!(
+                                "Project skill '{}' at '{}' overrides global skill at '{}'",
+                                skill.name,
+                                skill.skill_file_path.display(),
+                                existing_path.display()
+                            );
+                            seen_names.insert(
+                                skill.name.clone(),
+                                (
+                                    existing_index,
+                                    skill.source.clone(),
+                                    skill.skill_file_path.clone(),
+                                ),
+                            );
+                            skills[existing_index] = skill;
+                        }
+                        _ => {
+                            log::warn!(
+                                "Skill '{}' at '{}' conflicts with skill at '{}'; keeping the first one",
+                                skill.name,
+                                skill.skill_file_path.display(),
+                                existing_path.display()
+                            );
+                        }
+                    }
                 } else {
-                    seen_names.insert(skill.name.clone(), skill.skill_file_path.clone());
+                    seen_names.insert(
+                        skill.name.clone(),
+                        (
+                            skills.len(),
+                            skill.source.clone(),
+                            skill.skill_file_path.clone(),
+                        ),
+                    );
                     skills.push(skill);
                 }
             }
@@ -2389,8 +2418,38 @@ mod internal_tests {
         LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
     };
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, WorktreeId};
     use util::{path, rel_path::rel_path};
+
+    #[test]
+    fn test_project_skills_override_global_skills() {
+        let global_skill = Skill {
+            name: "review".to_string(),
+            description: "Global review".to_string(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/home/user/.agents/skills/review"),
+            skill_file_path: PathBuf::from("/home/user/.agents/skills/review/SKILL.md"),
+            content: "global".to_string(),
+        };
+        let project_skill = Skill {
+            name: "review".to_string(),
+            description: "Project review".to_string(),
+            source: SkillSource::ProjectLocal {
+                worktree_id: WorktreeId::from_usize(1),
+            },
+            directory_path: PathBuf::from("/project/.agents/skills/review"),
+            skill_file_path: PathBuf::from("/project/.agents/skills/review/SKILL.md"),
+            content: "project".to_string(),
+        };
+
+        let (skills, errors) =
+            merge_skills(vec![Ok(global_skill)], vec![Ok(project_skill)].into_iter());
+
+        assert!(errors.is_empty());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "Project review");
+        assert_eq!(skills[0].content, "project");
+    }
 
     #[gpui::test]
     async fn test_maintaining_project_context(cx: &mut TestAppContext) {
@@ -2487,7 +2546,7 @@ mod internal_tests {
             cx.update_flags(true, vec!["skills".to_string()]);
         });
         let fs = FakeFs::new(cx.executor());
-        let skills_dir = paths::skills_dir();
+        let skills_dir = global_skills_dir();
         let initial_skill_dir = skills_dir.join("my-skill");
         let initial_skill_path = initial_skill_dir.join("SKILL.md");
         fs.create_dir(&initial_skill_dir).await.unwrap();

@@ -288,7 +288,7 @@ mod tests {
         let project_skill_content =
             "---\nname: project-skill\ndescription: A project skill\n---\n\nProject content";
         let project_skill = parse_skill(
-            Path::new("/test/.zed/skills/project-skill/SKILL.md"),
+            Path::new("/test/.agents/skills/project-skill/SKILL.md"),
             project_skill_content,
             SkillSource::ProjectLocal { worktree_id },
         )

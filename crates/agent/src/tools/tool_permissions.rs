@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub enum SensitiveSettingsKind {
     Local,
     Global,
+    AgentSkills,
 }
 
 /// Result of resolving a path within the project with symlink safety checks.
@@ -101,8 +102,19 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
         .any(|root| canonical_path.starts_with(root))
 }
 
-/// Returns the kind of sensitive settings location this path targets, if any:
-/// either inside a `.zed/` local-settings directory or inside the global config dir.
+fn is_agents_skills_path(path: &Path) -> bool {
+    let mut components = path.components().map(|component| component.as_os_str());
+    while let Some(component) = components.next() {
+        if component == OsStr::new(".agents") && components.next() == Some(OsStr::new("skills")) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns the kind of sensitive settings or agent skills location this path targets, if any:
+/// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
+/// the global config dir.
 pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
     if path.components().any(|component| {
@@ -111,7 +123,20 @@ pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<Sensiti
         return Some(SensitiveSettingsKind::Local);
     }
 
+    if is_agents_skills_path(path) {
+        return Some(SensitiveSettingsKind::AgentSkills);
+    }
+
     if let Some(canonical_path) = canonicalize_with_ancestors(path, fs).await {
+        let global_agents_skills_dir = agent_skills::global_skills_dir();
+        let global_agents_skills_dir = fs
+            .canonicalize(global_agents_skills_dir.as_path())
+            .await
+            .unwrap_or(global_agents_skills_dir);
+        if canonical_path.starts_with(&global_agents_skills_dir) {
+            return Some(SensitiveSettingsKind::AgentSkills);
+        }
+
         let config_dir = fs
             .canonicalize(paths::config_dir())
             .await
@@ -267,6 +292,9 @@ pub fn authorize_with_sensitive_settings(
         }
         Some(SensitiveSettingsKind::Global) => {
             event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
+        }
+        Some(SensitiveSettingsKind::AgentSkills) => {
+            event_stream.authorize_always_prompt(format!("{title} (agent skills)"), context, cx)
         }
         None => event_stream.authorize(title, context, cx),
     }
@@ -499,6 +527,20 @@ pub fn authorize_file_edit(
                         vec![path_owned.to_string_lossy().to_string()],
                     );
                     event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
+                });
+                return authorize.await;
+            }
+            Some(SensitiveSettingsKind::AgentSkills) => {
+                let authorize = cx.update(|cx| {
+                    let context = ToolPermissionContext::new(
+                        &tool_name,
+                        vec![path_owned.to_string_lossy().to_string()],
+                    );
+                    event_stream.authorize_always_prompt(
+                        format!("{title} (agent skills)"),
+                        context,
+                        cx,
+                    )
                 });
                 return authorize.await;
             }

@@ -32,9 +32,9 @@ pub struct Skill {
 /// Indicates where a skill was loaded from.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum SkillSource {
-    /// From {config_dir}/skills/
+    /// From ~/.agents/skills/
     Global,
-    /// From {project}/.zed/skills/
+    /// From {project}/.agents/skills/
     ProjectLocal { worktree_id: WorktreeId },
 }
 
@@ -222,12 +222,12 @@ async fn load_single_skill(
     })
 }
 
-pub fn global_skills_dir() -> &'static PathBuf {
-    paths::skills_dir()
+pub fn global_skills_dir() -> PathBuf {
+    paths::home_dir().join(".agents").join("skills")
 }
 
 pub fn project_skills_relative_path() -> &'static str {
-    ".zed/skills"
+    ".agents/skills"
 }
 
 #[cfg(test)]
