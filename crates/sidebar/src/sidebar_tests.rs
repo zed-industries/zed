@@ -33,6 +33,12 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
+fn enable_agent_panel_terminal(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+    });
+}
+
 #[track_caller]
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     let active = sidebar.active_entry.as_ref();
@@ -1414,6 +1420,150 @@ fn setup_sidebar_with_agent_panel(
     let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
     let panel = add_agent_panel(&workspace, cx);
     (sidebar, panel)
+}
+
+#[gpui::test]
+async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Dev Server"]
+    );
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. }) if *active_terminal_id == terminal_id),
+            "expected active terminal entry, got {:?}",
+            sidebar.active_entry,
+        );
+        assert!(
+            sidebar.contents.entries.iter().any(|entry| {
+                matches!(entry, ListEntry::Terminal(terminal) if terminal.id == terminal_id && terminal.title.as_ref() == "Dev Server")
+            }),
+            "expected the inserted terminal to appear in sidebar contents",
+        );
+    });
+
+    type_in_search(&sidebar, "server", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Dev Server  <== selected"]
+    );
+
+    type_in_search(&sidebar, "missing", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        Vec::<String>::new()
+    );
+}
+
+#[gpui::test]
+async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(panel.active_terminal_id(), Some(server_terminal_id));
+    });
+
+    panel.update(cx, |panel, cx| {
+        panel.emit_test_terminal_bell(build_terminal_id, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, cx| {
+        assert!(sidebar.has_notifications(cx));
+        assert!(sidebar.contents.notified_terminals.contains(&build_terminal_id));
+        assert!(sidebar.contents.entries.iter().any(|entry| {
+            matches!(entry, ListEntry::Terminal(terminal) if terminal.id == build_terminal_id && terminal.has_notification)
+        }));
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.activate_terminal(build_terminal_id, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, cx| {
+        assert!(!sidebar.has_notifications(cx));
+        assert!(
+            !sidebar
+                .contents
+                .notified_terminals
+                .contains(&build_terminal_id)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_closing_active_agent_panel_terminal_activates_neighbor(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.close_terminal(&workspace, server_terminal_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.has_terminal(server_terminal_id));
+        assert_eq!(panel.active_terminal_id(), Some(build_terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id, .. }) if *terminal_id == build_terminal_id),
+            "expected remaining terminal to become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Build"]
+    );
 }
 
 #[gpui::test]

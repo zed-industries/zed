@@ -4303,6 +4303,61 @@ impl AgentPanel {
         self.draft_thread = Some(thread.conversation_view.clone());
         self.set_base_view(thread.into(), true, window, cx);
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn insert_test_terminal(
+        &mut self,
+        title: impl Into<String>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<TerminalId> {
+        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+            anyhow::bail!("agent-panel-terminal feature flag must be enabled");
+        }
+
+        let terminal_id = TerminalId::new();
+        let settings = TerminalSettings::get_global(cx).clone();
+        let path_style = self.project.read(cx).path_style(cx);
+        let builder = terminal::TerminalBuilder::new_display_only(
+            settings.cursor_shape,
+            settings.alternate_scroll,
+            settings.max_scroll_history_lines,
+            cx.entity_id().as_u64(),
+            cx.background_executor(),
+            path_style,
+        )?;
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+        let terminal_view = cx.new(|cx| {
+            TerminalView::new(
+                terminal,
+                self.workspace.clone(),
+                self.workspace_id,
+                self.project.downgrade(),
+                window,
+                cx,
+            )
+        });
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.set_custom_title(Some(title.into()), cx);
+        });
+        self.insert_terminal(terminal_id, terminal_view, focus, window, cx);
+        Ok(terminal_id)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn emit_test_terminal_bell(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+        let Some(terminal_entity) = self
+            .terminals
+            .get(&terminal_id)
+            .map(|terminal| terminal.view.read(cx).terminal().clone())
+        else {
+            return;
+        };
+        terminal_entity.update(cx, |_terminal, cx| {
+            cx.emit(TerminalEvent::Bell);
+        });
+    }
 }
 
 #[cfg(test)]
@@ -5277,6 +5332,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs.clone(), [], cx).await;
 
         let multi_workspace =
@@ -5293,6 +5349,98 @@ mod tests {
         });
 
         (panel, cx)
+    }
+
+    #[gpui::test]
+    async fn test_terminal_entry_kind_controls_new_entry(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(panel.supports_terminal(cx));
+            assert!(!panel.should_create_terminal_for_new_entry(cx));
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(panel.active_terminal_id(), Some(terminal_id));
+            assert!(panel.has_terminal(terminal_id));
+            assert!(panel.should_create_terminal_for_new_entry(cx));
+            let terminals = panel.terminals(cx);
+            assert_eq!(terminals.len(), 1);
+            assert_eq!(terminals[0].title.as_ref(), "Dev Server");
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_new_thread(false, "test", window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(panel.active_terminal_id(), None);
+            assert!(panel.has_terminal(terminal_id));
+            assert!(!panel.should_create_terminal_for_new_entry(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_bell_marks_and_activation_clears_notification(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        let second_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(second_terminal_id));
+        });
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let first_terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == first_terminal_id)
+                .expect("first terminal should remain in the panel");
+            assert!(first_terminal.has_notification);
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_terminal(first_terminal_id, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let first_terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == first_terminal_id)
+                .expect("first terminal should remain in the panel");
+            assert!(!first_terminal.has_notification);
+        });
     }
 
     #[gpui::test]
