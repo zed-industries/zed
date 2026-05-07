@@ -3,7 +3,8 @@
 A [dylint](https://github.com/trailofbits/dylint) library that flags various bad patterns in our codebase.
 
 ## Current lints
-- `SharedString::new/from etc` where `SharedString::from_static` should be used instead.
+- `shared_string_from_str_literal` — `SharedString::new/from` etc where `SharedString::from_static` should be used instead.
+- `async_block_without_await` — `async { … }` blocks whose body contains no `.await` expression.
 
 ## How to run
 Run the `clippy` in `scripts` directory
@@ -15,3 +16,8 @@ All issues highlighed go through manual review therefore we feel comfortable vib
 This is how you can optimally prompt Claude 4.6 as of may 2026 to add a lint:
 
 TODO!(yara)
+
+TODO!(raz)
+- setting state as you render, specifically (the `set_text` on the editor there)
+https://github.com/zed-industries/zed/blob/fb3218e01e22d5dcc2791fd6b94d22cf37d8e42f/crates/settings_ui/src/components/input_field.rs#L188-L208
+

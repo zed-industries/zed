@@ -1,0 +1,55 @@
+warning: this `async` block contains no `.await`
+  --> $DIR/async_block_without_await.rs:17:14
+   |
+LL |     let _f = async {};
+   |              ^^^^^^^^
+   |
+   = help: consider removing the `async` block or adding the missing `.await`
+   = note: `#[warn(async_block_without_await)]` on by default
+
+warning: this `async` block contains no `.await`
+  --> $DIR/async_block_without_await.rs:20:14
+   |
+LL |     let _f = async { 42 };
+   |              ^^^^^^^^^^^^
+   |
+   = help: consider removing the `async` block or adding the missing `.await`
+
+warning: this `async` block contains no `.await`
+  --> $DIR/async_block_without_await.rs:23:14
+   |
+LL |       let _f = async move {
+   |  ______________^
+LL | |         let x = 1;
+LL | |         x + 2
+LL | |     };
+   | |_____^
+   |
+   = help: consider removing the `async` block or adding the missing `.await`
+
+warning: this `async` block contains no `.await`
+  --> $DIR/async_block_without_await.rs:29:14
+   |
+LL |     let _f = async { sync_fn() };
+   |              ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider removing the `async` block or adding the missing `.await`
+
+warning: this `async` block contains no `.await`
+  --> $DIR/async_block_without_await.rs:34:21
+   |
+LL |         let inner = async { 42 };
+   |                     ^^^^^^^^^^^^
+   |
+   = help: consider removing the `async` block or adding the missing `.await`
+
+warning: this `async` block contains no `.await`
+  --> $DIR/async_block_without_await.rs:77:9
+   |
+LL |         async { 42 }
+   |         ^^^^^^^^^^^^
+   |
+   = help: consider removing the `async` block or adding the missing `.await`
+
+warning: 6 warnings emitted
+

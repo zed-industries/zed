@@ -4,21 +4,50 @@
 extern crate rustc_ast;
 extern crate rustc_errors;
 extern crate rustc_hir;
+extern crate rustc_lint;
 extern crate rustc_middle;
+extern crate rustc_session;
 extern crate rustc_span;
 
-use clippy_utils::diagnostics::span_lint_and_then;
+use clippy_utils::diagnostics::{span_lint_and_help, span_lint_and_then};
+use clippy_utils::is_def_id_trait_method;
 use clippy_utils::source::snippet_opt;
 use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
-use rustc_hir::{Expr, ExprKind};
+use rustc_hir::intravisit::{Visitor, walk_expr};
+use rustc_hir::{
+    Closure, ClosureKind, CoroutineDesugaring, CoroutineKind, CoroutineSource, Expr, ExprKind,
+    YieldSource,
+};
 use rustc_lint::{LateContext, LateLintPass};
+use rustc_middle::hir::nested_filter;
 use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
-dylint_linting::declare_late_lint! {
+// ---------------------------------------------------------------------------
+// Boilerplate: export the dylint ABI version symbol.
+// ---------------------------------------------------------------------------
+dylint_linting::dylint_library!();
+
+// ---------------------------------------------------------------------------
+// Registration: a single entry point that hands both lints to the compiler.
+// ---------------------------------------------------------------------------
+#[allow(clippy::no_mangle_with_rust_abi)]
+#[unsafe(no_mangle)]
+pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint::LintStore) {
+    dylint_linting::init_config(sess);
+    lint_store.register_lints(&[SHARED_STRING_FROM_STR_LITERAL, ASYNC_BLOCK_WITHOUT_AWAIT]);
+    lint_store.register_late_pass(|_| Box::new(SharedStringFromStrLiteral));
+    lint_store.register_late_pass(|_| Box::new(AsyncBlockWithoutAwait));
+}
+
+// ===========================================================================
+// Lint A — SHARED_STRING_FROM_STR_LITERAL
+// ===========================================================================
+
+rustc_session::declare_lint! {
     /// ### What it does
     ///
     /// Flags `gpui::SharedString` values constructed from a string literal by
@@ -62,6 +91,8 @@ dylint_linting::declare_late_lint! {
     "constructing a `SharedString` from a string literal via a copying/allocating path"
 }
 
+rustc_session::declare_lint_pass!(SharedStringFromStrLiteral => [SHARED_STRING_FROM_STR_LITERAL]);
+
 /// Maximum number of bytes that `SmolStr` (and therefore `SharedString`) can
 /// store inline on 64-bit targets. Literals larger than this trigger an
 /// `Arc<str>` allocation on every conversion.
@@ -87,7 +118,7 @@ impl<'tcx> LateLintPass<'tcx> for SharedStringFromStrLiteral {
             return;
         };
 
-        emit(cx, expr.span, literal);
+        emit_shared_string(cx, expr.span, literal);
     }
 }
 
@@ -218,7 +249,7 @@ fn is_shared_string(cx: &LateContext<'_>, ty: Ty<'_>) -> bool {
     cx.tcx.item_name(did).as_str() == "SharedString"
 }
 
-fn emit(cx: &LateContext<'_>, call_span: Span, literal: LiteralSource) {
+fn emit_shared_string(cx: &LateContext<'_>, call_span: Span, literal: LiteralSource) {
     let LiteralSource {
         contents,
         replace_span,
@@ -330,4 +361,155 @@ fn extract_embedded_string_literal(snippet: String) -> Option<String> {
         i += 1;
     }
     None
+}
+
+// ===========================================================================
+// Lint B — ASYNC_BLOCK_WITHOUT_AWAIT
+// ===========================================================================
+
+rustc_session::declare_lint! {
+    /// ### What it does
+    ///
+    /// Flags `async { … }` and `async move { … }` blocks whose body contains
+    /// no `.await` expression at their own nesting level.
+    ///
+    /// ### Why is this bad?
+    ///
+    /// An async block without an `.await` wraps synchronous code in a `Future`
+    /// state machine for no benefit. The state machine adds binary size, and
+    /// the indirection may hide the fact that the code never actually yields.
+    /// Either the `async` should be removed (the code is synchronous), or a
+    /// missing `.await` is a bug.
+    ///
+    /// ### Example
+    ///
+    /// ```ignore
+    /// let future = async { compute_something() };
+    /// ```
+    ///
+    /// Use instead:
+    ///
+    /// ```ignore
+    /// let value = compute_something();
+    /// ```
+    pub ASYNC_BLOCK_WITHOUT_AWAIT,
+    Warn,
+    "`async` block that contains no `.await` expression"
+}
+
+rustc_session::declare_lint_pass!(AsyncBlockWithoutAwait => [ASYNC_BLOCK_WITHOUT_AWAIT]);
+
+impl<'tcx> LateLintPass<'tcx> for AsyncBlockWithoutAwait {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+        if expr.span.from_expansion() {
+            return;
+        }
+
+        // Match only async blocks — not async function bodies or async closures.
+        let ExprKind::Closure(Closure {
+            kind:
+                ClosureKind::Coroutine(CoroutineKind::Desugared(
+                    CoroutineDesugaring::Async,
+                    CoroutineSource::Block,
+                )),
+            body,
+            ..
+        }) = &expr.kind
+        else {
+            return;
+        };
+
+        // Trait impls are constrained by the trait's signature. If the trait
+        // requires a method that returns a future, the implementor must produce
+        // an async block even when their implementation has nothing to await.
+        let enclosing_body_owner = cx.tcx.hir_enclosing_body_owner(expr.hir_id);
+        if is_def_id_trait_method(cx, enclosing_body_owner) {
+            return;
+        }
+
+        let body = cx.tcx.hir_body(*body);
+        let mut visitor = AwaitVisitor {
+            cx,
+            found_await: false,
+            async_depth: 0,
+        };
+        walk_expr(&mut visitor, body.value);
+
+        if !visitor.found_await {
+            span_lint_and_help(
+                cx,
+                ASYNC_BLOCK_WITHOUT_AWAIT,
+                expr.span,
+                "this `async` block contains no `.await`",
+                None,
+                "consider removing the `async` block or adding the missing `.await`",
+            );
+        }
+    }
+}
+
+/// Walks the body of an async block looking for `.await` expressions. Tracks
+/// nesting depth so that an `.await` inside a *nested* async block is not
+/// attributed to the *outer* block.
+struct AwaitVisitor<'a, 'tcx> {
+    cx: &'a LateContext<'tcx>,
+    found_await: bool,
+    async_depth: usize,
+}
+
+impl<'tcx> Visitor<'tcx> for AwaitVisitor<'_, 'tcx> {
+    type NestedFilter = nested_filter::OnlyBodies;
+
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.cx.tcx
+    }
+
+    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        if let ExprKind::Yield(_, YieldSource::Await { .. }) = expr.kind {
+            if self.async_depth == 0 {
+                self.found_await = true;
+                return;
+            }
+        }
+
+        let is_nested_async_block = matches!(
+            expr.kind,
+            ExprKind::Closure(Closure {
+                kind: ClosureKind::Coroutine(CoroutineKind::Desugared(
+                    CoroutineDesugaring::Async,
+                    _
+                )),
+                ..
+            })
+        );
+
+        if is_nested_async_block {
+            self.async_depth += 1;
+        }
+
+        walk_expr(self, expr);
+
+        if is_nested_async_block {
+            self.async_depth -= 1;
+        }
+    }
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ui_async_block_without_await() {
+        dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), "ui")
+            .rustc_flags(["--edition=2021"])
+            .run();
+    }
+
+    #[test]
+    fn ui_shared_string() {
+        dylint_testing::ui_test_examples(env!("CARGO_PKG_NAME"));
+    }
 }
