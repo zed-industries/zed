@@ -237,7 +237,7 @@ async fn test_auto_watch_turns_off_when_following_collaborator(
     let mut server = TestServer::start(executor.clone()).await;
     let setup = setup_auto_watch_test(&mut server, user_a, user_b, user_c).await;
     let (workspace_a, user_a) = setup.client_a.build_workspace(&setup.project_a, user_a);
-    let peer_id_b = setup._client_b.peer_id().unwrap();
+    let user_b_peer_id = setup._client_b.peer_id().unwrap();
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
         workspace.toggle_auto_watch(window, cx);
@@ -250,7 +250,7 @@ async fn test_auto_watch_turns_off_when_following_collaborator(
     });
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
-        workspace.follow(peer_id_b, window, cx);
+        workspace.follow(user_b_peer_id, window, cx);
     });
     executor.run_until_parked();
 
