@@ -1,47 +1,98 @@
 use super::*;
 
-impl Editor {
-    pub fn set_mark(&mut self, _: &actions::SetMark, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selection_mark_mode {
-            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.move_with(&mut |_, sel| {
-                    sel.collapse_to(sel.head(), SelectionGoal::None);
-                });
-            })
-        }
-        self.selection_mark_mode = true;
-        cx.notify();
+impl GutterDimensions {
+    /// The width of the space reserved for the fold indicators,
+    /// use alongside 'justify_end' and `gutter_width` to
+    /// right align content with the line numbers
+    pub fn fold_area_width(&self) -> Pixels {
+        self.margin + self.right_padding
     }
+}
 
-    pub fn swap_selection_ends(
-        &mut self,
-        _: &actions::SwapSelectionEnds,
+impl EditorSnapshot {
+    pub fn render_crease_toggle(
+        &self,
+        buffer_row: MultiBufferRow,
+        row_contains_cursor: bool,
+        editor: Entity<Editor>,
         window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.move_with(&mut |_, sel| {
-                if sel.start != sel.end {
-                    sel.reversed = !sel.reversed
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let folded = self.is_line_folded(buffer_row);
+        let mut is_foldable = false;
+
+        if let Some(crease) = self
+            .crease_snapshot
+            .query_row(buffer_row, self.buffer_snapshot())
+        {
+            is_foldable = true;
+            match crease {
+                Crease::Inline { render_toggle, .. } | Crease::Block { render_toggle, .. } => {
+                    if let Some(render_toggle) = render_toggle {
+                        let toggle_callback =
+                            Arc::new(move |folded, window: &mut Window, cx: &mut App| {
+                                if folded {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.fold_at(buffer_row, window, cx)
+                                    });
+                                } else {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.unfold_at(buffer_row, window, cx)
+                                    });
+                                }
+                            });
+                        return Some((render_toggle)(
+                            buffer_row,
+                            folded,
+                            toggle_callback,
+                            window,
+                            cx,
+                        ));
+                    }
                 }
-            });
-        });
-        self.request_autoscroll(Autoscroll::newest(), cx);
-        cx.notify();
+            }
+        }
+
+        is_foldable |= !self.use_lsp_folding_ranges && self.starts_indent(buffer_row);
+
+        if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
+            Some(
+                Disclosure::new(("gutter_crease", buffer_row.0), !folded)
+                    .toggle_state(folded)
+                    .on_click(window.listener_for(&editor, move |this, _e, window, cx| {
+                        if folded {
+                            this.unfold_at(buffer_row, window, cx);
+                        } else {
+                            this.fold_at(buffer_row, window, cx);
+                        }
+                    }))
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
     }
 
-    pub fn toggle_focus(
-        workspace: &mut Workspace,
-        _: &actions::ToggleFocus,
+    pub fn render_crease_trailer(
+        &self,
+        buffer_row: MultiBufferRow,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(item) = workspace.recent_active_item_by_type::<Self>(cx) else {
-            return;
-        };
-        workspace.activate_item(&item, true, true, window, cx);
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let folded = self.is_line_folded(buffer_row);
+        if let Crease::Inline { render_trailer, .. } = self
+            .crease_snapshot
+            .query_row(buffer_row, self.buffer_snapshot())?
+        {
+            let render_trailer = render_trailer.as_ref()?;
+            Some(render_trailer(buffer_row, folded, window, cx))
+        } else {
+            None
+        }
     }
+}
 
+impl Editor {
     pub fn toggle_fold(
         &mut self,
         _: &actions::ToggleFold,
@@ -741,46 +792,192 @@ impl Editor {
         self.display_map.read(cx).fold_placeholder.clone()
     }
 
-    pub fn set_expand_all_diff_hunks(&mut self, cx: &mut App) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.set_all_diff_hunks_expanded(cx);
-        });
+    pub fn insert_creases(
+        &mut self,
+        creases: impl IntoIterator<Item = Crease<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Vec<CreaseId> {
+        self.display_map
+            .update(cx, |map, cx| map.insert_creases(creases, cx))
     }
 
-    pub fn expand_all_diff_hunks(
+    pub fn remove_creases(
         &mut self,
-        _: &ExpandAllDiffHunks,
-        _window: &mut Window,
+        ids: impl IntoIterator<Item = CreaseId>,
         cx: &mut Context<Self>,
-    ) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
-        });
+    ) -> Vec<(CreaseId, Range<Anchor>)> {
+        self.display_map
+            .update(cx, |map, cx| map.remove_creases(ids, cx))
     }
 
-    pub fn collapse_all_diff_hunks(
-        &mut self,
-        _: &CollapseAllDiffHunks,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
-        });
-    }
+    pub(super) fn folds_did_change(&mut self, cx: &mut Context<Self>) {
+        use text::ToOffset as _;
 
-    pub fn toggle_selected_diff_hunks(
-        &mut self,
-        _: &ToggleSelectedDiffHunks,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ranges: Vec<_> = self
-            .selections
-            .disjoint_anchors()
-            .iter()
-            .map(|s| s.range())
+        if self.mode.is_minimap()
+            || WorkspaceSettings::get(None, cx).restore_on_startup
+                == RestoreOnStartupBehavior::EmptyTab
+        {
+            return;
+        }
+
+        let display_snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let Some(buffer_snapshot) = display_snapshot.buffer_snapshot().as_singleton() else {
+            return;
+        };
+        let inmemory_folds = display_snapshot
+            .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
+            .map(|fold| {
+                let start = fold.range.start.text_anchor_in(buffer_snapshot);
+                let end = fold.range.end.text_anchor_in(buffer_snapshot);
+                (start..end).to_point(buffer_snapshot)
+            })
             .collect();
-        self.toggle_diff_hunks_in_ranges(ranges, cx);
+        self.update_restoration_data(cx, |data| {
+            data.folds = inmemory_folds;
+        });
+
+        let Some(workspace_id) = self.workspace_serialization_id(cx) else {
+            return;
+        };
+
+        // Get file path for path-based fold storage (survives tab close)
+        let Some(file_path) = self.buffer().read(cx).as_singleton().and_then(|buffer| {
+            project::File::from_dyn(buffer.read(cx).file())
+                .map(|file| Arc::<Path>::from(file.abs_path(cx)))
+        }) else {
+            return;
+        };
+
+        let background_executor = cx.background_executor().clone();
+        const FINGERPRINT_LEN: usize = 32;
+        let db_folds = display_snapshot
+            .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
+            .map(|fold| {
+                let start = fold
+                    .range
+                    .start
+                    .text_anchor_in(buffer_snapshot)
+                    .to_offset(buffer_snapshot);
+                let end = fold
+                    .range
+                    .end
+                    .text_anchor_in(buffer_snapshot)
+                    .to_offset(buffer_snapshot);
+
+                // Extract fingerprints - content at fold boundaries for validation on restore
+                // Both fingerprints must be INSIDE the fold to avoid capturing surrounding
+                // content that might change independently.
+                // start_fp: first min(32, fold_len) bytes of fold content
+                // end_fp: last min(32, fold_len) bytes of fold content
+                // Clip to character boundaries to handle multibyte UTF-8 characters.
+                let fold_len = end - start;
+                let start_fp_end = buffer_snapshot
+                    .clip_offset(start + std::cmp::min(FINGERPRINT_LEN, fold_len), Bias::Left);
+                let start_fp: String = buffer_snapshot
+                    .text_for_range(start..start_fp_end)
+                    .collect();
+                let end_fp_start = buffer_snapshot
+                    .clip_offset(end.saturating_sub(FINGERPRINT_LEN).max(start), Bias::Right);
+                let end_fp: String = buffer_snapshot.text_for_range(end_fp_start..end).collect();
+
+                (start, end, start_fp, end_fp)
+            })
+            .collect::<Vec<_>>();
+        let db = EditorDb::global(cx);
+        self.serialize_folds = cx.background_spawn(async move {
+            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+            if db_folds.is_empty() {
+                // No folds - delete any persisted folds for this file
+                db.delete_file_folds(workspace_id, file_path)
+                    .await
+                    .with_context(|| format!("deleting file folds for workspace {workspace_id:?}"))
+                    .log_err();
+            } else {
+                db.save_file_folds(workspace_id, file_path, db_folds)
+                    .await
+                    .with_context(|| {
+                        format!("persisting file folds for workspace {workspace_id:?}")
+                    })
+                    .log_err();
+            }
+        });
+    }
+
+    pub(super) fn refresh_single_line_folds(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        struct NewlineFold;
+        let type_id = std::any::TypeId::of::<NewlineFold>();
+        if !self.mode.is_single_line() {
+            return;
+        }
+        let snapshot = self.snapshot(window, cx);
+        if snapshot.buffer_snapshot().max_point().row == 0 {
+            return;
+        }
+        let task = cx.background_spawn(async move {
+            let new_newlines = snapshot
+                .buffer_chars_at(MultiBufferOffset(0))
+                .filter_map(|(c, i)| {
+                    if c == '\n' {
+                        Some(
+                            snapshot.buffer_snapshot().anchor_after(i)
+                                ..snapshot.buffer_snapshot().anchor_before(i + 1usize),
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let existing_newlines = snapshot
+                .folds_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len())
+                .filter_map(|fold| {
+                    if fold.placeholder.type_tag == Some(type_id) {
+                        Some(fold.range.start..fold.range.end)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            (new_newlines, existing_newlines)
+        });
+        self.folding_newlines = cx.spawn(async move |this, cx| {
+            let (new_newlines, existing_newlines) = task.await;
+            if new_newlines == existing_newlines {
+                return;
+            }
+            let placeholder = FoldPlaceholder {
+                render: Arc::new(move |_, _, cx| {
+                    div()
+                        .bg(cx.theme().status().hint_background)
+                        .border_b_1()
+                        .size_full()
+                        .font(ThemeSettings::get_global(cx).buffer_font.clone())
+                        .border_color(cx.theme().status().hint)
+                        .child("\\n")
+                        .into_any()
+                }),
+                constrain_width: false,
+                merge_adjacent: false,
+                type_tag: Some(type_id),
+                collapsed_text: None,
+            };
+            let creases = new_newlines
+                .into_iter()
+                .map(|range| Crease::simple(range, placeholder.clone()))
+                .collect();
+            this.update(cx, |this, cx| {
+                this.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_folds_with_type(existing_newlines, type_id, cx);
+                    display_map.fold(creases, cx);
+                });
+            })
+            .ok();
+        });
     }
 }
