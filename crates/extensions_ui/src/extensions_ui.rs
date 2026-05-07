@@ -4,9 +4,7 @@ mod extension_version_selector;
 
 use std::sync::OnceLock;
 use std::time::Duration;
-use std::{ops::Range, sync::Arc};
-
-use std::any::TypeId;
+use std::{any::TypeId, ops::Range, sync::Arc};
 
 use anyhow::Context as _;
 use client::zed_urls;
@@ -25,6 +23,8 @@ use num_format::{Locale, ToFormattedString};
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
@@ -51,10 +51,20 @@ actions!(
     [
         /// Installs an extension from a local directory for development.
         InstallDevExtension,
-        /// Rebuilds an installed dev extension.
-        RebuildDevExtension
     ]
 );
+
+/// Rebuilds an installed dev extension.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, gpui::Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct RebuildDevExtension {
+    /// The ID of the dev extension to rebuild.
+    ///
+    /// Default: opens a picker if multiple dev extensions are installed.
+    #[serde(default)]
+    pub extension_id: Option<String>,
+}
 
 fn update_rebuild_dev_extension_visibility(cx: &mut App) {
     let has_dev_extensions = ExtensionStore::global(cx)
@@ -194,7 +204,27 @@ pub fn init(cx: &mut App) {
                     })
                     .detach();
             })
-            .register_action(move |workspace, _: &RebuildDevExtension, window, cx| {
+            .register_action(move |workspace, action: &RebuildDevExtension, window, cx| {
+                if let Some(target_id) = action.extension_id.as_deref() {
+                    let found = ExtensionStore::global(cx)
+                        .read(cx)
+                        .dev_extensions()
+                        .any(|m| m.id.as_ref() == target_id);
+
+                    if found {
+                        let extension_id = Arc::from(target_id);
+                        ExtensionStore::global(cx).update(cx, |store, cx| {
+                            store.rebuild_dev_extension(extension_id, cx);
+                        });
+                    } else {
+                        workspace.show_error(
+                            &format!("Dev extension '{}' is not installed.", target_id),
+                            cx,
+                        );
+                    }
+                    return;
+                }
+
                 let dev_extensions = ExtensionStore::global(cx)
                     .read(cx)
                     .dev_extensions()
