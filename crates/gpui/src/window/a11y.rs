@@ -14,7 +14,7 @@
 //! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
 use crate::{App, Bounds, FocusId, Pixels, Window};
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 /// The fixed AccessKit node ID used for the root of every window's a11y tree.
@@ -84,7 +84,10 @@ impl A11y {
 pub(crate) struct A11yNodeBuilder {
     ids_stack: SmallVec<[accesskit::NodeId; 16]>,
     nodes_stack: SmallVec<[accesskit::Node; 16]>,
+    /// This is the exact type required by accesskit, so we can't just make it a
+    /// `HashMap<NodeId, Node>` to remove the need for `seen_ids`
     all_nodes: Vec<(accesskit::NodeId, accesskit::Node)>,
+    seen_ids: FxHashSet<accesskit::NodeId>,
     focus: accesskit::NodeId,
     #[cfg(debug_assertions)]
     has_set_focus: bool,
@@ -96,6 +99,7 @@ impl A11yNodeBuilder {
             ids_stack: SmallVec::new(),
             nodes_stack: SmallVec::new(),
             all_nodes: Vec::new(),
+            seen_ids: FxHashSet::default(),
             focus: ROOT_NODE_ID,
             #[cfg(debug_assertions)]
             has_set_focus: false,
@@ -104,14 +108,24 @@ impl A11yNodeBuilder {
 
     /// Push a new node onto the stack. It becomes a child of the current
     /// top-of-stack node.
-    pub(crate) fn push(&mut self, id: accesskit::NodeId, node: accesskit::Node) {
+    /// 
+    /// Returns `true` if the node was successfully pushed.
+    pub(crate) fn push(&mut self, id: accesskit::NodeId, node: accesskit::Node) -> bool {
         debug_assert!(!self.ids_stack.is_empty(), "push called before push_root");
+
+        if !self.seen_ids.insert(id) {
+            debug_assert!(false, "Duplicate a11y node id: {id:?}");
+            // We need to return `false` here because inserting a duplicate
+            // node will cause a panic in accesskit
+            return false;
+        }
 
         if let Some(parent) = self.nodes_stack.last_mut() {
             parent.push_child(id);
         }
         self.ids_stack.push(id);
         self.nodes_stack.push(node);
+        true
     }
 
     /// Pop the current node off the stack and finalize it into the all_nodes
@@ -129,6 +143,7 @@ impl A11yNodeBuilder {
         self.all_nodes.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
+        self.seen_ids.clear();
         #[cfg(debug_assertions)]
         {
             self.has_set_focus = false;

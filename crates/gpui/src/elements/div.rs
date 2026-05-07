@@ -1181,6 +1181,10 @@ pub trait InteractiveElement: Sized {
     /// Set the accessible role for this element.
     fn role(mut self, role: accesskit::Role) -> Self {
         debug_assert_interactivity_has_id(self.interactivity());
+        debug_assert!(
+            role != accesskit::Role::GenericContainer,
+            "GenericContainer is filtered out of the a11y tree and has no effect"
+        );
         self.interactivity().override_role = Some(role);
         self
     }
@@ -1608,15 +1612,11 @@ impl Element for Div {
     }
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
-        if self.interactivity.element_id.is_some() {
-            Some(
-                self.interactivity
-                    .override_role
-                    .unwrap_or(accesskit::Role::GenericContainer),
-            )
-        } else {
-            None
-        }
+        // Nodes with `GenericContainer` should never be reported to accesskit.
+        // Equivalent to an HTML div with no role.
+        self.interactivity
+            .override_role
+            .filter(|role| *role != accesskit::Role::GenericContainer)
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -1998,7 +1998,7 @@ impl Interactivity {
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
-            
+
             if let Some(global_id) = global_id {
                 let node_id = global_id.accesskit_node_id();
                 window.a11y.focus_ids.insert(node_id, focus_handle.id);
@@ -3096,13 +3096,59 @@ impl Interactivity {
         if !self.click_listeners.is_empty() {
             node.add_action(accesskit::Action::Click);
         }
-        if self.tracked_focus_handle.is_some() || self.focusable {
+        let inherently_focusable = self.override_role.map_or(false, is_inherently_focusable);
+        if self.tracked_focus_handle.is_some()
+            || self.focusable
+            || inherently_focusable
+            || !self.click_listeners.is_empty()
+        {
             node.add_action(accesskit::Action::Focus);
         }
         for (action, _) in &self.a11y_action_listeners {
             node.add_action(*action);
         }
     }
+}
+
+/// Whether an AccessKit role represents a widget that is inherently focusable
+/// per the ARIA specification (i.e. users should not need to manually add
+/// `.focusable(true)` for these roles).
+fn is_inherently_focusable(role: accesskit::Role) -> bool {
+    use accesskit::Role;
+    matches!(
+        role,
+        Role::Button
+            | Role::DefaultButton
+            | Role::CheckBox
+            | Role::RadioButton
+            | Role::Switch
+            | Role::Link
+            | Role::Tab
+            | Role::MenuItem
+            | Role::MenuItemCheckBox
+            | Role::MenuItemRadio
+            | Role::ListBoxOption
+            | Role::MenuListOption
+            | Role::TreeItem
+            | Role::TextInput
+            | Role::MultilineTextInput
+            | Role::SearchInput
+            | Role::DateInput
+            | Role::DateTimeInput
+            | Role::WeekInput
+            | Role::MonthInput
+            | Role::TimeInput
+            | Role::EmailInput
+            | Role::NumberInput
+            | Role::PasswordInput
+            | Role::PhoneNumberInput
+            | Role::UrlInput
+            | Role::ComboBox
+            | Role::EditableComboBox
+            | Role::Slider
+            | Role::SpinButton
+            | Role::DisclosureTriangle
+    )
 }
 
 /// The per-frame state of an interactive element. Used for tracking stateful interactions like clicks

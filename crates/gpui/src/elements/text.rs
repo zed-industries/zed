@@ -18,6 +18,128 @@ use std::{
     sync::Arc,
 };
 
+/// An [`Element`] that renders text.
+#[derive(Debug, Clone, )]
+pub struct Text {
+    id: Option<ElementId>,
+    text: SharedString,
+}
+
+impl Text {
+    /// Create a new [`Text`] element.
+    #[inline]
+    pub const fn new(id: ElementId, text: SharedString) -> Self {
+        Self { id: Some(id), text }
+    }
+
+    /// Create a new [`Text`] element that is inaccessible to screen readers.
+    /// 
+    /// In order for text to be accessible to screen readers, it must have an ID
+    /// provided. Prefer using [`Text::new`] instead, and providing an ID.
+    #[inline]
+    pub const fn new_inaccessible(text: SharedString) -> Self {
+        Self { id: None, text }
+    }
+}
+
+
+/// Create a new [`Text`] element.
+pub fn text(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Text {
+    Text::new(id.into(), text.into())
+}
+
+/// Create a new [`Text`] element that is inaccessible to screen readers.
+/// 
+/// In order for text to be accessible to screen readers, it must have an ID
+/// provided. Prefer using [`text`] instead, and providing an ID.
+pub fn inaccessible_text(text: impl Into<SharedString>) -> Text {
+    Text::new_inaccessible(text.into())
+}
+
+impl IntoElement for Text {
+    type Element = Self;
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for Text {
+    type RequestLayoutState = TextLayout;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        self.id.clone()
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        if self.id.is_some() {
+            Some(accesskit::Role::TextRun)
+        } else {
+            None
+        }
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        node.set_value(self.text.to_string());
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        <SharedString as Element>::request_layout(&mut self.text, id, inspector_id, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        <SharedString as Element>::prepaint(
+            &mut self.text,
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            window,
+            cx,
+        )
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        <SharedString as Element>::paint(
+            &mut self.text,
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        );
+    }
+}
+
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
     type PrepaintState = ();

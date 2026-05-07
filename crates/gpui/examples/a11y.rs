@@ -8,7 +8,7 @@
 
 use gpui::{
     App, Bounds, Context, FocusHandle, KeyBinding, Role, SharedString, Toggled, Window,
-    WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size, text,
 };
 use gpui_platform::application;
 
@@ -57,7 +57,7 @@ impl Render for A11yDemo {
                     .aria_label("Accessibility Demo")
                     .text_xl()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .child("Accessibility Demo"),
+                    .child(text("heading-text", "Accessibility Demo")),
             )
             // Buttons — screen readers use the built-in Click action,
             // so plain on_click is all that's needed.
@@ -84,7 +84,7 @@ impl Render for A11yDemo {
                                 this.count += 1;
                                 cx.notify();
                             }))
-                            .child(format!("Count: {}", self.count)),
+                            .child(text("increment-text", format!("Count: {}", self.count))),
                     )
                     .child(
                         div()
@@ -100,7 +100,7 @@ impl Render for A11yDemo {
                                 this.count = 0;
                                 cx.notify();
                             }))
-                            .child("Reset"),
+                            .child(text("reset-text", "Reset")),
                     ),
             )
             // A toggle switch
@@ -139,7 +139,7 @@ impl Render for A11yDemo {
                                 cx.notify();
                             })),
                     )
-                    .child("Enable feature"),
+                    .child(text("toggle-label", "Enable feature")),
             )
             // A short list
             .child(
@@ -163,7 +163,7 @@ impl Render for A11yDemo {
                                     .aria_size_of_set(3)
                                     .py_1()
                                     .px_2()
-                                    .child(format!("{}. {}", i + 1, label))
+                                    .child(text(("task-text", i), format!("{}. {}", i + 1, label)))
                             }),
                     ),
             )
