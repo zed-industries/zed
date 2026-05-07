@@ -15,7 +15,7 @@ use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
-    actions::{Copy, Paste},
+    actions::{Copy, Cut, Paste},
     code_context_menus::CodeContextMenu,
     display_map::{CreaseId, CreaseSnapshot},
     scroll::Autoscroll,
@@ -35,7 +35,7 @@ use project::{
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
@@ -1180,12 +1180,30 @@ impl MessageEditor {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = self.serialized_copy_text(cx) else {
+        let Some((text, _)) = self.serialize_selection_with_mentions(false, cx) else {
             cx.propagate();
             return;
         };
 
         cx.stop_propagation();
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((text, ranges)) = self.serialize_selection_with_mentions(true, cx) else {
+            cx.propagate();
+            return;
+        };
+
+        cx.stop_propagation();
+        self.editor.update(cx, |editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges(ranges);
+                });
+                editor.insert("", window, cx);
+            });
+        });
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -1689,12 +1707,20 @@ impl MessageEditor {
         });
     }
 
-    fn serialized_copy_text(&self, cx: &mut App) -> Option<String> {
+    fn serialize_selection_with_mentions(
+        &self,
+        expand_empty_to_line: bool,
+        cx: &mut App,
+    ) -> Option<(String, Vec<Range<MultiBufferOffset>>)> {
+        if self.mention_set.read(cx).is_empty() {
+            return None;
+        }
+
         let display_snapshot = self
             .editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
         let editor = self.editor.read(cx);
-        if !editor.has_non_empty_selection(&display_snapshot) {
+        if !expand_empty_to_line && !editor.has_non_empty_selection(&display_snapshot) {
             return None;
         }
 
@@ -1715,48 +1741,55 @@ impl MessageEditor {
             })
             .collect::<Vec<_>>();
 
+        let line_mode = editor.selections.line_mode();
+        let max_point = snapshot.max_point();
+        let point_selections = editor.selections.all::<Point>(&display_snapshot);
+
         let mut text = String::new();
+        let mut ranges = Vec::with_capacity(point_selections.len());
         let mut has_mentions = false;
         let mut is_first = true;
+        let mut prev_was_entire_line = false;
 
-        for selection in editor
-            .selections
-            .all::<MultiBufferOffset>(&display_snapshot)
-        {
+        for mut selection in point_selections {
+            let is_entire_line = (selection.is_empty() && expand_empty_to_line) || line_mode;
+            if is_entire_line {
+                selection.start = Point::new(selection.start.row, 0);
+                if !selection.is_empty() && selection.end.column == 0 {
+                    selection.end = min(max_point, selection.end);
+                } else {
+                    selection.end = min(max_point, Point::new(selection.end.row + 1, 0));
+                }
+            }
+            let range = selection.start.to_offset(&snapshot)..selection.end.to_offset(&snapshot);
+
             if is_first {
                 is_first = false;
-            } else {
+            } else if !prev_was_entire_line {
                 text.push('\n');
             }
+            prev_was_entire_line = is_entire_line;
 
-            let mut overlapping_mentions = mention_ranges
+            let mut cursor = range.start;
+            for (start, end, uri) in mention_ranges
                 .iter()
-                .filter(|(start, end, _)| *start < selection.end && selection.start < *end)
-                .peekable();
-
-            if overlapping_mentions.peek().is_none() {
-                text.extend(snapshot.text_for_range(selection.start..selection.end));
-                continue;
-            }
-
-            has_mentions = true;
-
-            let mut cursor = selection.start;
-            for (start, end, uri) in overlapping_mentions {
+                .filter(|(start, end, _)| *start < range.end && range.start < *end)
+            {
                 if cursor < *start {
                     text.extend(snapshot.text_for_range(cursor..*start));
                 }
-
                 write!(text, "{}", uri.as_link()).unwrap();
                 cursor = *end;
+                has_mentions = true;
+            }
+            if cursor < range.end {
+                text.extend(snapshot.text_for_range(cursor..range.end));
             }
 
-            if cursor < selection.end {
-                text.extend(snapshot.text_for_range(cursor..selection.end));
-            }
+            ranges.push(range);
         }
 
-        has_mentions.then_some(text)
+        has_mentions.then_some((text, ranges))
     }
 }
 
@@ -1775,6 +1808,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::copy))
+            .capture_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::paste_raw))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
@@ -1991,7 +2025,7 @@ mod tests {
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
-        actions::Paste,
+        actions::{Cut, Paste},
     };
 
     use fs::FakeFs;
@@ -4029,7 +4063,8 @@ mod tests {
 
         let copied_text = source_message_editor.update(&mut cx, |message_editor, cx| {
             message_editor
-                .serialized_copy_text(cx)
+                .serialize_selection_with_mentions(false, cx)
+                .map(|(text, _)| text)
                 .expect("selection mentions should serialize")
         });
         let expected_text = format!(
@@ -4094,7 +4129,9 @@ mod tests {
         message_editor: Entity<MessageEditor>,
         first_uri: MentionUri,
         first_range: Range<usize>,
+        second_uri: MentionUri,
         second_range: Range<usize>,
+        buffer_len: MultiBufferOffset,
     }
 
     async fn setup_selection_mention_fixture(
@@ -4119,7 +4156,7 @@ mod tests {
             line_range: 2..=3,
         };
 
-        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+        let buffer_len = message_editor.update_in(&mut cx, |message_editor, window, cx| {
             message_editor.set_text(source_text, window, cx);
 
             let snapshot = message_editor
@@ -4174,6 +4211,8 @@ mod tests {
                     );
                 });
             }
+
+            snapshot.len()
         });
 
         (
@@ -4181,7 +4220,9 @@ mod tests {
                 message_editor,
                 first_uri,
                 first_range,
+                second_uri,
                 second_range,
+                buffer_len,
             },
             cx,
         )
@@ -4209,7 +4250,9 @@ mod tests {
         let copied = fixture
             .message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor.serialized_copy_text(cx)
+                message_editor
+                    .serialize_selection_with_mentions(false, cx)
+                    .map(|(text, _)| text)
             });
 
         assert_eq!(copied, Some(fixture.first_uri.as_link().to_string()));
@@ -4241,7 +4284,9 @@ mod tests {
         let copied = fixture
             .message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor.serialized_copy_text(cx)
+                message_editor
+                    .serialize_selection_with_mentions(false, cx)
+                    .map(|(text, _)| text)
             });
 
         assert_eq!(copied, None);
@@ -4295,6 +4340,117 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_cut_with_selection_mentions_serializes_and_removes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let buffer_len = fixture.buffer_len;
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([MultiBufferOffset(0)..buffer_len]);
+                    });
+                });
+                message_editor.cut(&Cut, window, cx);
+            });
+
+        let expected_text = format!(
+            "{} needs work\n{} looks fine",
+            fixture.first_uri.as_link(),
+            fixture.second_uri.as_link()
+        );
+
+        let clipboard_text = cx
+            .read_from_clipboard()
+            .and_then(|item| match item.entries().first().cloned() {
+                Some(ClipboardEntry::String(entry)) => Some(entry.text().to_string()),
+                _ => None,
+            })
+            .expect("cut should write serialized text to clipboard");
+        assert_eq!(clipboard_text, expected_text);
+
+        let remaining_text = fixture.message_editor.read_with(&cx, |message_editor, cx| {
+            message_editor.editor.read(cx).text(cx)
+        });
+        assert_eq!(remaining_text, "");
+    }
+
+    #[gpui::test]
+    async fn test_cut_with_empty_cursor_on_mention_line_removes_whole_line(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let cursor_offset = MultiBufferOffset(fixture.first_range.end + 4);
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([cursor_offset..cursor_offset]);
+                    });
+                });
+                message_editor.cut(&Cut, window, cx);
+            });
+
+        let clipboard_text = cx
+            .read_from_clipboard()
+            .and_then(|item| match item.entries().first().cloned() {
+                Some(ClipboardEntry::String(entry)) => Some(entry.text().to_string()),
+                _ => None,
+            })
+            .expect("cut should write serialized text to clipboard");
+        assert_eq!(
+            clipboard_text,
+            format!("{} needs work\n", fixture.first_uri.as_link())
+        );
+
+        let remaining_text = fixture.message_editor.read_with(&cx, |message_editor, cx| {
+            message_editor.editor.read(cx).text(cx)
+        });
+        assert_eq!(remaining_text, "selection looks fine");
+    }
+
+    #[gpui::test]
+    async fn test_serialized_cut_text_returns_none_when_mentions_outside_selection(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let between_start = fixture.first_range.end;
+        let between_end = fixture.second_range.start - 1;
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([
+                            MultiBufferOffset(between_start)..MultiBufferOffset(between_end)
+                        ]);
+                    });
+                });
+            });
+
+        let result = fixture
+            .message_editor
+            .update(&mut cx, |message_editor, cx| {
+                message_editor.serialize_selection_with_mentions(true, cx)
+            });
+
+        assert!(
+            result.is_none(),
+            "serialize_selection_with_mentions should return None so the default editor cut runs"
+        );
     }
 
     #[gpui::test]

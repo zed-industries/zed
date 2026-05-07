@@ -170,6 +170,10 @@ impl MentionSet {
         self.mentions.keys().cloned().collect()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.mentions.is_empty()
+    }
+
     pub fn mentions(&self) -> HashSet<MentionUri> {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }

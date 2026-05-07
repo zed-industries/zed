@@ -31,7 +31,7 @@ use git::repository::{
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
-use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
+use git::{Amend, Commit, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
     StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
@@ -2125,13 +2125,19 @@ impl GitPanel {
         }
     }
 
-    fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_commit(&mut self, _: &Commit, window: &mut Window, cx: &mut Context<Self>) {
+        let is_amend = self.amend_pending;
         if self.commit(&self.commit_editor.focus_handle(cx), window, cx) {
-            telemetry::event!("Git Committed", source = "Git Panel");
+            if is_amend {
+                telemetry::event!("Git Amended", source = "Git Panel");
+            } else {
+                telemetry::event!("Git Committed", source = "Git Panel");
+            }
         }
     }
 
     /// Commits staged changes with the current commit message.
+    /// When `amend_pending` is true, performs an amend commit instead.
     ///
     /// Returns `true` if the commit was executed, `false` otherwise.
     pub(crate) fn commit(
@@ -2140,14 +2146,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.amend_pending {
-            return false;
-        }
-
         if commit_editor_focus_handle.contains_focused(window, cx) {
             self.commit_changes(
                 CommitOptions {
-                    amend: false,
+                    amend: self.amend_pending,
                     signoff: self.signoff_enabled,
                     allow_empty: false,
                 },
@@ -2161,17 +2163,16 @@ impl GitPanel {
         }
     }
 
-    fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_amend(&mut self, _: &Amend, window: &mut Window, cx: &mut Context<Self>) {
         if self.amend(&self.commit_editor.focus_handle(cx), window, cx) {
             telemetry::event!("Git Amended", source = "Git Panel");
         }
     }
 
-    /// Amends the most recent commit with staged changes and/or an updated commit message.
-    ///
-    /// Uses a two-stage workflow where the first invocation loads the commit
-    /// message for editing, second invocation performs the amend. Returns
-    /// `true` if the amend was executed, `false` otherwise.
+    /// Enters the amend state on first invocation, loading the last commit
+    /// message for editing. On second invocation, performs the amend commit
+    /// by delegating to [`Self::commit`]. Returns `true` if a commit was
+    /// executed.
     pub(crate) fn amend(
         &mut self,
         commit_editor_focus_handle: &FocusHandle,
@@ -2181,28 +2182,15 @@ impl GitPanel {
         if commit_editor_focus_handle.contains_focused(window, cx) {
             if self.head_commit(cx).is_some() {
                 if !self.amend_pending {
-                    self.set_amend_pending(true, cx);
-                    self.load_last_commit_message(cx);
-
-                    return false;
+                    self.toggle_amend_pending(cx);
                 } else {
-                    self.commit_changes(
-                        CommitOptions {
-                            amend: true,
-                            signoff: self.signoff_enabled,
-                            allow_empty: false,
-                        },
-                        window,
-                        cx,
-                    );
-
-                    return true;
+                    return self.commit(commit_editor_focus_handle, window, cx);
                 }
             }
-            return false;
+            false
         } else {
             cx.propagate();
-            return false;
+            false
         }
     }
     pub fn head_commit(&self, cx: &App) -> Option<CommitDetails> {
@@ -4740,7 +4728,7 @@ impl GitPanel {
                         if can_commit {
                             Tooltip::with_meta_in(
                                 tooltip,
-                                Some(if amend { &git::Amend } else { &git::Commit }),
+                                Some(&git::Commit),
                                 format!(
                                     "git commit{}{}",
                                     if amend { " --amend" } else { "" },
