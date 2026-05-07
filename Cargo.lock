@@ -22363,6 +22363,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "url",
  "util",
  "uuid",
  "windows 0.61.3",

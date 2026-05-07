@@ -1,4 +1,5 @@
 use std::any::TypeId;
+use std::borrow::Cow;
 use std::cmp::min;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -25,12 +26,11 @@ use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
-use util::normalize_path;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::{OpenOptions, OpenVisible, Pane, Workspace};
+use workspace::{Pane, Workspace};
 
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown, ScrollDownByItem,
@@ -785,56 +785,22 @@ fn open_preview_url(
 ) {
     let (path_text, _) = split_preview_url(url.as_ref());
 
-    if let Some(path) = resolve_preview_path(path_text, base_directory.as_deref())
-        && let Some(workspace) = workspace.upgrade()
-    {
-        let _ = workspace.update(cx, |workspace, cx| {
-            workspace
-                .open_abs_path(
-                    normalize_path(path.as_path()),
-                    OpenOptions {
-                        visible: Some(OpenVisible::None),
-                        ..Default::default()
-                    },
-                    window,
-                    cx,
-                )
-                .detach();
-        });
-        return;
-    }
+    // URL-decode the path for proper handling of encoded characters
+    let decoded_path = urlencoding::decode(path_text).unwrap_or_else(|_| Cow::Borrowed(path_text));
 
-    cx.open_url(url.as_ref());
+    if let Some(workspace) = workspace.upgrade() {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_url_or_file(&decoded_path, base_directory.as_deref(), window, cx);
+        });
+    } else {
+        cx.open_url(url.as_ref());
+    }
 }
 
 fn split_preview_url(url: &str) -> (&str, Option<&str>) {
     match url.split_once('#') {
         Some((path, fragment)) => (path, Some(fragment)),
         None => (url, None),
-    }
-}
-
-fn resolve_preview_path(url: &str, base_directory: Option<&Path>) -> Option<PathBuf> {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        return None;
-    }
-
-    let (path_text, _) = split_preview_url(url);
-    let decoded_url = urlencoding::decode(path_text)
-        .map(|decoded| decoded.into_owned())
-        .unwrap_or_else(|_| path_text.to_string());
-    let candidate = PathBuf::from(&decoded_url);
-
-    if candidate.is_absolute() && candidate.exists() {
-        return Some(candidate);
-    }
-
-    let base_directory = base_directory?;
-    let resolved = base_directory.join(decoded_url);
-    if resolved.exists() {
-        Some(resolved)
-    } else {
-        None
     }
 }
 
@@ -1212,53 +1178,7 @@ mod tests {
     use util::test::TempTree;
     use workspace::{AppState, MultiWorkspace, SaveIntent, Workspace, open_paths};
 
-    use super::{MarkdownPreviewView, resolve_preview_path};
-
-    #[test]
-    fn resolves_relative_preview_path_and_missing_cases() {
-        let tree = markdown_fixture_tree(json!({
-            "notes.md": "# Notes"
-        }));
-        let base_directory = markdown_fixture_directory(&tree);
-        let file = base_directory.join("notes.md");
-
-        assert_eq!(
-            resolve_preview_path("notes.md", Some(base_directory.as_path())),
-            Some(file)
-        );
-        assert_eq!(
-            resolve_preview_path("nonexistent.md", Some(base_directory.as_path())),
-            None
-        );
-        assert_eq!(resolve_preview_path("notes.md", None), None);
-    }
-
-    #[test]
-    fn resolves_urlencoded_preview_path_and_ignores_fragment_component() {
-        let tree = markdown_fixture_tree(json!({
-            "release notes.md": "# Release Notes",
-            "notes.md": "# Notes"
-        }));
-        let base_directory = markdown_fixture_directory(&tree);
-
-        assert_eq!(
-            resolve_preview_path(
-                "release%20notes.md#overview",
-                Some(base_directory.as_path())
-            ),
-            Some(base_directory.join("release notes.md"))
-        );
-        assert_eq!(
-            resolve_preview_path("notes.md#L10", Some(base_directory.as_path())),
-            Some(base_directory.join("notes.md"))
-        );
-    }
-
-    #[test]
-    fn does_not_treat_web_links_as_preview_files() {
-        assert_eq!(resolve_preview_path("https://zed.dev", None), None);
-        assert_eq!(resolve_preview_path("http://example.com", None), None);
-    }
+    use super::MarkdownPreviewView;
 
     #[test]
     fn resolves_workspace_absolute_preview_image_path_and_rejects_missing() {
@@ -1461,12 +1381,6 @@ mod tests {
             crate::init(cx);
             state
         })
-    }
-
-    fn markdown_fixture_tree(docs_tree: serde_json::Value) -> TempTree {
-        TempTree::new(json!({
-            "docs": docs_tree
-        }))
     }
 
     fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {
