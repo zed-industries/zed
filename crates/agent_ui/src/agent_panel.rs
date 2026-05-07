@@ -73,7 +73,7 @@ use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
-use terminal_view::{TerminalView, TerminalViewEvent, terminal_panel::TerminalPanel};
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
     Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
@@ -1457,10 +1457,11 @@ impl AgentPanel {
         let view_subscription = cx.subscribe_in(
             &terminal_view,
             window,
-            move |this, _terminal_view, event: &TerminalViewEvent, window, cx| match event {
-                TerminalViewEvent::CustomTitleChanged => {
+            move |this, _terminal_view, event: &ItemEvent, window, cx| match event {
+                ItemEvent::UpdateTab => {
                     this.refresh_terminal_title(terminal_id, window, cx);
                 }
+                ItemEvent::CloseItem | ItemEvent::UpdateBreadcrumbs | ItemEvent::Edit => {}
             },
         );
         // Listen on the underlying `Terminal` entity for shell-driven metadata
