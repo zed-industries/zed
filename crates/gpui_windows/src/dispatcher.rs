@@ -13,9 +13,7 @@ use windows::{
     Win32::{
         Foundation::{LPARAM, WPARAM},
         Media::{timeBeginPeriod, timeEndPeriod},
-        System::Threading::{
-            GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
-        },
+        System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL},
         UI::WindowsAndMessaging::PostMessageW,
     },
 };
