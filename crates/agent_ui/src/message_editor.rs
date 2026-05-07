@@ -14,8 +14,7 @@ use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, HideMouseCursorOrigin, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot,
-    ToOffset,
+    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
     actions::{Copy, Cut, Paste},
     code_context_menus::CodeContextMenu,
     display_map::{CreaseId, CreaseSnapshot},
@@ -1198,7 +1197,6 @@ impl MessageEditor {
 
         cx.stop_propagation();
         self.editor.update(cx, |editor, cx| {
-            editor.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |selections| {
                     selections.select_ranges(ranges);
