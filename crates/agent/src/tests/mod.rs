@@ -5575,7 +5575,6 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
     });
 
     let lsp_tool_names = [
-        DiagnosticsTool::NAME,
         FindReferencesTool::NAME,
         GetCodeActionsTool::NAME,
         ApplyCodeActionTool::NAME,

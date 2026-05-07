@@ -2897,8 +2897,7 @@ impl Thread {
                 cx.has_flag::<LspToolFeatureFlag>()
                     || !matches!(
                         tool_name.as_ref(),
-                        DiagnosticsTool::NAME
-                            | FindReferencesTool::NAME
+                        FindReferencesTool::NAME
                             | GetCodeActionsTool::NAME
                             | ApplyCodeActionTool::NAME
                             | GoToDefinitionTool::NAME
