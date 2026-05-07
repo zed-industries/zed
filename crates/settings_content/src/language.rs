@@ -462,6 +462,17 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: auto
     pub formatter: Option<FormatterList>,
+    /// Path(s) to `.env` file(s) loaded into the environment of test runs
+    /// triggered through Zed's runnable code-lenses (gutter Run, "Run test",
+    /// LSP-driven runnables). Accepts a single path string or an array of
+    /// paths; when an array is given, later entries override earlier ones.
+    /// Relative paths resolve against the buffer's worktree root.
+    /// `$ZED_WORKTREE_ROOT` and `~` are expanded. Missing files are silently
+    /// skipped. Variables from the file override variables inherited from the
+    /// project shell environment.
+    ///
+    /// Default: none
+    pub test_env_file: Option<TestEnvFilePaths>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
@@ -942,6 +953,26 @@ pub enum LineEndingSetting {
     /// Normalize line endings to CRLF (`\r\n`) during format and save.
     #[strum(serialize = "Enforce CRLF")]
     EnforceCrlf,
+}
+
+/// Paths to `.env` files loaded into the environment of test runs.
+///
+/// Either a single path or an array of paths. When an array is given, the
+/// files are applied in order and later entries override earlier ones.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum TestEnvFilePaths {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl AsRef<[String]> for TestEnvFilePaths {
+    fn as_ref(&self) -> &[String] {
+        match self {
+            Self::Single(single) => std::slice::from_ref(single),
+            Self::Multiple(v) => v,
+        }
+    }
 }
 
 /// Controls which formatters should be used when formatting code.

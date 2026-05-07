@@ -17684,6 +17684,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "dotenvy",
  "futures 0.3.32",
  "gpui",
  "hex",

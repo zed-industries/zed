@@ -9,6 +9,7 @@ use fs::Fs;
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     ContextLocation, ContextProvider as _, LanguageToolchainStore, Location,
+    language_settings::LanguageSettings,
     proto::{deserialize_anchor, serialize_anchor},
 };
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -19,7 +20,7 @@ use util::ResultExt;
 
 use crate::{
     BasicContextProvider, Inventory, ProjectEnvironment, buffer_store::BufferStore,
-    git_store::GitStore, worktree_store::WorktreeStore,
+    git_store::GitStore, test_env_file::load_test_env_files, worktree_store::WorktreeStore,
 };
 
 // platform-dependent warning
@@ -329,6 +330,20 @@ fn local_task_context_for_location(
             })
             .await;
 
+        let test_env_paths = cx.update(|cx| {
+            LanguageSettings::for_buffer(location.buffer.read(cx), cx)
+                .test_env_file
+                .clone()
+        });
+        let test_env = match (
+            test_env_paths.as_ref(),
+            worktree_abs_path.as_deref(),
+            fs.as_ref(),
+        ) {
+            (Some(paths), Some(root), Some(fs)) => load_test_env_files(paths, root, fs).await,
+            _ => HashMap::default(),
+        };
+
         let mut task_variables = cx
             .update(|cx| {
                 combine_task_variables(
@@ -347,8 +362,11 @@ fn local_task_context_for_location(
         // Remove all custom entries starting with _, as they're not intended for use by the end user.
         task_variables.sweep();
 
+        let mut merged_project_env = project_env.unwrap_or_default();
+        merged_project_env.extend(test_env);
+
         Ok(Some(TaskContext {
-            project_env: project_env.unwrap_or_default(),
+            project_env: merged_project_env,
             cwd: worktree_abs_path.map(|p| p.to_path_buf()),
             task_variables,
         }))
@@ -367,6 +385,10 @@ fn remote_task_context_for_location(
 ) -> Task<anyhow::Result<Option<TaskContext>>> {
     cx.spawn(async move |cx| {
         // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
+        // The remote host fills `project_env` (including any `test_env_file` entries it
+        // applied via `local_task_context_for_location`) and serializes it back through
+        // the `proto::TaskContextForLocation` response, so this path inherits the env
+        // file transitively and does not need its own hook.
         let mut remote_context = cx
             .update(|cx| {
                 let worktree_root = worktree_root(&worktree_store, &location, cx);

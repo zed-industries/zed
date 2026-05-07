@@ -2898,10 +2898,45 @@ The following settings can be overridden for each specific language:
 - [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
+- [`test_env_file`](#test-env-file)
 - [`use_autoclose`](#use-autoclose)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
 These values take in the same options as the root-level settings with the same name.
+
+### Test Env File
+
+- Description: Path or list of paths to `.env`-formatted file(s) loaded into the environment of test runs triggered through Zed's runnable code-lenses (gutter Run, "Run test", LSP-driven runnables) for this language.
+- Setting: `test_env_file`
+- Default: `null`
+
+Relative paths resolve against the buffer's worktree root. The token `$ZED_WORKTREE_ROOT` is expanded to the same root, and `~` is expanded to the home directory. Missing files are silently skipped. When multiple paths are configured, files are applied in order and later entries override earlier ones. Variables defined in the file override variables inherited from the project shell environment.
+
+DAP-driven debug runs use a separate envFile mechanism configured per debug scenario; this setting does not affect them.
+
+Example — single file:
+
+```json [settings]
+{
+  "languages": {
+    "Go": {
+      "test_env_file": "$ZED_WORKTREE_ROOT/.env"
+    }
+  }
+}
+```
+
+Example — layered files (later overrides earlier):
+
+```json [settings]
+{
+  "languages": {
+    "Go": {
+      "test_env_file": [".env", ".env.local"]
+    }
+  }
+}
+```
 
 ### Document Symbols
 

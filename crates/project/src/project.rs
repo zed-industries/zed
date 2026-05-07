@@ -18,6 +18,7 @@ pub mod project_settings;
 pub mod search;
 pub mod task_inventory;
 pub mod task_store;
+pub mod test_env_file;
 pub mod telemetry_snapshot;
 pub mod terminals;
 pub mod toolchain_store;

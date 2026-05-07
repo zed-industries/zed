@@ -8,6 +8,7 @@ use gpui::{App, Entity, Task};
 use gpui::{AsyncApp, FutureExt};
 use language::Buffer;
 use language::Language;
+use language::language_settings::LanguageSettings;
 use lsp::LanguageServerId;
 use lsp::LanguageServerName;
 use project::LanguageServerToQuery;
@@ -15,6 +16,7 @@ use project::LocationLink;
 use project::Project;
 use project::TaskSourceKind;
 use project::lsp_store::lsp_ext_command::GetLspRunnables;
+use project::test_env_file::load_test_env_files;
 use task::ResolvedTask;
 use task::TaskContext;
 use text::BufferId;
@@ -89,9 +91,27 @@ async fn lsp_task_context(
         })
         .await;
 
+    let test_env_paths = cx.update(|cx| {
+        LanguageSettings::for_buffer(buffer.read(cx), cx)
+            .test_env_file
+            .clone()
+    });
+    let fs = cx.update(|cx| worktree_store.read(cx).fs());
+    let test_env = match (
+        test_env_paths.as_ref(),
+        worktree_abs_path.as_deref(),
+        fs.as_ref(),
+    ) {
+        (Some(paths), Some(root), Some(fs)) => load_test_env_files(paths, root, fs).await,
+        _ => HashMap::default(),
+    };
+
+    let mut merged_project_env = project_env.unwrap_or_default();
+    merged_project_env.extend(test_env);
+
     Some(TaskContext {
         cwd: worktree_abs_path.map(|p| p.to_path_buf()),
-        project_env: project_env.unwrap_or_default(),
+        project_env: merged_project_env,
         ..TaskContext::default()
     })
 }

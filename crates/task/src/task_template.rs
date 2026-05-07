@@ -1102,4 +1102,69 @@ mod tests {
         };
         assert!(task.unknown_variables().is_empty());
     }
+
+    /// Locks the merge order in `resolve_task` that the `test_env_file` feature
+    /// relies on: `project_env` (shell + .env file content extended in by the
+    /// orchestrator in `project::test_env_file`) is the baseline, then
+    /// `template.env` overrides those, and finally task variables — which all
+    /// live in the `ZED_*` namespace per `VariableName::Display` — are added on
+    /// top. If anyone refactors the merge order, this test catches the
+    /// regression.
+    #[test]
+    fn test_resolve_task_env_precedence() {
+        let template = TaskTemplate {
+            label: "precedence".to_string(),
+            command: "true".to_string(),
+            env: HashMap::from_iter([
+                ("FROM_TEMPLATE".to_string(), "template".to_string()),
+                ("OVERRIDDEN_BY_TEMPLATE".to_string(), "template".to_string()),
+                ("ZED_WORKTREE_ROOT".to_string(), "template".to_string()),
+            ]),
+            ..TaskTemplate::default()
+        };
+
+        let project_env = HashMap::from_iter([
+            ("FROM_PROJECT_ENV".to_string(), "project".to_string()),
+            ("OVERRIDDEN_BY_TEMPLATE".to_string(), "project".to_string()),
+        ]);
+
+        let task_variables = TaskVariables::from_iter([(
+            VariableName::WorktreeRoot,
+            "/from-task-variable/".to_string(),
+        )]);
+
+        let cx = TaskContext {
+            cwd: None,
+            task_variables,
+            project_env,
+        };
+
+        let resolved = template
+            .resolve_task(TEST_ID_BASE, &cx)
+            .expect("template should resolve")
+            .resolved;
+
+        assert_eq!(
+            resolved.env.get("FROM_PROJECT_ENV").map(String::as_str),
+            Some("project"),
+            "project_env entries with no override should reach the resolved task"
+        );
+        assert_eq!(
+            resolved.env.get("FROM_TEMPLATE").map(String::as_str),
+            Some("template"),
+            "template.env entries should reach the resolved task"
+        );
+        assert_eq!(
+            resolved.env.get("OVERRIDDEN_BY_TEMPLATE").map(String::as_str),
+            Some("template"),
+            "template.env should win over project_env (this is what makes \
+             tasks.json env: blocks reliably override .env file content)"
+        );
+        assert_eq!(
+            resolved.env.get("ZED_WORKTREE_ROOT").map(String::as_str),
+            Some("/from-task-variable/"),
+            "$ZED_* task variables are appended last and should win even \
+             when template.env tries to set them"
+        );
+    }
 }

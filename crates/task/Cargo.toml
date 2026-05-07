@@ -21,6 +21,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+dotenvy.workspace = true
 futures.workspace = true
 gpui.workspace = true
 hex.workspace = true

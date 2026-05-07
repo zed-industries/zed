@@ -5,6 +5,7 @@ mod debug_format;
 mod serde_helpers;
 pub mod static_source;
 mod task_template;
+mod test_env_file;
 mod vscode_debug_format;
 mod vscode_format;
 
@@ -26,6 +27,7 @@ pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, SaveStrategy, TaskHook, TaskTemplate,
     TaskTemplates, substitute_variables_in_map, substitute_variables_in_str,
 };
+pub use test_env_file::parse_env_file;
 pub use util::shell::{Shell, ShellKind};
 pub use util::shell_builder::ShellBuilder;
 pub use vscode_debug_format::VsCodeDebugTaskFile;

@@ -19,7 +19,8 @@ pub use settings::{
     AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
     EditPredictionPromptFormat, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
-    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, TestEnvFilePaths,
+    WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -89,6 +90,8 @@ pub struct LanguageSettings {
     pub line_ending: LineEndingSetting,
     /// How to perform a buffer format.
     pub formatter: settings::FormatterList,
+    /// Paths to `.env` files loaded into the env of test runs for this language.
+    pub test_env_file: Option<TestEnvFilePaths>,
     /// Zed's Prettier integration settings.
     pub prettier: PrettierSettings,
     /// Whether to automatically close JSX tags.
@@ -700,6 +703,7 @@ impl settings::Settings for AllLanguageSettings {
                 ensure_final_newline_on_save: settings.ensure_final_newline_on_save.unwrap(),
                 line_ending: settings.line_ending.unwrap(),
                 formatter: settings.formatter.unwrap(),
+                test_env_file: settings.test_env_file.clone(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
                     parser: prettier.parser.filter(|parser| !parser.is_empty()),
