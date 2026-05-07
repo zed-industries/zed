@@ -201,26 +201,34 @@ pub async fn load_skills_from_directory(
 /// child directory of the skills root, and `SKILL.md` is the file that
 /// names it. See `crates/agent_skills/README.md` for why we don't recurse.
 async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
-    let mut skill_files = Vec::new();
-
     let Ok(mut entries) = fs.read_dir(directory).await else {
-        return skill_files;
+        return Vec::new();
     };
 
+    let mut entry_paths = Vec::new();
     while let Some(entry) = entries.next().await {
-        let Ok(entry_path) = entry else {
-            continue;
-        };
-
-        if fs.is_dir(&entry_path).await {
-            let skill_file = entry_path.join(SKILL_FILE_NAME);
-            if fs.is_file(&skill_file).await {
-                skill_files.push(skill_file);
-            }
+        if let Ok(entry_path) = entry {
+            entry_paths.push(entry_path);
         }
     }
 
-    skill_files
+    let checks = entry_paths.into_iter().map(|entry_path| async move {
+        if !fs.is_dir(&entry_path).await {
+            return None;
+        }
+        let skill_file = entry_path.join(SKILL_FILE_NAME);
+        if fs.is_file(&skill_file).await {
+            Some(skill_file)
+        } else {
+            None
+        }
+    });
+
+    future::join_all(checks)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 async fn load_single_skill(
