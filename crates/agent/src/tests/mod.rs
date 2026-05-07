@@ -4063,14 +4063,8 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
-                        content: vec![
-                            "Failed to receive tool input: tool input was not fully received"
-                                .into(),
-                        ],
-                        output: Some(
-                            "Failed to receive tool input: tool input was not fully received"
-                                .into()
-                        ),
+                        content: vec!["tool input was not fully received".into(),],
+                        output: Some("tool input was not fully received".into()),
                     }
                 )],
                 cache: true,
@@ -6067,11 +6061,8 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         tool.run(
             ToolInput::resolved(crate::EditFileToolInput {
-                display_description: "Edit sensitive file".to_string(),
                 path: "root/sensitive_config.txt".into(),
-                mode: crate::EditFileMode::Edit,
-                content: None,
-                edits: Some(vec![]),
+                edits: vec![],
             }),
             event_stream,
             cx,
@@ -6502,11 +6493,8 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
     let _task = cx.update(|cx| {
         tool.run(
             ToolInput::resolved(crate::EditFileToolInput {
-                display_description: "Edit README".to_string(),
                 path: "root/README.md".into(),
-                mode: crate::EditFileMode::Edit,
-                content: None,
-                edits: Some(vec![]),
+                edits: vec![],
             }),
             event_stream,
             cx,
@@ -6575,11 +6563,8 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     let _task = cx.update(|cx| {
         tool.run(
             ToolInput::resolved(crate::EditFileToolInput {
-                display_description: "Edit local settings".to_string(),
                 path: "root/.zed/settings.json".into(),
-                mode: crate::EditFileMode::Edit,
-                content: None,
-                edits: Some(vec![]),
+                edits: vec![],
             }),
             event_stream,
             cx,
