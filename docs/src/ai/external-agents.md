@@ -23,7 +23,7 @@ Under the hood we run Gemini CLI in the background, and talk to it over ACP.
 
 First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
 ```json [keymap]
 [
@@ -69,7 +69,7 @@ Under the hood, Zed runs the Claude Agent SDK, which runs Claude Code under the 
 
 Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Agent thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
 ```json [keymap]
 [
@@ -144,7 +144,7 @@ Under the hood, Zed runs Codex CLI and communicates to it over ACP, through [a d
 As of version `0.208`, you should be able to use Codex directly from Zed.
 Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Codex thread.
 
-If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap file` command to include:
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
 ```json
 [
@@ -202,7 +202,7 @@ At some point in the near future, Agent Server extensions will be deprecated.
 
 Add more external agents to Zed by installing [Agent Server extensions](../extensions/agent-servers.md).
 
-See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with `zed: extensions`, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
+See what agents are available by filtering for "Agent Servers" in the extensions page, which you can access via the command palette with {#action zed::Extensions}, or the [Zed website](https://zed.dev/extensions?filter=agent-servers).
 
 ### Via The ACP Registry
 
@@ -216,7 +216,7 @@ At the moment, the registry is a curated set of agents, including only the ones 
 
 #### Using it in Zed
 
-Use the `zed: acp registry` command to quickly go to the ACP Registry page.
+Use the {#action zed::AcpRegistry} command to quickly go to the ACP Registry page.
 There's also a button ("Add Agent") that takes you there in the agent panel's configuration view.
 
 From there, you can click to install your preferred agent and it will become available right away in the `+` icon button in the agent panel.
@@ -246,7 +246,7 @@ It's also possible to customize environment variables for registry-installed age
 
 ## Debugging Agents
 
-When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette.
+When using external agents in Zed, you can access the debug view via with {#action dev::OpenAcpLogs} from the Command Palette.
 This lets you see the messages being sent and received between Zed and the agent.
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
@@ -339,7 +339,7 @@ For more on configuring MCP servers, see [Model Context Protocol](./mcp.md).
 
 1. Verify the MCP server is enabled in `context_servers` settings
 2. For remote MCP servers with OAuth, this is a [known issue](https://github.com/zed-industries/zed/issues/54410) — try local stdio-based servers instead
-3. Open `dev: open acp logs` from the Command Palette to debug
+3. Open {#action dev::OpenAcpLogs} from the Command Palette to debug
 
 **"My existing Claude Code / Codex setup isn't working in Zed"**
 
