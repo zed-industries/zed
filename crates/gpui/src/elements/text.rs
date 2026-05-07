@@ -23,7 +23,9 @@ use std::{
 /// In general, [`Text`] objects should be created via the [`text`] macro:
 /// ```rust
 /// # use gpui::*;
+/// # fn render() -> impl IntoElement {
 /// div().child(text!("hello"))
+/// # }
 /// ```
 /// ## IDs and Accessibility
 /// 
@@ -48,13 +50,13 @@ use std::{
 /// let x = text!("hello");
 /// let y = text!("hello");
 /// // not equal, because different `text!` invocations produced them
-/// assert_ne!(x.id, y.id);
+/// assert_ne!(x.id(), y.id());
 /// 
 /// fn make_text(s: &str) -> Text { text!(s) }
 /// let x = make_text("hello");
 /// let y = make_text("hello");
 /// // equal, because the same `text!` invocation produced them
-/// assert_eq!(x.id, y.id)
+/// assert_eq!(x.id(), y.id());
 /// ```
 /// When the contents of an invocation of [`text`] do not change, this
 /// distinction is less relevant (with the caveat that you still need to take
@@ -90,17 +92,22 @@ impl Text {
         Self { id: None, text }
     }
 
-    /// The ID of the [`Text`] element.
+    /// The ID of this [`Text`] element.
     #[inline]
     pub const fn id(&self) -> Option<&ElementId> {
         self.id.as_ref()
     }
+
+    /// The text that this [`Text`] element will display.
+    #[inline]
+    pub const fn text(&self) -> &SharedString {
+        &self.text
+    }
 }
 
-
-
 /// Trivial hash function for the location information produced by the [`text`]
-/// macro. Not covered by semver guarantees.
+/// macro. Not covered by semver guarantees. Performance is not particularly
+/// significant because it's only used on small strings in const contexts.
 #[doc(hidden)]
 pub const fn __hash_text_macro_location_unstable_do_not_use(s: &'static str) -> u64 {
     const BASIS: u64 = 0xcbf29ce484222325;
