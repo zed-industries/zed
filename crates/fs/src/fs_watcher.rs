@@ -1,4 +1,4 @@
-use notify::EventKind;
+use notify::{Event, EventKind};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -458,6 +458,16 @@ fn handle_poll_event(event: Result<notify::Event, notify::Error>) {
 }
 
 fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) {
+    if matches!(
+        event,
+        Ok(Event {
+            kind: EventKind::Access(_),
+            ..
+        })
+    ) {
+        return;
+    }
+
     log::trace!("global handle event for {mode:?}: {event:?}");
 
     let callbacks = {
@@ -472,9 +482,6 @@ fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) 
 
     match event {
         Ok(event) => {
-            if matches!(event.kind, EventKind::Access(_)) {
-                return;
-            }
             for callback in callbacks {
                 callback(Ok(&event));
             }

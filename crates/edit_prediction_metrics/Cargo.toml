@@ -12,7 +12,7 @@ workspace = true
 path = "src/edit_prediction_metrics.rs"
 
 [dependencies]
-language.workspace = true
+imara-diff.workspace = true
 serde.workspace = true
 serde_json = "1.0"
 similar = "2.7.0"

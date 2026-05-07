@@ -24,8 +24,7 @@ use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{env, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
-    prompt_input_contains_special_tokens, stop_tokens_for_format,
+    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -119,10 +118,6 @@ pub fn request_prediction_with_zeta(
                 can_collect_data,
                 repo_url,
             );
-
-            if prompt_input_contains_special_tokens(&prompt_input, zeta_version) {
-                return Err(anyhow::anyhow!("prompt contains special tokens"));
-            }
 
             let formatted_prompt = format_zeta_prompt(&prompt_input, zeta_version);
 
