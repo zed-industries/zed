@@ -5,15 +5,373 @@ impl Editor {
         self.completion_provider = provider;
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn completion_provider(&self) -> Option<Rc<dyn CompletionProvider>> {
-        self.completion_provider.clone()
-    }
-
     pub fn set_show_completions_on_input(&mut self, show_completions_on_input: Option<bool>) {
         self.show_completions_on_input_override = show_completions_on_input;
     }
 
+    pub fn text_layout_details(&self, window: &mut Window, cx: &mut App) -> TextLayoutDetails {
+        TextLayoutDetails {
+            text_system: window.text_system().clone(),
+            editor_style: self.style.clone().unwrap_or_else(|| self.create_style(cx)),
+            rem_size: window.rem_size(),
+            scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
+            visible_rows: self.visible_line_count(),
+            vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
+        }
+    }
+
+    pub fn show_word_completions(
+        &mut self,
+        _: &ShowWordCompletions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_or_update_completions_menu(
+            Some(CompletionsMenuSource::Words {
+                ignore_threshold: true,
+            }),
+            None,
+            false,
+            window,
+            cx,
+        );
+    }
+
+    pub fn show_completions(
+        &mut self,
+        _: &ShowCompletions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_or_update_completions_menu(None, None, false, window, cx);
+    }
+
+    pub fn confirm_completion(
+        &mut self,
+        action: &ConfirmCompletion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+        self.do_completion(action.item_ix, CompletionIntent::Complete, window, cx)
+    }
+
+    pub fn confirm_completion_insert(
+        &mut self,
+        _: &ConfirmCompletionInsert,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+        self.do_completion(None, CompletionIntent::CompleteWithInsert, window, cx)
+    }
+
+    pub fn confirm_completion_replace(
+        &mut self,
+        _: &ConfirmCompletionReplace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+        self.do_completion(None, CompletionIntent::CompleteWithReplace, window, cx)
+    }
+
+    pub fn compose_completion(
+        &mut self,
+        action: &ComposeCompletion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
+    }
+
+    pub fn has_visible_completions_menu(&self) -> bool {
+        !self.edit_prediction_preview_is_active()
+            && self.context_menu.borrow().as_ref().is_some_and(|menu| {
+                menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
+            })
+    }
+}
+
+impl Editor {
+    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
+        let offset = position.to_offset(buffer);
+        let (word_range, kind) =
+            buffer.surrounding_word(offset, Some(CharScopeContext::Completion));
+        if offset > word_range.start && kind == Some(CharKind::Word) {
+            Some(
+                buffer
+                    .text_for_range(word_range.start..offset)
+                    .collect::<String>(),
+            )
+        } else {
+            None
+        }
+    }
+
+    fn do_completion(
+        &mut self,
+        item_ix: Option<usize>,
+        intent: CompletionIntent,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
+
+        let CodeContextMenu::Completions(completions_menu) = self.hide_context_menu(window, cx)?
+        else {
+            return None;
+        };
+
+        let candidate_id = {
+            let entries = completions_menu.entries.borrow();
+            let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            if self.show_edit_predictions_in_menu() {
+                self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
+            }
+            mat.candidate_id
+        };
+
+        let completion = completions_menu
+            .completions
+            .borrow()
+            .get(candidate_id)?
+            .clone();
+        cx.stop_propagation();
+
+        let buffer_handle = completions_menu.buffer.clone();
+        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let (initial_position, _) =
+            multibuffer_snapshot.anchor_to_buffer_anchor(completions_menu.initial_position)?;
+
+        let CompletionEdit {
+            new_text,
+            snippet,
+            replace_range,
+        } = process_completion_for_edit(&completion, intent, &buffer_handle, &initial_position, cx);
+
+        let buffer = buffer_handle.read(cx).snapshot();
+        let newest_selection = self.selections.newest_anchor();
+
+        let Some(replace_range_multibuffer) =
+            multibuffer_snapshot.buffer_anchor_range_to_anchor_range(replace_range.clone())
+        else {
+            return None;
+        };
+
+        let Some((buffer_snapshot, newest_range_buffer)) =
+            multibuffer_snapshot.anchor_range_to_buffer_anchor_range(newest_selection.range())
+        else {
+            return None;
+        };
+
+        let old_text = buffer
+            .text_for_range(replace_range.clone())
+            .collect::<String>();
+        let lookbehind = newest_range_buffer
+            .start
+            .to_offset(buffer_snapshot)
+            .saturating_sub(replace_range.start.to_offset(&buffer_snapshot));
+        let lookahead = replace_range
+            .end
+            .to_offset(&buffer_snapshot)
+            .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
+        let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
+        let suffix = &old_text[lookbehind.min(old_text.len())..];
+
+        let selections = self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx));
+        let mut ranges = Vec::new();
+        let mut all_commit_ranges = Vec::new();
+        let mut linked_edits = LinkedEdits::new();
+
+        let text: Arc<str> = new_text.clone().into();
+        for selection in &selections {
+            let range = if selection.id == newest_selection.id {
+                replace_range_multibuffer.clone()
+            } else {
+                let mut range = selection.range();
+
+                // if prefix is present, don't duplicate it
+                if multibuffer_snapshot
+                    .contains_str_at(range.start.saturating_sub_usize(lookbehind), prefix)
+                {
+                    range.start = range.start.saturating_sub_usize(lookbehind);
+
+                    // if suffix is also present, mimic the newest cursor and replace it
+                    if selection.id != newest_selection.id
+                        && multibuffer_snapshot.contains_str_at(range.end, suffix)
+                    {
+                        range.end += lookahead;
+                    }
+                }
+                range.to_anchors(&multibuffer_snapshot)
+            };
+
+            ranges.push(range.clone());
+
+            let start_anchor = multibuffer_snapshot.anchor_before(range.start);
+            let end_anchor = multibuffer_snapshot.anchor_after(range.end);
+
+            if let Some((buffer_snapshot_2, anchor_range)) =
+                multibuffer_snapshot.anchor_range_to_buffer_anchor_range(start_anchor..end_anchor)
+                && buffer_snapshot_2.remote_id() == buffer_snapshot.remote_id()
+            {
+                all_commit_ranges.push(anchor_range.clone());
+                if !self.linked_edit_ranges.is_empty() {
+                    linked_edits.push(&self, anchor_range, text.clone(), cx);
+                }
+            }
+        }
+
+        let common_prefix_len = old_text
+            .chars()
+            .zip(new_text.chars())
+            .take_while(|(a, b)| a == b)
+            .map(|(a, _)| a.len_utf8())
+            .sum::<usize>();
+
+        cx.emit(EditorEvent::InputHandled {
+            utf16_range_to_replace: None,
+            text: new_text[common_prefix_len..].into(),
+        });
+
+        let tx_id = self.transact(window, cx, |editor, window, cx| {
+            if let Some(mut snippet) = snippet {
+                snippet.text = new_text.to_string();
+                let offset_ranges = ranges
+                    .iter()
+                    .map(|range| range.to_offset(&multibuffer_snapshot))
+                    .collect::<Vec<_>>();
+                editor
+                    .insert_snippet(&offset_ranges, snippet, window, cx)
+                    .log_err();
+            } else {
+                editor.buffer.update(cx, |multi_buffer, cx| {
+                    let auto_indent = match completion.insert_text_mode {
+                        Some(InsertTextMode::AS_IS) => None,
+                        _ => editor.autoindent_mode.clone(),
+                    };
+                    let edits = ranges.into_iter().map(|range| (range, new_text.as_str()));
+                    multi_buffer.edit(edits, auto_indent, cx);
+                });
+            }
+            linked_edits.apply(cx);
+            editor.refresh_edit_prediction(true, false, window, cx);
+        });
+        self.invalidate_autoclose_regions(
+            &self.selections.disjoint_anchors_arc(),
+            &multibuffer_snapshot,
+        );
+
+        let show_new_completions_on_confirm = completion
+            .confirm
+            .as_ref()
+            .is_some_and(|confirm| confirm(intent, window, cx));
+        if show_new_completions_on_confirm {
+            self.open_or_update_completions_menu(None, None, false, window, cx);
+        }
+
+        let provider = self.completion_provider.as_ref()?;
+
+        let lsp_store = self.project().map(|project| project.read(cx).lsp_store());
+        let command = lsp_store.as_ref().and_then(|lsp_store| {
+            let CompletionSource::Lsp {
+                lsp_completion,
+                server_id,
+                ..
+            } = &completion.source
+            else {
+                return None;
+            };
+            let lsp_command = lsp_completion.command.as_ref()?;
+            let available_commands = lsp_store
+                .read(cx)
+                .lsp_server_capabilities
+                .get(server_id)
+                .and_then(|server_capabilities| {
+                    server_capabilities
+                        .execute_command_provider
+                        .as_ref()
+                        .map(|options| options.commands.as_slice())
+                })?;
+            if available_commands.contains(&lsp_command.command) {
+                Some(CodeAction {
+                    server_id: *server_id,
+                    range: language::Anchor::min_min_range_for_buffer(buffer.remote_id()),
+                    lsp_action: LspAction::Command(lsp_command.clone()),
+                    resolved: false,
+                })
+            } else {
+                None
+            }
+        });
+
+        drop(completion);
+        let apply_edits = provider.apply_additional_edits_for_completion(
+            buffer_handle.clone(),
+            completions_menu.completions.clone(),
+            candidate_id,
+            true,
+            all_commit_ranges,
+            cx,
+        );
+
+        let editor_settings = EditorSettings::get_global(cx);
+        if editor_settings.show_signature_help_after_edits || editor_settings.auto_signature_help {
+            // After the code completion is finished, users often want to know what signatures are needed.
+            // so we should automatically call signature_help
+            self.show_signature_help(&ShowSignatureHelp, window, cx);
+        }
+
+        Some(cx.spawn_in(window, async move |editor, cx| {
+            let additional_edits_tx = apply_edits.await?;
+
+            if let Some((lsp_store, command)) = lsp_store.zip(command) {
+                let title = command.lsp_action.title().to_owned();
+                let project_transaction = lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        lsp_store.apply_code_action(buffer_handle, command, false, cx)
+                    })
+                    .await
+                    .context("applying post-completion command")?;
+                if let Some(workspace) = editor.read_with(cx, |editor, _| editor.workspace())? {
+                    Self::open_project_transaction(
+                        &editor,
+                        workspace.downgrade(),
+                        project_transaction,
+                        title,
+                        cx,
+                    )
+                    .await?;
+                }
+            }
+
+            if let Some(tx_id) = tx_id
+                && let Some(additional_edits_tx) = additional_edits_tx
+            {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.buffer.update(cx, |buffer, cx| {
+                            buffer.merge_transactions(additional_edits_tx.id, tx_id, cx)
+                        });
+                    })
+                    .context("merge transactions")?;
+            }
+
+            Ok(())
+        }))
+    }
+}
+
+impl Editor {
     pub(super) fn trigger_completion_on_input(
         &mut self,
         text: &str,
@@ -52,22 +410,7 @@ impl Editor {
         }
     }
 
-    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
-        let offset = position.to_offset(buffer);
-        let (word_range, kind) =
-            buffer.surrounding_word(offset, Some(CharScopeContext::Completion));
-        if offset > word_range.start && kind == Some(CharKind::Word) {
-            Some(
-                buffer
-                    .text_for_range(word_range.start..offset)
-                    .collect::<String>(),
-            )
-        } else {
-            None
-        }
-    }
-
-    pub fn is_lsp_relevant(&self, file: Option<&Arc<dyn language::File>>, cx: &App) -> bool {
+    pub(super) fn is_lsp_relevant(&self, file: Option<&Arc<dyn language::File>>, cx: &App) -> bool {
         let Some(project) = self.project() else {
             return false;
         };
@@ -87,7 +430,7 @@ impl Editor {
         !worktree_entry.is_ignored
     }
 
-    pub fn visible_buffers(&self, cx: &mut Context<Editor>) -> Vec<Entity<Buffer>> {
+    pub(super) fn visible_buffers(&self, cx: &mut Context<Editor>) -> Vec<Entity<Buffer>> {
         let display_snapshot = self.display_snapshot(cx);
         let visible_range = self.multi_buffer_visible_range(&display_snapshot, cx);
         let multi_buffer = self.buffer().read(cx);
@@ -100,7 +443,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn visible_buffer_ranges(
+    pub(super) fn visible_buffer_ranges(
         &self,
         cx: &mut Context<Editor>,
     ) -> Vec<(
@@ -116,17 +459,6 @@ impl Editor {
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .collect()
-    }
-
-    pub fn text_layout_details(&self, window: &mut Window, cx: &mut App) -> TextLayoutDetails {
-        TextLayoutDetails {
-            text_system: window.text_system().clone(),
-            editor_style: self.style.clone().unwrap_or_else(|| self.create_style(cx)),
-            rem_size: window.rem_size(),
-            scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
-            visible_rows: self.visible_line_count(),
-            vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
-        }
     }
 
     pub(super) fn trigger_on_type_formatting(
@@ -180,32 +512,6 @@ impl Editor {
             }
             Ok(())
         }))
-    }
-
-    pub fn show_word_completions(
-        &mut self,
-        _: &ShowWordCompletions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_or_update_completions_menu(
-            Some(CompletionsMenuSource::Words {
-                ignore_threshold: true,
-            }),
-            None,
-            false,
-            window,
-            cx,
-        );
-    }
-
-    pub fn show_completions(
-        &mut self,
-        _: &ShowCompletions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_or_update_completions_menu(None, None, false, window, cx);
     }
 
     pub(super) fn open_or_update_completions_menu(
@@ -697,18 +1003,7 @@ impl Editor {
         self.completion_tasks.push((id, task));
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn current_completions(&self) -> Option<Vec<project::Completion>> {
-        let menu = self.context_menu.borrow();
-        if let CodeContextMenu::Completions(menu) = menu.as_ref()? {
-            let completions = menu.completions.borrow();
-            Some(completions.to_vec())
-        } else {
-            None
-        }
-    }
-
-    pub fn with_completions_menu_matching_id<R>(
+    pub(super) fn with_completions_menu_matching_id<R>(
         &self,
         id: CompletionId,
         f: impl FnOnce(Option<&mut CompletionsMenu>) -> R,
@@ -721,317 +1016,6 @@ impl Editor {
             return f(None);
         }
         f(Some(completions_menu))
-    }
-
-    pub fn confirm_completion(
-        &mut self,
-        action: &ConfirmCompletion,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        if self.read_only(cx) {
-            return None;
-        }
-        self.do_completion(action.item_ix, CompletionIntent::Complete, window, cx)
-    }
-
-    pub fn confirm_completion_insert(
-        &mut self,
-        _: &ConfirmCompletionInsert,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        if self.read_only(cx) {
-            return None;
-        }
-        self.do_completion(None, CompletionIntent::CompleteWithInsert, window, cx)
-    }
-
-    pub fn confirm_completion_replace(
-        &mut self,
-        _: &ConfirmCompletionReplace,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        if self.read_only(cx) {
-            return None;
-        }
-        self.do_completion(None, CompletionIntent::CompleteWithReplace, window, cx)
-    }
-
-    pub fn compose_completion(
-        &mut self,
-        action: &ComposeCompletion,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
-        self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
-    }
-
-    fn do_completion(
-        &mut self,
-        item_ix: Option<usize>,
-        intent: CompletionIntent,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Option<Task<Result<()>>> {
-        use language::ToOffset as _;
-
-        let CodeContextMenu::Completions(completions_menu) = self.hide_context_menu(window, cx)?
-        else {
-            return None;
-        };
-
-        let candidate_id = {
-            let entries = completions_menu.entries.borrow();
-            let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
-            if self.show_edit_predictions_in_menu() {
-                self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
-            }
-            mat.candidate_id
-        };
-
-        let completion = completions_menu
-            .completions
-            .borrow()
-            .get(candidate_id)?
-            .clone();
-        cx.stop_propagation();
-
-        let buffer_handle = completions_menu.buffer.clone();
-        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let (initial_position, _) =
-            multibuffer_snapshot.anchor_to_buffer_anchor(completions_menu.initial_position)?;
-
-        let CompletionEdit {
-            new_text,
-            snippet,
-            replace_range,
-        } = process_completion_for_edit(&completion, intent, &buffer_handle, &initial_position, cx);
-
-        let buffer = buffer_handle.read(cx).snapshot();
-        let newest_selection = self.selections.newest_anchor();
-
-        let Some(replace_range_multibuffer) =
-            multibuffer_snapshot.buffer_anchor_range_to_anchor_range(replace_range.clone())
-        else {
-            return None;
-        };
-
-        let Some((buffer_snapshot, newest_range_buffer)) =
-            multibuffer_snapshot.anchor_range_to_buffer_anchor_range(newest_selection.range())
-        else {
-            return None;
-        };
-
-        let old_text = buffer
-            .text_for_range(replace_range.clone())
-            .collect::<String>();
-        let lookbehind = newest_range_buffer
-            .start
-            .to_offset(buffer_snapshot)
-            .saturating_sub(replace_range.start.to_offset(&buffer_snapshot));
-        let lookahead = replace_range
-            .end
-            .to_offset(&buffer_snapshot)
-            .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
-        let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
-        let suffix = &old_text[lookbehind.min(old_text.len())..];
-
-        let selections = self
-            .selections
-            .all::<MultiBufferOffset>(&self.display_snapshot(cx));
-        let mut ranges = Vec::new();
-        let mut all_commit_ranges = Vec::new();
-        let mut linked_edits = LinkedEdits::new();
-
-        let text: Arc<str> = new_text.clone().into();
-        for selection in &selections {
-            let range = if selection.id == newest_selection.id {
-                replace_range_multibuffer.clone()
-            } else {
-                let mut range = selection.range();
-
-                // if prefix is present, don't duplicate it
-                if multibuffer_snapshot
-                    .contains_str_at(range.start.saturating_sub_usize(lookbehind), prefix)
-                {
-                    range.start = range.start.saturating_sub_usize(lookbehind);
-
-                    // if suffix is also present, mimic the newest cursor and replace it
-                    if selection.id != newest_selection.id
-                        && multibuffer_snapshot.contains_str_at(range.end, suffix)
-                    {
-                        range.end += lookahead;
-                    }
-                }
-                range.to_anchors(&multibuffer_snapshot)
-            };
-
-            ranges.push(range.clone());
-
-            let start_anchor = multibuffer_snapshot.anchor_before(range.start);
-            let end_anchor = multibuffer_snapshot.anchor_after(range.end);
-
-            if let Some((buffer_snapshot_2, anchor_range)) =
-                multibuffer_snapshot.anchor_range_to_buffer_anchor_range(start_anchor..end_anchor)
-                && buffer_snapshot_2.remote_id() == buffer_snapshot.remote_id()
-            {
-                all_commit_ranges.push(anchor_range.clone());
-                if !self.linked_edit_ranges.is_empty() {
-                    linked_edits.push(&self, anchor_range, text.clone(), cx);
-                }
-            }
-        }
-
-        let common_prefix_len = old_text
-            .chars()
-            .zip(new_text.chars())
-            .take_while(|(a, b)| a == b)
-            .map(|(a, _)| a.len_utf8())
-            .sum::<usize>();
-
-        cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace: None,
-            text: new_text[common_prefix_len..].into(),
-        });
-
-        let tx_id = self.transact(window, cx, |editor, window, cx| {
-            if let Some(mut snippet) = snippet {
-                snippet.text = new_text.to_string();
-                let offset_ranges = ranges
-                    .iter()
-                    .map(|range| range.to_offset(&multibuffer_snapshot))
-                    .collect::<Vec<_>>();
-                editor
-                    .insert_snippet(&offset_ranges, snippet, window, cx)
-                    .log_err();
-            } else {
-                editor.buffer.update(cx, |multi_buffer, cx| {
-                    let auto_indent = match completion.insert_text_mode {
-                        Some(InsertTextMode::AS_IS) => None,
-                        _ => editor.autoindent_mode.clone(),
-                    };
-                    let edits = ranges.into_iter().map(|range| (range, new_text.as_str()));
-                    multi_buffer.edit(edits, auto_indent, cx);
-                });
-            }
-            linked_edits.apply(cx);
-            editor.refresh_edit_prediction(true, false, window, cx);
-        });
-        self.invalidate_autoclose_regions(
-            &self.selections.disjoint_anchors_arc(),
-            &multibuffer_snapshot,
-        );
-
-        let show_new_completions_on_confirm = completion
-            .confirm
-            .as_ref()
-            .is_some_and(|confirm| confirm(intent, window, cx));
-        if show_new_completions_on_confirm {
-            self.open_or_update_completions_menu(None, None, false, window, cx);
-        }
-
-        let provider = self.completion_provider.as_ref()?;
-
-        let lsp_store = self.project().map(|project| project.read(cx).lsp_store());
-        let command = lsp_store.as_ref().and_then(|lsp_store| {
-            let CompletionSource::Lsp {
-                lsp_completion,
-                server_id,
-                ..
-            } = &completion.source
-            else {
-                return None;
-            };
-            let lsp_command = lsp_completion.command.as_ref()?;
-            let available_commands = lsp_store
-                .read(cx)
-                .lsp_server_capabilities
-                .get(server_id)
-                .and_then(|server_capabilities| {
-                    server_capabilities
-                        .execute_command_provider
-                        .as_ref()
-                        .map(|options| options.commands.as_slice())
-                })?;
-            if available_commands.contains(&lsp_command.command) {
-                Some(CodeAction {
-                    server_id: *server_id,
-                    range: language::Anchor::min_min_range_for_buffer(buffer.remote_id()),
-                    lsp_action: LspAction::Command(lsp_command.clone()),
-                    resolved: false,
-                })
-            } else {
-                None
-            }
-        });
-
-        drop(completion);
-        let apply_edits = provider.apply_additional_edits_for_completion(
-            buffer_handle.clone(),
-            completions_menu.completions.clone(),
-            candidate_id,
-            true,
-            all_commit_ranges,
-            cx,
-        );
-
-        let editor_settings = EditorSettings::get_global(cx);
-        if editor_settings.show_signature_help_after_edits || editor_settings.auto_signature_help {
-            // After the code completion is finished, users often want to know what signatures are needed.
-            // so we should automatically call signature_help
-            self.show_signature_help(&ShowSignatureHelp, window, cx);
-        }
-
-        Some(cx.spawn_in(window, async move |editor, cx| {
-            let additional_edits_tx = apply_edits.await?;
-
-            if let Some((lsp_store, command)) = lsp_store.zip(command) {
-                let title = command.lsp_action.title().to_owned();
-                let project_transaction = lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        lsp_store.apply_code_action(buffer_handle, command, false, cx)
-                    })
-                    .await
-                    .context("applying post-completion command")?;
-                if let Some(workspace) = editor.read_with(cx, |editor, _| editor.workspace())? {
-                    Self::open_project_transaction(
-                        &editor,
-                        workspace.downgrade(),
-                        project_transaction,
-                        title,
-                        cx,
-                    )
-                    .await?;
-                }
-            }
-
-            if let Some(tx_id) = tx_id
-                && let Some(additional_edits_tx) = additional_edits_tx
-            {
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.buffer.update(cx, |buffer, cx| {
-                            buffer.merge_transactions(additional_edits_tx.id, tx_id, cx)
-                        });
-                    })
-                    .context("merge transactions")?;
-            }
-
-            Ok(())
-        }))
-    }
-
-    pub fn disable_word_completions(&mut self) {
-        self.word_completions_enabled = false;
-    }
-
-    pub fn has_visible_completions_menu(&self) -> bool {
-        !self.edit_prediction_preview_is_active()
-            && self.context_menu.borrow().as_ref().is_some_and(|menu| {
-                menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
-            })
     }
 }
 
@@ -1301,7 +1285,7 @@ fn snippet_completions(
                         server_id: LanguageServerId(usize::MAX),
                         resolved: true,
                         lsp_completion: Box::new(lsp::CompletionItem {
-                            label: snippet.prefix.first().unwrap().clone(),
+                            label: matching_prefix.clone(),
                             kind: Some(CompletionItemKind::SNIPPET),
                             label_details: snippet.description.as_ref().map(|description| {
                                 lsp::CompletionItemLabelDetails {
@@ -1484,4 +1468,28 @@ pub(crate) fn snippet_candidate_suffixes<'a>(
                 Some(chunk)
             }
         })
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Editor {
+    pub fn completion_provider(&self) -> Option<Rc<dyn CompletionProvider>> {
+        self.completion_provider.clone()
+    }
+
+    pub fn current_completions(&self) -> Option<Vec<project::Completion>> {
+        let menu = self.context_menu.borrow();
+        if let CodeContextMenu::Completions(menu) = menu.as_ref()? {
+            let completions = menu.completions.borrow();
+            Some(completions.to_vec())
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+impl Editor {
+    pub(super) fn disable_word_completions(&mut self) {
+        self.word_completions_enabled = false;
+    }
 }

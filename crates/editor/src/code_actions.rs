@@ -186,47 +186,6 @@ impl Editor {
         })
     }
 
-    fn debug_scenarios(
-        &mut self,
-        resolved_tasks: &Option<ResolvedTasks>,
-        buffer: &Entity<Buffer>,
-        cx: &mut App,
-    ) -> Task<Vec<task::DebugScenario>> {
-        maybe!({
-            let project = self.project()?;
-            let dap_store = project.read(cx).dap_store();
-            let mut scenarios = vec![];
-            let resolved_tasks = resolved_tasks.as_ref()?;
-            let buffer = buffer.read(cx);
-            let language = buffer.language()?;
-            let debug_adapter = LanguageSettings::for_buffer(&buffer, cx)
-                .debuggers
-                .first()
-                .map(SharedString::from)
-                .or_else(|| language.config().debuggers.first().map(SharedString::from))?;
-
-            dap_store.update(cx, |dap_store, cx| {
-                for (_, task) in &resolved_tasks.templates {
-                    let maybe_scenario = dap_store.debug_scenario_for_build_task(
-                        task.original_task().clone(),
-                        debug_adapter.clone().into(),
-                        task.display_label().to_owned().into(),
-                        cx,
-                    );
-                    scenarios.push(maybe_scenario);
-                }
-            });
-            Some(cx.background_spawn(async move {
-                futures::future::join_all(scenarios)
-                    .await
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-            }))
-        })
-        .unwrap_or_else(|| Task::ready(vec![]))
-    }
-
     pub fn confirm_code_action(
         &mut self,
         action: &ConfirmCodeAction,
@@ -316,6 +275,55 @@ impl Editor {
         }
     }
 
+    pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
+        &self.context_menu
+    }
+}
+
+impl Editor {
+    fn debug_scenarios(
+        &mut self,
+        resolved_tasks: &Option<ResolvedTasks>,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<Vec<task::DebugScenario>> {
+        maybe!({
+            let project = self.project()?;
+            let dap_store = project.read(cx).dap_store();
+            let mut scenarios = vec![];
+            let resolved_tasks = resolved_tasks.as_ref()?;
+            let buffer = buffer.read(cx);
+            let language = buffer.language()?;
+            let debug_adapter = LanguageSettings::for_buffer(&buffer, cx)
+                .debuggers
+                .first()
+                .map(SharedString::from)
+                .or_else(|| language.config().debuggers.first().map(SharedString::from))?;
+
+            dap_store.update(cx, |dap_store, cx| {
+                for (_, task) in &resolved_tasks.templates {
+                    let maybe_scenario = dap_store.debug_scenario_for_build_task(
+                        task.original_task().clone(),
+                        debug_adapter.clone().into(),
+                        task.display_label().to_owned().into(),
+                        cx,
+                    );
+                    scenarios.push(maybe_scenario);
+                }
+            });
+            Some(cx.background_spawn(async move {
+                futures::future::join_all(scenarios)
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+            }))
+        })
+        .unwrap_or_else(|| Task::ready(vec![]))
+    }
+}
+
+impl Editor {
     pub(super) fn render_inline_code_actions(
         &self,
         icon_size: ui::IconSize,
@@ -359,10 +367,6 @@ impl Editor {
                 );
             }))
             .into_any_element()
-    }
-
-    pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
-        &self.context_menu
     }
 
     pub(super) fn refresh_code_actions_for_selection(
