@@ -119,6 +119,18 @@ Skills with `disable-model-invocation: true` are excluded from the catalog entir
 
 If the model invokes the `skill` tool with a `name` that matches a hidden skill, the tool returns a "not found" error whose "Available skills" listing excludes the hidden skill. So even if the model hallucinates the right name, it can't extract the description from an error message.
 
+### Fixed 50KB total budget
+
+The sum of every skill's `name + description` (across the whole catalog, both global and project-local) is capped at 50KB. Skills that don't fit are dropped from the catalog with a warning, in iteration order — the model still sees as many skills as fit, plus a load error that surfaces in the UI for any that didn't.
+
+We could express this as a fraction of the model's context window instead, which would scale with newer models. We don't, and won't. The reasoning:
+
+1. Authors need a single, predictable answer to "is my skill going to load?" A fixed cap means the same `SKILL.md` either loads or doesn't — the same way, every time, on every model. Tying it to the model's context size means the answer changes when the user picks a different model, which would make skill authoring needlessly opaque.
+2. Authors should treat the catalog as a budget they're sharing with everyone else's skills, and design accordingly: short, keyword-front-loaded descriptions. A fixed cap nudges them in that direction. A model-relative cap encourages "why not write a paragraph, the budget is huge."
+3. 50KB is enough for hundreds of well-written skill descriptions. If a real user runs into the cap by writing too many skills with too many words, the right answer is shorter descriptions, not a bigger budget.
+
+This is a permanent decision, not a tentative starting point. If someone proposes "let's just bump the cap" or "let's make it dynamic," the answer is no — push back on whoever wrote the catalog-overflowing descriptions instead.
+
 ## Activation
 
 The skill tool — when the model decides to load a skill, it calls `skill { name: "brand-writer" }` and gets back the body of `SKILL.md` wrapped in a `<skill_content>` envelope.
@@ -170,11 +182,13 @@ Paths outside both the worktree and the skills tree are still refused, exactly a
 
 This handles the "the user should be the one deciding when to run this" case — workflows like `/deploy` or `/release` where you don't want the model autonomously triggering them based on conversation context.
 
-### `user-invocable: false` (we don't support, yet)
+### `user-invocable: false` is intentionally not supported
 
-The inverse — a skill that only the model can invoke, hidden from the slash command list — exists in some other tools, with the use case being "background reference" skills that aren't meaningful as user-typed commands.
+The inverse of `disable-model-invocation` — a skill the model can use but the user can't see in the slash menu — exists in some other tools. We don't support it and don't plan to.
 
-We didn't implement it because the use case is rare in practice and the implementation cost is real (filtering the slash command list, plus a second frontmatter field that interacts with the first). If a real user need shows up, this is a small additive change.
+The argued use case is "background reference" skills. We're not convinced that's a real category. If a piece of behavior is worth giving the model autonomous access to, it's worth letting the user invoke it manually too. The reverse holds: if a user shouldn't see something in their slash menu, the model probably shouldn't be loading it autonomously either.
+
+If you find yourself reaching for `user-invocable: false` to declutter the slash menu, the right answer is to not install the skill at all, or to write a more focused skill instead of a kitchen-sink one. The frontmatter shouldn't grow a knob for hiding things from the user.
 
 ### Slash commands work for all skills
 
@@ -232,10 +246,9 @@ The alternative — empty skill list for subagents — would mean a subagent los
 
 A few things that are common in other tools, that we deliberately deferred:
 
-- **Override warnings surfaced in the UI**: currently log-only.
+- **Override warnings surfaced in the UI**: currently log-only. The override happens correctly; users just don't get a banner about it.
 - **Compaction protection**: not applicable yet — the agent doesn't compact conversations. When that lands, skill tool outputs should be exempt.
-- **Per-skill picker dialog**: slash autocomplete should already surface skills, but a dedicated picker UI (with descriptions, search) would be a small UX win.
-- **`user-invocable: false`**: the model-only counterpart to `disable-model-invocation`. Defer until there's a real use case.
+- **`allowed-tools` enforcement**: the spec calls this experimental. We parse the field but don't honor it. If/when we wire it, the integration point is the existing tool-permission flow.
 - **Argument substitution in skill bodies**: some tools support `$ARGUMENTS` substitution when invoking via slash command. Useful but additive.
 - **Dynamic context injection**: shell commands embedded in SKILL.md that get expanded before the model sees the body. Powerful but requires its own security model.
 
