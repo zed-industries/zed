@@ -1,6 +1,8 @@
 use std::ops::Range;
 
-use gpui::{App, FontStyle, FontWeight, StrikethroughStyle, TextStyleRefinement, UnderlineStyle};
+use gpui::{
+    App, FontStyle, FontWeight, StrikethroughStyle, TextAlign, TextStyleRefinement, UnderlineStyle,
+};
 use pulldown_cmark::Alignment;
 use ui::prelude::*;
 
@@ -245,6 +247,13 @@ impl MarkdownElement {
                 }
 
                 let max_span = max_column_count.saturating_sub(column_index);
+                let text_align = match cell.alignment {
+                    Alignment::Left => TextAlign::Left,
+                    Alignment::Center => TextAlign::Center,
+                    Alignment::Right => TextAlign::Right,
+                    _ => self.style.base_text_style.text_align,
+                };
+
                 let mut cell_div = div()
                     .col_span(cell.col_span.min(max_span) as u16)
                     .row_span(cell.row_span.min(total_rows - row_index) as u16)
@@ -269,9 +278,19 @@ impl MarkdownElement {
                     _ => cell_div,
                 };
 
+                builder.push_text_style(TextStyleRefinement {
+                    text_align: Some(text_align),
+                    ..Default::default()
+                });
                 builder.push_div(cell_div, &table.source_range, markdown_end);
                 builder.push_div(
-                    div().flex().flex_col().flex_1().justify_center(),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .w_full()
+                        .justify_center()
+                        .text_align(text_align),
                     &table.source_range,
                     markdown_end,
                 );
@@ -284,6 +303,7 @@ impl MarkdownElement {
                 );
                 builder.pop_div();
                 builder.pop_div();
+                builder.pop_text_style();
 
                 for row_offset in 0..cell.row_span {
                     for column_offset in 0..cell.col_span {

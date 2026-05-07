@@ -2001,6 +2001,12 @@ impl Element for MarkdownElement {
                             let row_index = builder.table.row_index;
                             let col_index = builder.table.col_index;
                             let alignment = builder.table.alignments.get(col_index).copied();
+                            let text_align = match alignment {
+                                Some(Alignment::Left) => TextAlign::Left,
+                                Some(Alignment::Center) => TextAlign::Center,
+                                Some(Alignment::Right) => TextAlign::Right,
+                                _ => self.style.base_text_style.text_align,
+                            };
 
                             let mut cell_div = div()
                                 .flex()
@@ -2024,9 +2030,19 @@ impl Element for MarkdownElement {
                                 _ => cell_div,
                             };
 
+                            builder.push_text_style(TextStyleRefinement {
+                                text_align: Some(text_align),
+                                ..Default::default()
+                            });
                             builder.push_div(cell_div, range, markdown_end);
                             builder.push_div(
-                                div().flex().flex_col().flex_1().justify_center(),
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .w_full()
+                                    .justify_center()
+                                    .text_align(text_align),
                                 range,
                                 markdown_end,
                             );
@@ -2127,6 +2143,7 @@ impl Element for MarkdownElement {
                         builder.replace_pending_checkbox(self.on_checkbox_toggle.clone());
                         builder.pop_div();
                         builder.pop_div();
+                        builder.pop_text_style();
                         builder.table.end_cell();
                     }
                     MarkdownTagEnd::FootnoteDefinition => {
