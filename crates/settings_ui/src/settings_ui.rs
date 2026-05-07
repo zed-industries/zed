@@ -1698,6 +1698,14 @@ impl SettingsWindow {
         this
     }
 
+    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+        if !self.search_bar.read(cx).text(cx).is_empty() {
+            self.search_bar.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        }
+    }
+
     fn handle_project_event(
         &mut self,
         _: &Entity<Project>,
@@ -2573,10 +2581,14 @@ impl SettingsWindow {
     //     }
     // }
 
-    fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
+    fn render_search(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+        let has_query = !self.search_bar.read(cx).text(cx).is_empty();
+
         h_flex()
             .py_1()
-            .px_1p5()
+            .pl_1p5()
+            .pr_0p5()
+            .h_7()
             .mb_3()
             .gap_1p5()
             .rounded_sm()
@@ -2585,6 +2597,17 @@ impl SettingsWindow {
             .border_color(cx.theme().colors().border)
             .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
             .child(self.search_bar.clone())
+            .when(has_query, |this| {
+                this.child(
+                    IconButton::new("clear-btn", IconName::Close)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Clear"))
+                        .on_click(cx.listener(|settings_window, _, window, cx| {
+                            settings_window.clear_search(window, cx);
+                        })),
+                )
+            })
     }
 
     fn render_nav(
