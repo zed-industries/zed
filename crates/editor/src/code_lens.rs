@@ -6,7 +6,7 @@ use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
-use project::{CodeAction, TaskSourceKind};
+use project::{CodeAction, TaskSourceKind, lsp_store::code_lens::CodeLensActions};
 use task::TaskContext;
 use text::ToOffset as _;
 
@@ -28,10 +28,6 @@ struct CodeLensLine {
 
 #[derive(Clone, Debug)]
 struct CodeLensItem {
-    /// `None` means the lens is still waiting for a `resolve` reply, so we
-    /// render it as a blank placeholder to reserve the line and avoid the
-    /// post-edit flicker that happens when the block is removed and then
-    /// re-inserted.
     title: Option<SharedString>,
     action: CodeAction,
 }
@@ -44,7 +40,7 @@ pub(super) struct CodeLensBlock {
 
 pub(super) struct CodeLensState {
     pub(super) blocks: HashMap<BufferId, Vec<CodeLensBlock>>,
-    actions: HashMap<BufferId, Vec<CodeAction>>,
+    actions: HashMap<BufferId, CodeLensActions>,
     resolve_task: Task<()>,
 }
 
@@ -208,7 +204,7 @@ impl Editor {
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let Some(tasks) = project
+            let Some(tasks_per_buffer) = project
                 .update(cx, |project, cx| {
                     project.lsp_store().update(cx, |lsp_store, cx| {
                         buffers_to_query
@@ -226,15 +222,15 @@ impl Editor {
                 return;
             };
 
-            let results = join_all(tasks).await;
-            if results.is_empty() {
+            let code_lens_per_buffer = join_all(tasks_per_buffer).await;
+            if code_lens_per_buffer.is_empty() {
                 return;
             }
 
             editor
                 .update(cx, |editor, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for (buffer_id, result) in results {
+                    for (buffer_id, result) in code_lens_per_buffer {
                         let actions = match result {
                             Ok(Some(actions)) => actions,
                             Ok(None) => continue,
@@ -253,33 +249,27 @@ impl Editor {
         });
     }
 
-    /// Reconciles the set of blocks for `buffer_id` with `actions`. For each
-    /// row that has at least one lens action:
-    /// - if the lens has a resolved `command.title` it contributes a real
-    ///   item;
-    /// - if the lens has no `command` yet (shallow response awaiting a
-    ///   `resolve`) it contributes a blank placeholder item so the line is
-    ///   reserved on screen — this prevents the post-edit flicker for
-    ///   servers like `rust-analyzer` that resolve later;
-    /// - if the lens resolved to an empty title (`Some("")`) it is dropped
-    ///   as a no-op.
+    /// Reconcile blocks for `buffer_id` against the latest `actions`.
     ///
-    /// A row is removed entirely when it has no lens at all in the new
-    /// fetch, or when every lens on that row is dropped as a no-op.
+    /// Lenses without a `command` keep a placeholder block so the line
+    /// stays reserved while the resolve is in flight — this is what avoids
+    /// the post-edit flicker on `rust-analyzer`-style servers. Lenses
+    /// whose resolve already came back without a usable title are dropped
+    /// (`resolve_visible_code_lenses` won't retry them), otherwise they'd
+    /// leave a permanent blank line.
     ///
-    /// When merging with existing blocks: if the new line is fully
-    /// unresolved (all placeholders) but the old block already has resolved
-    /// content, we keep the old block to avoid blanking out the line until
-    /// a fresh `resolve` lands.
+    /// When the new fetch has only placeholders for a row but the old
+    /// block was already resolved we keep the old block, so the line
+    /// doesn't blank out until the fresh resolve lands.
     fn apply_lens_actions_for_buffer(
         &mut self,
         buffer_id: BufferId,
-        actions: Vec<CodeAction>,
+        actions: CodeLensActions,
         snapshot: &MultiBufferSnapshot,
         cx: &mut Context<Self>,
     ) {
         let mut all_lenses = Vec::new();
-        for action in &actions {
+        for (_, action) in actions.iter().sorted_by_key(|(id, _)| **id) {
             let Some(position) = snapshot.anchor_in_excerpt(action.range.start) else {
                 continue;
             };
@@ -287,8 +277,9 @@ impl Editor {
                 let title = lens
                     .command
                     .as_ref()
+                    .filter(|cmd| !cmd.title.is_empty())
                     .map(|cmd| SharedString::from(&cmd.title));
-                if matches!(&title, Some(t) if t.is_empty()) {
+                if title.is_none() && action.resolved {
                     continue;
                 }
                 all_lenses.push((
@@ -442,7 +433,7 @@ impl Editor {
 
         let lsp_store = project.read(cx).lsp_store();
 
-        let mut per_lens = Vec::new();
+        let mut pending_resolves = Vec::new();
         for (buffer_snapshot, visible_range, _) in self.visible_buffer_ranges(cx) {
             let buffer_id = buffer_snapshot.remote_id();
             let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
@@ -455,7 +446,7 @@ impl Editor {
             else {
                 continue;
             };
-            for action in actions {
+            for (lens_id, action) in actions {
                 if action.resolved {
                     continue;
                 }
@@ -469,23 +460,25 @@ impl Editor {
                     continue;
                 }
                 let resolve_task = lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.resolve_code_lens(&buffer, action, cx)
+                    lsp_store.resolve_code_lens(&buffer, action.server_id, *lens_id, cx)
                 });
-                per_lens.push((buffer_id, resolve_task));
+                pending_resolves.push((buffer_id, resolve_task));
             }
         }
-        if per_lens.is_empty() {
+        if pending_resolves.is_empty() {
             return;
         }
 
         let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
         code_lens.resolve_task = cx.spawn(async move |editor, cx| {
-            let mut in_flight = per_lens
+            let mut resolves_in_progress = pending_resolves
                 .into_iter()
                 .map(|(buffer_id, task)| async move { (buffer_id, task.await) })
                 .collect::<FuturesUnordered<_>>();
-            while let Some((buffer_id, resolved)) = in_flight.next().await {
-                let Some(resolved) = resolved else { continue };
+            while let Some((buffer_id, resolve_result)) = resolves_in_progress.next().await {
+                let Some((resolved_id, resolved)) = resolve_result else {
+                    continue;
+                };
                 editor
                     .update(cx, |editor, cx| {
                         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -497,10 +490,8 @@ impl Editor {
                         else {
                             return;
                         };
-                        if let Some(unresolved) = actions.iter_mut().find(|action| {
-                            action.server_id == resolved.server_id && action.range == resolved.range
-                        }) {
-                            *unresolved = resolved;
+                        if let Some(slot) = actions.get_mut(&resolved_id) {
+                            *slot = resolved;
                         }
                         editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
                     })
@@ -1091,6 +1082,175 @@ mod tests {
             assert_eq!(
                 total_blocks, 0,
                 "placeholder block should be cleaned up when its lens resolves to a blank title"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_same_range_lenses_resolve_independently(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_editor_settings(cx, &|settings| {
+            settings.code_lens = Some(CodeLens::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_typescript(
+            lsp::ServerCapabilities {
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Two shallow lenses on the same range, distinguished only by `data`
+        // — exactly the shape vtsls/TypeScript-LS uses for the
+        // "references" + "implementations" pair on the same line.
+        let mut code_lens_request =
+            cx.set_request_handler::<lsp::request::CodeLensRequest, _, _>(move |_, _, _| async {
+                Ok(Some(vec![
+                    lsp::CodeLens {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 19)),
+                        command: None,
+                        data: Some(serde_json::json!({"kind": "references"})),
+                    },
+                    lsp::CodeLens {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 19)),
+                        command: None,
+                        data: Some(serde_json::json!({"kind": "implementations"})),
+                    },
+                ]))
+            });
+
+        let resolve_calls = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        cx.lsp
+            .set_request_handler::<lsp::request::CodeLensResolve, _, _>({
+                let resolve_calls = resolve_calls.clone();
+                move |lens, _| {
+                    let resolve_calls = resolve_calls.clone();
+                    async move {
+                        let kind = lens
+                            .data
+                            .as_ref()
+                            .and_then(|d| d.get("kind"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        resolve_calls.lock().unwrap().push(kind.clone());
+                        let title = match kind.as_str() {
+                            Some("references") => "2 references",
+                            Some("implementations") => "1 implementation",
+                            _ => "",
+                        };
+                        Ok(lsp::CodeLens {
+                            command: Some(lsp::Command {
+                                title: title.to_owned(),
+                                command: "noop".to_owned(),
+                                arguments: None,
+                            }),
+                            ..lens
+                        })
+                    }
+                }
+            });
+
+        cx.set_state("ˇfunction hello() {}");
+
+        assert!(
+            code_lens_request.next().await.is_some(),
+            "should have received the initial code lens request"
+        );
+        cx.run_until_parked();
+
+        let calls = resolve_calls.lock().unwrap().clone();
+        assert_eq!(
+            calls.len(),
+            2,
+            "both same-range lenses should be resolved independently, got {calls:?}"
+        );
+        let kinds: Vec<&str> = calls.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(kinds.contains(&"references"), true);
+        assert_eq!(kinds.contains(&"implementations"), true);
+
+        cx.editor.read_with(&cx.cx.cx, |editor, _| {
+            let blocks = editor
+                .code_lens
+                .as_ref()
+                .map(|s| s.blocks.values().flatten().collect::<Vec<_>>())
+                .unwrap_or_default();
+            assert_eq!(
+                blocks.len(),
+                1,
+                "a single block should host both lens items"
+            );
+            let titles: Vec<String> = blocks[0]
+                .line
+                .items
+                .iter()
+                .filter_map(|item| item.title.as_ref().map(|t| t.to_string()))
+                .collect();
+            assert_eq!(titles.len(), 2, "both lens titles should be resolved");
+            assert_eq!(titles.contains(&"2 references".to_string()), true);
+            assert_eq!(titles.contains(&"1 implementation".to_string()), true);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_block_removed_when_resolve_yields_no_command(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_editor_settings(cx, &|settings| {
+            settings.code_lens = Some(CodeLens::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_typescript(
+            lsp::ServerCapabilities {
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut code_lens_request =
+            cx.set_request_handler::<lsp::request::CodeLensRequest, _, _>(move |_, _, _| async {
+                Ok(Some(vec![lsp::CodeLens {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 19)),
+                    command: None,
+                    data: Some(serde_json::json!({"id": "lens_1"})),
+                }]))
+            });
+
+        // Server acknowledges the resolve but still returns no `command` —
+        // a real-world scenario for buggy/incomplete servers. Without
+        // cleanup the placeholder line would be reserved forever because
+        // `resolve_visible_code_lenses` skips actions with `resolved=true`.
+        cx.lsp
+            .set_request_handler::<lsp::request::CodeLensResolve, _, _>(|lens, _| async move {
+                Ok(lsp::CodeLens {
+                    command: None,
+                    ..lens
+                })
+            });
+
+        cx.set_state("ˇfunction hello() {}");
+
+        assert!(
+            code_lens_request.next().await.is_some(),
+            "should have received the initial code lens request"
+        );
+        cx.run_until_parked();
+
+        cx.editor.read_with(&cx.cx.cx, |editor, _| {
+            let total_blocks: usize = editor
+                .code_lens
+                .as_ref()
+                .map(|s| s.blocks.values().map(|v| v.len()).sum())
+                .unwrap_or(0);
+            assert_eq!(
+                total_blocks, 0,
+                "placeholder block should be cleaned up when resolve yields no command"
             );
         });
     }

@@ -22,20 +22,34 @@ use crate::{
     project_settings::ProjectSettings,
 };
 
-pub(super) type CodeLensTask =
-    Shared<Task<std::result::Result<Option<Vec<CodeAction>>, Arc<anyhow::Error>>>>;
+/// Opaque per-action identifier issued by [`LspStore`] at fetch time.
+///
+/// LSP `CodeLens.data` is the server's private payload for resolve
+/// round-trips, so we can't use it (or anything derived from it) to
+/// disambiguate sibling lenses that share the same buffer `range`
+/// (TypeScript's references + implementations is the canonical case).
+/// We tag every cached action with this id and require it back on resolve
+/// so each lens routes to its own request and slot.
+///
+/// Ids are issued in fetch order; sorting by id reproduces server-emit
+/// order, which is how callers recover a stable render order without
+/// paying for an ordered map.
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct CodeLensActionId(u64);
 
-pub type CodeLensResolveTask = Shared<Task<Option<CodeAction>>>;
+pub type CodeLensActions = HashMap<CodeLensActionId, CodeAction>;
+
+pub(super) type CodeLensTask =
+    Shared<Task<std::result::Result<Option<CodeLensActions>, Arc<anyhow::Error>>>>;
+
+pub type CodeLensResolveTask = Shared<Task<Option<(CodeLensActionId, CodeAction)>>>;
 
 #[derive(Debug, Default)]
 pub(super) struct CodeLensData {
-    pub(super) lens: HashMap<LanguageServerId, Vec<CodeAction>>,
+    pub(super) lens: HashMap<LanguageServerId, CodeLensActions>,
+    pub(super) next_id: u64,
     pub(super) update: Option<(Global, CodeLensTask)>,
-    /// In-flight `codeLens/resolve` requests, keyed by `(server, action
-    /// range)` so multiple callers awaiting the same lens (e.g. concurrent
-    /// scroll-driven resolves overlapping a quick-action menu fetch) share
-    /// a single LSP request. Entries are cleared on completion.
-    pub(super) resolving: HashMap<(LanguageServerId, Range<Anchor>), CodeLensResolveTask>,
+    pub(super) resolving: HashMap<(LanguageServerId, CodeLensActionId), CodeLensResolveTask>,
 }
 
 impl CodeLensData {
@@ -45,6 +59,17 @@ impl CodeLensData {
     }
 }
 
+fn flatten_cache(lens: &HashMap<LanguageServerId, CodeLensActions>) -> CodeLensActions {
+    let mut out = CodeLensActions::default();
+    out.reserve(lens.values().map(|per_server| per_server.len()).sum());
+    for per_server in lens.values() {
+        for (id, action) in per_server {
+            out.insert(*id, action.clone());
+        }
+    }
+    out
+}
+
 impl LspStore {
     pub(super) fn invalidate_code_lens(&mut self) {
         for lsp_data in self.lsp_data.values_mut() {
@@ -52,15 +77,14 @@ impl LspStore {
         }
     }
 
-    /// Fetches and returns all code lenses for the buffer.
-    ///
-    /// Resolution of individual lenses is the caller's responsibility; see
-    /// [`LspStore::resolve_visible_code_lenses`].
+    /// Fetches all code lenses for the buffer, each tagged with the
+    /// [`CodeLensActionId`] that callers must pass back to
+    /// [`Self::resolve_code_lens`]. Resolution is the caller's job.
     pub fn code_lens_actions(
         &mut self,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<CodeAction>>>> {
+    ) -> Task<Result<Option<CodeLensActions>>> {
         let buffer_id = buffer.read(cx).remote_id();
         let fetch_task = self.fetch_code_lenses(buffer, cx);
 
@@ -74,7 +98,7 @@ impl LspStore {
                     .lsp_data
                     .get(&buffer_id)
                     .and_then(|data| data.code_lens.as_ref())
-                    .map(|code_lens| code_lens.lens.values().flatten().cloned().collect())
+                    .map(|code_lens| flatten_cache(&code_lens.lens))
             })?;
             Ok(actions)
         })
@@ -102,10 +126,7 @@ impl LspStore {
                         existing_servers != cached_lens.lens.keys().copied().collect()
                     });
                     if !has_different_servers {
-                        return Task::ready(Ok(Some(
-                            cached_lens.lens.values().flatten().cloned().collect(),
-                        )))
-                        .shared();
+                        return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens)))).shared();
                     }
                 } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
                     if !version_queried_for.changed_since(updating_for) {
@@ -153,27 +174,34 @@ impl LspStore {
                 };
 
                 lsp_store
-                    .update(cx, |lsp_store, cx| {
+                    .update(cx, |lsp_store, _| {
                         let lsp_data = lsp_store.current_lsp_data(buffer_id)?;
                         let code_lens = lsp_data.code_lens.as_mut()?;
                         if let Some(fetched_lens) = fetched_lens {
+                            let mut tagged: HashMap<LanguageServerId, CodeLensActions> =
+                                HashMap::default();
+                            for (server_id, actions) in fetched_lens {
+                                let mut cache = CodeLensActions::default();
+                                cache.reserve(actions.len());
+                                for action in actions {
+                                    let id = CodeLensActionId(code_lens.next_id);
+                                    code_lens.next_id += 1;
+                                    cache.insert(id, action);
+                                }
+                                tagged.insert(server_id, cache);
+                            }
                             if lsp_data.buffer_version == query_version_queried_for {
-                                code_lens.lens.extend(fetched_lens);
+                                code_lens.lens.extend(tagged);
                             } else if !lsp_data
                                 .buffer_version
                                 .changed_since(&query_version_queried_for)
                             {
                                 lsp_data.buffer_version = query_version_queried_for;
-                                code_lens.lens = fetched_lens;
-                            }
-                            let snapshot = buffer.read(cx).snapshot();
-                            for actions in code_lens.lens.values_mut() {
-                                actions
-                                    .sort_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot));
+                                code_lens.lens = tagged;
                             }
                         }
                         code_lens.update = None;
-                        Some(code_lens.lens.values().flatten().cloned().collect())
+                        Some(flatten_cache(&code_lens.lens))
                     })
                     .map_err(Arc::new)
             })
@@ -253,28 +281,27 @@ impl LspStore {
         }
     }
 
-    /// Resolves a single code lens action via `codeLens/resolve`. The
-    /// returned task is shared and cached on [`CodeLensData::resolving`]
-    /// keyed by `(server, range)`, so concurrent callers awaiting the same
-    /// lens only drive a single LSP request.
+    /// Resolves a single code lens via `codeLens/resolve`, identified by
+    /// the [`CodeLensActionId`] returned from [`Self::code_lens_actions`].
+    /// The returned task is shared and cached on [`CodeLensData::resolving`]
+    /// keyed by `(server, lens_id)`, so concurrent callers awaiting the
+    /// same lens only drive a single LSP request.
     ///
-    /// `None` is yielded when the lens cannot be resolved (no cached
-    /// action, server gone, server has no `resolveProvider`, request
-    /// failure, etc.). On success, the cached `lsp_data` entry is updated
-    /// in place before the resolved [`CodeAction`] is returned.
+    /// `None` is yielded when the lens cannot be resolved (id no longer
+    /// cached, server gone, no `resolveProvider`, request failure, etc.).
+    /// On success, the cached entry is updated in place before the
+    /// `(id, resolved_action)` pair is returned.
     ///
     /// All visibility / batching policy lives in the caller. Remote (proto)
-    /// resolves are not yet supported and currently yield `None` so callers
-    /// can fall through to the unresolved title.
+    /// resolves are not yet supported and currently yield `None`.
     pub fn resolve_code_lens(
         &mut self,
         buffer: &Entity<Buffer>,
-        action: &CodeAction,
+        server_id: LanguageServerId,
+        lens_id: CodeLensActionId,
         cx: &mut Context<Self>,
     ) -> CodeLensResolveTask {
         let buffer_id = buffer.read(cx).remote_id();
-        let server_id = action.server_id;
-        let key_range = action.range.clone();
 
         let Some(code_lens) = self
             .lsp_data
@@ -283,17 +310,19 @@ impl LspStore {
         else {
             return Task::ready(None).shared();
         };
-        if let Some(existing) = code_lens.resolving.get(&(server_id, key_range.clone())) {
+        let key = (server_id, lens_id);
+        if let Some(existing) = code_lens.resolving.get(&key) {
             return existing.clone();
         }
-        let Some(actions) = code_lens.lens.get(&server_id) else {
-            return Task::ready(None).shared();
-        };
-        let Some(cached) = actions.iter().find(|a| a.range == key_range) else {
+        let Some(cached) = code_lens
+            .lens
+            .get(&server_id)
+            .and_then(|cache| cache.get(&lens_id))
+        else {
             return Task::ready(None).shared();
         };
         if cached.resolved {
-            return Task::ready(Some(cached.clone())).shared();
+            return Task::ready(Some((lens_id, cached.clone()))).shared();
         }
         let LspAction::CodeLens(lens) = &cached.lsp_action else {
             return Task::ready(None).shared();
@@ -310,10 +339,8 @@ impl LspStore {
             .global_lsp_settings
             .get_request_timeout();
 
-        let key = (server_id, key_range.clone());
         let task = cx
             .spawn({
-                let key = key.clone();
                 async move |lsp_store, cx| {
                     let response = server
                         .request::<lsp::request::CodeLensResolve>(lens, request_timeout)
@@ -333,11 +360,13 @@ impl LspStore {
                                     return None;
                                 }
                             };
-                            let actions = code_lens.lens.get_mut(&key.0)?;
-                            let action = actions.iter_mut().find(|a| a.range == key.1)?;
+                            let action = code_lens
+                                .lens
+                                .get_mut(&server_id)
+                                .and_then(|cache| cache.get_mut(&lens_id))?;
                             action.resolved = true;
                             action.lsp_action = LspAction::CodeLens(resolved_lens);
-                            Some(action.clone())
+                            Some((lens_id, action.clone()))
                         })
                         .ok()
                         .flatten()
@@ -402,30 +431,32 @@ impl Project {
             lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
         let buffer = buffer.clone();
         cx.spawn(async move |_, cx| {
-            let mut actions = fetch_task.await?;
-            if let Some(actions) = &mut actions {
-                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                actions.retain(|action| {
-                    range.start.cmp(&action.range.start, &snapshot).is_ge()
-                        && range.end.cmp(&action.range.end, &snapshot).is_le()
-                });
-                let resolve_tasks = lsp_store.update(cx, |lsp_store, cx| {
-                    actions
-                        .iter()
-                        .filter(|action| !action.resolved)
-                        .map(|action| lsp_store.resolve_code_lens(&buffer, action, cx))
-                        .collect::<Vec<_>>()
-                });
-                for resolved in join_all(resolve_tasks).await.into_iter().flatten() {
-                    if let Some(action) = actions
-                        .iter_mut()
-                        .find(|a| a.server_id == resolved.server_id && a.range == resolved.range)
-                    {
-                        *action = resolved;
-                    }
+            let Some(mut tagged) = fetch_task.await? else {
+                return Ok(None);
+            };
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            tagged.retain(|_, action| {
+                range.start.cmp(&action.range.start, &snapshot).is_ge()
+                    && range.end.cmp(&action.range.end, &snapshot).is_le()
+            });
+            let resolve_tasks = lsp_store.update(cx, |lsp_store, cx| {
+                tagged
+                    .iter()
+                    .filter(|(_, action)| !action.resolved)
+                    .map(|(id, action)| {
+                        lsp_store.resolve_code_lens(&buffer, action.server_id, *id, cx)
+                    })
+                    .collect::<Vec<_>>()
+            });
+            for (resolved_id, resolved) in join_all(resolve_tasks).await.into_iter().flatten() {
+                if let Some(slot) = tagged.get_mut(&resolved_id) {
+                    *slot = resolved;
                 }
             }
-            Ok(actions)
+            // Sort by id to recover server-emit order at the menu boundary.
+            let mut entries: Vec<_> = tagged.into_iter().collect();
+            entries.sort_by_key(|(id, _)| *id);
+            Ok(Some(entries.into_iter().map(|(_, a)| a).collect()))
         })
     }
 }

@@ -10,7 +10,7 @@
 //!
 //! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
 pub mod clangd_ext;
-mod code_lens;
+pub mod code_lens;
 mod document_colors;
 mod document_symbols;
 mod folding_ranges;
