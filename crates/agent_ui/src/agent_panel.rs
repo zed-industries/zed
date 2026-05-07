@@ -1124,6 +1124,7 @@ impl AgentPanel {
                 }
             },
         );
+        // Todo, unify with active thread focus subscription
         let _window_activation_subscription =
             cx.observe_window_activation(window, |this, window, cx| {
                 this.clear_active_terminal_notification_if_focused(window, cx);

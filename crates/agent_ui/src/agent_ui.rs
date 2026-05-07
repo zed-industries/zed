@@ -41,7 +41,7 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{AgentPanelTerminalFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
 use language::{
@@ -498,11 +498,6 @@ pub fn init(
     .detach();
 
     cx.on_flags_ready(|_, cx| {
-        update_command_palette_filter(cx);
-    })
-    .detach();
-
-    cx.observe_flag::<AgentPanelTerminalFeatureFlag, _>(|_, cx| {
         update_command_palette_filter(cx);
     })
     .detach();
