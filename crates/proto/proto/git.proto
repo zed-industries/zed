@@ -215,6 +215,7 @@ message GitDeleteBranch {
   uint64 repository_id = 2;
   string branch_name = 3;
   bool is_remote = 4;
+  bool force = 5;
 }
 
 message GitDiff {

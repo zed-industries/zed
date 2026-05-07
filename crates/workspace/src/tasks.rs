@@ -121,7 +121,7 @@ impl Workspace {
         let save_action = match save_strategy {
             SaveStrategy::All => {
                 let save_all = workspace.update_in(cx, |workspace, window, cx| {
-                    let task = workspace.save_all_internal(SaveIntent::SaveAll, window, cx);
+                    let task = workspace.save_all_internal(SaveIntent::SaveAll, true, window, cx);
                     cx.background_spawn(async { task.await.map(|_| ()) })
                 });
                 save_all.ok()
