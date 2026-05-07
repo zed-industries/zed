@@ -4,7 +4,7 @@ use crate::{
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RenameTool,
     RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
-    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
+    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -822,6 +822,7 @@ impl ToolPermissionContext {
             } else if tool_name == CopyPathTool::NAME
                 || tool_name == MovePathTool::NAME
                 || tool_name == EditFileTool::NAME
+                || tool_name == WriteFileTool::NAME
                 || tool_name == DeletePathTool::NAME
                 || tool_name == CreateDirectoryTool::NAME
                 || tool_name == SaveFileTool::NAME
@@ -1547,6 +1548,12 @@ impl Thread {
             self.project.clone(),
             cx.weak_entity(),
             self.action_log.clone(),
+            language_registry.clone(),
+        ));
+        self.add_tool(WriteFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            self.action_log.clone(),
             language_registry,
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
@@ -1570,20 +1577,19 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
-        if cx.has_flag::<LspToolFeatureFlag>() {
-            let code_action_store: CodeActionStore = cx.new(|_cx| None);
-            self.add_tool(FindReferencesTool::new(self.project.clone()));
-            self.add_tool(GetCodeActionsTool::new(
-                self.project.clone(),
-                code_action_store.clone(),
-            ));
-            self.add_tool(ApplyCodeActionTool::new(
-                self.project.clone(),
-                code_action_store,
-            ));
-            self.add_tool(GoToDefinitionTool::new(self.project.clone()));
-            self.add_tool(RenameTool::new(self.project.clone()));
-        }
+
+        let code_action_store: CodeActionStore = cx.new(|_cx| None);
+        self.add_tool(FindReferencesTool::new(self.project.clone()));
+        self.add_tool(GetCodeActionsTool::new(
+            self.project.clone(),
+            code_action_store.clone(),
+        ));
+        self.add_tool(ApplyCodeActionTool::new(
+            self.project.clone(),
+            code_action_store,
+        ));
+        self.add_tool(GoToDefinitionTool::new(self.project.clone()));
+        self.add_tool(RenameTool::new(self.project.clone()));
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));
@@ -2887,6 +2893,17 @@ impl Thread {
                     None
                 }
             })
+            .filter(|(tool_name, _)| {
+                cx.has_flag::<LspToolFeatureFlag>()
+                    || !matches!(
+                        tool_name.as_ref(),
+                        FindReferencesTool::NAME
+                            | GetCodeActionsTool::NAME
+                            | ApplyCodeActionTool::NAME
+                            | GoToDefinitionTool::NAME
+                            | RenameTool::NAME
+                    )
+            })
             .collect::<BTreeMap<_, _>>();
 
         let mut context_server_tools = Vec::new();
@@ -2948,10 +2965,6 @@ impl Thread {
     #[cfg(any(test, feature = "test-support"))]
     pub fn has_registered_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
-    }
-
-    pub fn registered_tool_names(&self) -> Vec<SharedString> {
-        self.tools.keys().cloned().collect()
     }
 
     pub(crate) fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {

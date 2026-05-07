@@ -61,6 +61,7 @@ members = [
     "crates/edit_prediction_types",
     "crates/edit_prediction_ui",
     "crates/editor",
+    "crates/editor_benchmarks",
     "crates/encoding_selector",
     "crates/env_var",
     "crates/etw_tracing",
