@@ -805,10 +805,7 @@ impl Sidebar {
                     this.sync_active_entry_from_panel(_agent_panel, cx);
                     this.update_entries(cx);
                 }
-                AgentPanelEvent::ThreadFocused
-                | AgentPanelEvent::TerminalFocused
-                | AgentPanelEvent::TerminalsChanged
-                | AgentPanelEvent::RetainedThreadChanged => {
+                AgentPanelEvent::ActiveViewFocused | AgentPanelEvent::EntryChanged => {
                     this.sync_active_entry_from_panel(_agent_panel, cx);
                     this.update_entries(cx);
                 }

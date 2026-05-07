@@ -804,7 +804,6 @@ pub struct AgentPanel {
     selected_agent: Agent,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
-    _window_activation_subscription: Subscription,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
@@ -1055,7 +1054,7 @@ impl AgentPanel {
     pub(crate) fn new(
         workspace: &Workspace,
         prompt_store: Option<Entity<PromptStore>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let fs = workspace.app_state().fs.clone();
@@ -1136,12 +1135,6 @@ impl AgentPanel {
                 }
             },
         );
-        // Todo, unify with active thread focus subscription
-        let _window_activation_subscription =
-            cx.observe_window_activation(window, |this, window, cx| {
-                this.clear_active_terminal_notification_if_focused(window, cx);
-            });
-
         let mut panel = Self {
             workspace_id,
             base_view,
@@ -1173,7 +1166,6 @@ impl AgentPanel {
             selected_agent: Agent::default(),
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
-            _window_activation_subscription,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
@@ -1514,7 +1506,7 @@ impl AgentPanel {
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
         }
-        cx.emit(AgentPanelEvent::TerminalsChanged);
+        cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
     }
 
@@ -1535,11 +1527,12 @@ impl AgentPanel {
         terminal.has_notification = false;
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         if had_notification {
-            cx.emit(AgentPanelEvent::TerminalsChanged);
+            cx.emit(AgentPanelEvent::EntryChanged);
             cx.notify();
         }
     }
 
+    // TODO: have sidebar choose next active thread
     pub fn close_terminal(
         &mut self,
         terminal_id: TerminalId,
@@ -1572,7 +1565,7 @@ impl AgentPanel {
             }
         }
 
-        cx.emit(AgentPanelEvent::TerminalsChanged);
+        cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
     }
 
@@ -1585,7 +1578,7 @@ impl AgentPanel {
         if let Some(terminal) = self.terminals.get_mut(&terminal_id)
             && terminal.refresh_title(window, cx)
         {
-            cx.emit(AgentPanelEvent::TerminalsChanged);
+            cx.emit(AgentPanelEvent::EntryChanged);
             cx.notify();
         }
     }
@@ -1660,39 +1653,8 @@ impl AgentPanel {
         };
         if !terminal.has_notification {
             terminal.has_notification = true;
-            cx.emit(AgentPanelEvent::TerminalsChanged);
+            cx.emit(AgentPanelEvent::EntryChanged);
             cx.notify();
-        }
-    }
-
-    fn clear_terminal_notification(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
-        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
-            return;
-        };
-        if terminal.has_notification {
-            terminal.has_notification = false;
-            cx.emit(AgentPanelEvent::TerminalsChanged);
-            cx.notify();
-        }
-    }
-
-    fn clear_active_terminal_notification_if_focused(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !window.is_window_active() {
-            return;
-        }
-        let Some(terminal_id) = self.active_terminal_id() else {
-            return;
-        };
-        let is_focused = self
-            .terminals
-            .get(&terminal_id)
-            .is_some_and(|terminal| terminal.view.focus_handle(cx).contains_focused(window, cx));
-        if is_focused {
-            self.clear_terminal_notification(terminal_id, cx);
         }
     }
 
@@ -2617,13 +2579,6 @@ impl AgentPanel {
     }
 
     fn refresh_base_view_subscriptions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let BaseView::Terminal { terminal_id } = &self.base_view
-            && !self.terminals.contains_key(terminal_id)
-        {
-            self.activate_draft(false, "agent_panel", window, cx);
-            return;
-        }
-
         self._base_view_observation = match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
                 self._thread_view_subscription =
@@ -2631,7 +2586,7 @@ impl AgentPanel {
                 let focus_handle = conversation_view.focus_handle(cx);
                 self._active_thread_focus_subscription =
                     Some(cx.on_focus_in(&focus_handle, window, |_this, _window, cx| {
-                        cx.emit(AgentPanelEvent::ThreadFocused);
+                        cx.emit(AgentPanelEvent::ActiveViewFocused);
                         cx.notify();
                     }));
                 Some(cx.observe_in(
@@ -2657,15 +2612,14 @@ impl AgentPanel {
                                 if let Some(terminal) = this.terminals.get_mut(&terminal_id) {
                                     terminal.has_notification = false;
                                 }
-                                cx.emit(AgentPanelEvent::TerminalFocused);
+                                cx.emit(AgentPanelEvent::ActiveViewFocused);
                                 cx.notify();
                             }),
                         );
-                    None
                 } else {
                     self._active_thread_focus_subscription = None;
-                    None
                 }
+                None
             }
             BaseView::Uninitialized => {
                 self._thread_view_subscription = None;
@@ -2951,7 +2905,7 @@ impl AgentPanel {
                 cx.emit(AgentPanelEvent::ActiveViewChanged);
                 this.serialize(cx);
             } else {
-                cx.emit(AgentPanelEvent::RetainedThreadChanged);
+                cx.emit(AgentPanelEvent::EntryChanged);
             }
             cx.notify();
         })
@@ -2996,11 +2950,8 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
 
 pub enum AgentPanelEvent {
     ActiveViewChanged,
-    ThreadFocused,
-    //TODO: unify events
-    TerminalFocused,
-    TerminalsChanged,
-    RetainedThreadChanged,
+    ActiveViewFocused,
+    EntryChanged,
     ThreadInteracted { thread_id: ThreadId },
 }
 
