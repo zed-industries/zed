@@ -2257,6 +2257,9 @@
           "name": "ruff",
         },
       },
+      "prettier": {
+        "allowed": false,
+      },
       "debuggers": ["Debugpy"],
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
