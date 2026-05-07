@@ -697,6 +697,14 @@ impl AgentTerminal {
         let view = self.view.read(cx);
         view.custom_title()
             .map(SharedString::from)
+            .or_else(|| {
+                let breadcrumb_text = &view.terminal().read(cx).breadcrumb_text;
+                if breadcrumb_text.is_empty() {
+                    None
+                } else {
+                    Some(breadcrumb_text.clone().into())
+                }
+            })
             .unwrap_or_else(|| SharedString::from(view.terminal().read(cx).title(true)))
     }
 
@@ -1448,10 +1456,10 @@ impl AgentPanel {
             &terminal_view,
             window,
             move |this, _terminal_view, event: &ItemEvent, window, cx| match event {
-                ItemEvent::UpdateTab => {
+                ItemEvent::UpdateTab | ItemEvent::UpdateBreadcrumbs => {
                     this.refresh_terminal_title(terminal_id, window, cx);
                 }
-                ItemEvent::CloseItem | ItemEvent::UpdateBreadcrumbs | ItemEvent::Edit => {}
+                ItemEvent::CloseItem | ItemEvent::Edit => {}
             },
         );
         // Listen on the underlying `Terminal` entity for shell-driven metadata
@@ -1460,15 +1468,16 @@ impl AgentPanel {
             &terminal_entity,
             window,
             move |this, _terminal, event: &TerminalEvent, window, cx| match event {
-                TerminalEvent::TitleChanged | TerminalEvent::Wakeup => {
+                TerminalEvent::TitleChanged
+                | TerminalEvent::Wakeup
+                | TerminalEvent::BreadcrumbsChanged => {
                     this.refresh_terminal_title(terminal_id, window, cx);
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
                     this.close_terminal(terminal_id, window, cx);
                 }
-                TerminalEvent::BreadcrumbsChanged
-                | TerminalEvent::BlinkChanged(_)
+                TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
                 | TerminalEvent::NewNavigationTarget(_)
                 | TerminalEvent::Open(_) => {}
