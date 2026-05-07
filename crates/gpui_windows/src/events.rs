@@ -34,6 +34,7 @@ const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 impl WindowsWindowInner {
     pub(crate) fn handle_msg(
         self: &Rc<Self>,
+        wnd_proc_guard: &WndProcGuard,
         handle: HWND,
         msg: u32,
         wparam: WPARAM,
@@ -48,18 +49,18 @@ impl WindowsWindowInner {
             WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
-            WM_SIZE => self.handle_size_msg(wparam, lparam),
+            WM_SIZE => self.handle_size_msg(wnd_proc_guard, wparam, lparam),
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
             WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(handle),
             WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(handle),
             WM_TIMER => self.handle_timer_msg(handle, wparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(handle, wparam, lparam),
-            WM_DPICHANGED => self.handle_dpi_changed_msg(handle, wparam, lparam),
+            WM_DPICHANGED => self.handle_dpi_changed_msg(wnd_proc_guard, handle, wparam, lparam),
             WM_DISPLAYCHANGE => self.handle_display_change_msg(handle),
             WM_NCHITTEST => self.handle_hit_test_msg(handle, lparam),
             WM_PAINT => self.handle_paint_msg(handle),
             WM_CLOSE => self.handle_close_msg(),
-            WM_DESTROY => self.handle_destroy_msg(handle),
+            WM_DESTROY => self.handle_destroy_msg(wnd_proc_guard, handle),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
@@ -170,7 +171,12 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+    fn handle_size_msg(
+        self: &Rc<Self>,
+        wnd_proc_guard: &WndProcGuard,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
@@ -195,12 +201,18 @@ impl WindowsWindowInner {
             should_resize_renderer = true;
         }
 
-        self.handle_size_change(new_size, scale_factor, should_resize_renderer);
+        self.handle_size_change(
+            wnd_proc_guard,
+            new_size,
+            scale_factor,
+            should_resize_renderer,
+        );
         Some(0)
     }
 
     fn handle_size_change(
-        &self,
+        self: &Rc<Self>,
+        wnd_proc_guard: &WndProcGuard,
         device_size: Size<DevicePixels>,
         scale_factor: f32,
         should_resize_renderer: bool,
@@ -208,18 +220,23 @@ impl WindowsWindowInner {
         let new_logical_size = device_size.to_pixels(scale_factor);
 
         self.state.logical_size.set(new_logical_size);
-        if should_resize_renderer
-            && let Err(e) = self.state.renderer.borrow_mut().resize(device_size)
-        {
-            log::error!("Failed to resize renderer, invalidating devices: {}", e);
-            self.state
-                .invalidate_devices
-                .store(true, std::sync::atomic::Ordering::Release);
-        }
-        if let Some(mut callback) = self.state.callbacks.resize.take() {
-            callback(new_logical_size, scale_factor);
-            self.state.callbacks.resize.set(Some(callback));
-        }
+        wnd_proc_guard.run_at_outermost({
+            let this = self.clone();
+            move || {
+                if should_resize_renderer
+                    && let Err(error) = this.state.renderer.borrow_mut().resize(device_size)
+                {
+                    log::error!("Failed to resize renderer, invalidating devices: {}", error);
+                    this.state
+                        .invalidate_devices
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                if let Some(mut callback) = this.state.callbacks.resize.take() {
+                    callback(new_logical_size, scale_factor);
+                    this.state.callbacks.resize.set(Some(callback));
+                }
+            }
+        });
     }
 
     fn handle_size_move_loop(&self, handle: HWND) -> Option<isize> {
@@ -270,7 +287,7 @@ impl WindowsWindowInner {
         if should_close { None } else { Some(0) }
     }
 
-    fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
+    fn handle_destroy_msg(&self, wnd_proc_guard: &WndProcGuard, handle: HWND) -> Option<isize> {
         let callback = { self.state.callbacks.close.take() };
         // Re-enable parent window if this was a modal dialog
         if let Some(parent_hwnd) = self.parent_hwnd {
@@ -281,7 +298,7 @@ impl WindowsWindowInner {
         }
 
         if let Some(callback) = callback {
-            callback();
+            wnd_proc_guard.run_at_outermost(callback);
         }
         unsafe {
             PostMessageW(
@@ -774,7 +791,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_dpi_changed_msg(
-        &self,
+        self: &Rc<Self>,
+        wnd_proc_guard: &WndProcGuard,
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
@@ -819,7 +837,7 @@ impl WindowsWindowInner {
                 // SetWindowPos may not send WM_SIZE for maximized windows in some cases,
                 // so we manually update the size to ensure proper rendering
                 let device_size = size(DevicePixels(width), DevicePixels(height));
-                self.handle_size_change(device_size, new_scale_factor, true);
+                self.handle_size_change(wnd_proc_guard, device_size, new_scale_factor, true);
             }
         } else {
             // For non-maximized windows, use the suggested RECT from the system

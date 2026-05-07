@@ -1278,6 +1278,8 @@ unsafe extern "system" fn window_procedure(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let wnd_proc_guard = WndProcGuard::enter();
+
     if msg == WM_NCCREATE {
         let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
@@ -1302,7 +1304,7 @@ unsafe extern "system" fn window_procedure(
     }
     let inner = unsafe { &*ptr };
     let result = if let Some(inner) = inner.upgrade() {
-        inner.handle_msg(hwnd, msg, wparam, lparam)
+        inner.handle_msg(&wnd_proc_guard, hwnd, msg, wparam, lparam)
     } else {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
