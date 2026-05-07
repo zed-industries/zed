@@ -3787,14 +3787,6 @@ impl Sidebar {
         metadata.interacted_at.unwrap_or(metadata.updated_at)
     }
 
-    fn entry_display_time(entry: &ListEntry) -> DateTime<Utc> {
-        match entry {
-            ListEntry::Thread(thread) => Self::thread_display_time(&thread.metadata),
-            ListEntry::Terminal(terminal) => terminal.created_at,
-            ListEntry::ProjectHeader { .. } => DateTime::<Utc>::MIN_UTC,
-        }
-    }
-
     fn push_entries_by_display_time(
         entries: &mut Vec<ListEntry>,
         terminals: Vec<TerminalEntry>,
@@ -3802,14 +3794,20 @@ impl Sidebar {
         current_session_ids: &mut HashSet<acp::SessionId>,
         current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
     ) {
+        fn display_time(entry: &ListEntry) -> DateTime<Utc> {
+            match entry {
+                ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
+                ListEntry::Terminal(terminal) => terminal.created_at,
+                ListEntry::ProjectHeader { .. } => unreachable!(),
+            }
+        }
+
         let mut row_entries = terminals
             .into_iter()
             .map(ListEntry::Terminal)
             .chain(threads.into_iter().map(ListEntry::Thread))
             .collect::<Vec<_>>();
-        row_entries.sort_by(|left, right| {
-            Self::entry_display_time(right).cmp(&Self::entry_display_time(left))
-        });
+        row_entries.sort_by_key(|right| std::cmp::Reverse(display_time(right)));
 
         for entry in row_entries {
             if let ListEntry::Thread(thread) = &entry {

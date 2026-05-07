@@ -685,6 +685,7 @@ pub(crate) struct AgentThread {
 
 struct AgentTerminal {
     view: Entity<TerminalView>,
+    title_editor: Entity<Editor>,
     last_known_title: String,
     created_at: DateTime<Utc>,
     has_notification: bool,
@@ -699,12 +700,23 @@ impl AgentTerminal {
             .unwrap_or_else(|| SharedString::from(view.terminal().read(cx).title(true)))
     }
 
-    fn refresh_title(&mut self, cx: &App) -> bool {
+    fn refresh_title(&mut self, window: &mut Window, cx: &mut App) -> bool {
         let title = self.display_title(cx).to_string();
         let changed = self.last_known_title != title;
         if changed {
-            self.last_known_title = title;
+            self.last_known_title = title.clone();
         }
+
+        let should_update_editor = {
+            let title_editor = self.title_editor.read(cx);
+            !title_editor.is_focused(window) && title_editor.text(cx) != title
+        };
+        if should_update_editor {
+            self.title_editor.update(cx, |title_editor, cx| {
+                title_editor.set_text(title, window, cx);
+            });
+        }
+
         changed
     }
 }
@@ -1339,10 +1351,6 @@ impl AgentPanel {
         if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
             return;
         }
-        if !self.project.read(cx).supports_terminal(cx) {
-            self.show_terminal_unavailable_toast(cx);
-            return;
-        }
         let working_directory = workspace
             .map(|workspace| terminal_view::default_working_directory(workspace, cx))
             .unwrap_or_else(|| self.default_terminal_working_directory(cx));
@@ -1418,6 +1426,31 @@ impl AgentPanel {
             return;
         }
         let terminal_entity = terminal_view.read(cx).terminal().clone();
+        let title = {
+            let terminal_view = terminal_view.read(cx);
+            terminal_view
+                .custom_title()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| terminal_view.terminal().read(cx).title(true))
+        };
+        let title_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(title, window, cx);
+            editor
+        });
+        let title_editor_subscription = cx.subscribe_in(
+            &title_editor,
+            window,
+            move |this, title_editor, event: &editor::EditorEvent, window, cx| {
+                this.handle_terminal_title_editor_event(
+                    terminal_id,
+                    title_editor,
+                    event,
+                    window,
+                    cx,
+                );
+            },
+        );
         // Listen on `TerminalView` for user-driven item closes.
         let item_subscription = cx.subscribe_in(
             &terminal_view,
@@ -1429,11 +1462,12 @@ impl AgentPanel {
                 }
             },
         );
-        let view_subscription = cx.subscribe(
+        let view_subscription = cx.subscribe_in(
             &terminal_view,
-            move |this, _terminal_view, event: &TerminalViewEvent, cx| match event {
+            window,
+            move |this, _terminal_view, event: &TerminalViewEvent, window, cx| match event {
                 TerminalViewEvent::CustomTitleChanged => {
-                    this.refresh_terminal_title(terminal_id, cx);
+                    this.refresh_terminal_title(terminal_id, window, cx);
                 }
             },
         );
@@ -1443,8 +1477,8 @@ impl AgentPanel {
             &terminal_entity,
             window,
             move |this, _terminal, event: &TerminalEvent, window, cx| match event {
-                TerminalEvent::TitleChanged => {
-                    this.refresh_terminal_title(terminal_id, cx);
+                TerminalEvent::TitleChanged | TerminalEvent::Wakeup => {
+                    this.refresh_terminal_title(terminal_id, window, cx);
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
@@ -1454,7 +1488,6 @@ impl AgentPanel {
                     this.close_terminal(terminal_id, focus, window, cx);
                 }
                 TerminalEvent::BreadcrumbsChanged
-                | TerminalEvent::Wakeup
                 | TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
                 | TerminalEvent::NewNavigationTarget(_)
@@ -1464,13 +1497,19 @@ impl AgentPanel {
 
         let mut terminal = AgentTerminal {
             view: terminal_view,
+            title_editor,
             last_known_title: String::new(),
             created_at: Utc::now(),
             has_notification: false,
-            _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
+            _subscriptions: vec![
+                item_subscription,
+                view_subscription,
+                terminal_subscription,
+                title_editor_subscription,
+            ],
         };
         self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal, cx);
-        terminal.refresh_title(cx);
+        terminal.refresh_title(window, cx);
         self.terminals.insert(terminal_id, terminal);
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
@@ -1537,12 +1576,64 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn refresh_terminal_title(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+    fn refresh_terminal_title(
+        &mut self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(terminal) = self.terminals.get_mut(&terminal_id)
-            && terminal.refresh_title(cx)
+            && terminal.refresh_title(window, cx)
         {
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
+        }
+    }
+
+    fn handle_terminal_title_editor_event(
+        &mut self,
+        terminal_id: TerminalId,
+        title_editor: &Entity<Editor>,
+        event: &editor::EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            editor::EditorEvent::BufferEdited => {
+                if !title_editor.read(cx).is_focused(window) {
+                    return;
+                }
+                let Some(terminal_view) = self
+                    .terminals
+                    .get(&terminal_id)
+                    .map(|terminal| terminal.view.clone())
+                else {
+                    return;
+                };
+                let new_title = title_editor.read(cx).text(cx).trim().to_string();
+                let label = if new_title.is_empty() {
+                    None
+                } else {
+                    let terminal_title = terminal_view.read(cx).terminal().read(cx).title(true);
+                    if new_title == terminal_title {
+                        None
+                    } else {
+                        Some(new_title)
+                    }
+                };
+
+                cx.defer(move |cx| {
+                    terminal_view.update(cx, |terminal_view, cx| {
+                        terminal_view.set_custom_title(label, cx);
+                    });
+                });
+            }
+            editor::EditorEvent::Blurred => {
+                if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
+                    terminal.refresh_title(window, cx);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1603,28 +1694,6 @@ impl AgentPanel {
         if is_focused {
             self.clear_terminal_notification(terminal_id, cx);
         }
-    }
-
-    fn show_terminal_unavailable_toast(&self, cx: &mut Context<Self>) {
-        let workspace = self.workspace.clone();
-        cx.defer(move |cx| {
-            let Some(workspace) = workspace.upgrade() else {
-                return;
-            };
-            workspace.update(cx, |workspace, cx| {
-                struct AgentPanelTerminalUnavailableToast;
-                workspace.show_toast(
-                    workspace::Toast::new(
-                        workspace::notifications::NotificationId::unique::<
-                            AgentPanelTerminalUnavailableToast,
-                        >(),
-                        "Terminals aren't available for this project",
-                    )
-                    .autohide(),
-                    cx,
-                );
-            });
-        });
     }
 
     fn default_terminal_working_directory(&self, cx: &App) -> Option<PathBuf> {
@@ -2928,6 +2997,7 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
 pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,
+    //TODO: unify events
     TerminalFocused,
     TerminalsChanged,
     RetainedThreadChanged,
@@ -3246,15 +3316,30 @@ impl AgentPanel {
                         .into_any_element()
                 }
             }
-            VisibleSurface::Terminal(_) => self
-                .active_terminal_id()
-                .and_then(|terminal_id| self.terminals.get(&terminal_id))
-                .map(|terminal| terminal.display_title(cx))
-                .map(|title| Label::new(title))
-                .unwrap_or_else(|| Label::new("Terminal"))
-                .color(Color::Muted)
-                .truncate()
-                .into_any_element(),
+            VisibleSurface::Terminal(_) => {
+                if let Some((title_editor, terminal_view)) = self
+                    .active_terminal_id()
+                    .and_then(|terminal_id| self.terminals.get(&terminal_id))
+                    .map(|terminal| (terminal.title_editor.clone(), terminal.view.clone()))
+                {
+                    let terminal_view_cancel = terminal_view.clone();
+                    div()
+                        .flex_1()
+                        .on_action(move |_: &menu::Confirm, window, cx| {
+                            terminal_view.focus_handle(cx).focus(window, cx);
+                        })
+                        .on_action(move |_: &editor::actions::Cancel, window, cx| {
+                            terminal_view_cancel.focus_handle(cx).focus(window, cx);
+                        })
+                        .child(title_editor)
+                        .into_any_element()
+                } else {
+                    Label::new("Terminal")
+                        .color(Color::Muted)
+                        .truncate()
+                        .into_any_element()
+                }
+            }
             VisibleSurface::Configuration(_) => {
                 Label::new("Settings").truncate().into_any_element()
             }
