@@ -35,6 +35,7 @@ use crate::open_ai_compatible::{
 fn zeta_format_for_local_model(model: &str) -> Option<ZetaFormat> {
     match model {
         "zeta2" => Some(ZetaFormat::V0211SeedCoder),
+        "zeta2.1" => Some(ZetaFormat::V0318SeedMultiRegions),
         _ => None,
     }
 }

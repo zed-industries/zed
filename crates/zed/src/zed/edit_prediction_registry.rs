@@ -151,7 +151,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
 }
 
 fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
-    if model == "zeta2" {
+    if matches!(model, "zeta2" | "zeta2.1") {
         return Some(EditPredictionPromptFormat::Zeta2);
     }
 
