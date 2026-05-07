@@ -5,7 +5,7 @@ description: Navigate code structure with Zed's outline panel. View symbols, jum
 
 # Outline Panel
 
-In addition to the modal outline (`cmd-shift-o`), Zed offers an outline panel. The outline panel can be deployed via `cmd-shift-b` (`outline panel: toggle focus` via the command palette), or by clicking the `Outline Panel` button in the status bar.
+In addition to the modal outline (`cmd-shift-o`), Zed offers an outline panel. The outline panel can be deployed via `cmd-shift-b` ({#action outline_panel::ToggleFocus} via the command palette), or by clicking the `Outline Panel` button in the status bar.
 
 When viewing a "singleton" buffer (i.e., a single file on a tab), the outline panel works similarly to that of the outline modal－it displays the outline of the current buffer's symbols. Each symbol entry shows its type prefix (such as "struct", "fn", "mod", "impl") along with the symbol name, helping you quickly identify what kind of symbol you're looking at. Clicking on an entry allows you to jump to the associated section in the file. The outline view will also automatically scroll to the section associated with the current cursor position within the file.
 
@@ -29,7 +29,7 @@ View a summary of all errors and warnings reported by the language server.
 
 ### Find All References
 
-Quickly navigate through all references when using the `editor: find all references` action.
+Quickly navigate through all references when using the {#action editor::FindAllReferences} action.
 
 ![Using the outline panel while viewing `find all references` multi-buffer](https://zed.dev/img/outline-panel/find-all-references.png)
 
