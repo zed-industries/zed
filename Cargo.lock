@@ -347,7 +347,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "gpui",
- "log",
  "paths",
  "serde",
  "serde_json",
