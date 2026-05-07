@@ -2779,30 +2779,6 @@ impl Editor {
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(window))
     }
 
-    pub fn is_range_selected(&mut self, range: &Range<Anchor>, cx: &mut Context<Self>) -> bool {
-        if self
-            .selections
-            .pending_anchor()
-            .is_some_and(|pending_selection| {
-                let snapshot = self.buffer().read(cx).snapshot(cx);
-                pending_selection.range().includes(range, &snapshot)
-            })
-        {
-            return true;
-        }
-
-        self.selections
-            .disjoint_in_range::<MultiBufferOffset>(range.clone(), &self.display_snapshot(cx))
-            .into_iter()
-            .any(|selection| {
-                // This is needed to cover a corner case, if we just check for an existing
-                // selection in the fold range, having a cursor at the start of the fold
-                // marks it as selected. Non-empty selections don't cause this.
-                let length = selection.end - selection.start;
-                length > 0
-            })
-    }
-
     pub fn key_context(&self, window: &mut Window, cx: &mut App) -> KeyContext {
         self.key_context_internal(self.has_active_edit_prediction(), window, cx)
     }

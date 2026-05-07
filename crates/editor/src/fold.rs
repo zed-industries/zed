@@ -246,60 +246,6 @@ impl Editor {
         }
     }
 
-    pub(super) fn fold_at_level(
-        &mut self,
-        fold_at: &FoldAtLevel,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.buffer.read(cx).is_singleton() {
-            return;
-        }
-
-        let fold_at_level = fold_at.0;
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let mut to_fold = Vec::new();
-        let mut stack = vec![(0, snapshot.max_row().0, 1)];
-
-        let row_ranges_to_keep: Vec<Range<u32>> = self
-            .selections
-            .all::<Point>(&self.display_snapshot(cx))
-            .into_iter()
-            .map(|sel| sel.start.row..sel.end.row)
-            .collect();
-
-        while let Some((mut start_row, end_row, current_level)) = stack.pop() {
-            while start_row < end_row {
-                match self
-                    .snapshot(window, cx)
-                    .crease_for_buffer_row(MultiBufferRow(start_row))
-                {
-                    Some(crease) => {
-                        let nested_start_row = crease.range().start.row + 1;
-                        let nested_end_row = crease.range().end.row;
-
-                        if current_level < fold_at_level {
-                            stack.push((nested_start_row, nested_end_row, current_level + 1));
-                        } else if current_level == fold_at_level {
-                            // Fold iff there is no selection completely contained within the fold region
-                            if !row_ranges_to_keep.iter().any(|selection| {
-                                selection.end >= nested_start_row
-                                    && selection.start <= nested_end_row
-                            }) {
-                                to_fold.push(crease);
-                            }
-                        }
-
-                        start_row = nested_end_row + 1;
-                    }
-                    None => start_row += 1,
-                }
-            }
-        }
-
-        self.fold_creases(to_fold, true, window, cx);
-    }
-
     pub fn fold_at_level_1(
         &mut self,
         _: &actions::FoldAtLevel1,
@@ -736,21 +682,6 @@ impl Editor {
         self.display_map.read(cx).folded_buffers()
     }
 
-    pub(super) fn unfold_buffers_with_selections(&mut self, cx: &mut Context<Self>) {
-        if self.buffer().read(cx).is_singleton() {
-            return;
-        }
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffer_ids: HashSet<BufferId> = self
-            .selections
-            .disjoint_anchor_ranges()
-            .flat_map(|range| snapshot.buffer_ids_for_range(range))
-            .collect();
-        for buffer_id in buffer_ids {
-            self.unfold_buffer(buffer_id, cx);
-        }
-    }
-
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
         self.display_map.update(cx, |display_map, cx| {
             display_map.disable_header_for_buffer(buffer_id, cx);
@@ -770,28 +701,6 @@ impl Editor {
             map.remove_folds_with_type(ranges.iter().cloned(), type_id, cx)
         });
         self.folds_did_change(cx);
-    }
-
-    fn remove_folds_with<T: ToOffset + Clone>(
-        &mut self,
-        ranges: &[Range<T>],
-        auto_scroll: bool,
-        cx: &mut Context<Self>,
-        update: impl FnOnce(&mut DisplayMap, &mut Context<DisplayMap>),
-    ) {
-        if ranges.is_empty() {
-            return;
-        }
-
-        self.display_map.update(cx, update);
-
-        if auto_scroll {
-            self.request_autoscroll(Autoscroll::fit(), cx);
-        }
-
-        cx.notify();
-        self.scrollbar_marker_state.dirty = true;
-        self.active_indent_guides_state.dirty = true;
     }
 
     pub fn update_renderer_widths(
@@ -823,6 +732,75 @@ impl Editor {
     ) -> Vec<(CreaseId, Range<Anchor>)> {
         self.display_map
             .update(cx, |map, cx| map.remove_creases(ids, cx))
+    }
+
+    pub(super) fn fold_at_level(
+        &mut self,
+        fold_at: &FoldAtLevel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+
+        let fold_at_level = fold_at.0;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut to_fold = Vec::new();
+        let mut stack = vec![(0, snapshot.max_row().0, 1)];
+
+        let row_ranges_to_keep: Vec<Range<u32>> = self
+            .selections
+            .all::<Point>(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|sel| sel.start.row..sel.end.row)
+            .collect();
+
+        while let Some((mut start_row, end_row, current_level)) = stack.pop() {
+            while start_row < end_row {
+                match self
+                    .snapshot(window, cx)
+                    .crease_for_buffer_row(MultiBufferRow(start_row))
+                {
+                    Some(crease) => {
+                        let nested_start_row = crease.range().start.row + 1;
+                        let nested_end_row = crease.range().end.row;
+
+                        if current_level < fold_at_level {
+                            stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        } else if current_level == fold_at_level {
+                            // Fold iff there is no selection completely contained within the fold region
+                            if !row_ranges_to_keep.iter().any(|selection| {
+                                selection.end >= nested_start_row
+                                    && selection.start <= nested_end_row
+                            }) {
+                                to_fold.push(crease);
+                            }
+                        }
+
+                        start_row = nested_end_row + 1;
+                    }
+                    None => start_row += 1,
+                }
+            }
+        }
+
+        self.fold_creases(to_fold, true, window, cx);
+    }
+
+    pub(super) fn unfold_buffers_with_selections(&mut self, cx: &mut Context<Self>) {
+        if self.buffer().read(cx).is_singleton() {
+            return;
+        }
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer_ids: HashSet<BufferId> = self
+            .selections
+            .disjoint_anchor_ranges()
+            .flat_map(|range| snapshot.buffer_ids_for_range(range))
+            .collect();
+        for buffer_id in buffer_ids {
+            self.unfold_buffer(buffer_id, cx);
+        }
     }
 
     pub(super) fn folds_did_change(&mut self, cx: &mut Context<Self>) {
@@ -1091,5 +1069,27 @@ impl Editor {
         if !valid_folds.is_empty() {
             self.fold_ranges(valid_folds, false, window, cx);
         }
+    }
+
+    fn remove_folds_with<T: ToOffset + Clone>(
+        &mut self,
+        ranges: &[Range<T>],
+        auto_scroll: bool,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut DisplayMap, &mut Context<DisplayMap>),
+    ) {
+        if ranges.is_empty() {
+            return;
+        }
+
+        self.display_map.update(cx, update);
+
+        if auto_scroll {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+        }
+
+        cx.notify();
+        self.scrollbar_marker_state.dirty = true;
+        self.active_indent_guides_state.dirty = true;
     }
 }
