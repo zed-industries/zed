@@ -2955,7 +2955,7 @@ impl ReferenceMultibuffer {
                     })
                     .collect::<Vec<_>>();
 
-            new_ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
+            new_ranges.sort_by_key(|nr| nr.context.start);
 
             self.set_excerpts(
                 path.unwrap(),
@@ -3899,7 +3899,7 @@ fn mutate_excerpt_ranges(
     }
 
     existing_ranges.extend(ranges_to_add);
-    existing_ranges.sort_by(|l, r| l.start.cmp(&r.start));
+    existing_ranges.sort_by_key(|r| r.start);
 }
 
 fn check_multibuffer(
@@ -5865,6 +5865,48 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_range_to_buffer_ranges_zero_length_at_excerpt_boundary(cx: &mut App) {
+    let buffer_1 = cx.new(|cx| Buffer::local("aaa\nbbb", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("ccc\nddd", cx));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_1.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_2.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    assert_eq!(snapshot.text(), "aaa\nbbb\nccc\nddd");
+
+    // This point is right at the start of the very first excerpt, so if we get
+    // a buffer range, we should get `0..0`
+    let excerpt_2_start = Point::new(2, 0);
+    let expected_ranges = vec![BufferOffset(0)..BufferOffset(0)];
+    let ranges = snapshot
+        .range_to_buffer_ranges(excerpt_2_start..excerpt_2_start)
+        .into_iter()
+        .map(|tup| tup.1)
+        .collect_vec();
+
+    assert_eq!(
+        ranges, expected_ranges,
+        "Zero-length range at excerpt boundary should return the excerpt at that point"
+    );
+}
+
+#[gpui::test]
 async fn test_buffer_range_to_excerpt_ranges(cx: &mut TestAppContext) {
     let base_text = indoc!(
         "
@@ -6163,4 +6205,55 @@ fn test_resolving_max_anchor_for_buffer(cx: &mut TestAppContext) {
             .to_point(&snapshot);
         assert_eq!(point, Point::new(10, 0));
     })
+}
+
+#[gpui::test]
+fn test_is_valid_anchor_past_last_excerpt_for_buffer(cx: &mut TestAppContext) {
+    let buffer_a = cx.new(|cx| Buffer::local("aaa\nbbb\nccc\n", cx));
+    buffer_a.update(cx, |buffer, cx| {
+        let len = buffer.len();
+        buffer.edit([(len..len, "ddd\neee\n")], None, cx);
+    });
+    let buffer_b = cx.new(|cx| Buffer::local("xxx\n", cx));
+    for line in ["yyy\n", "zzz\n", "www\n", "vvv\n"] {
+        buffer_b.update(cx, |buffer, cx| {
+            let len = buffer.len();
+            buffer.edit([(len..len, line)], None, cx);
+        });
+    }
+
+    let path_a = PathKey::with_sort_prefix(0, rel_path("aaa.rs").into_arc());
+    let path_b = PathKey::with_sort_prefix(1, rel_path("bbb.rs").into_arc());
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path_a.clone(),
+            buffer_a.clone(),
+            vec![Point::new(1, 0)..Point::new(2, 3)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            path_b.clone(),
+            buffer_b.clone(),
+            vec![Point::new(1, 0)..Point::new(3, 3)],
+            0,
+            cx,
+        );
+    });
+
+    multibuffer.read_with(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+
+        let buffer_a_snapshot = buffer_a.read(cx).snapshot();
+        let anchor_past_excerpt = buffer_a_snapshot.anchor_after(Point::new(4, 0));
+        let mb_anchor = snapshot.anchor_in_buffer(anchor_past_excerpt).unwrap();
+
+        assert!(
+            !mb_anchor.is_valid(&snapshot),
+            "anchor past the last excerpt for its buffer should not be valid"
+        );
+    });
 }

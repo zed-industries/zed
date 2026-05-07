@@ -1,6 +1,6 @@
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use chrono::Utc;
 use collections::HashSet;
 use db::kvp::Dismissable;
@@ -9,7 +9,7 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
-    Render, SharedString, Task, WeakEntity, Window,
+    Render, SharedString, Task, TaskExt, WeakEntity, Window,
 };
 use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;

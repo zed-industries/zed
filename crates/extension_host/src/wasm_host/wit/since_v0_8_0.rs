@@ -1,10 +1,4 @@
-use crate::wasm_host::wit::since_v0_6_0::{
-    dap::{
-        BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, StartDebuggingRequestArguments,
-        TcpArguments, TcpArgumentsTemplate,
-    },
-    slash_command::SlashCommandOutputSection,
-};
+use crate::wasm_host::wit::since_v0_6_0::slash_command::SlashCommandOutputSection;
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
@@ -24,7 +18,7 @@ use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
     env,
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -104,18 +98,44 @@ impl From<StartDebuggingRequestArgumentsRequest>
         }
     }
 }
-impl TryFrom<StartDebuggingRequestArguments> for extension::StartDebuggingRequestArguments {
+impl TryFrom<dap::StartDebuggingRequestArguments> for extension::StartDebuggingRequestArguments {
     type Error = anyhow::Error;
 
-    fn try_from(value: StartDebuggingRequestArguments) -> Result<Self, Self::Error> {
+    fn try_from(value: dap::StartDebuggingRequestArguments) -> Result<Self, Self::Error> {
         Ok(Self {
             configuration: serde_json::from_str(&value.configuration)?,
             request: value.request.into(),
         })
     }
 }
-impl From<TcpArguments> for extension::TcpArguments {
-    fn from(value: TcpArguments) -> Self {
+impl From<dap::IpAddress> for IpAddr {
+    fn from(value: dap::IpAddress) -> Self {
+        match value {
+            dap::IpAddress::Ipv4((a, b, c, d)) => IpAddr::V4(Ipv4Addr::new(a, b, c, d)),
+            dap::IpAddress::Ipv6((a, b, c, d, e, f, g, h)) => {
+                IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h))
+            }
+        }
+    }
+}
+
+impl From<IpAddr> for dap::IpAddress {
+    fn from(value: IpAddr) -> Self {
+        match value {
+            IpAddr::V4(v4) => {
+                let [a, b, c, d] = v4.octets();
+                Self::Ipv4((a, b, c, d))
+            }
+            IpAddr::V6(v6) => {
+                let [a, b, c, d, e, f, g, h] = v6.segments();
+                Self::Ipv6((a, b, c, d, e, f, g, h))
+            }
+        }
+    }
+}
+
+impl From<dap::TcpArguments> for extension::TcpArguments {
+    fn from(value: dap::TcpArguments) -> Self {
         Self {
             host: value.host.into(),
             port: value.port,
@@ -124,20 +144,20 @@ impl From<TcpArguments> for extension::TcpArguments {
     }
 }
 
-impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
+impl From<extension::TcpArgumentsTemplate> for dap::TcpArgumentsTemplate {
     fn from(value: extension::TcpArgumentsTemplate) -> Self {
         Self {
-            host: value.host.map(Ipv4Addr::to_bits),
+            host: value.host.map(Into::into),
             port: value.port,
             timeout: value.timeout,
         }
     }
 }
 
-impl From<TcpArgumentsTemplate> for extension::TcpArgumentsTemplate {
-    fn from(value: TcpArgumentsTemplate) -> Self {
+impl From<dap::TcpArgumentsTemplate> for extension::TcpArgumentsTemplate {
+    fn from(value: dap::TcpArgumentsTemplate) -> Self {
         Self {
-            host: value.host.map(Ipv4Addr::from_bits),
+            host: value.host.map(Into::into),
             port: value.port,
             timeout: value.timeout,
         }
@@ -235,11 +255,11 @@ impl TryFrom<DebugAdapterBinary> for extension::DebugAdapterBinary {
     }
 }
 
-impl From<BuildTaskDefinition> for extension::BuildTaskDefinition {
-    fn from(value: BuildTaskDefinition) -> Self {
+impl From<dap::BuildTaskDefinition> for extension::BuildTaskDefinition {
+    fn from(value: dap::BuildTaskDefinition) -> Self {
         match value {
-            BuildTaskDefinition::ByName(name) => Self::ByName(name.into()),
-            BuildTaskDefinition::Template(build_task_template) => Self::Template {
+            dap::BuildTaskDefinition::ByName(name) => Self::ByName(name.into()),
+            dap::BuildTaskDefinition::Template(build_task_template) => Self::Template {
                 task_template: build_task_template.template.into(),
                 locator_name: build_task_template.locator_name.map(SharedString::from),
             },
@@ -247,14 +267,14 @@ impl From<BuildTaskDefinition> for extension::BuildTaskDefinition {
     }
 }
 
-impl From<extension::BuildTaskDefinition> for BuildTaskDefinition {
+impl From<extension::BuildTaskDefinition> for dap::BuildTaskDefinition {
     fn from(value: extension::BuildTaskDefinition) -> Self {
         match value {
             extension::BuildTaskDefinition::ByName(name) => Self::ByName(name.into()),
             extension::BuildTaskDefinition::Template {
                 task_template,
                 locator_name,
-            } => Self::Template(BuildTaskDefinitionTemplatePayload {
+            } => Self::Template(dap::BuildTaskDefinitionTemplatePayload {
                 template: task_template.into(),
                 locator_name: locator_name.map(String::from),
             }),
@@ -898,19 +918,19 @@ impl context_server::Host for WasmState {}
 impl dap::Host for WasmState {
     async fn resolve_tcp_template(
         &mut self,
-        template: TcpArgumentsTemplate,
-    ) -> wasmtime::Result<Result<TcpArguments, String>> {
+        template: dap::TcpArgumentsTemplate,
+    ) -> wasmtime::Result<Result<dap::TcpArguments, String>> {
         maybe!(async {
             let (host, port, timeout) =
                 ::dap::configure_tcp_connection(task::TcpArgumentsTemplate {
                     port: template.port,
-                    host: template.host.map(Ipv4Addr::from_bits),
+                    host: template.host.map(Into::into),
                     timeout: template.timeout,
                 })
                 .await?;
-            Ok(TcpArguments {
+            Ok(dap::TcpArguments {
                 port,
-                host: host.to_bits(),
+                host: host.into(),
                 timeout,
             })
         })
@@ -1072,7 +1092,7 @@ impl ExtensionImports for WasmState {
                 "download failed with status {}",
                 response.status()
             );
-            let body = BufReader::new(response.body_mut());
+            let mut body = BufReader::new(response.body_mut());
 
             match file_type {
                 DownloadedFileType::Uncompressed => {
@@ -1091,11 +1111,14 @@ impl ExtensionImports for WasmState {
                         .await?;
                 }
                 DownloadedFileType::GzipTar => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
+                    let mut tar_gz_bytes = Vec::new();
+                    body.read_to_end(&mut tar_gz_bytes).await?;
+                    let decompressed_bytes =
+                        GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+                    futures::pin_mut!(decompressed_bytes);
                     self.host
                         .fs
-                        .extract_tar_file(&destination_path, Archive::new(body))
+                        .extract_tar_file(&destination_path, Archive::new(decompressed_bytes))
                         .await?;
                 }
                 DownloadedFileType::Zip => {

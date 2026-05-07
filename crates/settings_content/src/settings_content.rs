@@ -1,3 +1,4 @@
+mod action;
 mod agent;
 mod editor;
 mod extension;
@@ -12,6 +13,7 @@ mod theme;
 mod title_bar;
 mod workspace;
 
+pub use action::{ActionName, ActionWithArguments};
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;
@@ -78,6 +80,35 @@ pub enum ParseStatus {
     Unchanged,
     /// Settings failed to parse
     Failed { error: String },
+}
+
+/// Determines when the mouse cursor should be hidden in response to keyboard
+/// input.
+///
+/// Default: on_typing_and_action
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum HideMouseMode {
+    /// Never hide the mouse cursor
+    Never,
+    /// Hide only when typing
+    OnTyping,
+    /// Hide on typing and on key bindings that resolve to an action
+    #[default]
+    OnTypingAndAction,
 }
 
 #[with_fallible_options]
@@ -154,6 +185,13 @@ pub struct SettingsContent {
     /// Default: false
     pub helix_mode: Option<bool>,
 
+    /// Determines when the mouse cursor should be hidden in response to
+    /// keyboard input. Applies globally across all input surfaces (editors,
+    /// terminals, palettes, etc.).
+    ///
+    /// Default: on_typing_and_action
+    pub hide_mouse: Option<HideMouseMode>,
+
     pub journal: Option<JournalSettingsContent>,
 
     /// A map of log scopes to the desired log level.
@@ -180,6 +218,13 @@ pub struct SettingsContent {
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
+
+    /// The URL used as the key for credential storage.
+    ///
+    /// When set, credentials are stored under this URL instead of `server_url`.
+    /// This allows running multiple Zed instances side by side without them
+    /// overwriting each other's keychain entries.
+    pub credentials_url: Option<String>,
 
     /// Configuration for session-related features
     pub session: Option<SessionSettingsContent>,
@@ -214,6 +259,33 @@ pub struct SettingsContent {
 
     /// Local overrides for feature flags, keyed by flag name.
     pub feature_flags: Option<FeatureFlagsMap>,
+
+    /// Settings for developer-oriented instrumentation tools (profilers,
+    /// tracers, etc.) that can be toggled at runtime.
+    pub instrumentation: Option<InstrumentationSettingsContent>,
+}
+
+/// Configuration for developer-oriented instrumentation tools that collect
+/// diagnostic data about a running Zed instance.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct InstrumentationSettingsContent {
+    /// Configuration for the performance profiler, accessed via the
+    /// `zed: open performance profiler` action.
+    pub performance_profiler: Option<PerformanceProfilerSettingsContent>,
+}
+
+/// Configuration for the performance profiler which collects timing data
+/// for foreground and background executor tasks.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PerformanceProfilerSettingsContent {
+    /// Whether to collect timing data for foreground and background executor
+    /// tasks. Enabling this may lead to increased memory usage, hence it's
+    /// disabled by default for regular builds.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, MergeFrom)]
@@ -575,7 +647,7 @@ pub struct GitPanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: left
+    /// Default: right
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
@@ -638,6 +710,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub starts_open: Option<bool>,
+
+    /// Maximum length of the commit message title before a warning is shown.
+    /// Set to 0 to disable.
+    ///
+    /// Default: 72
+    pub commit_title_max_length: Option<usize>,
 }
 
 #[derive(
@@ -678,7 +756,7 @@ pub struct PanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: left
+    /// Default: right
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
@@ -786,6 +864,9 @@ pub struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
+    /// When enabled, edit predictions are shown in Vim normal mode.
+    /// By default, edit predictions are only shown in insert and replace modes.
+    pub show_edit_predictions_in_normal_mode: Option<bool>,
 }
 
 #[derive(
@@ -920,7 +1001,7 @@ pub struct OutlinePanelSettingsContent {
     pub default_width: Option<f32>,
     /// The position of outline panel
     ///
-    /// Default: left
+    /// Default: right
     pub dock: Option<DockSide>,
     /// Whether to show file icons in the outline panel.
     ///

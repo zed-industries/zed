@@ -80,7 +80,9 @@ impl LspInstaller for CLspAdapter {
             digest: expected_digest,
         } = version;
         let version_dir = container_dir.join(format!("clangd_{name}"));
-        let binary_path = version_dir.join("bin/clangd");
+        let binary_path = version_dir
+            .join("bin")
+            .join(format!("clangd{}", consts::EXE_SUFFIX));
 
         let binary = LanguageServerBinary {
             path: binary_path.clone(),
@@ -388,7 +390,9 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             }
         }
         let clangd_dir = last_clangd_dir.context("no cached binary")?;
-        let clangd_bin = clangd_dir.join("bin/clangd");
+        let clangd_bin = clangd_dir
+            .join("bin")
+            .join(format!("clangd{}", consts::EXE_SUFFIX));
         anyhow::ensure!(
             clangd_bin.exists(),
             "missing clangd binary in directory {clangd_dir:?}"

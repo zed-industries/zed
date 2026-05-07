@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -261,7 +261,7 @@ impl DbThread {
                                 tool_use_id: tool_result.tool_use_id,
                                 tool_name: name.into(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content,
+                                content: vec![tool_result.content],
                                 output: tool_result.output,
                             },
                         );

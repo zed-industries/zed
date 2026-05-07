@@ -94,7 +94,7 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
 };
 use language::{
@@ -113,6 +113,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
+use theme::StatusColors;
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -144,6 +145,15 @@ pub enum FoldStatus {
     Foldable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NavigationOverlayKey(TypeId);
+
+impl NavigationOverlayKey {
+    pub const fn unique<T: 'static>() -> Self {
+        Self(TypeId::of::<T>())
+    }
+}
+
 /// Keys for tagging text highlights.
 ///
 /// Note the order is important as it determines the priority of the highlights, lower means higher priority
@@ -168,6 +178,7 @@ pub enum HighlightKey {
     InlineAssist,
     InputComposition,
     MatchingBracket,
+    NavigationOverlay(NavigationOverlayKey),
     PendingInput,
     ProjectSearchView,
     Rename,
@@ -287,6 +298,12 @@ impl Companion {
         };
 
         let Some(excerpt) = patches.into_iter().next() else {
+            if cfg!(any(test, debug_assertions)) {
+                assert!(
+                    our_snapshot.max_point() == Point::zero(),
+                    "`patches_for_*_in_range` is only allowed to return an empty vec if the multibuffer is empty"
+                );
+            }
             return Point::zero()..our_snapshot.max_point();
         };
         excerpt.patch.edit_for_old_position(point).new
@@ -670,6 +687,10 @@ impl DisplayMap {
             use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
         }
+    }
+
+    pub fn crease_snapshot(&self) -> CreaseSnapshot {
+        self.crease_map.snapshot()
     }
 
     #[instrument(skip_all)]
@@ -1832,8 +1853,7 @@ impl DisplaySnapshot {
                         && editor_style.show_underlines
                         && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
                         .then(|| {
-                            let diagnostic_color =
-                                super::diagnostic_style(severity, &editor_style.status);
+                            let diagnostic_color = diagnostic_style(severity, &editor_style.status);
                             UnderlineStyle {
                                 color: Some(diagnostic_color),
                                 thickness: 1.0.into(),
@@ -2252,23 +2272,38 @@ impl DisplaySnapshot {
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
-            let max_point = self.buffer_snapshot().max_point();
+            let snapshot = self.buffer_snapshot();
+            let max_point = snapshot.max_point();
             let mut closing_row = None;
+
+            // End byte of the smallest syntactic node enclosing `buffer_row`.
+            // Used to tell standalone top-level comments (which terminate the
+            // fold) apart from unindented content inside a multi-line string
+            // or block comment belonging to the folded node (which does not).
+            let foldable_node_end = {
+                let row_start = Point::new(buffer_row.0, 0);
+                let row_end = Point::new(buffer_row.0, snapshot.line_len(buffer_row));
+                snapshot
+                    .syntax_ancestor(row_start..row_end)
+                    .map(|(_, range)| range.end)
+            };
 
             for row in (buffer_row.0 + 1)..=max_point.row {
                 let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
-                    if self
-                        .buffer_snapshot()
+                    let in_string_or_comment_scope = snapshot
                         .language_scope_at(Point::new(row, 0))
                         .is_some_and(|scope| {
                             matches!(
                                 scope.override_name(),
                                 Some("string") | Some("comment") | Some("comment.inclusive")
                             )
-                        })
+                        });
+                    if in_string_or_comment_scope
+                        && let Some(end) = foldable_node_end
+                        && Point::new(row, 0).to_offset(snapshot) < end
                     {
                         continue;
                     }
@@ -2380,6 +2415,16 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+}
+
+fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+    match severity {
+        lsp::DiagnosticSeverity::ERROR => colors.error,
+        lsp::DiagnosticSeverity::WARNING => colors.warning,
+        lsp::DiagnosticSeverity::INFORMATION => colors.info,
+        lsp::DiagnosticSeverity::HINT => colors.hint,
+        _ => colors.ignored,
     }
 }
 
@@ -2551,9 +2596,9 @@ pub mod tests {
     };
     use lsp::LanguageServerId;
 
+    use futures::stream::StreamExt;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
-    use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};

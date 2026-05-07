@@ -3,7 +3,10 @@ use std::{
     cell::LazyCell,
     collections::{HashMap, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::ThreadId,
 };
 
@@ -348,6 +351,9 @@ impl Drop for ThreadTimings {
 
 #[doc(hidden)]
 pub fn add_task_timing(timing: TaskTiming) {
+    if !PROFILER_ENABLED.load(Ordering::Acquire) {
+        return;
+    }
     THREAD_TIMINGS.with(|timings| {
         timings.lock().add_task_timing(timing);
     });
@@ -356,4 +362,29 @@ pub fn add_task_timing(timing: TaskTiming) {
 #[doc(hidden)]
 pub fn get_current_thread_task_timings() -> ThreadTaskTimings {
     THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings())
+}
+
+static PROFILER_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enables or disables task timing collection at runtime.
+///
+/// When transitioning from enabled to disabled, `add_task_timing` becomes a
+/// no-op and the existing per-thread buffers are cleared so stale data isn't
+/// reported after a later re-enable. Calls with the current value are a no-op.
+pub fn set_enabled(enabled: bool) -> bool {
+    if PROFILER_ENABLED.swap(enabled, Ordering::AcqRel) == enabled {
+        return false;
+    }
+
+    if !enabled {
+        for global in GLOBAL_THREAD_TIMINGS.lock().iter() {
+            if let Some(timings) = global.timings.upgrade() {
+                let mut timings = timings.lock();
+                timings.timings.clear();
+                timings.timings.shrink_to_fit();
+                timings.total_pushed = 0;
+            }
+        }
+    }
+    true
 }

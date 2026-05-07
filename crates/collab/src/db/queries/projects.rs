@@ -379,6 +379,8 @@ impl Database {
                 merge_message: ActiveValue::set(update.merge_message.clone()),
                 remote_upstream_url: ActiveValue::set(update.remote_upstream_url.clone()),
                 remote_origin_url: ActiveValue::set(update.remote_origin_url.clone()),
+                repository_dir_abs_path: ActiveValue::set(update.repository_dir_abs_path.clone()),
+                common_dir_abs_path: ActiveValue::set(update.common_dir_abs_path.clone()),
                 linked_worktrees: ActiveValue::Set(Some(
                     serde_json::to_string(&update.linked_worktrees).unwrap(),
                 )),
@@ -396,6 +398,8 @@ impl Database {
                     project_repository::Column::CurrentMergeConflicts,
                     project_repository::Column::HeadCommitDetails,
                     project_repository::Column::MergeMessage,
+                    project_repository::Column::RepositoryDirAbsPath,
+                    project_repository::Column::CommonDirAbsPath,
                     project_repository::Column::LinkedWorktrees,
                 ])
                 .to_owned(),
@@ -886,13 +890,15 @@ impl Database {
                         current_merge_conflicts,
                         branch_summary,
                         head_commit_details,
+                        branch_list: Vec::new(),
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
                         stash_entries: Vec::new(),
                         remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),
-                        original_repo_abs_path: Some(db_repository_entry.abs_path),
+                        repository_dir_abs_path: db_repository_entry.repository_dir_abs_path,
+                        common_dir_abs_path: db_repository_entry.common_dir_abs_path,
                         linked_worktrees: db_repository_entry
                             .linked_worktrees
                             .as_deref()
