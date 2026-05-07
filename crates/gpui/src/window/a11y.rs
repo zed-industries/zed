@@ -110,13 +110,16 @@ impl A11yNodeBuilder {
 
     /// Push a new node onto the stack. It becomes a child of the current
     /// top-of-stack node.
-    /// 
+    ///
     /// Returns `true` if the node was successfully pushed.
     pub(crate) fn push(&mut self, id: accesskit::NodeId, node: accesskit::Node) -> bool {
         debug_assert!(!self.ids_stack.is_empty(), "push called before push_root");
 
         if !self.seen_ids.insert(id) {
-            debug_assert!(false, "Duplicate a11y node id: {id:?}");
+            debug_assert!(
+                false,
+                "Duplicate a11y node id: {id:?}. In a release build, this node would be silently discarded from the a11y tree."
+            );
             // We need to return `false` here because inserting a duplicate
             // node will cause a panic in accesskit
             return false;
