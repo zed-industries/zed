@@ -121,7 +121,7 @@ impl fmt::Display for TerminalId {
 pub struct AgentPanelTerminalInfo {
     pub id: TerminalId,
     pub title: SharedString,
-    pub last_interacted_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
     pub has_unseen_bell: bool,
 }
 
@@ -697,7 +697,7 @@ pub(crate) struct AgentThread {
 struct AgentTerminal {
     view: Entity<TerminalView>,
     last_known_title: String,
-    last_interacted_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
     has_unseen_bell: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -1447,9 +1447,6 @@ impl AgentPanel {
                 TerminalViewEvent::CustomTitleChanged => {
                     this.refresh_terminal_title(terminal_id, cx);
                 }
-                TerminalViewEvent::InputSubmitted => {
-                    this.record_terminal_interaction(terminal_id, cx);
-                }
             },
         );
         // Listen on the underlying `Terminal` entity for shell-driven metadata
@@ -1480,7 +1477,7 @@ impl AgentPanel {
         let mut terminal = AgentTerminal {
             view: terminal_view,
             last_known_title: String::new(),
-            last_interacted_at: Utc::now(),
+            created_at: Utc::now(),
             has_unseen_bell: false,
             _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
         };
@@ -1532,7 +1529,7 @@ impl AgentPanel {
             if let Some(next_terminal_id) = self
                 .terminals
                 .iter()
-                .max_by_key(|(terminal_id, terminal)| (terminal.last_interacted_at, **terminal_id))
+                .max_by_key(|(terminal_id, terminal)| (terminal.created_at, **terminal_id))
                 .map(|(terminal_id, _)| *terminal_id)
             {
                 self.set_base_view(
@@ -1559,15 +1556,6 @@ impl AgentPanel {
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
-    }
-
-    fn record_terminal_interaction(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
-        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
-            return;
-        };
-        terminal.last_interacted_at = Utc::now();
-        cx.emit(AgentPanelEvent::TerminalsChanged);
-        cx.notify();
     }
 
     fn mark_terminal_bell_unseen(
@@ -1785,7 +1773,7 @@ impl AgentPanel {
             .map(|(id, terminal)| AgentPanelTerminalInfo {
                 id: *id,
                 title: terminal.display_title(cx),
-                last_interacted_at: terminal.last_interacted_at,
+                created_at: terminal.created_at,
                 has_unseen_bell: terminal.has_unseen_bell,
             })
             .collect()

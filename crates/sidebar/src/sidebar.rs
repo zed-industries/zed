@@ -228,7 +228,7 @@ struct TerminalEntry {
     id: TerminalId,
     title: SharedString,
     workspace: Entity<Workspace>,
-    last_interacted_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
     has_unseen_bell: bool,
     highlight_positions: Vec<usize>,
 }
@@ -3790,7 +3790,7 @@ impl Sidebar {
     fn entry_display_time(entry: &ListEntry) -> DateTime<Utc> {
         match entry {
             ListEntry::Thread(thread) => Self::thread_display_time(&thread.metadata),
-            ListEntry::Terminal(terminal) => terminal.last_interacted_at,
+            ListEntry::Terminal(terminal) => terminal.created_at,
             ListEntry::ProjectHeader { .. } => DateTime::<Utc>::MIN_UTC,
         }
     }
@@ -4249,7 +4249,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = ElementId::from(format!("terminal-{}", terminal.id));
-        let timestamp = format_history_entry_timestamp(terminal.last_interacted_at);
+        let timestamp = format_history_entry_timestamp(terminal.created_at);
         let is_hovered = self.hovered_thread_index == Some(ix);
         let color = cx.theme().colors();
         let sidebar_bg = color
@@ -5387,7 +5387,7 @@ fn terminal_entries_for_workspace(
                 id: terminal.id,
                 title: terminal.title,
                 workspace: workspace.clone(),
-                last_interacted_at: terminal.last_interacted_at,
+                created_at: terminal.created_at,
                 has_unseen_bell: terminal.has_unseen_bell,
                 highlight_positions: Vec::new(),
             });
