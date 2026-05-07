@@ -1565,7 +1565,7 @@ fn get_injections(
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
-    query_cursor.set_match_limit(256);
+    query_cursor.set_match_limit(u32::MAX);
     let mut seen_matches = HashSet::default();
 
     // Ensure that a `ParseStep` is created for every combined injection language, even
