@@ -11,6 +11,7 @@ use std::{
     ops::Range,
     sync::atomic::{self, AtomicBool},
 };
+use util::paths::PathStyle;
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -122,6 +123,7 @@ pub async fn match_strings<T>(
     max_results: usize,
     cancel_flag: &AtomicBool,
     executor: BackgroundExecutor,
+    path_style: Option<PathStyle>,
 ) -> Vec<StringMatch>
 where
     T: Borrow<StringMatchCandidate> + Sync,
@@ -168,6 +170,7 @@ where
                         query_char_bag,
                         smart_case,
                         penalize_length,
+                        path_style.unwrap_or_else(PathStyle::local),
                     );
 
                     matcher.match_candidates(

@@ -832,6 +832,7 @@ async fn fuzzy_search_options(
         100,
         &Default::default(),
         executor,
+        None,
     )
     .await;
 

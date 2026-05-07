@@ -178,6 +178,7 @@ impl PickerDelegate for PickerPromptDelegate {
                     10000,
                     &Default::default(),
                     cx.background_executor().clone(),
+                    None,
                 )
                 .await
             };

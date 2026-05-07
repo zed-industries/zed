@@ -4,13 +4,12 @@ use std::{
 };
 
 use crate::{CharBag, char_bag::simple_lowercase};
+use util::paths::PathStyle;
 
 const BASE_DISTANCE_PENALTY: f64 = 0.6;
 const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
 const MIN_DISTANCE_PENALTY: f64 = 0.2;
 
-// TODO:
-// Use `Path` instead of `&str` for paths.
 pub struct Matcher<'a> {
     query: &'a [char],
     lowercase_query: &'a [char],
@@ -22,6 +21,7 @@ pub struct Matcher<'a> {
     last_positions: Vec<usize>,
     score_matrix: Vec<Option<f64>>,
     best_position_matrix: Vec<usize>,
+    path_style: PathStyle,
 }
 
 pub trait MatchCandidate {
@@ -30,12 +30,17 @@ pub trait MatchCandidate {
 }
 
 impl<'a> Matcher<'a> {
+    fn is_path_separator(&self, c: char) -> bool {
+        self.path_style.separators_ch().contains(&c)
+    }
+
     pub fn new(
         query: &'a [char],
         lowercase_query: &'a [char],
         query_char_bag: CharBag,
         smart_case: bool,
         penalize_length: bool,
+        path_style: PathStyle,
     ) -> Self {
         Self {
             query,
@@ -48,6 +53,7 @@ impl<'a> Matcher<'a> {
             best_position_matrix: Vec::new(),
             smart_case,
             penalize_length,
+            path_style,
         }
     }
 
@@ -226,7 +232,7 @@ impl<'a> Matcher<'a> {
                     None => continue,
                 }
             };
-            let is_path_sep = path_char == '/';
+            let is_path_sep = self.is_path_separator(path_char);
 
             if query_idx == 0 && is_path_sep {
                 last_slash = j;
@@ -245,7 +251,7 @@ impl<'a> Matcher<'a> {
                         None => path[j - 1 - prefix.len()],
                     };
 
-                    if last == '/' {
+                    if self.is_path_separator(last) {
                         char_score = 0.9;
                     } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
                         || (last.is_lowercase() && curr.is_uppercase())
@@ -266,7 +272,9 @@ impl<'a> Matcher<'a> {
                 // Apply a severe penalty if the case doesn't match.
                 // This will make the exact matches have higher score than the case-insensitive and the
                 // path insensitive matches.
-                if (self.smart_case || curr == '/') && self.query[query_idx] != curr {
+                if (self.smart_case || self.is_path_separator(curr))
+                    && self.query[query_idx] != curr
+                {
                     char_score *= 0.001;
                 }
 
@@ -331,19 +339,20 @@ mod tests {
 
     #[test]
     fn test_get_last_positions() {
+        let path_style = PathStyle::local();
         let mut query: &[char] = &['d', 'c'];
-        let mut matcher = Matcher::new(query, query, query.into(), false, true);
+        let mut matcher = Matcher::new(query, query, query.into(), false, true, path_style);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
         assert!(!result);
 
         query = &['c', 'd'];
-        let mut matcher = Matcher::new(query, query, query.into(), false, true);
+        let mut matcher = Matcher::new(query, query, query.into(), false, true, path_style);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
         assert!(result);
         assert_eq!(matcher.last_positions, vec![2, 4]);
 
         query = &['z', '/', 'z', 'f'];
-        let mut matcher = Matcher::new(query, query, query.into(), false, true);
+        let mut matcher = Matcher::new(query, query, query.into(), false, true, path_style);
         let result = matcher.find_last_positions(&['z', 'e', 'd', '/'], &['z', 'e', 'd', '/', 'f']);
         assert!(result);
         assert_eq!(matcher.last_positions, vec![0, 3, 4, 8]);
@@ -589,7 +598,14 @@ mod tests {
             });
         }
 
-        let mut matcher = Matcher::new(&query, &lowercase_query, query_chars, smart_case, true);
+        let mut matcher = Matcher::new(
+            &query,
+            &lowercase_query,
+            query_chars,
+            smart_case,
+            true,
+            PathStyle::local(),
+        );
 
         let cancel_flag = AtomicBool::new(false);
         let mut results = Vec::new();

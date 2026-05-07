@@ -721,6 +721,7 @@ impl KeymapEditor {
             keybind_count,
             &Default::default(),
             executor,
+            None,
         )
         .await;
         this.update(cx, |this, cx| {

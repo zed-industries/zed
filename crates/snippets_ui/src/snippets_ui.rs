@@ -291,6 +291,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                     100,
                     &Default::default(),
                     background,
+                    None,
                 )
                 .await
             };

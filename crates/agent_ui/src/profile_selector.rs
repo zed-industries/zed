@@ -418,6 +418,7 @@ impl ProfilePickerDelegate {
             100,
             &cancel_flag,
             self.background.clone(),
+            None,
         ))
     }
 }
@@ -496,6 +497,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                 100,
                 cancel_for_future.as_ref(),
                 background,
+                None,
             )
             .await;
 

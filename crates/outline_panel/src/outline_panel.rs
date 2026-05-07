@@ -3985,6 +3985,7 @@ impl OutlinePanel {
                 usize::MAX,
                 &AtomicBool::default(),
                 cx.background_executor().clone(),
+                None,
             )
             .await
             .into_iter()

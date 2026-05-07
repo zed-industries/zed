@@ -464,6 +464,7 @@ impl PromptStore {
                     100,
                     &cancellation_flag,
                     executor,
+                    None,
                 )
                 .await;
                 matches

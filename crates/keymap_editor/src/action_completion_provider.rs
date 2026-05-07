@@ -82,6 +82,7 @@ impl CompletionProvider for ActionCompletionProvider {
                 action_names.len(),
                 &Default::default(),
                 executor_for_fuzzy,
+                None,
             )
             .await;
 

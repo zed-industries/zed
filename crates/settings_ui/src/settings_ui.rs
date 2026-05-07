@@ -2002,6 +2002,7 @@ impl SettingsWindow {
                 search_index.fuzzy_match_candidates.len(),
                 &cancel_flag,
                 cx.background_executor().clone(),
+                None,
             );
 
             let fuzzy_matches = fuzzy_search_task.await;

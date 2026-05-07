@@ -2008,6 +2008,7 @@ pub fn command_interceptor(
                 MAX_RESULTS,
                 &Default::default(),
                 executor,
+                None,
             )
             .await;
 

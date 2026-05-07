@@ -206,6 +206,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
                     100,
                     &Default::default(),
                     background,
+                    None,
                 )
                 .await
             };
