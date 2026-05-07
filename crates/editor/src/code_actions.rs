@@ -257,15 +257,31 @@ impl Editor {
                 })
             }
             CodeActionsItem::CodeAction { action, provider } => {
-                if code_lens::try_handle_client_command(&action, self, &workspace, window, cx) {
-                    return Some(Task::ready(Ok(())));
-                }
+                let client_command_action = action.clone();
 
-                let apply_code_action =
-                    provider.apply_code_action(buffer, action, true, window, cx);
                 let workspace = workspace.downgrade();
                 Some(cx.spawn_in(window, async move |editor, cx| {
-                    let project_transaction = apply_code_action.await?;
+                    let apply_code_action = editor.update_in(cx, |_, window, cx| {
+                        provider.apply_code_action(buffer, action, true, window, cx)
+                    })?;
+                    let (project_transaction, client_command) = apply_code_action.await?;
+
+                    if let Some(client_command) = client_command {
+                        editor.update_in(cx, |editor, window, cx| {
+                            if let Some(workspace) = workspace.upgrade() {
+                                return code_lens::handle_client_command(
+                                    client_command,
+                                    &client_command_action,
+                                    editor,
+                                    &workspace,
+                                    window,
+                                    cx,
+                                );
+                            }
+                            false
+                        })?;
+                    }
+
                     Self::open_project_transaction(
                         &editor,
                         workspace,
@@ -524,7 +540,7 @@ pub trait CodeActionProvider {
         push_to_history: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<ProjectTransaction>>;
+    ) -> Task<Result<(ProjectTransaction, Option<language::ClientCommand>)>>;
 }
 
 impl CodeActionProvider for Entity<Project> {
@@ -567,9 +583,14 @@ impl CodeActionProvider for Entity<Project> {
         push_to_history: bool,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<ProjectTransaction>> {
+    ) -> Task<Result<(ProjectTransaction, Option<language::ClientCommand>)>> {
         self.update(cx, |project, cx| {
-            project.apply_code_action(buffer_handle, action, push_to_history, cx)
+            project.apply_code_action_with_client_command(
+                buffer_handle,
+                action,
+                push_to_history,
+                cx,
+            )
         })
     }
 }
