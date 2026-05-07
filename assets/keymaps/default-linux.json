@@ -1248,6 +1248,12 @@
     },
   },
   {
+    "context": "AgentPanel && Terminal",
+    "bindings": {
+      "ctrl-n": "agent::NewThread",
+    },
+  },
+  {
     "context": "ZedPredictModal",
     "bindings": {
       "escape": "menu::Cancel",

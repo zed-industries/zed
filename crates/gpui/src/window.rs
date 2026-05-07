@@ -1521,6 +1521,11 @@ impl Window {
                             .update(&mut cx, |_, window, cx| {
                                 let mut frame_diagnostics = frame_diagnostics;
                                 let draw_start = Instant::now();
+                                if request_frame_options.force_render {
+                                    // Bypass cached view reuse so we don't replay stale
+                                    // atlas tile references after a GPU device recovery.
+                                    window.refresh();
+                                }
                                 let arena_clear_needed = window.draw(cx);
                                 frame_diagnostics.draw_duration = Some(draw_start.elapsed());
                                 let present_start = Instant::now();

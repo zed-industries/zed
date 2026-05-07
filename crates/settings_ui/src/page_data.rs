@@ -2573,7 +2573,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn vim_settings_section() -> [SettingsPageItem; 13] {
+    fn vim_settings_section() -> [SettingsPageItem; 14] {
         [
             SettingsPageItem::SectionHeader("Vim"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2695,6 +2695,28 @@ fn editor_page() -> SettingsPage {
                             .vim
                             .get_or_insert_default()
                             .use_regex_search = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Edit Predictions in Normal Mode",
+                description: "Whether edit predictions are shown in normal mode. By default, edit predictions are only shown in insert and replace modes.",
+                field: Box::new(SettingField {
+                    json_path: Some("vim.show_edit_predictions_in_normal_mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .vim
+                            .as_ref()?
+                            .show_edit_predictions_in_normal_mode
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .show_edit_predictions_in_normal_mode = value;
                     },
                 }),
                 metadata: None,

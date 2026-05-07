@@ -2,7 +2,7 @@ use crate::{AgentTool, Template, Templates, TerminalTool, TerminalToolInput};
 use Role::*;
 use anyhow::{Context as _, Result};
 use client::{Client, RefreshLlmTokenListener, UserStore};
-use futures::StreamExt;
+use futures::{FutureExt as _, StreamExt};
 use gpui::{AppContext as _, AsyncApp, TestAppContext};
 use http_client::StatusCode;
 use language_model::{
@@ -428,33 +428,25 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
 }
 
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
-    let dispatcher = gpui::TestDispatcher::new(rand::random());
-    let mut cx = TestAppContext::build(dispatcher, None);
-    let foreground_executor = cx.foreground_executor().clone();
-    let result = foreground_executor.block_test(async {
-        let test = TerminalToolTest::new(&mut cx).await;
-        let result = test.eval(eval, &mut cx).await;
-        drop(test);
-        cx.run_until_parked();
-        result
-    });
-    cx.quit();
-    match result {
-        Ok(output) => eval_utils::EvalOutput {
-            data: output.to_string(),
-            outcome: if output.assertion.score < 80 {
+    super::run_gpui_eval(
+        |cx| {
+            async move {
+                let test = TerminalToolTest::new(cx).await;
+                let result = test.eval(eval, cx).await;
+                drop(test);
+                cx.run_until_parked();
+                result
+            }
+            .boxed_local()
+        },
+        |output| {
+            if output.assertion.score < 80 {
                 eval_utils::OutcomeKind::Failed
             } else {
                 eval_utils::OutcomeKind::Passed
-            },
-            metadata: (),
+            }
         },
-        Err(err) => eval_utils::EvalOutput {
-            data: format!("{err:?}"),
-            outcome: eval_utils::OutcomeKind::Error,
-            metadata: (),
-        },
-    }
+    )
 }
 
 fn message(

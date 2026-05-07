@@ -547,33 +547,25 @@ impl EditToolTest {
 }
 
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
-    let dispatcher = gpui::TestDispatcher::new(rand::random());
-    let mut cx = TestAppContext::build(dispatcher, None);
-    let foreground_executor = cx.foreground_executor().clone();
-    let result = foreground_executor.block_test(async {
-        let test = EditToolTest::new(&mut cx).await;
-        let result = test.eval(eval, &mut cx).await;
-        drop(test);
-        cx.run_until_parked();
-        result
-    });
-    cx.quit();
-    match result {
-        Ok(output) => eval_utils::EvalOutput {
-            data: output.to_string(),
-            outcome: if output.assertion.score < 80 {
+    super::run_gpui_eval(
+        |cx| {
+            async move {
+                let test = EditToolTest::new(cx).await;
+                let result = test.eval(eval, cx).await;
+                drop(test);
+                cx.run_until_parked();
+                result
+            }
+            .boxed_local()
+        },
+        |output| {
+            if output.assertion.score < 80 {
                 eval_utils::OutcomeKind::Failed
             } else {
                 eval_utils::OutcomeKind::Passed
-            },
-            metadata: (),
+            }
         },
-        Err(err) => eval_utils::EvalOutput {
-            data: format!("{err:?}"),
-            outcome: eval_utils::OutcomeKind::Error,
-            metadata: (),
-        },
-    }
+    )
 }
 
 fn message(
