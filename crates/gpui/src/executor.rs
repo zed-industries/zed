@@ -4,12 +4,11 @@ use futures::prelude::*;
 use gpui_util::{TryFutureExt, TryFutureExtBacktrace};
 use scheduler::Instant;
 use scheduler::Scheduler;
-use std::{
-    fmt::Debug, future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc,
-    time::Duration,
-};
+use std::{future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
-pub use scheduler::{FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority};
+pub use scheduler::{
+    FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority, Task,
+};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -28,101 +27,36 @@ pub struct ForegroundExecutor {
     not_send: PhantomData<Rc<()>>,
 }
 
-/// Task is a primitive that allows work to happen in the background.
+/// Extension trait for `Task<Result<T, E>>` that adds `detach_and_log_err` with an `&App` context.
 ///
-/// It implements [`Future`] so you can `.await` on it.
-///
-/// If you drop a task it will be cancelled immediately. Calling [`Task::detach`] allows
-/// the task to continue running, but with no way to return a value.
-#[must_use]
-#[derive(Debug)]
-pub struct Task<T>(scheduler::Task<T>);
-
-impl<T> Task<T> {
-    /// Creates a new task that will resolve with the value.
-    pub fn ready(val: T) -> Self {
-        Task(scheduler::Task::ready(val))
-    }
-
-    /// Returns true if the task has completed or was created with `Task::ready`.
-    pub fn is_ready(&self) -> bool {
-        self.0.is_ready()
-    }
-
-    /// Detaching a task runs it to completion in the background.
-    pub fn detach(self) {
-        self.0.detach()
-    }
-
-    /// Wraps a scheduler::Task.
-    pub fn from_scheduler(task: scheduler::Task<T>) -> Self {
-        Task(task)
-    }
-
-    /// Converts this task into a fallible task that returns `Option<T>`.
-    ///
-    /// Unlike the standard `Task<T>`, a [`FallibleTask`] will return `None`
-    /// if the task was cancelled.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Background task that gracefully handles cancellation:
-    /// cx.background_spawn(async move {
-    ///     let result = foreground_task.fallible().await;
-    ///     if let Some(value) = result {
-    ///         // Process the value
-    ///     }
-    ///     // If None, task was cancelled - just exit gracefully
-    /// }).detach();
-    /// ```
-    pub fn fallible(self) -> FallibleTask<T> {
-        self.0.fallible()
-    }
+/// This trait is automatically implemented for all `Task<Result<T, E>>` types.
+pub trait TaskExt<T, E> {
+    /// Run the task to completion in the background and log any errors that occur.
+    fn detach_and_log_err(self, cx: &App);
+    /// Like [`Self::detach_and_log_err`], but uses `{:?}` formatting on failure so `anyhow::Error`
+    /// values emit their full backtrace. Prefer `detach_and_log_err` unless a backtrace is wanted.
+    fn detach_and_log_err_with_backtrace(self, cx: &App);
 }
 
-impl<T, E> Task<Result<T, E>>
+impl<T, E> TaskExt<T, E> for Task<Result<T, E>>
 where
     T: 'static,
-    E: 'static + std::fmt::Display,
+    E: 'static + std::fmt::Display + std::fmt::Debug,
 {
-    /// Run the task to completion in the background and log any errors that occur.
     #[track_caller]
-    pub fn detach_and_log_err(self, cx: &App) {
+    fn detach_and_log_err(self, cx: &App) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err(*location))
             .detach();
     }
-}
 
-impl<T, E> Task<Result<T, E>>
-where
-    T: 'static,
-    E: 'static + std::fmt::Debug,
-{
-    /// Like [`Self::detach_and_log_err`], but uses `{:?}` formatting on failure so `anyhow::Error`
-    /// values emit their full backtrace. Prefer `detach_and_log_err` unless a backtrace is wanted.
     #[track_caller]
-    pub fn detach_and_log_err_with_backtrace(self, cx: &App) {
+    fn detach_and_log_err_with_backtrace(self, cx: &App) {
         let location = *core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err_with_backtrace(location))
             .detach();
-    }
-}
-
-impl<T> std::future::Future for Task<T> {
-    type Output = T;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        // SAFETY: Task is a repr(transparent) wrapper around scheduler::Task,
-        // and we're just projecting the pin through to the inner task.
-        let inner = unsafe { self.map_unchecked_mut(|t| &mut t.0) };
-        inner.poll(cx)
     }
 }
 
@@ -175,9 +109,9 @@ impl BackgroundExecutor {
         R: Send + 'static,
     {
         if priority == Priority::RealtimeAudio {
-            Task::from_scheduler(self.inner.spawn_realtime(future))
+            self.inner.spawn_realtime(future)
         } else {
-            Task::from_scheduler(self.inner.spawn_with_priority(priority, future))
+            self.inner.spawn_with_priority(priority, future)
         }
     }
 
@@ -426,7 +360,7 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        Task::from_scheduler(self.inner.spawn(future.boxed_local()))
+        self.inner.spawn(future.boxed_local())
     }
 
     /// Enqueues the given Task to run on the main thread with the given priority.
@@ -440,7 +374,7 @@ impl ForegroundExecutor {
         R: 'static,
     {
         // Priority is ignored for foreground tasks - they run in order on the main thread
-        Task::from_scheduler(self.inner.spawn(future))
+        self.inner.spawn(future)
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.

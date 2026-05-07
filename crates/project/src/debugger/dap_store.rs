@@ -32,6 +32,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    TaskExt,
 };
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};

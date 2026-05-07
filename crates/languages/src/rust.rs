@@ -898,7 +898,7 @@ impl ContextProvider for RustContextProvider {
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(path, project_env.as_ref()).await
+                    target_info_from_abs_path(path, project_env.as_ref()).await?
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -1164,24 +1164,31 @@ struct TargetInfo {
 async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<(Option<TargetInfo>, Arc<Path>)> {
+) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
     let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
     let output = command
-        .current_dir(abs_path.parent()?)
+        .current_dir(
+            abs_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?,
+        )
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version")
         .arg("1")
         .output()
-        .await
-        .log_err()?
-        .stdout;
+        .await?;
 
-    let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
-    target_info_from_metadata(metadata, abs_path)
+    if !output.status.success() {
+        let stderr_msg = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Cargo metadata failed\n {stderr_msg}");
+    }
+
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
+    Ok(target_info_from_metadata(metadata, abs_path))
 }
 
 fn target_info_from_metadata(
@@ -2090,6 +2097,21 @@ mod tests {
 
             assert_eq!(target_info_from_metadata(metadata, absolute_path), expected);
         }
+    }
+
+    #[test]
+    fn target_info_from_abs_path_failed() {
+        let project_root = tempfile::tempdir().unwrap();
+        let cargo_toml_path = project_root.path().join("Cargo.toml");
+        let src_dir = project_root.path().join("src");
+        let main_rs_path = src_dir.join("main.rs");
+
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(&cargo_toml_path, "invalid_toml = {[[{").unwrap();
+        std::fs::write(&main_rs_path, "// rust").unwrap();
+
+        let e = smol::block_on(target_info_from_abs_path(&main_rs_path, None)).unwrap_err();
+        assert!(e.to_string().contains("Cargo metadata failed"));
     }
 
     #[test]

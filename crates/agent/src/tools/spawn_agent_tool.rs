@@ -137,7 +137,7 @@ impl AgentTool for SpawnAgentTool {
                 .await
                 .map_err(|e| SpawnAgentToolOutput::Error {
                     session_id: None,
-                    error: format!("Failed to receive tool input: {e}"),
+                    error: e.to_string(),
                     session_info: None,
                 })?;
 

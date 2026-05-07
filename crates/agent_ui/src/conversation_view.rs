@@ -31,7 +31,7 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TaskExt, TextStyle,
     WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
     list, point, pulsating_between,
 };
@@ -48,8 +48,7 @@ use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
 use settings::{
-    NewThreadLocation, NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide,
-    ThinkingBlockDisplay,
+    NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -81,8 +80,9 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
+use crate::completion_provider::AgentContextSelection;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
-use crate::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::message_editor::{InputAttempt, MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
@@ -862,10 +862,7 @@ impl ConversationView {
             SidebarSide::Left => "left",
             SidebarSide::Right => "right",
         };
-        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
-            NewThreadLocation::LocalProject => "current_worktree",
-            NewThreadLocation::NewWorktree => "new_worktree",
-        };
+        let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_result.await {
@@ -1391,7 +1388,7 @@ impl ConversationView {
     fn move_queued_message_to_main_editor(
         &mut self,
         index: usize,
-        inserted_text: Option<&str>,
+        attempt: Option<InputAttempt>,
         cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1400,7 +1397,7 @@ impl ConversationView {
             active.update(cx, |active, cx| {
                 active.move_queued_message_to_main_editor(
                     index,
-                    inserted_text,
+                    attempt,
                     cursor_offset,
                     window,
                     cx,
@@ -2163,11 +2160,17 @@ impl ConversationView {
                 msg.into(),
                 Some(self.create_copy_button(msg.to_string()).into_any_element()),
             ),
-            LoadError::Exited { status } => (
-                "Failed to Launch",
-                format!("Server exited with status {status}").into(),
-                None,
-            ),
+            LoadError::Exited { status, stderr } => {
+                let mut message = format!("Server exited with status {status}");
+                if let Some(stderr) = stderr {
+                    message.push_str("\n");
+                    message.push_str(stderr);
+                };
+                let action_slot = stderr
+                    .is_some()
+                    .then(|| self.create_copy_button(message.clone()).into_any_element());
+                ("Failed to Launch", message.into(), action_slot)
+            }
             LoadError::Other(msg) => (
                 "Failed to Launch",
                 msg.into(),
@@ -2382,15 +2385,17 @@ impl ConversationView {
                 window,
                 move |this, _editor, event, window, cx| match event {
                     MessageEditorEvent::InputAttempted {
-                        text,
+                        attempt,
                         cursor_offset,
-                    } => this.move_queued_message_to_main_editor(
-                        index,
-                        Some(text.as_ref()),
-                        Some(*cursor_offset),
-                        window,
-                        cx,
-                    ),
+                    } => {
+                        this.move_queued_message_to_main_editor(
+                            index,
+                            Some(attempt.clone()),
+                            Some(*cursor_offset),
+                            window,
+                            cx,
+                        );
+                    }
                     MessageEditorEvent::LostFocus => {
                         this.save_queued_message_at_index(index, cx);
                     }
@@ -2703,10 +2708,10 @@ impl ConversationView {
                     &panel,
                     window,
                     move |this, _, event: &AgentPanelEvent, window, cx| match event {
-                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ThreadFocused => {
+                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ActiveViewFocused => {
                             dismiss_if_visible(this, window, cx);
                         }
-                        AgentPanelEvent::RetainedThreadChanged
+                        AgentPanelEvent::EntryChanged
                         | AgentPanelEvent::ThreadInteracted { .. } => {}
                     },
                 ));
@@ -2756,11 +2761,16 @@ impl ConversationView {
 
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
-    pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn insert_selection(
+        &self,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
-                    editor.insert_selections(window, cx);
+                    editor.insert_selections(selection, window, cx);
                 })
             });
         }
@@ -2956,8 +2966,9 @@ pub(crate) mod tests {
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
+    use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{EventEmitter, TestAppContext, VisualTestContext};
+    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext};
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -2969,6 +2980,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::completion_provider::AgentContextSource;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
@@ -5898,7 +5910,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
-            view.insert_selections(window, cx);
+            let workspace = workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -5961,7 +5980,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
-            view.insert_selections(window, cx);
+            let workspace = view.workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         message_editor.read_with(cx, |editor, cx| {
@@ -7401,6 +7427,107 @@ pub(crate) mod tests {
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
         );
+    }
+
+    #[gpui::test]
+    async fn test_paste_text_into_queued_message_promotes_to_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            paste_into_queued_message(cx, ClipboardItem::new_string("PASTED".to_string())).await;
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0);
+
+        let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "queued PASTEDmessage");
+    }
+
+    #[gpui::test]
+    async fn test_paste_image_into_queued_message_promotes_to_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        use base64::Engine as _;
+        use std::io::Write as _;
+        let png_bytes = base64::prelude::BASE64_STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+            .unwrap();
+        let mut image_file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        image_file.write_all(&png_bytes).unwrap();
+
+        let (conversation_view, cx) = paste_into_queued_message(
+            cx,
+            ClipboardItem {
+                entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                    vec![image_file.path().to_path_buf()].into(),
+                ))],
+            },
+        )
+        .await;
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0);
+
+        let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
+        let image_name = image_file.path().file_name().unwrap().to_string_lossy();
+        let expected_uri = acp_thread::MentionUri::PastedImage {
+            name: image_name.to_string(),
+        }
+        .to_uri()
+        .to_string();
+        assert_eq!(
+            text,
+            format!("queued [@{image_name}]({expected_uri}) message"),
+        );
+    }
+
+    async fn paste_into_queued_message(
+        cx: &mut TestAppContext,
+        clipboard: ClipboardItem,
+    ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        active_thread(&conversation_view, cx).update_in(cx, |thread, _window, cx| {
+            thread
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(acp::PromptCapabilities::new().image(true));
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued message".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+        conversation_view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        let queued_editor = active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
+            thread
+                .queued_message_editors
+                .first()
+                .cloned()
+                .expect("queued message editor not synced")
+        });
+
+        cx.write_to_clipboard(clipboard);
+
+        queued_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.editor().update(cx, |editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([MultiBufferOffset(7)..MultiBufferOffset(7)]);
+                });
+            });
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+
+        (conversation_view, cx)
     }
 
     #[gpui::test]

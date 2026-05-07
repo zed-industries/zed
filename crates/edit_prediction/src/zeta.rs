@@ -10,7 +10,7 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
 use edit_prediction_types::PredictedCursorPosition;
-use gpui::{App, AppContext as _, Entity, Task, WeakEntity, prelude::*};
+use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, OffsetRangeExt as _, ToOffset as _,
     language_settings::all_language_settings, text_diff,
@@ -24,8 +24,7 @@ use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{env, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
-    prompt_input_contains_special_tokens, stop_tokens_for_format,
+    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -119,10 +118,6 @@ pub fn request_prediction_with_zeta(
                 can_collect_data,
                 repo_url,
             );
-
-            if prompt_input_contains_special_tokens(&prompt_input, zeta_version) {
-                return Err(anyhow::anyhow!("prompt contains special tokens"));
-            }
 
             let formatted_prompt = format_zeta_prompt(&prompt_input, zeta_version);
 

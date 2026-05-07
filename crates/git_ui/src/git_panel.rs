@@ -31,16 +31,16 @@ use git::repository::{
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
-use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
+use git::{Amend, Commit, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
     StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent, Empty, Entity,
-    EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
-    PromptLevel, ScrollStrategy, Subscription, Task, TextStyle, UniformListScrollHandle,
-    WeakEntity, actions, anchored, deferred, point, size, uniform_list,
+    AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
+    Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent,
+    Point, PromptLevel, ScrollStrategy, Subscription, Task, TaskExt, TextStyle,
+    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point, size, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -117,6 +117,14 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+    ]
+);
+
+actions!(
+    dev,
+    [
+        /// Shows the current git job queue debug state for the active repository.
+        ShowGitJobQueue,
     ]
 );
 
@@ -257,6 +265,13 @@ pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &git::Init, window, cx| {
         if let Some(panel) = workspace.panel::<GitPanel>(cx) {
             panel.update(cx, |panel, cx| panel.git_init(window, cx));
+        }
+    });
+    workspace.register_action(|workspace, _: &ShowGitJobQueue, window, cx| {
+        if let Some(panel) = workspace.panel::<GitPanel>(cx) {
+            panel.update(cx, |panel, cx| {
+                panel.show_git_job_queue(window, cx);
+            });
         }
     });
 }
@@ -2110,13 +2125,19 @@ impl GitPanel {
         }
     }
 
-    fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_commit(&mut self, _: &Commit, window: &mut Window, cx: &mut Context<Self>) {
+        let is_amend = self.amend_pending;
         if self.commit(&self.commit_editor.focus_handle(cx), window, cx) {
-            telemetry::event!("Git Committed", source = "Git Panel");
+            if is_amend {
+                telemetry::event!("Git Amended", source = "Git Panel");
+            } else {
+                telemetry::event!("Git Committed", source = "Git Panel");
+            }
         }
     }
 
     /// Commits staged changes with the current commit message.
+    /// When `amend_pending` is true, performs an amend commit instead.
     ///
     /// Returns `true` if the commit was executed, `false` otherwise.
     pub(crate) fn commit(
@@ -2125,14 +2146,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.amend_pending {
-            return false;
-        }
-
         if commit_editor_focus_handle.contains_focused(window, cx) {
             self.commit_changes(
                 CommitOptions {
-                    amend: false,
+                    amend: self.amend_pending,
                     signoff: self.signoff_enabled,
                     allow_empty: false,
                 },
@@ -2146,17 +2163,16 @@ impl GitPanel {
         }
     }
 
-    fn on_amend(&mut self, _: &git::Amend, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_amend(&mut self, _: &Amend, window: &mut Window, cx: &mut Context<Self>) {
         if self.amend(&self.commit_editor.focus_handle(cx), window, cx) {
             telemetry::event!("Git Amended", source = "Git Panel");
         }
     }
 
-    /// Amends the most recent commit with staged changes and/or an updated commit message.
-    ///
-    /// Uses a two-stage workflow where the first invocation loads the commit
-    /// message for editing, second invocation performs the amend. Returns
-    /// `true` if the amend was executed, `false` otherwise.
+    /// Enters the amend state on first invocation, loading the last commit
+    /// message for editing. On second invocation, performs the amend commit
+    /// by delegating to [`Self::commit`]. Returns `true` if a commit was
+    /// executed.
     pub(crate) fn amend(
         &mut self,
         commit_editor_focus_handle: &FocusHandle,
@@ -2166,28 +2182,15 @@ impl GitPanel {
         if commit_editor_focus_handle.contains_focused(window, cx) {
             if self.head_commit(cx).is_some() {
                 if !self.amend_pending {
-                    self.set_amend_pending(true, cx);
-                    self.load_last_commit_message(cx);
-
-                    return false;
+                    self.toggle_amend_pending(cx);
                 } else {
-                    self.commit_changes(
-                        CommitOptions {
-                            amend: true,
-                            signoff: self.signoff_enabled,
-                            allow_empty: false,
-                        },
-                        window,
-                        cx,
-                    );
-
-                    return true;
+                    return self.commit(commit_editor_focus_handle, window, cx);
                 }
             }
-            return false;
+            false
         } else {
             cx.propagate();
-            return false;
+            false
         }
     }
     pub fn head_commit(&self, cx: &App) -> Option<CommitDetails> {
@@ -2244,7 +2247,7 @@ impl GitPanel {
         let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
         let wrapped_message = editor.update(cx, |editor, cx| {
             editor.select_all(&Default::default(), window, cx);
-            editor.rewrap_impl(
+            editor.rewrap(
                 RewrapOptions {
                     override_language_settings: false,
                     preserve_existing_whitespace: true,
@@ -3880,6 +3883,74 @@ impl GitPanel {
         show_error_toast(workspace, action, e, cx)
     }
 
+    fn show_git_job_queue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.as_ref() else {
+            let workspace = self.workspace.clone();
+            cx.defer(move |cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct GitJobQueueToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                NotificationId::unique::<GitJobQueueToast>(),
+                                "No active repository",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            });
+            return;
+        };
+
+        let repo_path = repo.read(cx).work_directory_abs_path.display().to_string();
+        let text = repo.read(cx).job_debug_queue().to_debug_string();
+        let title = format!("Git Job Queue: {repo_path}");
+
+        let json_language = self.project.read(cx).languages().language_for_name("JSON");
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| {
+                let json_language = json_language.await.ok();
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.create_buffer(json_language, false, cx)
+                    })
+                    .await?;
+
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_text(text, cx);
+                    buffer.set_capability(language::Capability::ReadWrite, cx);
+                });
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let buffer =
+                        cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.clone()));
+
+                    workspace.add_item_to_active_pane(
+                        Box::new(cx.new(|cx| {
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                            editor.set_breadcrumb_header(title);
+                            editor.disable_mouse_wheel_zoom();
+                            editor
+                        })),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+    }
+
     fn show_commit_message_error<E>(weak_this: &WeakEntity<Self>, err: &E, cx: &mut AsyncApp)
     where
         E: std::fmt::Debug + std::fmt::Display,
@@ -4535,7 +4606,7 @@ impl GitPanel {
                             .child(EditorElement::new(&self.commit_editor, panel_editor_style)),
                     )
                     .child(
-                        h_flex()
+                        v_flex()
                             .absolute()
                             .top_2()
                             .right_2()
@@ -4657,7 +4728,7 @@ impl GitPanel {
                         if can_commit {
                             Tooltip::with_meta_in(
                                 tooltip,
-                                Some(if amend { &git::Amend } else { &git::Commit }),
+                                Some(&git::Commit),
                                 format!(
                                     "git commit{}{}",
                                     if amend { " --amend" } else { "" },
@@ -4824,7 +4895,13 @@ impl GitPanel {
     }
 
     fn render_no_changes_ui(&self, cx: &Context<Self>) -> Vec<AnyElement> {
-        let mut elements: Vec<AnyElement> = vec!["No changes to commit".into_any_element()];
+        let mut elements: Vec<AnyElement> = vec![
+            div()
+                .self_stretch()
+                .text_center()
+                .child("No changes to commit")
+                .into_any_element(),
+        ];
 
         if self.changes_count == 0 && !self.is_on_main_branch(cx) {
             elements.push(
@@ -4906,7 +4983,11 @@ impl GitPanel {
         let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
         if worktree_count > 0 && self.active_repository.is_none() {
             vec![
-                "No Git Repositories".into_any_element(),
+                div()
+                    .self_stretch()
+                    .text_center()
+                    .child("No Git Repositories")
+                    .into_any_element(),
                 panel_filled_button("Initialize Repository")
                     .tooltip(Tooltip::for_action_title_in(
                         "git init",
@@ -6148,25 +6229,27 @@ pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
 pub(crate) fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorStyle {
     let settings = ThemeSettings::get_global(cx);
 
-    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
-
-    let (font_family, font_fallbacks, font_features, font_weight, line_height) = if monospace {
-        (
-            settings.buffer_font.family.clone(),
-            settings.buffer_font.fallbacks.clone(),
-            settings.buffer_font.features.clone(),
-            settings.buffer_font.weight,
-            font_size * settings.buffer_line_height.value(),
-        )
-    } else {
-        (
-            settings.ui_font.family.clone(),
-            settings.ui_font.fallbacks.clone(),
-            settings.ui_font.features.clone(),
-            settings.ui_font.weight,
-            window.line_height(),
-        )
-    };
+    let (font_family, font_fallbacks, font_features, font_size, font_weight, line_height) =
+        if monospace {
+            let font_size = settings.buffer_font_size(cx);
+            (
+                settings.buffer_font.family.clone(),
+                settings.buffer_font.fallbacks.clone(),
+                settings.buffer_font.features.clone(),
+                AbsoluteLength::from(font_size),
+                settings.buffer_font.weight,
+                font_size * settings.buffer_line_height.value(),
+            )
+        } else {
+            (
+                settings.ui_font.family.clone(),
+                settings.ui_font.fallbacks.clone(),
+                settings.ui_font.features.clone(),
+                AbsoluteLength::from(TextSize::Small.rems(cx)),
+                settings.ui_font.weight,
+                window.line_height(),
+            )
+        };
 
     EditorStyle {
         background: cx.theme().colors().editor_background,
@@ -6176,7 +6259,7 @@ pub(crate) fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> 
             font_family,
             font_fallbacks,
             font_features,
-            font_size: TextSize::Small.rems(cx).into(),
+            font_size,
             font_weight,
             line_height: line_height.into(),
             ..Default::default()
@@ -8394,6 +8477,27 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_editor_style_uses_buffer_font_size(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(20.0.into());
+                });
+            });
+        });
+
+        cx.add_window(|window, cx| {
+            let style = panel_editor_style(true, window, cx);
+
+            assert_eq!(style.text.font_size.to_pixels(window.rem_size()), px(20.0));
+
+            Editor::single_line(window, cx)
         });
     }
 }

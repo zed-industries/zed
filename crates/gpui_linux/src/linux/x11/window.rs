@@ -343,7 +343,7 @@ impl rwh::HasDisplayHandle for X11Window {
         };
         let screen_id = {
             let state = self.0.state.borrow();
-            u32::from(state.display.id()) as i32
+            u64::from(state.display.id()) as i32
         };
         let handle = rwh::XcbDisplayHandle::new(Some(non_zero), screen_id);
         Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
@@ -429,7 +429,7 @@ impl X11WindowState {
     ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
-            .map_or(x_main_screen_index, |did| u32::from(did) as usize);
+            .map_or(x_main_screen_index, |did| u64::from(did) as usize);
 
         let visual_set = find_visuals(xcb, x_screen_index);
 
@@ -1670,16 +1670,13 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            inner.renderer.recover(&raw_window).unwrap_or_else(|err| {
-                panic!(
-                    "GPU device lost and recovery failed. \
-                        This may happen after system suspend/resume. \
-                        Please restart the application.\n\nError: {err}"
-                )
-            });
+            match inner.renderer.recover(&raw_window) {
+                Ok(()) => {}
+                Err(err) => {
+                    log::warn!("GPU recovery failed, will retry on next frame: {err}");
+                }
+            }
 
-            // The current scene references atlas textures that were cleared during recovery.
-            // Skip this frame and let the next frame rebuild the scene with fresh textures.
             inner.force_render_after_recovery = true;
             return;
         }

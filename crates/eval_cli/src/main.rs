@@ -70,7 +70,7 @@ struct Args {
     workdir: PathBuf,
 
     /// Instruction/prompt text. If omitted, read from --instruction-file or stdin.
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     instruction: Option<String>,
 
     /// Language model to use, in `provider/model` format.

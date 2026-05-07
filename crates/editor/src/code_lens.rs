@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
-use gpui::{MouseButton, SharedString, Task, WeakEntity};
+use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};

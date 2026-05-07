@@ -28,23 +28,15 @@ const RUST_TARGET: &str = "wasm32-wasip2";
 /// Once Clang 17 and its wasm target are available via system package managers, we won't need
 /// to download this.
 const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/";
-const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(all(target_os = "macos", target_arch = "x86_64"))
-{
-    Some("wasi-sdk-25.0-x86_64-macos.tar.gz")
-} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-macos.tar.gz")
-} else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
-} else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
-} else if cfg!(all(target_os = "freebsd", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
-} else if cfg!(all(target_os = "freebsd", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
-} else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-windows.tar.gz")
-} else {
-    None
+const WASI_SDK_ASSET_NAME: Option<&str> = cfg_select! {
+    all(target_os = "macos", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-macos.tar.gz"),
+    all(target_os = "macos", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-macos.tar.gz"),
+    all(target_os = "linux", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
+    all(target_os = "linux", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
+    all(target_os = "windows", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-windows.tar.gz"),
+    _ => None
 };
 
 pub struct ExtensionBuilder {
