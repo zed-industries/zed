@@ -4053,8 +4053,9 @@ impl AgentPanel {
         key_context.add("AgentPanel");
         match self.visible_surface() {
             VisibleSurface::AgentThread(_) => key_context.add("acp_thread"),
-            VisibleSurface::Terminal(_) => key_context.add("Terminal"),
-            VisibleSurface::Configuration(_) | VisibleSurface::Uninitialized => {}
+            VisibleSurface::Terminal(_)
+            | VisibleSurface::Configuration(_)
+            | VisibleSurface::Uninitialized => {}
         }
         key_context
     }

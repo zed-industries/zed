@@ -249,13 +249,6 @@
     },
   },
   {
-    "context": "AgentPanel && Terminal",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-n": "agent::NewThread",
-    },
-  },
-  {
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
@@ -1267,6 +1260,13 @@
       "alt-t": "terminal::RerunTask",
       "ctrl-shift-5": "pane::SplitRight",
       "ctrl-shift-.": "agent::AddSelectionToThread",
+    },
+  },
+  {
+    "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-n": "agent::NewThread",
     },
   },
   {

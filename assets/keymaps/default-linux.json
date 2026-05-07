@@ -248,12 +248,6 @@
     },
   },
   {
-    "context": "AgentPanel && Terminal",
-    "bindings": {
-      "ctrl-n": "agent::NewThread",
-    },
-  },
-  {
     "context": "AgentPanel > Markdown",
     "bindings": {
       "copy": "markdown::CopyAsMarkdown",
@@ -1251,6 +1245,12 @@
       "alt-t": "terminal::RerunTask",
       "ctrl-shift-5": "pane::SplitRight",
       "ctrl->": "agent::AddSelectionToThread",
+    },
+  },
+  {
+    "context": "AgentPanel && Terminal",
+    "bindings": {
+      "ctrl-n": "agent::NewThread",
     },
   },
   {
