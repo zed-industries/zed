@@ -1,5 +1,7 @@
 use anyhow::{Context as _, Result};
 use fs::Fs;
+use futures::FutureExt as _;
+use futures::future::BoxFuture;
 use futures::{StreamExt, future};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -14,6 +16,29 @@ pub const MAX_SKILL_DESCRIPTIONS_SIZE: usize = 50 * 1024;
 
 /// The name of the skill definition file
 pub const SKILL_FILE_NAME: &str = "SKILL.md";
+
+/// Maximum directory depth to traverse when looking for skills.
+/// Allows organizing skills into a few levels of grouping subdirectories
+/// without ever scanning runaway directory trees.
+const MAX_SKILL_DISCOVERY_DEPTH: usize = 6;
+
+/// Hard cap on how many directories `find_skill_files` will visit. This is a
+/// defense against pathological filesystems and is generous enough that real
+/// skill collections will never hit it.
+const MAX_SKILL_DISCOVERY_DIRS: usize = 2000;
+
+/// Directory names skipped during recursive skill discovery. These never
+/// contain skills in practice, and descending into them would waste a lot of
+/// fs calls (especially `node_modules`).
+const SKILL_DISCOVERY_IGNORE_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".cache",
+];
 
 /// Represents a loaded skill with all its metadata and content.
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +75,10 @@ pub struct SkillMetadata {
 pub struct SkillSummary {
     pub name: String,
     pub description: String,
+    /// Absolute path to the SKILL.md file, so the model can resolve
+    /// references relative to the skill's directory when reading bundled
+    /// resources.
+    pub location: String,
 }
 
 impl From<&Skill> for SkillSummary {
@@ -57,6 +86,7 @@ impl From<&Skill> for SkillSummary {
         Self {
             name: skill.name.clone(),
             description: skill.description.clone(),
+            location: skill.skill_file_path.to_string_lossy().into_owned(),
         }
     }
 }
@@ -183,27 +213,92 @@ pub async fn load_skills_from_directory(
     .await
 }
 
+/// Walk `directory` looking for `SKILL.md` files at any depth.
+///
+/// Once a directory contains a `SKILL.md` we treat that directory as a skill
+/// and stop descending — files beneath it are bundled resources of that
+/// skill, not separate nested skills.
 async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
     let mut skill_files = Vec::new();
+    let mut directories_visited = 0usize;
+    find_skill_files_recursive(
+        fs.as_ref(),
+        directory,
+        0,
+        &mut directories_visited,
+        &mut skill_files,
+    )
+    .await;
+    skill_files
+}
 
-    let Ok(mut entries) = fs.read_dir(directory).await else {
-        return skill_files;
-    };
+fn find_skill_files_recursive<'a>(
+    fs: &'a dyn Fs,
+    directory: &'a Path,
+    depth: usize,
+    directories_visited: &'a mut usize,
+    skill_files: &'a mut Vec<PathBuf>,
+) -> BoxFuture<'a, ()> {
+    async move {
+        if depth > MAX_SKILL_DISCOVERY_DEPTH {
+            return;
+        }
 
-    while let Some(entry) = entries.next().await {
-        let Ok(entry_path) = entry else {
-            continue;
+        *directories_visited += 1;
+        if *directories_visited > MAX_SKILL_DISCOVERY_DIRS {
+            log::warn!(
+                "skill discovery hit the {} directory limit at {}",
+                MAX_SKILL_DISCOVERY_DIRS,
+                directory.display(),
+            );
+            return;
+        }
+
+        // If this directory itself is a skill, record it and don't descend
+        // further — its other entries are bundled resources of that skill.
+        let skill_file = directory.join(SKILL_FILE_NAME);
+        if fs.is_file(&skill_file).await {
+            skill_files.push(skill_file);
+            return;
+        }
+
+        let Ok(mut entries) = fs.read_dir(directory).await else {
+            return;
         };
 
-        if fs.is_dir(&entry_path).await {
-            let skill_file = entry_path.join(SKILL_FILE_NAME);
-            if fs.is_file(&skill_file).await {
-                skill_files.push(skill_file);
+        let mut child_dirs: Vec<PathBuf> = Vec::new();
+        while let Some(entry) = entries.next().await {
+            let Ok(entry_path) = entry else {
+                continue;
+            };
+
+            let file_name = entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+
+            // Skip well-known noise directories. We allow other dotfiles in
+            // case a user wants their skills under e.g. `.private/`, but
+            // explicitly skipping `.git` etc. avoids huge wasted scans.
+            if SKILL_DISCOVERY_IGNORE_DIRS.contains(&file_name) {
+                continue;
+            }
+
+            if fs.is_dir(&entry_path).await {
+                child_dirs.push(entry_path);
             }
         }
-    }
 
-    skill_files
+        // Stable ordering so test assertions and log output don't depend on
+        // filesystem iteration order.
+        child_dirs.sort();
+
+        for child in child_dirs {
+            find_skill_files_recursive(fs, &child, depth + 1, directories_visited, skill_files)
+                .await;
+        }
+    }
+    .boxed()
 }
 
 async fn load_single_skill(
@@ -672,5 +767,114 @@ description: A skill with no body content
         let summary = SkillSummary::from(&skill);
         assert_eq!(summary.name, "test-skill");
         assert_eq!(summary.description, "A test description");
+        assert_eq!(summary.location, "/skills/test-skill/SKILL.md");
+    }
+
+    #[gpui::test]
+    async fn test_load_grouped_skills(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "writing": {
+                    "brand-writer": {
+                        "SKILL.md": "---\nname: brand-writer\ndescription: Write on brand\n---\n\nBody"
+                    },
+                    "humanizer": {
+                        "SKILL.md": "---\nname: humanizer\ndescription: Humanize text\n---\n\nBody"
+                    },
+                },
+                "flat-skill": {
+                    "SKILL.md": "---\nname: flat-skill\ndescription: Top-level skill\n---\n\nBody"
+                },
+            }),
+        )
+        .await;
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        let mut names: Vec<&str> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .map(|s| s.name.as_str())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["brand-writer", "flat-skill", "humanizer"]);
+    }
+
+    #[gpui::test]
+    async fn test_nested_skill_md_inside_skill_resources_is_ignored(cx: &mut TestAppContext) {
+        // A `SKILL.md` inside a skill's resource folder should not be picked
+        // up as a separate skill: once we find a `SKILL.md` we stop descending.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "outer": {
+                    "SKILL.md": "---\nname: outer\ndescription: Outer skill\n---\n\nBody",
+                    "references": {
+                        "SKILL.md": "---\nname: bogus-inner\ndescription: Should not load\n---\n\nBody"
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        let names: Vec<&str> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["outer"]);
+    }
+
+    #[gpui::test]
+    async fn test_skill_discovery_skips_ignored_dirs(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "real-skill": {
+                    "SKILL.md": "---\nname: real-skill\ndescription: Real\n---\n\nBody"
+                },
+                "node_modules": {
+                    "some-pkg": {
+                        "SKILL.md": "---\nname: leaked\ndescription: Should not load\n---\n\nBody"
+                    }
+                },
+                ".git": {
+                    "hooks": {
+                        "SKILL.md": "---\nname: also-leaked\ndescription: Should not load\n---\n\nBody"
+                    }
+                },
+            }),
+        )
+        .await;
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        let names: Vec<&str> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .map(|s| s.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["real-skill"]);
     }
 }
