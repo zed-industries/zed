@@ -446,7 +446,7 @@ impl LspAdapter for GoLspAdapter {
         ))
     }
 
-    fn client_command(
+    async fn client_command(
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],

@@ -9,7 +9,7 @@ use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
+    BinaryStatus, ClientCommand, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
     LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
@@ -485,6 +485,29 @@ impl LspAdapter for ExtensionLspAdapter {
             .await?;
 
         Ok(labels_from_extension(labels, language))
+    }
+
+    async fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        let command = self
+            .extension
+            .language_server_client_command(
+                self.language_server_id.clone(),
+                command_name.to_string(),
+                arguments.to_vec(),
+            )
+            .await
+            .log_err()?;
+
+        command.map(|command| match command {
+            extension::ClientCommand::ShowLocations => ClientCommand::ShowLocations,
+            extension::ClientCommand::ScheduleTask(task_template) => {
+                ClientCommand::ScheduleTask(task_template)
+            }
+        })
     }
 
     fn is_extension(&self) -> bool {

@@ -88,6 +88,15 @@ impl From<Command> for extension::Command {
     }
 }
 
+impl From<ClientCommand> for extension::ClientCommand {
+    fn from(value: ClientCommand) -> Self {
+        match value {
+            ClientCommand::ShowLocations => Self::ShowLocations,
+            ClientCommand::ScheduleTask(task_template) => Self::ScheduleTask(task_template.into()),
+        }
+    }
+}
+
 impl From<StartDebuggingRequestArgumentsRequest>
     for extension::StartDebuggingRequestArgumentsRequest
 {

@@ -577,7 +577,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         Ok(original)
     }
 
-    fn client_command(
+    async fn client_command(
         &self,
         _command_name: &str,
         _arguments: &[serde_json::Value],
