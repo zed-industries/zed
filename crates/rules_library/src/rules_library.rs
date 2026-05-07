@@ -338,11 +338,18 @@ impl PickerDelegate for RulePickerDelegate {
     ) -> Option<Self::ListItem> {
         match self.filtered_entries.get(ix)? {
             RulePickerEntry::Header(title) => {
-                let tooltip_text = if title.as_ref() == "Built-in Rules" {
-                    "Built-in rules are those included out of the box with Zed."
-                } else {
-                    "Default Rules are attached by default with every new thread."
-                };
+                let (tooltip_title, tooltip_meta): (&'static str, &'static str) =
+                    if title.as_ref() == "Built-in Rules" {
+                        (
+                            "Built-in Rules",
+                            "These rules are included out of the box with Zed.",
+                        )
+                    } else {
+                        (
+                            "Default Rules",
+                            "Included in every thread's system prompt.\nEdits take effect on the next turn."
+                        )
+                    };
 
                 Some(
                     ListSubHeader::new(title.clone())
@@ -351,7 +358,9 @@ impl PickerDelegate for RulePickerDelegate {
                                 .style(ButtonStyle::Transparent)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
-                                .tooltip(Tooltip::text(tooltip_text))
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::with_meta(tooltip_title, None, tooltip_meta, cx)
+                                })
                                 .into_any_element(),
                         )
                         .inset(true)
@@ -420,7 +429,7 @@ impl PickerDelegate for RulePickerDelegate {
                                                         Tooltip::with_meta(
                                                             "Add to Default Rules",
                                                             None,
-                                                            "Always included in every thread.",
+                                                            "Included in every thread's system prompt.\nEdits take effect on the next turn.",
                                                             cx,
                                                         )
                                                     })
@@ -1199,7 +1208,7 @@ impl RulesLibrary {
                                 Tooltip::with_meta(
                                     "Add to Default Rules",
                                     None,
-                                    "Always included in every thread.",
+                                    "Included in every thread's system prompt.\nEdits take effect on the next turn.",
                                     cx,
                                 )
                             })
