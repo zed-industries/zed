@@ -18,7 +18,7 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 /// `<skill_content>` envelope (or the `<available_skills>` catalog) by
 /// embedding closing tags or attribute terminators in their skill name,
 /// description, body, or filenames.
-fn xml_escape(input: &str) -> String {
+pub(crate) fn xml_escape(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     for c in input.chars() {
         match c {
@@ -33,6 +33,45 @@ fn xml_escape(input: &str) -> String {
     output
 }
 
+/// Render a skill's body wrapped in the `<skill_content>` envelope.
+///
+/// Used by both model-driven activation (the `skill` tool) and user-driven
+/// activation (slash commands), so the model sees the same shape regardless
+/// of who initiated the load. Every interpolated value is XML-escaped so a
+/// hostile skill body cannot break out of the wrapper by embedding closing
+/// tags.
+pub fn render_skill_envelope(skill: &Skill) -> String {
+    let source = match &skill.source {
+        agent_skills::SkillSource::Global => "global",
+        agent_skills::SkillSource::ProjectLocal { .. } => "project-local",
+    };
+    let worktree = match &skill.source {
+        agent_skills::SkillSource::Global => None,
+        agent_skills::SkillSource::ProjectLocal { worktree_id } => {
+            Some(format!("worktree-{}", worktree_id.to_usize()))
+        }
+    };
+    let directory = skill.directory_path.to_string_lossy();
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<skill_content name=\"{}\">\n",
+        xml_escape(&skill.name)
+    ));
+    out.push_str(&format!("<source>{}</source>\n", xml_escape(source)));
+    if let Some(worktree) = worktree {
+        out.push_str(&format!("<worktree>{}</worktree>\n", xml_escape(&worktree)));
+    }
+    out.push_str(&format!(
+        "<directory>{}</directory>\n",
+        xml_escape(&directory)
+    ));
+    out.push_str("Relative paths in this skill resolve against <directory>.\n\n");
+    out.push_str(&xml_escape(skill.content.trim()));
+    out.push_str("\n</skill_content>\n");
+    out
+}
+
 /// Retrieves the content and resources of a skill by name. Use this when a user's request matches a skill's description.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SkillToolInput {
@@ -43,17 +82,11 @@ pub struct SkillToolInput {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SkillToolOutput {
+    /// Pre-rendered `<skill_content>` envelope. The wire format must match
+    /// what `render_skill_envelope` produces so model-driven and slash-
+    /// command activation are indistinguishable in the conversation.
     Found {
-        /// The skill's name, as it appears in the catalog.
-        name: String,
-        /// Whether the skill is global or project-local
-        source: String,
-        /// For project-local skills, which worktree it belongs to
-        worktree: Option<String>,
-        /// The full content of SKILL.md (frontmatter stripped)
-        content: String,
-        /// Absolute path to the skill's directory.
-        directory: String,
+        rendered: String,
     },
     Error {
         error: String,
@@ -63,41 +96,8 @@ pub enum SkillToolOutput {
 impl From<SkillToolOutput> for LanguageModelToolResultContent {
     fn from(output: SkillToolOutput) -> Self {
         match output {
-            SkillToolOutput::Found {
-                name,
-                source,
-                worktree,
-                content,
-                directory,
-            } => {
-                // Wrap the activation in `<skill_content>` so the model can
-                // distinguish skill instructions from other tool output and
-                // future compaction logic can identify and protect them.
-                //
-                // Every interpolated value is XML-escaped: the name is in an
-                // attribute, and the body is in element text. Without
-                // escaping, a skill body containing `</skill_content>` could
-                // break out of the wrapper.
-                //
-                // We deliberately don't enumerate bundled resource files
-                // here. SKILL.md is the source of truth for what the model
-                // should read; if the body references a directory, the
-                // model has `list_directory` and `read_file` to discover
-                // what's in it on demand.
-                let mut out = String::new();
-                out.push_str(&format!("<skill_content name=\"{}\">\n", xml_escape(&name)));
-                out.push_str(&format!("<source>{}</source>\n", xml_escape(&source)));
-                if let Some(worktree) = &worktree {
-                    out.push_str(&format!("<worktree>{}</worktree>\n", xml_escape(worktree)));
-                }
-                out.push_str(&format!(
-                    "<directory>{}</directory>\n",
-                    xml_escape(&directory)
-                ));
-                out.push_str("Relative paths in this skill resolve against <directory>.\n\n");
-                out.push_str(&xml_escape(content.trim()));
-                out.push_str("\n</skill_content>\n");
-                LanguageModelToolResultContent::Text(out.into())
+            SkillToolOutput::Found { rendered } => {
+                LanguageModelToolResultContent::Text(rendered.into())
             }
             SkillToolOutput::Error { error } => LanguageModelToolResultContent::Text(error.into()),
         }
@@ -113,8 +113,14 @@ impl SkillTool {
         Self { skills }
     }
 
+    /// Look up a skill by name, returning only those the model is allowed to
+    /// invoke. Skills with `disable_model_invocation` are hidden from the
+    /// model's catalog and rejected here as defense-in-depth: the model
+    /// shouldn't be able to load them even by hallucinating the name.
     fn find_skill(&self, name: &str) -> Option<&Skill> {
-        self.skills.iter().find(|s| s.name == name)
+        self.skills
+            .iter()
+            .find(|s| s.name == name && !s.disable_model_invocation)
     }
 }
 
@@ -158,6 +164,7 @@ impl AgentTool for SkillTool {
                         input.name,
                         self.skills
                             .iter()
+                            .filter(|s| !s.disable_model_invocation)
                             .map(|s| s.name.as_str())
                             .collect::<Vec<_>>()
                             .join(", ")
@@ -165,24 +172,8 @@ impl AgentTool for SkillTool {
                 });
             };
 
-            let source = match &skill.source {
-                agent_skills::SkillSource::Global => "global".to_string(),
-                agent_skills::SkillSource::ProjectLocal { .. } => "project-local".to_string(),
-            };
-
-            let worktree = match &skill.source {
-                agent_skills::SkillSource::Global => None,
-                agent_skills::SkillSource::ProjectLocal { worktree_id } => {
-                    Some(format!("worktree-{}", worktree_id.to_usize()))
-                }
-            };
-
             Ok(SkillToolOutput::Found {
-                name: skill.name.clone(),
-                source,
-                worktree,
-                content: skill.content.clone(),
-                directory: skill.directory_path.to_string_lossy().into_owned(),
+                rendered: render_skill_envelope(skill),
             })
         })
     }
@@ -240,18 +231,12 @@ mod tests {
         let output = task.await.unwrap();
 
         match output {
-            SkillToolOutput::Found {
-                name,
-                source,
-                worktree,
-                content,
-                ..
-            } => {
-                assert_eq!(name, "test-skill");
-                assert_eq!(source, "global");
-                assert!(worktree.is_none());
-                assert!(content.contains("# Instructions"));
-                assert!(content.contains("Do the thing."));
+            SkillToolOutput::Found { rendered } => {
+                assert!(rendered.contains("<skill_content name=\"test-skill\">"));
+                assert!(rendered.contains("<source>global</source>"));
+                assert!(!rendered.contains("<worktree>"));
+                assert!(rendered.contains("# Instructions"));
+                assert!(rendered.contains("Do the thing."));
             }
             SkillToolOutput::Error { error } => {
                 panic!("expected Found, got Error: {error}");
@@ -383,11 +368,9 @@ mod tests {
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
         let output = task.await.unwrap();
         match output {
-            SkillToolOutput::Found {
-                source, worktree, ..
-            } => {
-                assert_eq!(source, "global");
-                assert!(worktree.is_none());
+            SkillToolOutput::Found { rendered } => {
+                assert!(rendered.contains("<source>global</source>"));
+                assert!(!rendered.contains("<worktree>"));
             }
             SkillToolOutput::Error { error } => panic!("expected Found, got: {error}"),
         }
@@ -399,11 +382,9 @@ mod tests {
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
         let output = task.await.unwrap();
         match output {
-            SkillToolOutput::Found {
-                source, worktree, ..
-            } => {
-                assert_eq!(source, "project-local");
-                assert!(worktree.is_some());
+            SkillToolOutput::Found { rendered } => {
+                assert!(rendered.contains("<source>project-local</source>"));
+                assert!(rendered.contains("<worktree>worktree-"));
             }
             SkillToolOutput::Error { error } => panic!("expected Found, got: {error}"),
         }
@@ -429,5 +410,42 @@ mod tests {
         };
         assert!(err.contains("not found"));
         assert!(err.contains("existing-skill"));
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_refuses_disable_model_invocation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Skills with `disable_model_invocation: true` are slash-command-only.
+        // The model should not be able to load them via the tool, even if it
+        // somehow got the name (e.g. by hallucination or seeing it in user
+        // input).
+        let mut hidden = create_test_skill("deploy", "Deploy to production", "Steps");
+        hidden.disable_model_invocation = true;
+        let visible = create_test_skill("visible", "Visible skill", "Hello");
+        let skills = Arc::new(vec![hidden, visible]);
+
+        let tool = Arc::new(SkillTool::new(skills));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "deploy" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let err = match task.await {
+            Err(SkillToolOutput::Error { error }) => error,
+            other => panic!("expected Error variant, got: {other:?}"),
+        };
+        assert!(err.contains("not found"));
+        assert!(err.contains("visible"));
+        // The error's "available skills" listing must exclude the hidden
+        // skill so the model can't discover it from the error message. The
+        // skill name will appear once in the "Skill 'deploy' not found"
+        // prefix because that's the name the caller passed in; we just want
+        // to make sure it isn't echoed a second time as an available option.
+        assert_eq!(
+            err.matches("deploy").count(),
+            1,
+            "hidden skill name appeared in 'available skills' listing: {err}"
+        );
     }
 }

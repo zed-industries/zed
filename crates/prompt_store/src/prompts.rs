@@ -59,10 +59,13 @@ impl ProjectContext {
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
 
-        // Apply 50KB budget for skill descriptions
+        // Skills with disable_model_invocation are hidden from the model's
+        // catalog — they're slash-command-only. Filter before applying the
+        // size budget so they don't crowd out other skills.
         let mut total_size = 0;
         let skill_summaries: Vec<SkillSummary> = skills
             .iter()
+            .filter(|skill| !skill.disable_model_invocation)
             .filter_map(|skill| {
                 let entry_size = skill.name.len() + skill.description.len();
                 if total_size + entry_size <= MAX_SKILL_DESCRIPTIONS_SIZE {
@@ -167,6 +170,7 @@ mod tests {
                 directory_path: PathBuf::from(format!("/skills/{}", name)),
                 skill_file_path: PathBuf::from(format!("/skills/{}/SKILL.md", name)),
                 content: "Content".to_string(),
+                disable_model_invocation: false,
             });
             total_size += name.len() + description.len();
             skill_count += 1;
@@ -193,6 +197,33 @@ mod tests {
         let context = ProjectContext::new(vec![], vec![], vec![]);
         assert!(!context.has_skills);
         assert!(context.skills.is_empty());
+    }
+
+    #[test]
+    fn test_skills_with_disable_model_invocation_excluded_from_catalog() {
+        let visible = Skill {
+            name: "visible".to_string(),
+            description: "Shown to model".to_string(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/visible"),
+            skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
+            content: "body".to_string(),
+            disable_model_invocation: false,
+        };
+        let hidden = Skill {
+            name: "hidden".to_string(),
+            description: "Slash-only".to_string(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/hidden"),
+            skill_file_path: PathBuf::from("/skills/hidden/SKILL.md"),
+            content: "body".to_string(),
+            disable_model_invocation: true,
+        };
+
+        let context = ProjectContext::new(vec![], vec![], vec![visible, hidden]);
+        let names: Vec<&str> = context.skills.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["visible"]);
+        assert!(context.has_skills);
     }
 }
 

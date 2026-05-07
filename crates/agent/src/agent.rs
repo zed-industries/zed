@@ -590,6 +590,9 @@ impl NativeAgent {
                         message: skill_error.message.into(),
                     });
                 }
+                // Skills appear in the slash-command list, so a change in
+                // the loaded skills needs to be pushed out to active sessions.
+                this.update_available_commands_for_project(project_id, cx);
             })?;
         }
 
@@ -987,46 +990,52 @@ impl NativeAgent {
                 .or_insert(0) += 1;
         }
 
-        registry
-            .prompts()
-            .flat_map(|context_server_prompt| {
-                let prompt = &context_server_prompt.prompt;
+        let mcp_commands = registry.prompts().flat_map(|context_server_prompt| {
+            let prompt = &context_server_prompt.prompt;
 
-                let should_prefix = prompt_name_counts
-                    .get(prompt.name.as_str())
-                    .copied()
-                    .unwrap_or(0)
-                    > 1;
+            let should_prefix = prompt_name_counts
+                .get(prompt.name.as_str())
+                .copied()
+                .unwrap_or(0)
+                > 1;
 
-                let name = if should_prefix {
-                    format!("{}.{}", context_server_prompt.server_id, prompt.name)
-                } else {
-                    prompt.name.clone()
-                };
+            let name = if should_prefix {
+                format!("{}.{}", context_server_prompt.server_id, prompt.name)
+            } else {
+                prompt.name.clone()
+            };
 
-                let mut command = acp::AvailableCommand::new(
-                    name,
-                    prompt.description.clone().unwrap_or_default(),
-                );
+            let mut command =
+                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default());
 
-                match prompt.arguments.as_deref() {
-                    Some([arg]) => {
-                        let hint = format!("<{}>", arg.name);
+            match prompt.arguments.as_deref() {
+                Some([arg]) => {
+                    let hint = format!("<{}>", arg.name);
 
-                        command = command.input(acp::AvailableCommandInput::Unstructured(
-                            acp::UnstructuredCommandInput::new(hint),
-                        ));
-                    }
-                    Some([]) | None => {}
-                    Some(_) => {
-                        // skip >1 argument commands since we don't support them yet
-                        return None;
-                    }
+                    command = command.input(acp::AvailableCommandInput::Unstructured(
+                        acp::UnstructuredCommandInput::new(hint),
+                    ));
                 }
+                Some([]) | None => {}
+                Some(_) => {
+                    // skip >1 argument commands since we don't support them yet
+                    return None;
+                }
+            }
 
-                Some(command)
-            })
-            .collect()
+            Some(command)
+        });
+
+        // Skills are exposed as slash commands regardless of
+        // `disable_model_invocation`. The flag controls catalog visibility
+        // for the model, not user-driven invocation — that's the whole
+        // point of marking a skill model-disabled.
+        let skill_commands = state
+            .skills
+            .iter()
+            .map(|skill| acp::AvailableCommand::new(skill.name.clone(), skill.description.clone()));
+
+        mcp_commands.chain(skill_commands).collect()
     }
 
     pub fn load_thread(
@@ -1333,6 +1342,79 @@ impl NativeAgent {
                     thread.resume(cx)
                 }
             })?;
+
+            cx.update(|cx| {
+                NativeAgentConnection::handle_thread_events(
+                    response_stream,
+                    acp_thread.downgrade(),
+                    cx,
+                )
+            })
+            .await
+        })
+    }
+
+    /// Activate a skill in response to a `/skill-name` slash command. The
+    /// skill body is wrapped in the same `<skill_content>` envelope the
+    /// model-driven `skill` tool uses, so the conversation looks the same
+    /// regardless of who initiated the load. Any extra content the user
+    /// added after the command (file mentions, etc.) is preserved in the
+    /// model's context as a sibling user message.
+    fn send_skill_invocation(
+        &self,
+        message_id: UserMessageId,
+        session_id: acp::SessionId,
+        skill: Skill,
+        original_content: Vec<acp::ContentBlock>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        let Some(state) = self.session_project_state(&session_id) else {
+            return Task::ready(Err(anyhow!("Project state not found for session")));
+        };
+        let path_style = state.project.read(cx).path_style(cx);
+
+        cx.spawn(async move |this, cx| {
+            let (acp_thread, thread) = this.update(cx, |this, _cx| {
+                let session = this
+                    .sessions
+                    .get(&session_id)
+                    .context("Failed to get session")?;
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
+            })??;
+
+            // Push any non-command content blocks (file mentions, etc.) the
+            // user attached to their slash invocation. We skip the first
+            // block because it is the literal `/cmd` text — we don't want
+            // to add `/skill-name` as a user message in the model context.
+            thread.update(cx, |thread, cx| {
+                thread.push_acp_user_block(
+                    message_id,
+                    original_content.into_iter().skip(1),
+                    path_style,
+                    cx,
+                );
+            });
+
+            // Inject the rendered skill body as an additional user message.
+            // The model sees a wrapped `<skill_content>` envelope identical
+            // to what the tool path produces.
+            let envelope = crate::tools::render_skill_envelope(&skill);
+            let block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
+            let injected_id = acp_thread::UserMessageId::new();
+
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread.push_user_content_block_with_indent(
+                    Some(injected_id.clone()),
+                    block.clone(),
+                    true,
+                    cx,
+                );
+            });
+            thread.update(cx, |thread, cx| {
+                thread.push_acp_user_block(injected_id, [block], path_style, cx);
+            });
+
+            let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
@@ -1733,6 +1815,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
+            // MCP prompts and skills both register slash commands. MCP
+            // prompts are checked first — if a user has both an MCP prompt
+            // and a skill with the same name, the MCP prompt wins (matching
+            // the order they appear in the catalog).
             let registry = project_state.context_server_registry.read(cx);
 
             let explicit_server_id = parsed_command
@@ -1768,6 +1854,22 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         params.prompt,
                         cx,
                     )
+                });
+            }
+
+            // Skill match. Slash commands work for *all* skills regardless
+            // of `disable_model_invocation` — that flag only hides the
+            // skill from the model's catalog. The user explicitly typed
+            // the name, so they get to invoke it.
+            if parsed_command.explicit_server_id.is_none()
+                && let Some(skill) = project_state
+                    .skills
+                    .iter()
+                    .find(|skill| skill.name == parsed_command.prompt_name)
+            {
+                let skill = skill.clone();
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_skill_invocation(id, session_id.clone(), skill, params.prompt, cx)
                 });
             }
         };
@@ -2430,6 +2532,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/home/user/.agents/skills/review"),
             skill_file_path: PathBuf::from("/home/user/.agents/skills/review/SKILL.md"),
             content: "global".to_string(),
+            disable_model_invocation: false,
         };
         let project_skill = Skill {
             name: "review".to_string(),
@@ -2440,6 +2543,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/project/.agents/skills/review"),
             skill_file_path: PathBuf::from("/project/.agents/skills/review/SKILL.md"),
             content: "project".to_string(),
+            disable_model_invocation: false,
         };
 
         let (skills, errors) =
@@ -2595,6 +2699,87 @@ mod internal_tests {
             let state = agent.projects.get(&project.entity_id()).unwrap();
             assert_eq!(state.skills.len(), 1);
             assert_eq!(state.skills[0].description, "Second version");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_skills_appear_as_slash_commands(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+
+        // Two skills: one model-invocable (default), one slash-only via
+        // `disable-model-invocation: true`. Both should still appear as
+        // slash commands.
+        let visible_dir = skills_dir.join("visible-skill");
+        fs.create_dir(&visible_dir).await.unwrap();
+        fs.insert_file(
+            &visible_dir.join("SKILL.md"),
+            b"---\nname: visible-skill\ndescription: Visible skill\n---\n\nbody".to_vec(),
+        )
+        .await;
+
+        let hidden_dir = skills_dir.join("deploy");
+        fs.create_dir(&hidden_dir).await.unwrap();
+        fs.insert_file(
+            &hidden_dir.join("SKILL.md"),
+            b"---\nname: deploy\ndescription: Deploy to prod\ndisable-model-invocation: true\n---\n\nbody"
+                .to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+
+        // Both skills should be exposed as slash commands.
+        agent.read_with(cx, |agent, cx| {
+            let commands = NativeAgent::build_available_commands_for_project(
+                agent.projects.get(&project_id),
+                cx,
+            );
+            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+            assert!(
+                names.contains(&"visible-skill"),
+                "visible skill missing from slash commands: {names:?}"
+            );
+            assert!(
+                names.contains(&"deploy"),
+                "slash-only skill missing from slash commands: {names:?}"
+            );
+        });
+
+        // The model's catalog (ProjectContext.skills) should NOT include
+        // `deploy` since it has disable_model_invocation set.
+        agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let catalog: Vec<&str> = state
+                .project_context
+                .read(cx)
+                .skills
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect();
+            assert_eq!(catalog, vec!["visible-skill"]);
         });
     }
 

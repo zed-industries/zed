@@ -52,6 +52,10 @@ pub struct Skill {
     pub skill_file_path: PathBuf,
     /// The full content of SKILL.md (excluding frontmatter)
     pub content: String,
+    /// When `true`, this skill is hidden from the model's catalog and the
+    /// `skill` tool refuses to load it. The user can still invoke it as a
+    /// slash command.
+    pub disable_model_invocation: bool,
 }
 
 /// Indicates where a skill was loaded from.
@@ -68,6 +72,8 @@ pub enum SkillSource {
 pub struct SkillMetadata {
     pub name: String,
     pub description: String,
+    #[serde(default, rename = "disable-model-invocation")]
+    pub disable_model_invocation: bool,
 }
 
 /// Minimal skill info for system prompt (not full content)
@@ -136,6 +142,7 @@ pub fn parse_skill(skill_file_path: &Path, content: &str, source: SkillSource) -
         directory_path,
         skill_file_path: skill_file_path.to_path_buf(),
         content: body.trim().to_string(),
+        disable_model_invocation: metadata.disable_model_invocation,
     })
 }
 
@@ -356,6 +363,48 @@ Do the thing.
         assert_eq!(skill.directory_path, Path::new("/skills/my-skill"));
         assert!(skill.content.contains("# My Skill"));
         assert!(skill.content.contains("Do the thing."));
+        // Default: skill is invocable by both model and user.
+        assert!(!skill.disable_model_invocation);
+    }
+
+    #[test]
+    fn test_parse_disable_model_invocation_true() {
+        let content = r#"---
+name: deploy
+description: Deploy the application to production.
+disable-model-invocation: true
+---
+
+Steps to deploy.
+"#;
+
+        let skill = parse_skill(
+            Path::new("/skills/deploy/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("should parse");
+        assert!(skill.disable_model_invocation);
+    }
+
+    #[test]
+    fn test_parse_disable_model_invocation_explicit_false() {
+        let content = r#"---
+name: helper
+description: A helper skill.
+disable-model-invocation: false
+---
+
+Help.
+"#;
+
+        let skill = parse_skill(
+            Path::new("/skills/helper/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("should parse");
+        assert!(!skill.disable_model_invocation);
     }
 
     #[test]
@@ -762,6 +811,7 @@ description: A skill with no body content
             directory_path: PathBuf::from("/skills/test-skill"),
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
             content: "Instructions here".to_string(),
+            disable_model_invocation: false,
         };
 
         let summary = SkillSummary::from(&skill);
