@@ -303,35 +303,6 @@ impl Editor {
         }
     }
 
-    pub fn add_code_action_provider(
-        &mut self,
-        provider: Rc<dyn CodeActionProvider>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self
-            .code_action_providers
-            .iter()
-            .any(|existing_provider| existing_provider.id() == provider.id())
-        {
-            return;
-        }
-
-        self.code_action_providers.push(provider);
-        self.refresh_code_actions_for_selection(window, cx);
-    }
-
-    pub fn remove_code_action_provider(
-        &mut self,
-        id: Arc<str>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.code_action_providers
-            .retain(|provider| provider.id() != id);
-        self.refresh_code_actions_for_selection(window, cx);
-    }
-
     pub fn code_actions_enabled_for_toolbar(&self, cx: &App) -> bool {
         !self.code_action_providers.is_empty()
             && EditorSettings::get_global(cx).toolbar.code_actions
