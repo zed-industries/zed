@@ -682,9 +682,11 @@ impl DebugPanel {
                 .py_1()
                 .px_1p5()
                 .justify_between()
+                .flex_wrap()
+                .gap_y_1()
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
-                .when(is_side, |this| this.gap_1().h(Tab::container_height(cx)))
+                .when(is_side, |this| this.gap_1().min_h(Tab::container_height(cx)))
                 .child(
                     h_flex()
                         .justify_between()
@@ -938,8 +940,9 @@ impl DebugPanel {
                 )
                 .child(
                     h_flex()
+                        .flex_grow()
+                        .justify_end()
                         .gap_0p5()
-                        .when(is_side, |this| this.justify_between())
                         .child(
                             h_flex().when_some(
                                 active_session
