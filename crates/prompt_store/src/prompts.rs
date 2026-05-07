@@ -1,4 +1,4 @@
-use agent_skills::{MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillSummary};
+use agent_skills::{Skill, SkillSummary};
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
@@ -60,21 +60,13 @@ impl ProjectContext {
             .any(|worktree| worktree.rules_file.is_some());
 
         // Skills with disable_model_invocation are hidden from the model's
-        // catalog — they're slash-command-only. Filter before applying the
-        // size budget so they don't crowd out other skills.
-        let mut total_size = 0;
+        // catalog — they're slash-command-only. The catalog size budget is
+        // enforced upstream (see `apply_skill_budget` in `agent.rs`) so that
+        // dropped skills can surface as load errors in the UI.
         let skill_summaries: Vec<SkillSummary> = skills
             .iter()
             .filter(|skill| !skill.disable_model_invocation)
-            .filter_map(|skill| {
-                let entry_size = skill.name.len() + skill.description.len();
-                if total_size + entry_size <= MAX_SKILL_DESCRIPTIONS_SIZE {
-                    total_size += entry_size;
-                    Some(SkillSummary::from(skill))
-                } else {
-                    None
-                }
-            })
+            .map(SkillSummary::from)
             .collect();
 
         let has_skills = !skill_summaries.is_empty();
@@ -154,42 +146,24 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_skill_budget_limiting() {
-        let mut skills = Vec::new();
-        let mut total_size = 0;
-        let mut skill_count = 0;
+    fn test_project_context_does_not_filter_by_budget() {
+        // The budget is enforced upstream in `agent.rs::apply_skill_budget`
+        // so that dropped skills can surface as load errors. ProjectContext
+        // should accept whatever it's given and just convert to summaries.
+        let huge_description = "x".repeat(60 * 1024);
+        let skill = Skill {
+            name: "oversized".to_string(),
+            description: huge_description.clone(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/oversized"),
+            skill_file_path: PathBuf::from("/skills/oversized/SKILL.md"),
+            content: "Content".to_string(),
+            disable_model_invocation: false,
+        };
 
-        let description = "x".repeat(1000);
-
-        while total_size < MAX_SKILL_DESCRIPTIONS_SIZE + 10_000 {
-            let name = format!("skill-{:04}", skill_count);
-            skills.push(Skill {
-                name: name.clone(),
-                description: description.clone(),
-                source: SkillSource::Global,
-                directory_path: PathBuf::from(format!("/skills/{}", name)),
-                skill_file_path: PathBuf::from(format!("/skills/{}/SKILL.md", name)),
-                content: "Content".to_string(),
-                disable_model_invocation: false,
-            });
-            total_size += name.len() + description.len();
-            skill_count += 1;
-        }
-
-        let context = ProjectContext::new(vec![], vec![], skills.clone());
-
-        assert!(
-            context.skills.len() < skills.len(),
-            "Some skills should be excluded due to budget"
-        );
-        assert!(context.has_skills);
-
-        let included_size: usize = context
-            .skills
-            .iter()
-            .map(|s| s.name.len() + s.description.len())
-            .sum();
-        assert!(included_size <= MAX_SKILL_DESCRIPTIONS_SIZE);
+        let context = ProjectContext::new(vec![], vec![], vec![skill]);
+        assert_eq!(context.skills.len(), 1);
+        assert_eq!(context.skills[0].description, huge_description);
     }
 
     #[test]

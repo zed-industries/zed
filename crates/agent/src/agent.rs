@@ -29,8 +29,8 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    Skill, SkillLoadError, SkillSource, global_skills_dir, load_skills_from_directory,
-    project_skills_relative_path,
+    MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillSource, global_skills_dir,
+    load_skills_from_directory, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -741,11 +741,17 @@ impl NativeAgent {
             // Load and merge skills
             let global_skills = global_skills_task.await;
             let project_skills_results = future::join_all(project_skills_tasks).await;
-            let (skills, skill_errors) =
+            let (skills, mut skill_errors) =
                 merge_skills(global_skills, project_skills_results.into_iter().flatten());
 
+            // Enforce the catalog size budget here so that skills which
+            // don't fit produce a load error in the UI rather than being
+            // silently swallowed by ProjectContext.
+            let (catalog_skills, budget_errors) = apply_skill_budget(&skills);
+            skill_errors.extend(budget_errors);
+
             let project_context =
-                ProjectContext::new(worktrees, default_user_rules, skills.clone());
+                ProjectContext::new(worktrees, default_user_rules, catalog_skills);
             (project_context, skills, skill_errors)
         })
     }
@@ -2478,6 +2484,42 @@ impl TerminalHandle for AcpTerminalHandle {
     }
 }
 
+/// Enforce the fixed catalog description budget. Skills are walked in
+/// iteration order; visible skills accumulate against the budget, and any
+/// that don't fit are dropped with a `SkillLoadError` so the UI can surface
+/// the failure. Hidden skills (`disable_model_invocation: true`) are left
+/// in place because they don't appear in the model's catalog and therefore
+/// don't count against the budget.
+fn apply_skill_budget(skills: &[Skill]) -> (Vec<Skill>, Vec<SkillLoadError>) {
+    let mut kept = Vec::with_capacity(skills.len());
+    let mut errors = Vec::new();
+    let mut total_size = 0usize;
+
+    for skill in skills {
+        if skill.disable_model_invocation {
+            kept.push(skill.clone());
+            continue;
+        }
+
+        let entry_size = skill.name.len() + skill.description.len();
+        if total_size.saturating_add(entry_size) <= MAX_SKILL_DESCRIPTIONS_SIZE {
+            total_size += entry_size;
+            kept.push(skill.clone());
+        } else {
+            errors.push(SkillLoadError {
+                path: skill.skill_file_path.clone(),
+                message: format!(
+                    "Skill '{}' dropped from catalog: total skill description size would exceed the {}KB budget",
+                    skill.name,
+                    MAX_SKILL_DESCRIPTIONS_SIZE / 1024,
+                ),
+            });
+        }
+    }
+
+    (kept, errors)
+}
+
 /// Merge global and project-local skills.
 /// Project-local skills override global skills with the same name.
 fn merge_skills(
@@ -2587,6 +2629,102 @@ mod internal_tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "Project review");
         assert_eq!(skills[0].content, "project");
+    }
+
+    #[test]
+    fn test_apply_skill_budget_emits_errors_for_dropped_skills() {
+        // Each skill's name + description occupies ~10KB. With a 50KB
+        // budget, only the first ~5 visible skills fit; the rest must
+        // appear as load errors so the UI can surface them.
+        let description = "x".repeat(10 * 1024);
+        let mut skills = Vec::new();
+        let total = 10;
+        for i in 0..total {
+            let name = format!("skill-{i:02}");
+            skills.push(Skill {
+                name: name.clone(),
+                description: description.clone(),
+                source: SkillSource::Global,
+                directory_path: PathBuf::from(format!("/skills/{name}")),
+                skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
+                content: "body".to_string(),
+                disable_model_invocation: false,
+            });
+        }
+
+        let (kept, errors) = apply_skill_budget(&skills);
+
+        assert!(
+            kept.len() < skills.len(),
+            "some skills should be dropped due to the budget (kept {} of {})",
+            kept.len(),
+            skills.len(),
+        );
+        assert_eq!(
+            kept.len() + errors.len(),
+            skills.len(),
+            "every skill should either be kept or surface as an error",
+        );
+
+        let kept_size: usize = kept
+            .iter()
+            .map(|s| s.name.len() + s.description.len())
+            .sum();
+        assert!(
+            kept_size <= MAX_SKILL_DESCRIPTIONS_SIZE,
+            "kept skills must fit in the budget (got {kept_size} bytes)",
+        );
+
+        for (i, error) in errors.iter().enumerate() {
+            let original_index = kept.len() + i;
+            assert_eq!(
+                error.path, skills[original_index].skill_file_path,
+                "error path should match the dropped skill",
+            );
+            let name = &skills[original_index].name;
+            assert!(
+                error.message.contains(name.as_str()),
+                "error message {:?} should mention the dropped skill name {name:?}",
+                error.message,
+            );
+            assert!(
+                error.message.contains("50KB") && error.message.contains("budget"),
+                "error message {:?} should describe the budget",
+                error.message,
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_skill_budget_keeps_hidden_skills_without_charging_budget() {
+        // A hidden skill larger than the entire budget should be retained
+        // (it's slash-only and never enters the catalog), and shouldn't
+        // prevent later visible skills from fitting.
+        let huge_description = "y".repeat(MAX_SKILL_DESCRIPTIONS_SIZE * 2);
+        let hidden = Skill {
+            name: "hidden-huge".to_string(),
+            description: huge_description,
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/hidden-huge"),
+            skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
+            content: "body".to_string(),
+            disable_model_invocation: true,
+        };
+        let visible = Skill {
+            name: "visible".to_string(),
+            description: "short".to_string(),
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/visible"),
+            skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
+            content: "body".to_string(),
+            disable_model_invocation: false,
+        };
+
+        let (kept, errors) = apply_skill_budget(&[hidden, visible]);
+
+        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+        let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(kept_names, vec!["hidden-huge", "visible"]);
     }
 
     #[gpui::test]
