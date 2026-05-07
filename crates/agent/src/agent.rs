@@ -74,6 +74,7 @@ pub struct RulesLoadingError {
 
 #[derive(Clone, Debug)]
 pub struct SkillLoadingError {
+    pub project_id: EntityId,
     pub path: PathBuf,
     pub message: SharedString,
 }
@@ -607,6 +608,7 @@ impl NativeAgent {
             let skill_loading_errors: Vec<SkillLoadingError> = skill_errors
                 .into_iter()
                 .map(|skill_error| SkillLoadingError {
+                    project_id,
                     path: skill_error.path,
                     message: skill_error.message.into(),
                 })
