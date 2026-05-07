@@ -3875,9 +3875,9 @@ impl Sidebar {
                             .worktrees
                             .iter()
                             .cloned()
-                            .map(|mut worktree| {
-                                worktree.highlight_positions = Vec::new();
-                                worktree
+                            .map(|mut wt| {
+                                wt.highlight_positions = Vec::new();
+                                wt
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,

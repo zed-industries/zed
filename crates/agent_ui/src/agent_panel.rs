@@ -1135,6 +1135,7 @@ impl AgentPanel {
                 }
             },
         );
+
         let mut panel = Self {
             workspace_id,
             base_view,
