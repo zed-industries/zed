@@ -1298,6 +1298,10 @@ impl SplittableEditor {
 
 #[cfg(test)]
 impl SplittableEditor {
+    fn simulate_width_changed(&mut self, width: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        self.width_changed(width, window, cx);
+    }
+
     fn check_invariants(&self, quiesced: bool, cx: &mut App) {
         use text::Bias;
 
@@ -6202,5 +6206,52 @@ mod tests {
             editor.is_some(),
             "SplittableEditor should be able to act as Editor"
         );
+    }
+
+    #[gpui::test]
+    async fn test_width_changed_auto_split_and_unsplit(cx: &mut gpui::TestAppContext) {
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        cx.run_until_parked();
+
+        // After init with Split style, deferred split() should have run
+        let is_split = editor.read_with(cx, |e, _| e.is_split());
+        assert!(is_split, "should start split after deferred init");
+
+        // Simulate a very narrow width — should auto-unsplit
+        editor.update_in(cx, |editor, window, cx| {
+            editor.simulate_width_changed(px(100.0), window, cx);
+        });
+        cx.run_until_parked();
+
+        let is_split = editor.read_with(cx, |e, _| e.is_split());
+        assert!(!is_split, "should unsplit when too narrow");
+        let too_narrow = editor.read_with(cx, |e, _| e.too_narrow_for_split);
+        assert!(too_narrow, "too_narrow_for_split should be true");
+
+        // Widen again — should auto-re-split
+        editor.update_in(cx, |editor, window, cx| {
+            editor.simulate_width_changed(px(3000.0), window, cx);
+        });
+        cx.run_until_parked();
+
+        let is_split = editor.read_with(cx, |e, _| e.is_split());
+        assert!(is_split, "should re-split when wide enough");
+        let too_narrow = editor.read_with(cx, |e, _| e.too_narrow_for_split);
+        assert!(!too_narrow, "too_narrow_for_split should be false");
+    }
+
+    #[gpui::test]
+    async fn test_width_changed_does_not_unsplit_unified(cx: &mut gpui::TestAppContext) {
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Unified).await;
+        cx.run_until_parked();
+
+        // Unified mode should never split, regardless of width
+        editor.update_in(cx, |editor, window, cx| {
+            editor.simulate_width_changed(px(3000.0), window, cx);
+        });
+        cx.run_until_parked();
+
+        let is_split = editor.read_with(cx, |e, _| e.is_split());
+        assert!(!is_split, "unified mode should stay unified even when wide");
     }
 }
