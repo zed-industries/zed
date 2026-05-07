@@ -110,9 +110,6 @@ struct LineHighlightSpec {
     _active_stack_frame: bool,
 }
 
-const SECONDARY_LOCAL_SELECTION_OPACITY: f32 = 0.55;
-const PRIMARY_LOCAL_SELECTION_LIGHTNESS_BOOST: f32 = 0.30;
-
 #[derive(Debug)]
 struct SelectionLayout {
     head: DisplayPoint,
@@ -3687,7 +3684,8 @@ impl EditorElement {
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
         base_background: Hsla,
-        dim_secondary_local_selections: bool,
+        secondary_local_selection_background: Hsla,
+        highlight_secondary_local_selections: bool,
         has_multiple_local_selections: bool,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
@@ -3704,7 +3702,8 @@ impl EditorElement {
                     let color = Self::selection_background_color(
                         player_color,
                         selection_layout,
-                        dim_secondary_local_selections,
+                        secondary_local_selection_background,
+                        highlight_secondary_local_selections,
                         has_multiple_local_selections,
                     );
                     Some((selection_layout.range.clone(), color))
@@ -3752,24 +3751,16 @@ impl EditorElement {
     fn selection_background_color(
         player_color: &PlayerColor,
         selection_layout: &SelectionLayout,
-        dim_secondary_local_selections: bool,
+        secondary_local_selection_background: Hsla,
+        highlight_secondary_local_selections: bool,
         has_multiple_local_selections: bool,
     ) -> Hsla {
-        if dim_secondary_local_selections
+        if highlight_secondary_local_selections
+            && has_multiple_local_selections
             && selection_layout.is_local
             && !selection_layout.is_newest
         {
-            player_color
-                .selection
-                .opacity(SECONDARY_LOCAL_SELECTION_OPACITY)
-        } else if dim_secondary_local_selections
-            && selection_layout.is_local
-            && selection_layout.is_newest
-            && has_multiple_local_selections
-        {
-            let mut color = player_color.selection;
-            color.l += (1. - color.l) * PRIMARY_LOCAL_SELECTION_LIGHTNESS_BOOST;
-            color
+            secondary_local_selection_background
         } else {
             player_color.selection
         }
@@ -6722,8 +6713,9 @@ impl EditorElement {
             } else {
                 Pixels::ZERO
             };
-            let dim_secondary_local_selections =
-                self.editor.read(cx).dim_secondary_local_selections;
+            let highlight_secondary_local_selections =
+                self.editor.read(cx).highlight_secondary_local_selections;
+            let secondary_local_selection_background = cx.theme().colors().search_match_background;
             let has_multiple_local_selections = layout
                 .selections
                 .iter()
@@ -6738,7 +6730,8 @@ impl EditorElement {
                     let selection_background_color = Self::selection_background_color(
                         player_color,
                         selection,
-                        dim_secondary_local_selections,
+                        secondary_local_selection_background,
+                        highlight_secondary_local_selections,
                         has_multiple_local_selections,
                     );
                     self.paint_highlighted_range(
@@ -10477,7 +10470,8 @@ impl Element for EditorElement {
                         &selections,
                         &merged_highlighted_ranges,
                         self.style.background,
-                        self.editor.read(cx).dim_secondary_local_selections,
+                        cx.theme().colors().search_match_background,
+                        self.editor.read(cx).highlight_secondary_local_selections,
                         selections
                             .iter()
                             .flat_map(|(_, selections)| selections)
@@ -13870,6 +13864,7 @@ mod tests {
                 &selections,
                 &[],
                 base_bg,
+                Hsla::black(),
                 false,
                 false,
             );
@@ -13921,6 +13916,7 @@ mod tests {
                 &selections,
                 &[],
                 base_bg,
+                Hsla::black(),
                 false,
                 false,
             );
@@ -13937,6 +13933,60 @@ mod tests {
             assert_eq!(result[2][0].0.start, DisplayPoint::new(DisplayRow(2), 0));
             assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
             assert_eq!(result[2][0].0.end.column(), u32::MAX);
+        }
+
+        // Case C: secondary local selections use the provided secondary background.
+        {
+            let selection_color = Hsla {
+                h: 120.0,
+                s: 0.5,
+                l: 0.5,
+                a: 1.0,
+            };
+            let secondary_selection_color = Hsla {
+                h: 60.0,
+                s: 0.5,
+                l: 0.5,
+                a: 1.0,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
+
+            let primary_selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(1), 3),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 3),
+                active_rows: DisplayRow(1)..DisplayRow(2),
+                user_name: None,
+            };
+            let secondary_selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(1), 8),
+                cursor_shape: CursorShape::Bar,
+                is_newest: false,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(1), 8),
+                active_rows: DisplayRow(1)..DisplayRow(2),
+                user_name: None,
+            };
+
+            let selections = vec![(player_color, vec![primary_selection, secondary_selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(2),
+                &selections,
+                &[],
+                base_bg,
+                secondary_selection_color,
+                true,
+                true,
+            );
+
+            assert_eq!(result[1][0].1, selection_color);
+            assert_eq!(result[1][1].1, secondary_selection_color);
         }
     }
 
