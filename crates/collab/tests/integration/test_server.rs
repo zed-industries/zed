@@ -586,7 +586,6 @@ impl TestServer {
                 http_port: 0,
                 database_url: "".into(),
                 database_max_connections: 0,
-                api_token: "".into(),
                 livekit_server: None,
                 livekit_key: None,
                 livekit_secret: None,
