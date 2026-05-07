@@ -4,7 +4,7 @@ use gpui::{App, BackgroundExecutor, Entity, TestAppContext, TestScreenCaptureSou
 use project::Project;
 use serde_json::json;
 use util::path;
-use workspace::Workspace;
+use workspace::{AutoWatch, Workspace};
 
 use super::TestClient;
 
@@ -224,6 +224,38 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
 
     workspace_a.update(user_a, |workspace, cx| {
         assert_active_matches_title(workspace, "user_b's screen", cx);
+    });
+}
+
+#[gpui::test]
+async fn test_auto_watch_turns_off_when_following_collaborator(
+    executor: BackgroundExecutor,
+    user_a: &mut TestAppContext,
+    user_b: &mut TestAppContext,
+    user_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let setup = setup_auto_watch_test(&mut server, user_a, user_b, user_c).await;
+    let (workspace_a, user_a) = setup.client_a.build_workspace(&setup.project_a, user_a);
+    let peer_id_b = setup._client_b.peer_id().unwrap();
+
+    workspace_a.update_in(user_a, |workspace, window, cx| {
+        workspace.toggle_auto_watch(window, cx);
+    });
+    start_screen_share(user_b).await;
+    executor.run_until_parked();
+
+    workspace_a.update(user_a, |workspace, cx| {
+        assert_active_matches_title(workspace, "user_b's screen", cx);
+    });
+
+    workspace_a.update_in(user_a, |workspace, window, cx| {
+        workspace.follow(peer_id_b, window, cx);
+    });
+    executor.run_until_parked();
+
+    workspace_a.update(user_a, |workspace, _cx| {
+        assert_eq!(*workspace.auto_watch_state(), AutoWatch::Off);
     });
 }
 
