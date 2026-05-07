@@ -10,7 +10,7 @@ use crate::{EXCLUDE_PLACEHOLDER, INCLUDE_PLACEHOLDER, REPLACE_PLACEHOLDER};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions,
+    Subscription, Task, WeakEntity, Window, actions,
 };
 use language::Buffer;
 use multi_buffer::MultiBuffer;
@@ -44,11 +44,7 @@ actions!(
 
 const SEARCH_DEBOUNCE_MS: u64 = 100;
 const AUTOSAVE_DELAY_MS: u64 = 500;
-const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
-const RESIZE_HANDLE_WIDTH: f32 = 6.0;
-const RESIZE_DIVIDER_SIZE: f32 = 1.0;
 const RESIZE_CORNER_HANDLE_SIZE: f32 = 24.0;
-const RESIZE_CORNER_CLEARANCE: f32 = 18.0;
 const CLICK_THRESHOLD_MS: u128 = 50;
 const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
@@ -127,75 +123,6 @@ fn resize_hover_handler(is_highlighted: Entity<bool>) -> impl Fn(&bool, &mut Win
 
 fn clear_resize_highlight<T>(is_highlighted: Entity<bool>) -> impl Fn(&T, &mut Window, &mut App) {
     move |_, _, cx| is_highlighted.write(cx, false)
-}
-
-fn highlighted_drag_preview<T>(
-    is_highlighted: Entity<bool>,
-) -> impl Fn(&T, gpui::Point<Pixels>, &mut Window, &mut App) -> Entity<DragPreview> {
-    move |_, _, _, cx| {
-        is_highlighted.write(cx, true);
-        cx.new(|_| DragPreview)
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ResizeDrag {
-    mouse_start_y: Pixels,
-    results_height_start: Pixels,
-    preview_height_start: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct HorizontalResizeDrag {
-    side: ResizeSide,
-    mouse_start: Pixels,
-    width_start: Pixels,
-    preview_width_start: Pixels,
-    offset_start: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct VerticalResizeDrag {
-    side: ResizeSide,
-    mouse_start: Pixels,
-    results_height_start: Pixels,
-    preview_height_start: Pixels,
-    offset_start: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct CornerResizeDrag {
-    horizontal_side: ResizeSide,
-    vertical_side: ResizeSide,
-    mouse_start: gpui::Point<Pixels>,
-    width_start: Pixels,
-    preview_width_start: Pixels,
-    results_height_start: Pixels,
-    preview_height_start: Pixels,
-    content_height_start: Pixels,
-    offset_start: gpui::Point<Pixels>,
-}
-
-#[derive(Clone, Copy)]
-struct TelescopePreviewResizeDrag {
-    mouse_start_x: Pixels,
-    preview_width_start: Pixels,
-}
-
-#[derive(Clone, Copy)]
-struct TelescopeHeightResizeDrag {
-    side: ResizeSide,
-    mouse_start_y: Pixels,
-    content_height_start: Pixels,
-    offset_start: Pixels,
-}
-
-struct DragPreview;
-
-impl Render for DragPreview {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-    }
 }
 
 impl ModalView for QuickSearch {

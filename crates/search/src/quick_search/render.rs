@@ -2,10 +2,9 @@ use crate::{
     NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     quick_search::{
-        DragPreview, HistoryDirection, LayoutMode, QuickSearch, QuickSearchDrag,
-        RESIZE_DIVIDER_SIZE, RESIZE_HANDLE_HEIGHT, ReplaceAll, ReplaceNext, ResizeDrag, ResizeSide,
-        ToggleFilters, ToggleHistory, ToggleLayout, ToggleSplitMenu, clear_resize_highlight,
-        handle_resize_mouse_down, highlighted_drag_preview, resize_hover_handler,
+        HistoryDirection, LayoutMode, QuickSearch, QuickSearchDrag, ReplaceAll,
+        ReplaceNext, ResizeSide, ToggleFilters, ToggleHistory, ToggleLayout, ToggleSplitMenu,
+        clear_resize_highlight, handle_resize_mouse_down, resize_hover_handler,
         state::{StackedLayoutState, TelescopeLayoutState},
     },
 };
@@ -20,6 +19,21 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 mod telescope;
 mod window_controls;
+
+#[derive(Clone, Copy)]
+struct ResizeDrag {
+    mouse_start_y: Pixels,
+    results_height_start: Pixels,
+    preview_height_start: Pixels,
+}
+
+struct DragPreview;
+
+impl Render for DragPreview {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 
 impl Render for super::QuickSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -358,8 +372,8 @@ impl QuickSearch {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_highlighted = window.use_state(cx, |_window, _cx| false);
-        let divider_size = px(RESIZE_DIVIDER_SIZE);
-        let handle_height = px(RESIZE_HANDLE_HEIGHT);
+        let divider_size = px(window_controls::RESIZE_DIVIDER_SIZE);
+        let handle_height = px(window_controls::RESIZE_HANDLE_HEIGHT);
         let handle_offset = (handle_height - divider_size) / 2.0;
 
         div()
@@ -433,5 +447,14 @@ impl QuickSearch {
             .child(self.render_results_resize(window, cx))
             .child(self.render_preview(window, cx))
             .child(self.render_vertical_resize(ResizeSide::End, window, cx))
+    }
+}
+
+fn highlighted_drag_preview<T>(
+    is_highlighted: gpui::Entity<bool>,
+) -> impl Fn(&T, gpui::Point<Pixels>, &mut Window, &mut App) -> gpui::Entity<DragPreview> {
+    move |_, _, _, cx| {
+        is_highlighted.write(cx, true);
+        cx.new(|_| DragPreview)
     }
 }

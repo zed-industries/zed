@@ -1,16 +1,51 @@
 use crate::{
     SelectNextMatch, SelectPreviousMatch, ToggleReplace,
     quick_search::{
-        CornerResizeDrag, DragPreview, HorizontalResizeDrag, LayoutMode, QuickSearch,
-        RESIZE_CORNER_CLEARANCE, RESIZE_CORNER_HANDLE_SIZE, RESIZE_HANDLE_HEIGHT,
-        RESIZE_HANDLE_WIDTH, ResizeSide, ToggleFilters, ToggleLayout, ToggleSplitMenu,
-        VerticalResizeDrag, handle_resize_mouse_down,
+        LayoutMode, QuickSearch, RESIZE_CORNER_HANDLE_SIZE, ResizeSide, ToggleFilters,
+        ToggleLayout, ToggleSplitMenu, handle_resize_mouse_down,
+        render::DragPreview,
         state::{StackedLayoutState, TelescopeLayoutState},
     },
 };
 use gpui::{Action, Context, DragMoveEvent, FocusHandle, Focusable, MouseButton, Styled, Window};
 use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 use workspace::pane;
+
+pub(crate) const RESIZE_HANDLE_WIDTH: f32 = 6.0;
+pub(crate) const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
+pub(crate) const RESIZE_DIVIDER_SIZE: f32 = 1.0;
+pub(crate) const RESIZE_CORNER_CLEARANCE: f32 = 18.0;
+
+#[derive(Clone, Copy)]
+struct VerticalResizeDrag {
+    side: ResizeSide,
+    mouse_start: Pixels,
+    results_height_start: Pixels,
+    preview_height_start: Pixels,
+    offset_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct HorizontalResizeDrag {
+    side: ResizeSide,
+    mouse_start: Pixels,
+    width_start: Pixels,
+    preview_width_start: Pixels,
+    offset_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct CornerResizeDrag {
+    horizontal_side: ResizeSide,
+    vertical_side: ResizeSide,
+    mouse_start: gpui::Point<Pixels>,
+    width_start: Pixels,
+    preview_width_start: Pixels,
+    results_height_start: Pixels,
+    preview_height_start: Pixels,
+    content_height_start: Pixels,
+    offset_start: gpui::Point<Pixels>,
+}
 
 impl QuickSearch {
     pub(crate) fn render_horizontal_resize(

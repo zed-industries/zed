@@ -1,19 +1,34 @@
 use super::QuickSearch;
 
 use ui::{
-    ActiveTheme, FluentBuilder, InteractiveElement, IntoElement, ParentElement,
+    ActiveTheme, FluentBuilder, InteractiveElement, IntoElement, ParentElement, Pixels,
     StatefulInteractiveElement, Styled, div, h_flex, px, v_flex,
 };
 
+use crate::quick_search::render::highlighted_drag_preview;
 use crate::quick_search::{
-    RESIZE_CORNER_CLEARANCE, RESIZE_DIVIDER_SIZE, RESIZE_HANDLE_HEIGHT, RESIZE_HANDLE_WIDTH,
-    ResizeSide, TelescopeHeightResizeDrag, TelescopePreviewResizeDrag, clear_resize_highlight,
-    handle_resize_mouse_down, highlighted_drag_preview, resize_hover_handler,
+    ResizeSide, clear_resize_highlight, handle_resize_mouse_down, resize_hover_handler,
     state::TelescopeLayoutState,
 };
 
 use gpui::DragMoveEvent;
 use gpui::{Context, MouseButton, Window};
+
+use super::window_controls;
+
+#[derive(Clone, Copy)]
+struct TelescopePreviewResizeDrag {
+    mouse_start_x: Pixels,
+    preview_width_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct TelescopeHeightResizeDrag {
+    side: ResizeSide,
+    mouse_start_y: Pixels,
+    content_height_start: Pixels,
+    offset_start: Pixels,
+}
 
 impl QuickSearch {
     pub(crate) fn render_telescope_content(
@@ -69,8 +84,8 @@ impl QuickSearch {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_highlighted = window.use_state(cx, |_window, _cx| false);
-        let divider_size = px(RESIZE_DIVIDER_SIZE);
-        let handle_width = px(RESIZE_HANDLE_WIDTH);
+        let divider_size = px(window_controls::RESIZE_DIVIDER_SIZE);
+        let handle_width = px(window_controls::RESIZE_HANDLE_WIDTH);
         let handle_offset = (handle_width - divider_size) / 2.0;
 
         div()
@@ -125,10 +140,10 @@ impl QuickSearch {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_highlighted = window.use_state(cx, |_window, _cx| false);
-        let divider_size = px(RESIZE_DIVIDER_SIZE);
-        let handle_height = px(RESIZE_HANDLE_HEIGHT);
+        let divider_size = px(window_controls::RESIZE_DIVIDER_SIZE);
+        let handle_height = px(window_controls::RESIZE_HANDLE_HEIGHT);
         let handle_offset = (handle_height - divider_size) / 2.0;
-        let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
+        let corner_clearance = px(window_controls::RESIZE_CORNER_CLEARANCE);
 
         div()
             .id(match side {
@@ -177,9 +192,7 @@ impl QuickSearch {
                         },
                         highlighted_drag_preview(is_highlighted.clone()),
                     )
-                    .on_drop::<TelescopeHeightResizeDrag>(clear_resize_highlight(
-                        is_highlighted.clone(),
-                    )),
+                    .on_drop::<TelescopeHeightResizeDrag>(clear_resize_highlight(is_highlighted)),
             )
             .on_drag_move::<TelescopeHeightResizeDrag>(cx.listener(
                 move |this, event: &DragMoveEvent<TelescopeHeightResizeDrag>, _window, cx| {
