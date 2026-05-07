@@ -1837,7 +1837,7 @@ mod test {
     use indoc::indoc;
     use language::Point;
     use project::FakeFs;
-    use search::{ProjectSearchView, project_search};
+    use search::{BufferSearchBar, ProjectSearchView, project_search};
     use serde_json::json;
     use settings::{SettingsStore, ThemeColorsContent, ThemeStyleContent};
     use theme::ActiveTheme as _;
@@ -3153,12 +3153,44 @@ mod test {
         cx.run_until_parked();
         cx.simulate_keystrokes("enter");
         cx.assert_state("«oneˇ» two «oneˇ»", Mode::HelixNormal);
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, _| {
+            assert!(!editor.has_background_highlights(HighlightKey::BufferSearchHighlights));
+            assert!(!editor.has_background_highlights(HighlightKey::SearchWithinRange));
+        });
 
         cx.simulate_keystrokes("x");
         cx.simulate_keystrokes("s");
         cx.run_until_parked();
         cx.simulate_keystrokes("enter");
         cx.assert_state("«oneˇ» two «oneˇ»", Mode::HelixNormal);
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, _| {
+            assert!(!editor.has_background_highlights(HighlightKey::BufferSearchHighlights));
+            assert!(!editor.has_background_highlights(HighlightKey::SearchWithinRange));
+        });
+
+        cx.set_state("ˇone two one", Mode::HelixNormal);
+        cx.simulate_keystrokes("x");
+        cx.simulate_keystrokes("s z z z");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("«one two oneˇ»", Mode::HelixNormal);
+
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be deployed")
+        });
+        cx.update_entity(search_bar, |search_bar, _, cx| {
+            assert!(!search_bar.is_dismissed());
+            assert!(!search_bar.has_active_match());
+            assert_eq!(search_bar.query(cx), "zzz");
+        });
 
         // TODO: change "search_in_selection" to not perform any search when in helix select mode with no selection
         // cx.set_state("ˇstuff one two one", Mode::HelixNormal);

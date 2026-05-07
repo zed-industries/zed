@@ -110,8 +110,8 @@ struct LineHighlightSpec {
     _active_stack_frame: bool,
 }
 
-const SECONDARY_LOCAL_CURSOR_OPACITY: f32 = 0.30;
-const SECONDARY_LOCAL_SELECTION_OPACITY: f32 = 0.45;
+const SECONDARY_LOCAL_SELECTION_OPACITY: f32 = 0.55;
+const PRIMARY_LOCAL_SELECTION_LIGHTNESS_BOOST: f32 = 0.30;
 
 #[derive(Debug)]
 struct SelectionLayout {
@@ -1938,17 +1938,8 @@ impl EditorElement {
                         }
                     }
 
-                    let cursor_color = if editor.dim_secondary_local_selections
-                        && selection.is_local
-                        && !selection.is_newest
-                    {
-                        player_color.cursor.opacity(SECONDARY_LOCAL_CURSOR_OPACITY)
-                    } else {
-                        player_color.cursor
-                    };
-
                     let mut cursor = CursorLayout {
-                        color: cursor_color,
+                        color: player_color.cursor,
                         block_width,
                         origin: point(x, y),
                         line_height,
@@ -3697,6 +3688,7 @@ impl EditorElement {
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
         base_background: Hsla,
         dim_secondary_local_selections: bool,
+        has_multiple_local_selections: bool,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -3713,6 +3705,7 @@ impl EditorElement {
                         player_color,
                         selection_layout,
                         dim_secondary_local_selections,
+                        has_multiple_local_selections,
                     );
                     Some((selection_layout.range.clone(), color))
                 } else {
@@ -3760,6 +3753,7 @@ impl EditorElement {
         player_color: &PlayerColor,
         selection_layout: &SelectionLayout,
         dim_secondary_local_selections: bool,
+        has_multiple_local_selections: bool,
     ) -> Hsla {
         if dim_secondary_local_selections
             && selection_layout.is_local
@@ -3768,6 +3762,14 @@ impl EditorElement {
             player_color
                 .selection
                 .opacity(SECONDARY_LOCAL_SELECTION_OPACITY)
+        } else if dim_secondary_local_selections
+            && selection_layout.is_local
+            && selection_layout.is_newest
+            && has_multiple_local_selections
+        {
+            let mut color = player_color.selection;
+            color.l += (1. - color.l) * PRIMARY_LOCAL_SELECTION_LIGHTNESS_BOOST;
+            color
         } else {
             player_color.selection
         }
@@ -6722,6 +6724,14 @@ impl EditorElement {
             };
             let dim_secondary_local_selections =
                 self.editor.read(cx).dim_secondary_local_selections;
+            let has_multiple_local_selections = layout
+                .selections
+                .iter()
+                .flat_map(|(_, selections)| selections)
+                .filter(|selection| selection.is_local)
+                .take(2)
+                .count()
+                > 1;
 
             for (player_color, selections) in &layout.selections {
                 for selection in selections.iter() {
@@ -6729,6 +6739,7 @@ impl EditorElement {
                         player_color,
                         selection,
                         dim_secondary_local_selections,
+                        has_multiple_local_selections,
                     );
                     self.paint_highlighted_range(
                         selection.range.clone(),
@@ -10464,6 +10475,13 @@ impl Element for EditorElement {
                         &merged_highlighted_ranges,
                         self.style.background,
                         self.editor.read(cx).dim_secondary_local_selections,
+                        selections
+                            .iter()
+                            .flat_map(|(_, selections)| selections)
+                            .filter(|selection| selection.is_local)
+                            .take(2)
+                            .count()
+                            > 1,
                     );
 
                     let mut line_layouts = Self::layout_lines(
@@ -13850,6 +13868,7 @@ mod tests {
                 &[],
                 base_bg,
                 false,
+                false,
             );
 
             assert_eq!(result.len(), 5);
@@ -13899,6 +13918,7 @@ mod tests {
                 &selections,
                 &[],
                 base_bg,
+                false,
                 false,
             );
 
