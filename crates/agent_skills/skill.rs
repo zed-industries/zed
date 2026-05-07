@@ -187,12 +187,34 @@ pub async fn load_skills_from_directory(
 
     let skill_files = find_skill_files(fs, directory).await;
 
-    future::join_all(
+    let mut results = future::join_all(
         skill_files
             .into_iter()
             .map(|path| load_single_skill(fs.clone(), path, source.clone())),
     )
-    .await
+    .await;
+
+    // Sort by path so that name conflict resolution in `merge_skills`
+    // (in `crates/agent/src/agent.rs`) is deterministic across runs.
+    // `fs.read_dir` returns entries in OS/filesystem-dependent order,
+    // so without this sort, the "winner" of a name conflict can flip
+    // between launches. All entries here share the same `source` (it's
+    // passed in), so sorting by path alone is sufficient; the relative
+    // ordering of global vs project-local skills is handled by
+    // `merge_skills` itself via its iteration order.
+    results.sort_by(|a, b| {
+        let path_a: &Path = match a {
+            Ok(skill) => &skill.skill_file_path,
+            Err(error) => &error.path,
+        };
+        let path_b: &Path = match b {
+            Ok(skill) => &skill.skill_file_path,
+            Err(error) => &error.path,
+        };
+        path_a.cmp(path_b)
+    });
+
+    results
 }
 
 /// Find every `<skills_root>/<name>/SKILL.md` directly under `directory`.
@@ -646,6 +668,55 @@ description: A skill with no body content
             .collect();
         assert!(names.contains(&"skill-one"));
         assert!(names.contains(&"skill-two"));
+    }
+
+    #[gpui::test]
+    async fn test_load_skills_returns_results_sorted_by_path(cx: &mut TestAppContext) {
+        // `merge_skills` resolves name conflicts by keeping the first
+        // entry in iteration order. Without a stable sort here, the
+        // result depends on `fs.read_dir`, which is OS/filesystem-
+        // dependent. Assert the contract: results come back sorted by
+        // skill file path regardless of insertion order.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "charlie": {
+                    "SKILL.md": "---\nname: charlie\ndescription: C\n---\n\nC"
+                },
+                "alpha": {
+                    "SKILL.md": "---\nname: alpha\ndescription: A\n---\n\nA"
+                },
+                "bravo": {
+                    "SKILL.md": "---\nname: bravo\ndescription: B\n---\n\nB"
+                },
+                "delta": {
+                    "SKILL.md": "No frontmatter, will fail"
+                },
+            }),
+        )
+        .await;
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        assert_eq!(results.len(), 4);
+
+        let paths: Vec<PathBuf> = results
+            .iter()
+            .map(|r| match r {
+                Ok(skill) => skill.skill_file_path.clone(),
+                Err(error) => error.path.clone(),
+            })
+            .collect();
+
+        let mut expected = paths.clone();
+        expected.sort();
+        assert_eq!(paths, expected);
     }
 
     #[gpui::test]
