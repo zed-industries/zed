@@ -112,6 +112,7 @@ impl WindowsWindowInner {
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
+            WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -724,6 +725,14 @@ impl WindowsWindowInner {
 
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
+
+        if let Ok(mut adapter) = self.state.a11y_adapter.try_borrow_mut()
+            && let Some(adapter) = adapter.as_mut()
+            && let Some(events) = adapter.update_window_focus_state(activated)
+        {
+            events.raise();
+        }
+
         let this = self.clone();
 
         // When the window is activated (gains focus), reset the modifier tracking state.
@@ -754,6 +763,20 @@ impl WindowsWindowInner {
             .detach();
 
         None
+    }
+
+    fn handle_wm_getobject(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        let mut adapter = self.state.a11y_adapter.borrow_mut();
+        let adapter = adapter.as_mut()?;
+        let mut activation_handler = self.state.a11y_activation_handler.borrow_mut();
+        let activation_handler = activation_handler.as_mut()?;
+        let result = adapter.handle_wm_getobject(
+            accesskit_windows::WPARAM(wparam.0),
+            accesskit_windows::LPARAM(lparam.0),
+            activation_handler,
+        )?;
+        let lresult: accesskit_windows::LRESULT = result.into();
+        Some(lresult.0)
     }
 
     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {
