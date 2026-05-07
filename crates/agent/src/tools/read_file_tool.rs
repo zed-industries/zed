@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
-use util::markdown::MarkdownCodeBlock;
+use util::markdown::{MarkdownCodeBlock, MarkdownEscaped};
 
 fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent {
     LanguageModelToolResultContent::from(e.to_string())
@@ -99,12 +99,17 @@ impl AgentTool for ReadFileTool {
         {
             match (input.start_line, input.end_line) {
                 (Some(start), Some(end)) => {
-                    format!("Read file `{path}` (lines {}-{})", start, end,)
+                    format!(
+                        "Read file {} (lines {}-{})",
+                        MarkdownEscaped(&path),
+                        start,
+                        end,
+                    )
                 }
                 (Some(start), None) => {
-                    format!("Read file `{path}` (from line {})", start)
+                    format!("Read file {} (from line {})", MarkdownEscaped(&path), start)
                 }
-                _ => format!("Read file `{path}`"),
+                _ => format!("Read file {}", MarkdownEscaped(&path)),
             }
             .into()
         } else {
@@ -394,6 +399,38 @@ mod test {
             error_text(result.unwrap_err()),
             "root/some_dir is a directory, not a file. Use the list_directory tool to explore directory contents."
         );
+    }
+
+    #[gpui::test]
+    async fn test_initial_title_escapes_markdown_in_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "__tests__": {
+                    "[a]*.js": "",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = ReadFileTool::new(project, action_log, true);
+
+        let title = cx.update(|cx| {
+            tool.initial_title(
+                Ok(ReadFileToolInput {
+                    path: "root/__tests__/[a]*.js".to_string(),
+                    start_line: None,
+                    end_line: None,
+                }),
+                cx,
+            )
+        });
+
+        assert_eq!(title, "Read file root/\\_\\_tests\\_\\_/\\[a]\\*.js");
     }
 
     #[gpui::test]

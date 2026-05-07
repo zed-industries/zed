@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::path::Path;
 use std::sync::Arc;
-use util::markdown::MarkdownInlineCode;
+use util::markdown::{MarkdownEscaped, MarkdownInlineCode};
 
 /// Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -66,7 +66,7 @@ impl AgentTool for DeletePathTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!("Delete “`{}`”", input.path).into()
+            format!("Delete {}", MarkdownEscaped(&input.path)).into()
         } else {
             "Delete path".into()
         }

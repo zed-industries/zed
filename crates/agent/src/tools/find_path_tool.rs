@@ -9,6 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
+use util::markdown::MarkdownEscaped;
 use util::paths::PathMatcher;
 
 /// Fast file path pattern matching tool that works with any codebase size
@@ -114,7 +115,7 @@ impl AgentTool for FindPathTool {
     ) -> SharedString {
         let mut title = "Find paths".to_string();
         if let Ok(input) = input {
-            title.push_str(&format!(" matching “`{}`”", input.glob));
+            title.push_str(&format!(" matching {}", MarkdownEscaped(&input.glob)));
         }
         title.into()
     }
@@ -214,6 +215,27 @@ mod test {
     use project::{FakeFs, Project};
     use settings::SettingsStore;
     use util::path;
+
+    #[gpui::test]
+    async fn test_initial_title_escapes_markdown_in_glob(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let tool = FindPathTool::new(project);
+
+        let title = cx.update(|cx| {
+            tool.initial_title(
+                Ok(FindPathToolInput {
+                    glob: "__tests__/[a]*.js".to_string(),
+                    offset: 0,
+                }),
+                cx,
+            )
+        });
+
+        assert_eq!(title, "Find paths matching \\_\\_tests\\_\\_/\\[a]\\*.js");
+    }
 
     #[gpui::test]
     async fn test_find_path_tool(cx: &mut TestAppContext) {

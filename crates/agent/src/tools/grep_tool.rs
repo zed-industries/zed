@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{cmp, fmt::Write, sync::Arc};
 use util::RangeExt;
-use util::markdown::MarkdownInlineCode;
+use util::markdown::MarkdownEscaped;
 use util::paths::PathMatcher;
 
 /// Searches the contents of files in the project with a regular expression
@@ -94,7 +94,7 @@ impl AgentTool for GrepTool {
         match input {
             Ok(input) => {
                 let page = input.page();
-                let regex_str = MarkdownInlineCode(&input.regex);
+                let regex = MarkdownEscaped(&input.regex);
                 let case_info = if input.case_sensitive {
                     " (case-sensitive)"
                 } else {
@@ -102,9 +102,9 @@ impl AgentTool for GrepTool {
                 };
 
                 if page > 1 {
-                    format!("Get page {page} of search results for regex {regex_str}{case_info}")
+                    format!("Get page {page} of search results for regex {regex}{case_info}")
                 } else {
-                    format!("Search files for regex {regex_str}{case_info}")
+                    format!("Search files for regex {regex}{case_info}")
                 }
             }
             Err(_) => "Search with regex".into(),
@@ -348,6 +348,29 @@ mod tests {
     use settings::SettingsStore;
     use unindent::Unindent;
     use util::path;
+
+    #[gpui::test]
+    async fn test_initial_title_escapes_markdown_in_regex(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let tool = GrepTool::new(project);
+
+        let title = cx.update(|cx| {
+            tool.initial_title(
+                Ok(GrepToolInput {
+                    regex: "__tests__/[a]*".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                }),
+                cx,
+            )
+        });
+
+        assert_eq!(title, "Search files for regex \\_\\_tests\\_\\_/\\[a]\\*");
+    }
 
     #[gpui::test]
     async fn test_grep_tool_with_include_pattern(cx: &mut TestAppContext) {
