@@ -976,6 +976,7 @@ impl VsCodeSettings {
             buffer_font_features: None,
             agent_ui_font_size: None,
             agent_buffer_font_size: None,
+            git_commit_buffer_font_size: None,
             markdown_preview_font_family: None,
             markdown_preview_theme: None,
             theme: None,

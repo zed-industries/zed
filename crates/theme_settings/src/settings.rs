@@ -56,6 +56,7 @@ pub struct ThemeSettings {
     agent_ui_font_size: Option<Pixels>,
     /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
+    git_commit_buffer_font_size: Option<Pixels>,
     /// The font family to use for rendering in the markdown preview.
     /// Falls back to the UI font family if unset.
     markdown_preview_font_family: Option<SharedString>,
@@ -114,6 +115,16 @@ impl Global for AgentUiFontSize {}
 pub struct AgentBufferFontSize(Pixels);
 
 impl Global for AgentBufferFontSize {}
+
+#[derive(Default)]
+pub struct GitPanelBufferFontSize(Pixels);
+
+impl Global for GitPanelBufferFontSize {}
+
+#[derive(Default)]
+pub struct GitModalBufferFontSize(Pixels);
+
+impl Global for GitModalBufferFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -407,6 +418,20 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.buffer_font_size(cx))
     }
 
+    pub fn git_panel_buffer_font_size(&self, cx: &App) -> Pixels {
+        cx.try_global::<GitPanelBufferFontSize>()
+            .map(|size| size.0)
+            .or(self.git_commit_buffer_font_size)
+            .map(clamp_font_size)
+            .unwrap_or_else(|| self.buffer_font_size(cx))
+    }
+
+    pub fn git_modal_buffer_font_size(&self, cx: &App) -> Pixels {
+        cx.try_global::<GitModalBufferFontSize>()
+            .map(|size| clamp_font_size(size.0))
+            .unwrap_or_else(|| self.git_panel_buffer_font_size(cx))
+    }
+
     /// Returns the font family to use in the markdown preview,
     /// falling back to the UI font family when unset.
     pub fn markdown_preview_font_family(&self) -> &SharedString {
@@ -445,6 +470,10 @@ impl ThemeSettings {
     /// Use [`Self::agent_buffer_font_size`] to get the real font size.
     pub fn agent_buffer_font_size_settings(&self) -> Option<Pixels> {
         self.agent_buffer_font_size
+    }
+
+    pub fn git_commit_buffer_font_size_settings(&self) -> Option<Pixels> {
+        self.git_commit_buffer_font_size
     }
 
     /// Returns the buffer's line height.
@@ -596,6 +625,38 @@ pub fn reset_agent_buffer_font_size(cx: &mut App) {
     }
 }
 
+pub fn adjust_git_panel_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let git_panel_buffer_font_size = ThemeSettings::get_global(cx).git_panel_buffer_font_size(cx);
+    let adjusted_size = cx
+        .try_global::<GitPanelBufferFontSize>()
+        .map_or(git_panel_buffer_font_size, |adjusted_size| adjusted_size.0);
+    cx.set_global(GitPanelBufferFontSize(clamp_font_size(f(adjusted_size))));
+    cx.refresh_windows();
+}
+
+pub fn reset_git_panel_buffer_font_size(cx: &mut App) {
+    if cx.has_global::<GitPanelBufferFontSize>() {
+        cx.remove_global::<GitPanelBufferFontSize>();
+        cx.refresh_windows();
+    }
+}
+
+pub fn adjust_git_modal_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let git_modal_buffer_font_size = ThemeSettings::get_global(cx).git_modal_buffer_font_size(cx);
+    let adjusted_size = cx
+        .try_global::<GitModalBufferFontSize>()
+        .map_or(git_modal_buffer_font_size, |adjusted_size| adjusted_size.0);
+    cx.set_global(GitModalBufferFontSize(clamp_font_size(f(adjusted_size))));
+    cx.refresh_windows();
+}
+
+pub fn reset_git_modal_buffer_font_size(cx: &mut App) {
+    if cx.has_global::<GitModalBufferFontSize>() {
+        cx.remove_global::<GitModalBufferFontSize>();
+        cx.refresh_windows();
+    }
+}
+
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
@@ -645,6 +706,7 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
+            git_commit_buffer_font_size: content.git_commit_buffer_font_size.map(|s| s.into_gpui()),
             markdown_preview_font_family: content
                 .markdown_preview_font_family
                 .as_ref()

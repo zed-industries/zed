@@ -39,8 +39,9 @@ use git::{
 use gpui::{
     AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
     Empty, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent,
-    Point, PromptLevel, ScrollStrategy, Subscription, Task, TextStyle, UniformListScrollHandle,
-    WeakEntity, actions, anchored, deferred, point, size, uniform_list,
+    Pixels, Point, PromptLevel, ScrollStrategy, Subscription, Task, TextStyle,
+    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point, px, size,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -61,7 +62,7 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle};
+use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -83,6 +84,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 actions!(
     git_panel,
@@ -3407,6 +3409,54 @@ impl GitPanel {
         }
     }
 
+    fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_font_size_action(action.persist, px(1.0), cx);
+    }
+
+    fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_font_size_action(action.persist, px(-1.0), cx);
+    }
+
+    fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        if persist {
+            update_settings_file(self.fs.clone(), cx, move |settings, cx| {
+                let git_panel_buffer_font_size =
+                    ThemeSettings::get_global(cx).git_panel_buffer_font_size(cx) + delta;
+
+                let _ = settings.theme.git_commit_buffer_font_size.insert(
+                    f32::from(theme_settings::clamp_font_size(git_panel_buffer_font_size)).into(),
+                );
+            });
+        } else {
+            theme_settings::adjust_git_panel_buffer_font_size(cx, |size| size + delta);
+        }
+    }
+
+    fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.persist {
+            update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                settings.theme.git_commit_buffer_font_size = None;
+            });
+        } else {
+            theme_settings::reset_git_panel_buffer_font_size(cx);
+        }
+    }
+
     fn toggle_directory(&mut self, key: &TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.view_mode.tree_state_mut() {
             let expanded = state.expanded_dirs.entry(key.clone()).or_insert(true);
@@ -4408,7 +4458,9 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
-        let panel_editor_style = panel_editor_style(true, window, cx);
+        let settings = ThemeSettings::get_global(cx);
+        let panel_editor_style =
+            git_commit_editor_style(settings.git_panel_buffer_font_size(cx), cx);
         let enable_coauthors = self.render_co_authors(cx);
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let branch = active_repository.read(cx).branch.clone();
@@ -6006,6 +6058,9 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
@@ -6155,42 +6210,20 @@ pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
         .bg(cx.theme().colors().editor_background)
 }
 
-pub(crate) fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorStyle {
+pub(crate) fn git_commit_editor_style(font_size: gpui::Pixels, cx: &App) -> EditorStyle {
     let settings = ThemeSettings::get_global(cx);
-
-    let (font_family, font_fallbacks, font_features, font_size, font_weight, line_height) =
-        if monospace {
-            let font_size = settings.buffer_font_size(cx);
-            (
-                settings.buffer_font.family.clone(),
-                settings.buffer_font.fallbacks.clone(),
-                settings.buffer_font.features.clone(),
-                AbsoluteLength::from(font_size),
-                settings.buffer_font.weight,
-                font_size * settings.buffer_line_height.value(),
-            )
-        } else {
-            (
-                settings.ui_font.family.clone(),
-                settings.ui_font.fallbacks.clone(),
-                settings.ui_font.features.clone(),
-                AbsoluteLength::from(TextSize::Small.rems(cx)),
-                settings.ui_font.weight,
-                window.line_height(),
-            )
-        };
 
     EditorStyle {
         background: cx.theme().colors().editor_background,
         local_player: cx.theme().players().local(),
         text: TextStyle {
             color: cx.theme().colors().text,
-            font_family,
-            font_fallbacks,
-            font_features,
-            font_size,
-            font_weight,
-            line_height: line_height.into(),
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: AbsoluteLength::from(font_size),
+            font_weight: settings.buffer_font.weight,
+            line_height: (font_size * settings.buffer_line_height.value()).into(),
             ..Default::default()
         },
         syntax: cx.theme().syntax().clone(),
@@ -8406,27 +8439,6 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_panel_editor_style_uses_buffer_font_size(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.theme.buffer_font_size = Some(20.0.into());
-                });
-            });
-        });
-
-        cx.add_window(|window, cx| {
-            let style = panel_editor_style(true, window, cx);
-
-            assert_eq!(style.text.font_size.to_pixels(window.rem_size()), px(20.0));
-
-            Editor::single_line(window, cx)
         });
     }
 }
