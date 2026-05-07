@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
-use futures::future::join_all;
+use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
 use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
 use project::{CodeAction, TaskSourceKind};
 use task::TaskContext;
+use text::ToOffset as _;
 
 use ui::{Context, Window, div, prelude::*};
 
@@ -439,61 +440,72 @@ impl Editor {
             return;
         };
 
-        let resolve_tasks = self
-            .visible_buffer_ranges(cx)
-            .into_iter()
-            .filter_map(|(snapshot, visible_range, _)| {
-                let buffer_id = snapshot.remote_id();
-                let buffer = self.buffer.read(cx).buffer(buffer_id)?;
-                let visible_anchor_range = snapshot.anchor_before(visible_range.start)
-                    ..snapshot.anchor_after(visible_range.end);
-                let task = project.update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        lsp_store.resolve_visible_code_lenses(&buffer, visible_anchor_range, cx)
-                    })
+        let lsp_store = project.read(cx).lsp_store();
+
+        let mut per_lens = Vec::new();
+        for (buffer_snapshot, visible_range, _) in self.visible_buffer_ranges(cx) {
+            let buffer_id = buffer_snapshot.remote_id();
+            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+            let Some(actions) = self
+                .code_lens
+                .as_ref()
+                .and_then(|state| state.actions.get(&buffer_id))
+            else {
+                continue;
+            };
+            for action in actions {
+                if action.resolved {
+                    continue;
+                }
+                if let project::LspAction::CodeLens(lens) = &action.lsp_action {
+                    if lens.command.is_some() {
+                        continue;
+                    }
+                }
+                let action_offset = action.range.start.to_offset(&buffer_snapshot);
+                if action_offset < visible_range.start.0 || action_offset > visible_range.end.0 {
+                    continue;
+                }
+                let resolve_task = lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.resolve_code_lens(&buffer, action, cx)
                 });
-                Some((buffer_id, task))
-            })
-            .collect::<Vec<_>>();
-        if resolve_tasks.is_empty() {
+                per_lens.push((buffer_id, resolve_task));
+            }
+        }
+        if per_lens.is_empty() {
             return;
         }
 
         let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
         code_lens.resolve_task = cx.spawn(async move |editor, cx| {
-            let resolved_per_buffer = join_all(
-                resolve_tasks
-                    .into_iter()
-                    .map(|(buffer_id, task)| async move { (buffer_id, task.await) }),
-            )
-            .await;
-            editor
-                .update(cx, |editor, cx| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for (buffer_id, newly_resolved) in resolved_per_buffer {
-                        if newly_resolved.is_empty() {
-                            continue;
-                        }
+            let mut in_flight = per_lens
+                .into_iter()
+                .map(|(buffer_id, task)| async move { (buffer_id, task.await) })
+                .collect::<FuturesUnordered<_>>();
+            while let Some((buffer_id, resolved)) = in_flight.next().await {
+                let Some(resolved) = resolved else { continue };
+                editor
+                    .update(cx, |editor, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
                         let Some(mut actions) = editor
                             .code_lens
                             .as_ref()
                             .and_then(|state| state.actions.get(&buffer_id))
                             .cloned()
                         else {
-                            continue;
+                            return;
                         };
-                        for resolved in newly_resolved {
-                            if let Some(unresolved) = actions.iter_mut().find(|action| {
-                                action.server_id == resolved.server_id
-                                    && action.range == resolved.range
-                            }) {
-                                *unresolved = resolved;
-                            }
+                        if let Some(unresolved) = actions.iter_mut().find(|action| {
+                            action.server_id == resolved.server_id && action.range == resolved.range
+                        }) {
+                            *unresolved = resolved;
                         }
                         editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
-                    }
-                })
-                .ok();
+                    })
+                    .ok();
+            }
         });
     }
 
