@@ -70,7 +70,7 @@ Some implementations are more lenient — they warn but load anyway, on the theo
 
 We deliberately go strict because:
 
-1. The validation rules in the spec are short and easy to follow. A skill that fails them is almost certainly mis-authored, not legitimately diverging.
+1. The validation rules in the spec are short and easy to follow. A skill that fails them is almost certainly authored incorrectly, not legitimately diverging.
 2. Surfacing the error loud-and-early makes skill authoring better. The user fixes the typo and moves on, instead of silently getting an entry in the catalog that doesn't match what they wrote.
 3. Lenient parsing is additive. If we later get reports of legitimate skills failing to load, we can loosen specific checks without breaking anything that currently works.
 
@@ -201,6 +201,16 @@ Override warnings currently go to the log. They could surface in the UI as a ban
 The threat model is prompt injection by way of skill self-modification. If the agent could silently edit a skill's `SKILL.md`, a hostile prompt could persist itself across sessions by writing instructions into a skill the user has installed. Edit gating closes that loop.
 
 Reads are not gated, since the skills themselves expect the model to read their own bundled resources.
+
+## Activation requires authorization
+
+When the model invokes the `skill` tool, the call goes through the same tool-permission flow used by every other built-in tool. By default the user is prompted with the standard Allow Once / Always Allow / Reject options before the body is delivered. The skill name is the input value, so an "Always Allow" choice can be scoped per-skill (only this skill auto-approves) or per-tool (any skill auto-approves), and the user can configure these in settings instead of clicking through prompts.
+
+We match the default behavior of every other prompt-on-use tool (`Confirm`) rather than auto-allowing. Skills are inert by themselves — they're just instructions — but the side effects of the model following those instructions are not, and being on the safer side by default is cheap to recover from. A user who never wants to be prompted for skills can set the per-tool default to `Allow` once.
+
+Slash-command activation does *not* go through this flow. When the user types `/skill-name`, they've explicitly invoked it; prompting again would be redundant. The authorization gate is specifically for the model's autonomous use of the tool.
+
+This composes with `disable-model-invocation` rather than duplicating it: the frontmatter flag is *authoring*-time ("this workflow should never run autonomously"), the authorization prompt is *user*-time ("I want a confirmation step before any model-driven activation"). Both can be on, both can be off, and they cover different threats.
 
 ## Subagent inheritance
 

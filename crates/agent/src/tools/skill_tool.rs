@@ -149,32 +149,50 @@ impl AgentTool for SkillTool {
     fn run(
         self: Arc<Self>,
         input: ToolInput<Self::Input>,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |_cx| {
+        cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| SkillToolOutput::Error {
                 error: e.to_string(),
             })?;
 
-            let Some(skill) = self.find_skill(&input.name) else {
-                return Err(SkillToolOutput::Error {
-                    error: format!(
-                        "Skill '{}' not found. Available skills: {}",
-                        input.name,
-                        self.skills
-                            .iter()
-                            .filter(|s| !s.disable_model_invocation)
-                            .map(|s| s.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                });
+            // Render the envelope synchronously while we still have a
+            // borrow of `self.skills`, so we can drop the borrow before
+            // suspending across the authorization await.
+            let rendered = {
+                let Some(skill) = self.find_skill(&input.name) else {
+                    return Err(SkillToolOutput::Error {
+                        error: format!(
+                            "Skill '{}' not found. Available skills: {}",
+                            input.name,
+                            self.skills
+                                .iter()
+                                .filter(|s| !s.disable_model_invocation)
+                                .map(|s| s.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    });
+                };
+                render_skill_envelope(skill)
             };
 
-            Ok(SkillToolOutput::Found {
-                rendered: render_skill_envelope(skill),
-            })
+            // Activations go through the standard tool-permission flow so
+            // they participate in the same Allow-Once / Always-Allow UX as
+            // every other built-in tool. The skill name is the input value
+            // so the user can say "always allow this specific skill"
+            // distinct from "always allow any skill".
+            let authorize = cx.update(|cx| {
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.name.clone()]);
+                event_stream.authorize(self.initial_title(Ok(input), cx), context, cx)
+            });
+            authorize.await.map_err(|e| SkillToolOutput::Error {
+                error: e.to_string(),
+            })?;
+
+            Ok(SkillToolOutput::Found { rendered })
         })
     }
 }
@@ -187,13 +205,30 @@ mod tests {
     use gpui::TestAppContext;
     use project::Project;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{Settings, SettingsStore};
     use std::path::Path;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            // The skill tool now goes through the standard tool-permission
+            // flow. Most tests below aren't about that flow — they care
+            // about the rendered envelope, name lookup, etc. — so set the
+            // tool's default to Allow to bypass the prompt. The auth-flow
+            // test that does care explicitly overrides this.
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                SkillTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Allow),
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
         });
     }
 
@@ -446,6 +481,95 @@ mod tests {
             err.matches("deploy").count(),
             1,
             "hidden skill name appeared in 'available skills' listing: {err}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_prompts_for_authorization_by_default(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Override the test default (Allow) back to Confirm so we exercise
+        // the prompt flow.
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                SkillTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Confirm),
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let skill = create_test_skill("my-skill", "A test skill", "# Body");
+        let skills = Arc::new(vec![skill]);
+        let tool = Arc::new(SkillTool::new(skills));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "my-skill" }));
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        // The tool must request authorization before producing a result.
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("my-skill"),
+            "auth title should reference the skill name: {title}"
+        );
+
+        // Approve once and confirm the tool then completes successfully.
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                agent_client_protocol::schema::PermissionOptionId::new("allow"),
+                agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let SkillToolOutput::Found { rendered } = task.await.unwrap() else {
+            panic!("expected Found");
+        };
+        assert!(rendered.contains("<skill_content name=\"my-skill\">"));
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_denial_returns_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Per-tool default Deny: the skill tool should error out without
+        // ever rendering an envelope.
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                SkillTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let skill = create_test_skill("my-skill", "A test skill", "# Body");
+        let skills = Arc::new(vec![skill]);
+        let tool = Arc::new(SkillTool::new(skills));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "my-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        let result = task.await;
+        assert!(
+            matches!(result, Err(SkillToolOutput::Error { .. })),
+            "expected denial to surface as an error: {result:?}"
         );
     }
 }
