@@ -1581,7 +1581,7 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SkillsFeatureFlag>() && !self.skills.is_empty() {
-            self.add_tool(SkillTool::new(self.skills.clone(), self.project.clone()));
+            self.add_tool(SkillTool::new(self.skills.clone()));
         }
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));

@@ -112,6 +112,36 @@ fn is_agents_skills_path(path: &Path) -> bool {
     false
 }
 
+/// If `path` is an absolute path under the global skills directory
+/// (`~/.agents/skills`), return the canonicalized absolute path. Returns
+/// `None` for any path that resolves outside the global skills tree, or for
+/// relative paths.
+///
+/// This is the gate that lets `read_file` / `list_directory` reach into the
+/// global skills directory — which lives outside any worktree — without
+/// also opening up arbitrary external paths.
+pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+
+    // Canonicalize both sides so symlinks and `..` segments can't sneak the
+    // path out of the skills tree (and so different but equivalent path
+    // representations match).
+    let canonical_path = fs.canonicalize(path).await.ok()?;
+    let global_skills_dir = agent_skills::global_skills_dir();
+    let canonical_skills_dir = fs
+        .canonicalize(global_skills_dir.as_path())
+        .await
+        .unwrap_or(global_skills_dir);
+
+    if canonical_path.starts_with(&canonical_skills_dir) {
+        Some(canonical_path)
+    } else {
+        None
+    }
+}
+
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
 /// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
 /// the global config dir.
