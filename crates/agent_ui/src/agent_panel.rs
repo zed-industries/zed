@@ -32,6 +32,7 @@ use zed_actions::{
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
+use crate::completion_provider::AgentContextSource;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
@@ -60,17 +61,14 @@ use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
-    Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Task, TaskExt, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
-use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
-use terminal::terminal_settings::TerminalSettings;
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
     Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
@@ -413,61 +411,36 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
-                        let active_editor = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<Editor>(cx));
-                        let has_editor_selection = active_editor.is_some_and(|editor| {
-                            editor.update(cx, |editor, cx| {
-                                editor.has_non_empty_selection(&editor.display_snapshot(cx))
-                            })
-                        });
-
-                        let has_terminal_selection = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<TerminalView>(cx))
-                            .is_some_and(|terminal_view| {
-                                terminal_view
-                                    .read(cx)
-                                    .terminal()
-                                    .read(cx)
-                                    .last_content
-                                    .selection_text
-                                    .as_ref()
-                                    .is_some_and(|text| !text.is_empty())
-                            });
-
-                        let has_terminal_panel_selection =
-                            workspace.panel::<TerminalPanel>(cx).is_some_and(|panel| {
-                                let position = match TerminalSettings::get_global(cx).dock {
-                                    TerminalDockPosition::Left => DockPosition::Left,
-                                    TerminalDockPosition::Bottom => DockPosition::Bottom,
-                                    TerminalDockPosition::Right => DockPosition::Right,
-                                };
-                                let dock_is_open =
-                                    workspace.dock_at_position(position).read(cx).is_open();
-                                dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
-                            });
-
-                        if !has_editor_selection
-                            && !has_terminal_selection
-                            && !has_terminal_panel_selection
-                        {
-                            return;
-                        }
-
-                        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
                             return;
                         };
 
-                        if !panel.focus_handle(cx).contains_focused(window, cx) {
+                        let source = AgentContextSource::from_focused(workspace, window, cx);
+                        let source = source.or_else(|| {
+                            let cached = agent_panel.read(cx).last_context_source.clone()?;
+                            cached.exists(workspace, cx).then_some(cached)
+                        });
+                        let source =
+                            source.or_else(|| AgentContextSource::from_active(workspace, cx));
+
+                        let Some(source) = source else {
+                            return;
+                        };
+
+                        let Some(selection) = source.read_selection(workspace, true, cx) else {
+                            return;
+                        };
+
+                        if !agent_panel.focus_handle(cx).contains_focused(window, cx) {
                             workspace.toggle_panel_focus::<AgentPanel>(window, cx);
                         }
 
-                        panel.update(cx, |_, cx| {
+                        agent_panel.update(cx, |panel, cx| {
+                            panel.last_context_source = Some(source);
                             cx.defer_in(window, move |panel, window, cx| {
                                 if let Some(conversation_view) = panel.active_conversation_view() {
                                     conversation_view.update(cx, |conversation_view, cx| {
-                                        conversation_view.insert_selections(window, cx);
+                                        conversation_view.insert_selection(selection, window, cx);
                                     });
                                 }
                             });
@@ -707,6 +680,7 @@ pub struct AgentPanel {
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
+    last_context_source: Option<AgentContextSource>,
 }
 
 impl AgentPanel {
@@ -1065,6 +1039,7 @@ impl AgentPanel {
             _base_view_observation: None,
             _draft_editor_observation: None,
             _thread_metadata_store_subscription,
+            last_context_source: None,
         };
 
         // Initial sync of agent servers from extensions
@@ -2597,31 +2572,26 @@ impl AgentPanel {
     }
 
     fn active_initial_content(&self, cx: &App) -> Option<AgentInitialContent> {
-        self.active_thread_view(cx).and_then(|thread_view| {
+        let thread_view = self.active_thread_view(cx)?;
+        let thread_view = thread_view.read(cx);
+        let saved = thread_view
+            .thread
+            .read(cx)
+            .draft_prompt()
+            .map(|blocks| blocks.to_vec())
+            .filter(|blocks| !blocks.is_empty());
+        let blocks = saved.unwrap_or_else(|| {
             thread_view
+                .message_editor
                 .read(cx)
-                .thread
-                .read(cx)
-                .draft_prompt()
-                .map(|draft| AgentInitialContent::ContentBlock {
-                    blocks: draft.to_vec(),
-                    auto_submit: false,
-                })
-                .filter(|initial_content| match initial_content {
-                    AgentInitialContent::ContentBlock { blocks, .. } => !blocks.is_empty(),
-                    _ => true,
-                })
-                .or_else(|| {
-                    let text = thread_view.read(cx).message_editor.read(cx).text(cx);
-                    if text.trim().is_empty() {
-                        None
-                    } else {
-                        Some(AgentInitialContent::ContentBlock {
-                            blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
-                            auto_submit: false,
-                        })
-                    }
-                })
+                .draft_content_blocks_snapshot(cx)
+        });
+        if blocks.is_empty() {
+            return None;
+        }
+        Some(AgentInitialContent::ContentBlock {
+            blocks,
+            auto_submit: false,
         })
     }
 

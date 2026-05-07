@@ -215,6 +215,7 @@ message GitDeleteBranch {
   uint64 repository_id = 2;
   string branch_name = 3;
   bool is_remote = 4;
+  bool force = 5;
 }
 
 message GitDiff {
@@ -703,6 +704,30 @@ message GitLogSource {
     string sha = 3;
     string path = 4;
   }
+}
+
+message GetInitialGraphData {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  GitLogSource log_source = 3;
+
+  enum LogOrder {
+    DATE_ORDER = 0;
+    TOPO_ORDER = 1;
+    AUTHOR_DATE_ORDER = 2;
+    REVERSE_CHRONOLOGICAL = 3;
+  }
+  LogOrder log_order = 4;
+}
+
+message InitialGraphCommit {
+  string sha = 1;
+  repeated string parents = 2;
+  repeated string ref_names = 3;
+}
+
+message GetInitialGraphDataResponse {
+  repeated InitialGraphCommit commits = 1;
 }
 
 message SearchCommits {

@@ -18,8 +18,8 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Task, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
+    VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
@@ -6865,6 +6865,40 @@ async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_convert_to_base64(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Encode a plain text selection
+    cx.set_state(indoc! {"
+        «helloˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_base64(&ConvertToBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+
+    // Decode a valid base64 selection
+    cx.set_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ»
+    "});
+
+    // Decode invalid base64 — should leave text unchanged
+    cx.set_state(indoc! {"
+        «not!!!ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «not!!!ˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8139,7 +8173,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8544,7 +8578,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8570,7 +8604,7 @@ async fn test_rewrap_line_comment_in_go(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -8598,7 +8632,7 @@ async fn test_rewrap_line_comment_in_c(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ

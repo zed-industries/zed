@@ -22,8 +22,8 @@ mod visual;
 use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    NavigationOverlayKey, NavigationTargetOverlay, SelectionEffects,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, MultiBufferOffset, NavigationOverlayKey,
+    NavigationTargetOverlay, SelectionEffects,
     actions::Paste,
     display_map::ToDisplayPoint,
     movement::{self, FindRange},
@@ -1089,10 +1089,6 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx)
-                });
-
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
@@ -2213,7 +2209,9 @@ impl Vim {
             autoindent: self.should_autoindent(),
             cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
             line_mode: matches!(self.mode, Mode::VisualLine),
-            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
+            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace)
+                && !(self.mode.is_normal()
+                    && VimSettings::get_global(cx).show_edit_predictions_in_normal_mode),
         }
     }
 
@@ -2263,6 +2261,7 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
+    pub show_edit_predictions_in_normal_mode: bool,
 }
 
 /// Cursor shape configuration for insert mode.
@@ -2350,6 +2349,7 @@ impl Settings for VimSettings {
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
+            show_edit_predictions_in_normal_mode: vim.show_edit_predictions_in_normal_mode.unwrap(),
         }
     }
 }
