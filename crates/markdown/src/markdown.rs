@@ -2140,7 +2140,7 @@ impl Element for MarkdownElement {
                         builder.table.end_row();
                     }
                     MarkdownTagEnd::TableCell => {
-                        builder.replace_pending_checkbox(self.on_checkbox_toggle.clone());
+                        builder.replace_pending_checkbox(range, self.on_checkbox_toggle.clone());
                         builder.pop_div();
                         builder.pop_div();
                         builder.pop_text_style();
@@ -2700,7 +2700,11 @@ impl MarkdownElementBuilder {
         }
     }
 
-    fn replace_pending_checkbox(&mut self, on_toggle: Option<CheckboxToggleCallback>) {
+    fn replace_pending_checkbox(
+        &mut self,
+        source_range: &Range<usize>,
+        on_toggle: Option<CheckboxToggleCallback>,
+    ) {
         let text = &self.pending_line.text;
         let trimmed = text.trim();
         if trimmed != "[x]" && trimmed != "[X]" && trimmed != "[ ]" {
@@ -2710,9 +2714,10 @@ impl MarkdownElementBuilder {
 
         let leading_ws = text.len() - text.trim_start().len();
         let marker_rendered = leading_ws..leading_ws + trimmed.len();
-        let marker_source = self
-            .source_range_for_rendered(&marker_rendered)
-            .expect("pending checkbox text must have source mappings");
+        let marker_source = self.source_range_for_rendered(&marker_rendered);
+        let checkbox_source = marker_source
+            .clone()
+            .unwrap_or_else(|| source_range.clone());
 
         self.pending_line = PendingLine::default();
 
@@ -2725,7 +2730,7 @@ impl MarkdownElementBuilder {
             ElementId::Name(
                 format!(
                     "table_checkbox_{}_{}",
-                    marker_source.start, marker_source.end
+                    checkbox_source.start, checkbox_source.end
                 )
                 .into(),
             ),
@@ -2733,7 +2738,7 @@ impl MarkdownElementBuilder {
         )
         .fill();
 
-        let element = if let Some(on_toggle) = on_toggle {
+        let checkbox = if let (Some(on_toggle), Some(marker_source)) = (on_toggle, marker_source) {
             checkbox
                 .on_click(move |_state, window, cx| {
                     on_toggle(marker_source.clone(), !checked, window, cx);
@@ -2742,7 +2747,18 @@ impl MarkdownElementBuilder {
         } else {
             checkbox.visualization_only(true).into_any_element()
         };
-        self.div_stack.last_mut().unwrap().extend([element]);
+
+        let mut checkbox_container = h_flex().w_full();
+        checkbox_container = match self.text_style().text_align {
+            TextAlign::Left => checkbox_container.justify_start(),
+            TextAlign::Center => checkbox_container.justify_center(),
+            TextAlign::Right => checkbox_container.justify_end(),
+        };
+
+        self.div_stack
+            .last_mut()
+            .unwrap()
+            .extend([checkbox_container.child(checkbox).into_any_element()]);
     }
 
     fn source_range_for_rendered(&self, rendered: &Range<usize>) -> Option<Range<usize>> {
