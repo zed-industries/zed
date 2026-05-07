@@ -270,11 +270,11 @@ impl Editor {
             SelectMode::Word(range) | SelectMode::Line(range) => range.clone(),
         };
 
-        let mut pending_selection = self
-            .selections
-            .pending_anchor()
-            .cloned()
-            .expect("extend_selection not called with pending selection");
+        let Some((mut pending_selection, mut pending_mode)) = self.pending_selection_and_mode()
+        else {
+            log::error!("extend_selection dispatched with no pending selection");
+            return;
+        };
 
         if pending_selection
             .start
@@ -292,7 +292,6 @@ impl Editor {
             pending_selection.reversed = true;
         }
 
-        let mut pending_mode = self.selections.pending_mode().unwrap();
         match &mut pending_mode {
             SelectMode::Word(range) | SelectMode::Line(range) => *range = current_selection,
             _ => {}
@@ -486,11 +485,10 @@ impl Editor {
 
         if self.columnar_selection_state.is_some() {
             self.select_columns(position, goal_column, &display_map, window, cx);
-        } else if let Some(mut pending) = self.selections.pending_anchor().cloned() {
+        } else if let Some((mut pending, mode)) = self.pending_selection_and_mode() {
             let buffer = display_map.buffer_snapshot();
             let head;
             let tail;
-            let mode = self.selections.pending_mode().unwrap();
             match &mode {
                 SelectMode::Character => {
                     head = position.to_point(&display_map);
@@ -890,5 +888,12 @@ impl Editor {
             s.select_ranges(ranges);
         });
         cx.notify();
+    }
+
+    fn pending_selection_and_mode(&self) -> Option<(Selection<Anchor>, SelectMode)> {
+        Some((
+            self.selections.pending_anchor()?.clone(),
+            self.selections.pending_mode()?,
+        ))
     }
 }
