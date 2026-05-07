@@ -278,9 +278,7 @@ impl Editor {
     pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
         &self.context_menu
     }
-}
 
-impl Editor {
     fn debug_scenarios(
         &mut self,
         resolved_tasks: &Option<ResolvedTasks>,
@@ -321,9 +319,7 @@ impl Editor {
         })
         .unwrap_or_else(|| Task::ready(vec![]))
     }
-}
 
-impl Editor {
     pub(super) fn render_inline_code_actions(
         &self,
         icon_size: ui::IconSize,

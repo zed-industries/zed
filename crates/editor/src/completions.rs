@@ -97,9 +97,7 @@ impl Editor {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })
     }
-}
 
-impl Editor {
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) =
@@ -369,9 +367,7 @@ impl Editor {
             Ok(())
         }))
     }
-}
 
-impl Editor {
     pub(super) fn trigger_completion_on_input(
         &mut self,
         text: &str,
@@ -1485,10 +1481,8 @@ impl Editor {
             None
         }
     }
-}
 
-#[cfg(test)]
-impl Editor {
+    #[cfg(test)]
     pub(super) fn disable_word_completions(&mut self) {
         self.word_completions_enabled = false;
     }
