@@ -50,6 +50,7 @@ pub(crate) type A11yActionListener =
 /// Manages the AccessKit tree that is built each frame and the mappings
 /// needed to dispatch incoming action requests back to the right elements.
 pub(crate) struct A11y {
+    pub(crate) active: bool,
     pub(crate) nodes: A11yNodeBuilder,
     pub(crate) focus_ids: FxHashMap<accesskit::NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<accesskit::NodeId, Bounds<Pixels>>,
@@ -60,6 +61,7 @@ pub(crate) struct A11y {
 impl A11y {
     pub(crate) fn new() -> Self {
         Self {
+            active: false,
             nodes: A11yNodeBuilder::new(),
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),

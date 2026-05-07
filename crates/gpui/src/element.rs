@@ -452,22 +452,23 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let bounds = window.layout_bounds(layout_id);
-
                 let mut pushed_a11y_node = false;
-                if let Some(global_id) = global_id.as_ref() {
-                    if let Some(role) = self.element.a11y_role() {
-                        let node_id = global_id.accesskit_node_id();
-                        let mut node = accesskit::Node::new(role);
-                        let scale = window.scale_factor();
-                        node.set_bounds(accesskit::Rect {
-                            x0: (bounds.origin.x.0 * scale) as f64,
-                            y0: (bounds.origin.y.0 * scale) as f64,
-                            x1: ((bounds.origin.x.0 + bounds.size.width.0) * scale) as f64,
-                            y1: ((bounds.origin.y.0 + bounds.size.height.0) * scale) as f64,
-                        });
-                        self.element.write_a11y_info(&mut node);
-                        window.a11y.node_bounds.insert(node_id, bounds);
-                        pushed_a11y_node = window.a11y.nodes.push(node_id, node);
+                if window.a11y.active {
+                    if let Some(global_id) = global_id.as_ref() {
+                        if let Some(role) = self.element.a11y_role() {
+                            let node_id = global_id.accesskit_node_id();
+                            let mut node = accesskit::Node::new(role);
+                            let scale = window.scale_factor();
+                            node.set_bounds(accesskit::Rect {
+                                x0: (bounds.origin.x.0 * scale) as f64,
+                                y0: (bounds.origin.y.0 * scale) as f64,
+                                x1: ((bounds.origin.x.0 + bounds.size.width.0) * scale) as f64,
+                                y1: ((bounds.origin.y.0 + bounds.size.height.0) * scale) as f64,
+                            });
+                            self.element.write_a11y_info(&mut node);
+                            window.a11y.node_bounds.insert(node_id, bounds);
+                            pushed_a11y_node = window.a11y.nodes.push(node_id, node);
+                        }
                     }
                 }
 

@@ -2633,7 +2633,10 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
-        self.a11y.begin_frame();
+        self.a11y.active = self.platform_window.is_a11y_active();
+        if self.a11y.active {
+            self.a11y.begin_frame();
+        }
 
         let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
         let root_size = {
@@ -2702,8 +2705,10 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
 
-        let tree_update = self.a11y.end_frame();
-        self.platform_window.a11y_tree_update(tree_update);
+        if self.a11y.active {
+            let tree_update = self.a11y.end_frame();
+            self.platform_window.a11y_tree_update(tree_update);
+        }
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -5232,11 +5237,6 @@ impl Window {
     /// with the window, for others it's just a simple global function call.
     pub fn play_system_bell(&self) {
         self.platform_window.play_system_bell()
-    }
-
-    /// Check if accessibility is currently active for this window.
-    pub fn is_a11y_active(&self) -> bool {
-        self.platform_window.is_a11y_active()
     }
 
     /// Register a listener for an accessibility action on a specific node.

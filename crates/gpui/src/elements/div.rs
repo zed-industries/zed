@@ -1999,11 +1999,13 @@ impl Interactivity {
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
 
-            if let Some(global_id) = global_id {
-                let node_id = global_id.accesskit_node_id();
-                window.a11y.focus_ids.insert(node_id, focus_handle.id);
-                if focus_handle.is_focused(window) {
-                    window.a11y.nodes.set_focus(node_id);
+            if window.a11y.active {
+                if let Some(global_id) = global_id {
+                    let node_id = global_id.accesskit_node_id();
+                    window.a11y.focus_ids.insert(node_id, focus_handle.id);
+                    if focus_handle.is_focused(window) {
+                        window.a11y.nodes.set_focus(node_id);
+                    }
                 }
             }
         }
@@ -2231,14 +2233,17 @@ impl Interactivity {
 
                                         self.paint_keyboard_listeners(window, cx);
 
-                                        if let Some(global_id) = global_id {
-                                            if !self.a11y_action_listeners.is_empty() {
-                                                let node_id = global_id.accesskit_node_id();
-                                                for (action, listener) in
-                                                    self.a11y_action_listeners.drain(..)
-                                                {
-                                                    window
-                                                        .on_a11y_action(node_id, action, listener);
+                                        if window.a11y.active {
+                                            if let Some(global_id) = global_id {
+                                                if !self.a11y_action_listeners.is_empty() {
+                                                    let node_id = global_id.accesskit_node_id();
+                                                    for (action, listener) in
+                                                        self.a11y_action_listeners.drain(..)
+                                                    {
+                                                        window.on_a11y_action(
+                                                            node_id, action, listener,
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
