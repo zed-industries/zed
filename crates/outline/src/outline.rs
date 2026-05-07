@@ -4,7 +4,7 @@ use std::{cmp, sync::Arc};
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
-use fuzzy::StringMatch;
+use fuzzy_nucleo::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
@@ -934,7 +934,7 @@ mod tests {
     fn outline_names(
         outline_view: &Entity<Picker<OutlineViewDelegate>>,
         cx: &mut VisualTestContext,
-    ) -> Vec<String> {
+    ) -> Vec<SharedString> {
         outline_view.read_with(cx, |outline_view, _| {
             let items = &outline_view.delegate.outline.items;
             outline_view

@@ -1,7 +1,7 @@
 use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
-use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{BackgroundExecutor, HighlightStyle};
-use std::ops::Range;
+use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
+use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
+use std::{ops::Range, sync::atomic::AtomicBool};
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
@@ -17,7 +17,7 @@ pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
     pub source_range_for_text: Range<T>,
-    pub text: String,
+    pub text: SharedString,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
     pub body_range: Option<Range<T>>,
@@ -161,7 +161,7 @@ impl<T> Outline<T> {
         if similarity >= SIMILARITY_THRESHOLD {
             self.path_candidates
                 .get(position)
-                .map(|candidate| SymbolPath(candidate.string.clone()))
+                .map(|candidate| SymbolPath(candidate.string.to_string()))
                 .zip(self.items.get(position))
         } else {
             None
@@ -172,21 +172,19 @@ impl<T> Outline<T> {
     pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
         let query = query.trim_start();
         let is_path_query = query.contains(' ');
-        let smart_case = query.chars().any(|c| c.is_uppercase());
-        let mut matches = fuzzy::match_strings(
+        let mut matches = fuzzy_nucleo::match_strings_async(
             if is_path_query {
                 &self.path_candidates
             } else {
                 &self.candidates
             },
             query,
-            smart_case,
-            true,
+            Case::Smart,
+            LengthPenalty::On,
             100,
-            &Default::default(),
-            executor.clone(),
-        )
-        .await;
+            &AtomicBool::new(false),
+            executor
+        ).await;
         matches.sort_unstable_by_key(|m| m.candidate_id);
 
         let mut tree_matches = Vec::new();
@@ -290,7 +288,7 @@ mod tests {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 9),
-                text: "class Foo".to_string(),
+                text: "class Foo".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![6..9],
                 body_range: None,
@@ -300,7 +298,7 @@ mod tests {
                 depth: 0,
                 range: Point::new(2, 0)..Point::new(2, 7),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 7),
-                text: "private".to_string(),
+                text: "private".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![],
                 body_range: None,
@@ -313,8 +311,8 @@ mod tests {
                 .await
                 .into_iter()
                 .map(|mat| mat.string)
-                .collect::<Vec<String>>(),
-            vec!["class Foo".to_string()]
+                .collect::<Vec<SharedString>>(),
+            vec![SharedString::from("class Foo")]
         );
     }
 
@@ -325,7 +323,7 @@ mod tests {
                 depth: 0,
                 range: Point::new(0, 0)..Point::new(5, 0),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 10),
-                text: "fn process".to_string(),
+                text: "fn process".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![3..10],
                 body_range: None,
@@ -335,7 +333,7 @@ mod tests {
                 depth: 0,
                 range: Point::new(7, 0)..Point::new(12, 0),
                 source_range_for_text: Point::new(0, 0)..Point::new(0, 20),
-                text: "struct DataProcessor".to_string(),
+                text: "struct DataProcessor".into(),
                 highlight_ranges: vec![],
                 name_ranges: vec![7..20],
                 body_range: None,

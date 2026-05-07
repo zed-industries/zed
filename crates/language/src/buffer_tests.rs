@@ -864,7 +864,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(&outline, "dp p", cx).await,
         &[
-            ("impl Drop for Person", vec![5, 8, 9, 14]),
+            ("impl Drop for Person", vec![5, 14]),
             ("fn drop", vec![]),
         ]
     );
@@ -875,8 +875,8 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         search(&outline, "impl ", cx).await,
         &[
-            ("impl Eq for Person", vec![0, 1, 2, 3, 4]),
-            ("impl Drop for Person", vec![0, 1, 2, 3, 4]),
+            ("impl Eq for Person", vec![0, 1, 2, 3]),
+            ("impl Drop for Person", vec![0, 1, 2, 3]),
             ("fn drop", vec![]),
         ]
     );
@@ -999,7 +999,7 @@ fn test_outline_annotations(cx: &mut App) {
             .items
             .into_iter()
             .map(|item| (
-                item.text,
+                item.text.to_string(),
                 item.depth,
                 item.annotation_range
                     .map(|range| { buffer.read(cx).text_for_range(range).collect::<String>() })
@@ -1099,7 +1099,7 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|item| {
                 (
-                    item.text,
+                    item.text.to_string(),
                     item.range.start.to_point(snapshot)..item.range.end.to_point(snapshot),
                 )
             })
