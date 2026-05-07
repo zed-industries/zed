@@ -729,6 +729,15 @@ pub struct SearchCommitArgs {
     pub case_sensitive: bool,
 }
 
+pub fn delete_branch_flag(is_remote_tracking_ref: bool, force: bool) -> &'static str {
+    match (is_remote_tracking_ref, force) {
+        (true, true) => "-Dr",
+        (true, false) => "-dr",
+        (false, true) => "-D",
+        (false, false) => "-d",
+    }
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -806,7 +815,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         is_remote: bool,
         name: String,
-        force_delete: bool,
+        force: bool,
     ) -> BoxFuture<'_, Result<()>>;
     fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn push_tag(
@@ -2368,18 +2377,13 @@ impl GitRepository for RealGitRepository {
         &self,
         is_remote: bool,
         name: String,
-        force_delete: bool,
+        force: bool,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
-                let flag = match (is_remote, force_delete) {
-                    (true, true) => "-Dr",
-                    (true, false) => "-dr",
-                    (false, true) => "-D",
-                    (false, false) => "-d",
-                };
+                let flag = delete_branch_flag(is_remote, force);
                 git_binary?.run(&["branch", flag, &name]).await?;
                 anyhow::Ok(())
             })

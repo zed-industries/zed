@@ -37,7 +37,7 @@ use git::{
         CreateWorktreeTarget, DiffType, DropCommitSupport, FetchOptions, GitCommitTemplate,
         GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
         PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree,
+        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -3034,11 +3034,11 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let is_remote = envelope.payload.is_remote;
         let branch_name = envelope.payload.branch_name;
-        let force_delete = envelope.payload.force_delete;
+        let force = envelope.payload.force;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(is_remote, branch_name, force_delete)
+                repository_handle.delete_branch(is_remote, branch_name, force)
             })
             .await??;
 
@@ -7659,29 +7659,18 @@ impl Repository {
         &mut self,
         is_remote: bool,
         branch_name: String,
-        force_delete: bool,
+        force: bool,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
+        let flag = delete_branch_flag(is_remote, force);
         self.send_job(
-            Some(
-                format!(
-                    "git branch {} {}",
-                    match (is_remote, force_delete) {
-                        (true, true) => "-Dr",
-                        (true, false) => "-dr",
-                        (false, true) => "-D",
-                        (false, false) => "-d",
-                    },
-                    branch_name
-                )
-                .into(),
-            ),
+            Some(format!("git branch {flag} {branch_name}").into()),
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(state) => {
                         state
                             .backend
-                            .delete_branch(is_remote, branch_name, force_delete)
+                            .delete_branch(is_remote, branch_name, force)
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -7691,7 +7680,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 is_remote,
                                 branch_name,
-                                force_delete,
+                                force,
                             })
                             .await?;
 

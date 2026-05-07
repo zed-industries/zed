@@ -527,6 +527,7 @@
       "space w d": "pane::SplitDown", // not a helix default
 
       // Space mode
+      "space b": "tab_switcher::ToggleAll",
       "space f": "file_finder::Toggle",
       "space k": "editor::Hover",
       "space s": "outline::Toggle",

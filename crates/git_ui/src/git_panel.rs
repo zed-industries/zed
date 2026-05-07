@@ -2244,7 +2244,7 @@ impl GitPanel {
         let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
         let wrapped_message = editor.update(cx, |editor, cx| {
             editor.select_all(&Default::default(), window, cx);
-            editor.rewrap_impl(
+            editor.rewrap(
                 RewrapOptions {
                     override_language_settings: false,
                     preserve_existing_whitespace: true,

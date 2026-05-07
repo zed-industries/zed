@@ -607,10 +607,7 @@ impl ContextServerStore {
 
         let server = state.server();
         let configuration = state.configuration();
-        let mut result = Ok(());
-        if let ContextServerState::Running { server, .. } = &state {
-            result = server.stop();
-        }
+        let result = server.stop();
         drop(state);
 
         self.update_server_state(

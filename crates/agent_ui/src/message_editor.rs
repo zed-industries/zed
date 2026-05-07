@@ -677,7 +677,7 @@ impl MessageEditor {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).is_empty(cx)
+        self.editor.read(cx).text(cx).trim().is_empty()
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
