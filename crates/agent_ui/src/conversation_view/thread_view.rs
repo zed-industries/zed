@@ -4114,6 +4114,21 @@ impl ThreadView {
                         }),
                 )
                 .item(
+                    ContextMenuEntry::new("External File")
+                        .icon(IconName::FolderOpen)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::XSmall)
+                        .handler({
+                            let message_editor = message_editor.clone();
+                            move |window, cx| {
+                                message_editor.focus_handle(cx).focus(window, cx);
+                                message_editor.update(cx, |editor, cx| {
+                                    editor.add_external_files_from_picker(window, cx);
+                                });
+                            }
+                        }),
+                )
+                .item(
                     ContextMenuEntry::new("Symbols")
                         .icon(IconName::Code)
                         .icon_color(Color::Muted)
