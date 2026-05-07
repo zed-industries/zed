@@ -592,6 +592,7 @@ impl TestServer {
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                zed_cloud_internal_api_key: "test-internal-api-key".into(),
                 blob_store_url: None,
                 blob_store_region: None,
                 blob_store_access_key: None,

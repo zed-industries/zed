@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
+use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
+use cloud_api_types::internal_api::{
+    self, LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
+};
 use rpc::proto;
 
 use crate::Result;
@@ -33,6 +37,149 @@ pub trait UserService: Send + Sync + 'static {
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeUserService> {
         panic!("called as_fake on a real `UserService`");
+    }
+}
+
+/// A [`UserService`] implementation for transitioning from reading from the database to reading from Cloud.
+pub struct TransitionalUserService {
+    cloud_user_service: CloudUserService,
+    database_user_service: DatabaseUserService,
+}
+
+impl TransitionalUserService {
+    pub fn new(
+        cloud_user_service: CloudUserService,
+        database_user_service: DatabaseUserService,
+    ) -> Self {
+        Self {
+            cloud_user_service,
+            database_user_service,
+        }
+    }
+}
+
+#[async_trait]
+impl UserService for TransitionalUserService {
+    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
+        self.cloud_user_service.get_users_by_ids(ids).await
+    }
+
+    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+        self.database_user_service
+            .get_user_by_github_login(github_login)
+            .await
+    }
+
+    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
+        self.database_user_service
+            .fuzzy_search_users(query, limit)
+            .await
+    }
+
+    async fn search_channel_members(
+        &self,
+        channel: &Channel,
+        query: &str,
+        limit: u32,
+    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
+        self.database_user_service
+            .search_channel_members(channel, query, limit)
+            .await
+    }
+}
+
+/// A [`UserService`] implementation backed by Cloud.
+pub struct CloudUserService {
+    http_client: reqwest::Client,
+    zed_cloud_url: String,
+    internal_api_key: String,
+}
+
+impl CloudUserService {
+    pub fn new(
+        http_client: reqwest::Client,
+        zed_cloud_url: String,
+        internal_api_key: String,
+    ) -> Self {
+        Self {
+            http_client,
+            zed_cloud_url,
+            internal_api_key,
+        }
+    }
+}
+
+#[async_trait]
+impl UserService for CloudUserService {
+    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
+        let response = self
+            .http_client
+            .post(format!(
+                "{}/internal/users/look_up_by_legacy_id",
+                &self.zed_cloud_url
+            ))
+            .header("Content-Type", "application/json")
+            .header(
+                "Authorization",
+                format!("Bearer {}", &self.internal_api_key),
+            )
+            .json(&LookUpUsersByLegacyIdBody {
+                legacy_user_ids: ids.into_iter().map(|id| id.0).collect(),
+            })
+            .send()
+            .await
+            .context("failed to get users by legacy IDs")?;
+
+        match response.error_for_status() {
+            Ok(response) => {
+                let response_body: LookUpUsersByLegacyIdResponse = response
+                    .json()
+                    .await
+                    .context("failed to parse response body")?;
+
+                Ok(response_body.users.into_iter().map(User::from).collect())
+            }
+            Err(_err) => Err(anyhow!("failed to get users by legacy IDs"))?,
+        }
+    }
+
+    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+        let _ = github_login;
+
+        unimplemented!("not yet implemented in Cloud")
+    }
+
+    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
+        let _ = query;
+        let _ = limit;
+
+        unimplemented!("not yet implemented in Cloud")
+    }
+
+    async fn search_channel_members(
+        &self,
+        channel: &Channel,
+        query: &str,
+        limit: u32,
+    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
+        let _ = channel;
+        let _ = query;
+        let _ = limit;
+
+        unimplemented!("not yet implemented in Cloud")
+    }
+}
+
+impl From<internal_api::User> for User {
+    fn from(user: internal_api::User) -> Self {
+        Self {
+            id: UserId(user.legacy_user_id),
+            github_login: user.github_login,
+            github_user_id: user.github_user_id,
+            name: user.name,
+            admin: user.admin,
+            connected_once: user.connected_once,
+        }
     }
 }
 

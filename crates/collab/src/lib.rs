@@ -20,7 +20,9 @@ use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
 
-use crate::services::{DatabaseUserService, UserService};
+use crate::services::{
+    CloudUserService, DatabaseUserService, TransitionalUserService, UserService,
+};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -139,6 +141,7 @@ pub struct Config {
     pub kinesis_access_key: Option<String>,
     pub kinesis_secret_key: Option<String>,
     pub zed_environment: Arc<str>,
+    pub zed_cloud_internal_api_key: String,
     pub zed_client_checksum_seed: Option<String>,
 }
 
@@ -176,6 +179,7 @@ impl Config {
             rust_log: None,
             log_json: None,
             zed_environment: "test".into(),
+            zed_cloud_internal_api_key: "test-internal-api-key".into(),
             blob_store_url: None,
             blob_store_region: None,
             blob_store_access_key: None,
@@ -252,7 +256,7 @@ impl AppState {
         let db = Arc::new(db);
         let this = Self {
             db: db.clone(),
-            http_client: Some(http_client),
+            http_client: Some(http_client.clone()),
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             executor,
@@ -261,7 +265,19 @@ impl AppState {
             } else {
                 None
             },
-            user_service: Arc::new(DatabaseUserService::new(db)),
+            user_service: {
+                let database_user_service = DatabaseUserService::new(db);
+                let cloud_user_service = CloudUserService::new(
+                    http_client,
+                    config.zed_cloud_url().to_string(),
+                    config.zed_cloud_internal_api_key.clone(),
+                );
+
+                Arc::new(TransitionalUserService::new(
+                    cloud_user_service,
+                    database_user_service,
+                ))
+            },
             config,
         };
         Ok(Arc::new(this))
