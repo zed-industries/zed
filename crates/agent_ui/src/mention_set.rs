@@ -178,6 +178,16 @@ impl MentionSet {
         self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
     }
 
+    /// Returns the resolved mention for a crease, if any.
+    pub fn resolved_mention_for_crease(
+        &self,
+        crease_id: &CreaseId,
+    ) -> Option<(MentionUri, Option<Mention>)> {
+        let (uri, task) = self.mentions.get(crease_id)?;
+        let mention = task.clone().now_or_never().and_then(|result| result.ok());
+        Some((uri.clone(), mention))
+    }
+
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
         self.mentions = mentions;
     }

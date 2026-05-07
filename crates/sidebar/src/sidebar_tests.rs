@@ -33,13 +33,17 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
+fn enable_agent_panel_terminal(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+    });
+}
+
 #[track_caller]
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     let active = sidebar.active_entry.as_ref();
     let matches = active.is_some_and(|entry| {
-        // Match by session_id directly on active_entry.
-        entry.session_id.as_ref() == Some(session_id)
-            // Or match by finding the thread in sidebar entries.
+        matches!(entry, ActiveEntry::Thread { session_id: Some(active_session_id), .. } if active_session_id == session_id)
             || sidebar.contents.entries.iter().any(|list_entry| {
                 matches!(list_entry, ListEntry::Thread(t)
                     if t.metadata.session_id.as_ref() == Some(session_id)
@@ -67,7 +71,7 @@ fn is_active_session(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
         });
     match thread_id {
         Some(tid) => {
-            matches!(&sidebar.active_entry, Some(ActiveEntry { thread_id, .. }) if *thread_id == tid)
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { thread_id, .. }) if *thread_id == tid)
         }
         // Thread not in sidebar entries — can't confirm it's active.
         None => false,
@@ -77,7 +81,7 @@ fn is_active_session(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
 #[track_caller]
 fn assert_active_draft(sidebar: &Sidebar, workspace: &Entity<Workspace>, msg: &str) {
     assert!(
-        matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == workspace),
+        matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { workspace: ws, .. }) if ws == workspace),
         "{msg}: expected active_entry to be Draft for workspace {:?}, got {:?}",
         workspace.entity_id(),
         sidebar.active_entry,
@@ -145,6 +149,12 @@ fn assert_remote_project_integration_sidebar_state(
                 panic!(
                     "unexpected sidebar thread while simulating remote project integration flicker: title=`{}`",
                     title
+                );
+            }
+            ListEntry::Terminal(terminal) => {
+                panic!(
+                    "unexpected sidebar terminal while simulating remote project integration flicker: title=`{}`",
+                    terminal.title
                 );
             }
         }
@@ -516,6 +526,10 @@ fn visible_entries_as_strings(
                             };
                             format!("  {title}{worktree}{live}{status_str}{notified}{selected}")
                         }
+                    }
+                    ListEntry::Terminal(terminal) => {
+                        let title = &terminal.title;
+                        format!("  {title}{selected}")
                     }
                 }
             })
@@ -1406,6 +1420,150 @@ fn setup_sidebar_with_agent_panel(
     let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
     let panel = add_agent_panel(&workspace, cx);
     (sidebar, panel)
+}
+
+#[gpui::test]
+async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Dev Server"]
+    );
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id: active_terminal_id, .. }) if *active_terminal_id == terminal_id),
+            "expected active terminal entry, got {:?}",
+            sidebar.active_entry,
+        );
+        assert!(
+            sidebar.contents.entries.iter().any(|entry| {
+                matches!(entry, ListEntry::Terminal(terminal) if terminal.id == terminal_id && terminal.title.as_ref() == "Dev Server")
+            }),
+            "expected the inserted terminal to appear in sidebar contents",
+        );
+    });
+
+    type_in_search(&sidebar, "server", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Dev Server  <== selected"]
+    );
+
+    type_in_search(&sidebar, "missing", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        Vec::<String>::new()
+    );
+}
+
+#[gpui::test]
+async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(panel.active_terminal_id(), Some(server_terminal_id));
+    });
+
+    panel.update(cx, |panel, cx| {
+        panel.emit_test_terminal_bell(build_terminal_id, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, cx| {
+        assert!(sidebar.has_notifications(cx));
+        assert!(sidebar.contents.notified_terminals.contains(&build_terminal_id));
+        assert!(sidebar.contents.entries.iter().any(|entry| {
+            matches!(entry, ListEntry::Terminal(terminal) if terminal.id == build_terminal_id && terminal.has_notification)
+        }));
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.activate_terminal(build_terminal_id, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, cx| {
+        assert!(!sidebar.has_notifications(cx));
+        assert!(
+            !sidebar
+                .contents
+                .notified_terminals
+                .contains(&build_terminal_id)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_closing_active_agent_panel_terminal_activates_neighbor(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.close_terminal(&workspace, server_terminal_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.has_terminal(server_terminal_id));
+        assert_eq!(panel.active_terminal_id(), Some(build_terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id, .. }) if *terminal_id == build_terminal_id),
+            "expected remaining terminal to become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Build"]
+    );
 }
 
 #[gpui::test]
@@ -2740,7 +2898,7 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // because the panel has a thread with messages.
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { .. })),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
             "Panel has a thread with messages, so active_entry should be Thread, got {:?}",
             sidebar.active_entry,
         );
@@ -2776,7 +2934,7 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // false — the panel still has the old thread with messages.
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { .. })),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
             "After adding a folder the panel still has a thread with messages, \
                  so active_entry should be Thread, got {:?}",
             sidebar.active_entry,
@@ -3871,6 +4029,12 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                     panic!(
                         "unexpected sidebar thread while opening linked worktree thread: title=`{}`, worktree=`{}`",
                         title, worktree_name
+                    );
+                }
+                ListEntry::Terminal(terminal) => {
+                    panic!(
+                        "unexpected sidebar terminal while opening linked worktree thread: title=`{}`",
+                        terminal.title
                     );
                 }
             }
@@ -6241,7 +6405,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // active_entry should still be a draft on workspace_b (the active one).
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == &workspace_b),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { workspace: ws, .. }) if ws == &workspace_b),
             "expected Draft(workspace_b) after archiving non-active thread, got: {:?}",
             sidebar.active_entry,
         );
@@ -6278,7 +6442,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // sidebar row but active_entry tracks it.
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == &workspace_b),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { workspace: ws, .. }) if ws == &workspace_b),
             "expected draft on workspace_b after archiving active thread, got: {:?}",
             sidebar.active_entry,
         );
@@ -9773,7 +9937,7 @@ mod property_test {
         // 3. The entry must match the agent panel's current state.
         if panel.read(cx).active_thread_id(cx).is_some() {
             anyhow::ensure!(
-                matches!(entry, ActiveEntry { .. }),
+                matches!(entry, ActiveEntry::Thread { .. }),
                 "panel shows a tracked draft but active_entry is {:?}",
                 entry,
             );
@@ -9783,7 +9947,7 @@ mod property_test {
             .map(|cv| cv.read(cx).parent_id())
         {
             anyhow::ensure!(
-                matches!(entry, ActiveEntry { thread_id: tid, .. } if *tid == thread_id),
+                matches!(entry, ActiveEntry::Thread { thread_id: tid, .. } if *tid == thread_id),
                 "panel has thread {:?} but active_entry is {:?}",
                 thread_id,
                 entry,
@@ -9795,8 +9959,11 @@ mod property_test {
         //    a draft, which is represented by the + button's active state
         //    rather than a sidebar row.
         // TODO: Make this check more complete
-        let is_draft = panel.read(cx).active_thread_is_draft(cx)
-            || panel.read(cx).active_conversation_view().is_none();
+        // Active terminals must still match a row, so don't treat the absence
+        // of a conversation view as "draft" when a terminal is active.
+        let is_draft = panel.read(cx).active_terminal_id().is_none()
+            && (panel.read(cx).active_thread_is_draft(cx)
+                || panel.read(cx).active_conversation_view().is_none());
         if is_draft {
             return Ok(());
         }

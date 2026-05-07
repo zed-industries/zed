@@ -121,6 +121,14 @@ actions!(
 );
 
 actions!(
+    dev,
+    [
+        /// Shows the current git job queue debug state for the active repository.
+        ShowGitJobQueue,
+    ]
+);
+
+actions!(
     git_graph,
     [
         /// Opens the Git Graph Tab.
@@ -257,6 +265,13 @@ pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &git::Init, window, cx| {
         if let Some(panel) = workspace.panel::<GitPanel>(cx) {
             panel.update(cx, |panel, cx| panel.git_init(window, cx));
+        }
+    });
+    workspace.register_action(|workspace, _: &ShowGitJobQueue, window, cx| {
+        if let Some(panel) = workspace.panel::<GitPanel>(cx) {
+            panel.update(cx, |panel, cx| {
+                panel.show_git_job_queue(window, cx);
+            });
         }
     });
 }
@@ -3878,6 +3893,74 @@ impl GitPanel {
             return;
         };
         show_error_toast(workspace, action, e, cx)
+    }
+
+    fn show_git_job_queue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.as_ref() else {
+            let workspace = self.workspace.clone();
+            cx.defer(move |cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct GitJobQueueToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                NotificationId::unique::<GitJobQueueToast>(),
+                                "No active repository",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            });
+            return;
+        };
+
+        let repo_path = repo.read(cx).work_directory_abs_path.display().to_string();
+        let text = repo.read(cx).job_debug_queue().to_debug_string();
+        let title = format!("Git Job Queue: {repo_path}");
+
+        let json_language = self.project.read(cx).languages().language_for_name("JSON");
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| {
+                let json_language = json_language.await.ok();
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.create_buffer(json_language, false, cx)
+                    })
+                    .await?;
+
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_text(text, cx);
+                    buffer.set_capability(language::Capability::ReadWrite, cx);
+                });
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let buffer =
+                        cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.clone()));
+
+                    workspace.add_item_to_active_pane(
+                        Box::new(cx.new(|cx| {
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                            editor.set_breadcrumb_header(title);
+                            editor.disable_mouse_wheel_zoom();
+                            editor
+                        })),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     fn show_commit_message_error<E>(weak_this: &WeakEntity<Self>, err: &E, cx: &mut AsyncApp)

@@ -2515,6 +2515,9 @@
     "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
+    // When enabled, edit predictions are shown in Vim normal mode.
+    // By default, edit predictions are only shown in insert and replace modes.
+    "show_edit_predictions_in_normal_mode": false,
     // Cursor shape for each mode.
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
     "cursor_shape": {

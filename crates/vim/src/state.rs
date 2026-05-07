@@ -79,6 +79,10 @@ impl Mode {
     pub fn is_helix(&self) -> bool {
         matches!(self, Self::HelixNormal | Self::HelixSelect)
     }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal | Self::HelixNormal)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
