@@ -1,10 +1,11 @@
 use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
 
 use acp_thread::MentionUri;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use gpui::{
-    Animation, AnimationExt, AnyView, Context, IntoElement, WeakEntity, Window, pulsating_between,
+    Animation, AnimationExt, AnyView, Context, IntoElement, TaskExt, WeakEntity, Window,
+    pulsating_between,
 };
 use prompt_store::PromptId;
 use rope::Point;

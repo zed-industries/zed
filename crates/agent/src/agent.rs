@@ -1,5 +1,4 @@
 mod db;
-mod edit_agent;
 mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
@@ -28,7 +27,7 @@ use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse, TokenUsageRatio, UserMessageId,
 };
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -38,7 +37,7 @@ use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
-    WeakEntity,
+    TaskExt, WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{AgentId, Project, ProjectItem, ProjectPath, Worktree};
@@ -47,7 +46,7 @@ use prompt_store::{
     WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, update_settings_file};
+use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -591,6 +590,7 @@ impl NativeAgent {
         let tree = worktree.read(cx);
         let root_name = tree.root_name_str().into();
         let abs_path = tree.abs_path();
+        let scan_complete = tree.as_local().map(|local| local.scan_complete());
 
         let mut context = WorktreeContext {
             root_name,
@@ -598,20 +598,24 @@ impl NativeAgent {
             rules_file: None,
         };
 
-        let rules_task = Self::load_worktree_rules_file(worktree, project, cx);
-        let Some(rules_task) = rules_task else {
-            return Task::ready((context, None));
-        };
+        cx.spawn(async move |cx| {
+            if let Some(scan_complete) = scan_complete {
+                scan_complete.await;
+            }
 
-        cx.spawn(async move |_| {
-            let (rules_file, rules_file_error) = match rules_task.await {
-                Ok(rules_file) => (Some(rules_file), None),
-                Err(err) => (
-                    None,
-                    Some(RulesLoadingError {
-                        message: format!("{err}").into(),
-                    }),
-                ),
+            let rules_task = cx.update(|cx| Self::load_worktree_rules_file(worktree, project, cx));
+
+            let (rules_file, rules_file_error) = match rules_task {
+                Some(rules_task) => match rules_task.await {
+                    Ok(rules_file) => (Some(rules_file), None),
+                    Err(err) => (
+                        None,
+                        Some(RulesLoadingError {
+                            message: format!("{err}").into(),
+                        }),
+                    ),
+                },
+                None => (None, None),
             };
             context.rules_file = rules_file;
             (context, rules_file_error)
@@ -755,10 +759,9 @@ impl NativeAgent {
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
-                let should_update_model = thread.model().is_none()
-                    || (thread.is_empty()
-                        && matches!(event, language_model::Event::DefaultModelChanged));
-                if should_update_model && let Some(model) = default_model.clone() {
+                if thread.model().is_none()
+                    && let Some(model) = default_model.clone()
+                {
                     thread.set_model(model, cx);
                     cx.notify();
                 }
@@ -1305,7 +1308,9 @@ impl NativeAgentConnection {
                                     {
                                         response
                                             .send(outcome)
-                                            .map(|_| anyhow!("authorization receiver was dropped"))
+                                            .map_err(|_| {
+                                                anyhow!("authorization receiver was dropped")
+                                            })
                                             .log_err();
                                     }
                                 })
@@ -1423,16 +1428,29 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
-        // We want to reset the effort level when switching models, as the currently-selected effort level may
-        // not be compatible.
-        let effort = model
-            .default_effort_level()
-            .map(|effort_level| effort_level.value.to_string());
+        let favorite = agent_settings::AgentSettings::get_global(cx)
+            .favorite_models
+            .iter()
+            .find(|favorite| {
+                favorite.provider.0 == model.provider_id().0.as_ref()
+                    && favorite.model == model.id().0.as_ref()
+            })
+            .cloned();
+
+        let LanguageModelSelection {
+            enable_thinking,
+            effort,
+            speed,
+            ..
+        } = agent_settings::language_model_to_selection(&model, favorite.as_ref());
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_thinking_effort(effort.clone(), cx);
-            thread.set_thinking_enabled(model.supports_thinking(), cx);
+            thread.set_thinking_enabled(enable_thinking, cx);
+            if let Some(speed) = speed {
+                thread.set_speed(speed, cx);
+            }
         });
 
         update_settings_file(
@@ -1724,14 +1742,14 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 
 pub struct NativeAgentSessionList {
     thread_store: Entity<ThreadStore>,
-    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
-    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
+    updates_tx: async_channel::Sender<acp_thread::SessionListUpdate>,
+    updates_rx: async_channel::Receiver<acp_thread::SessionListUpdate>,
     _subscription: Subscription,
 }
 
 impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let this_tx = tx.clone();
         let subscription = cx.observe(&thread_store, move |_, _| {
             this_tx
@@ -1783,7 +1801,7 @@ impl AgentSessionList for NativeAgentSessionList {
     fn watch(
         &self,
         _cx: &mut App,
-    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
+    ) -> Option<async_channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 

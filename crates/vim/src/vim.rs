@@ -22,8 +22,8 @@ mod visual;
 use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    SelectionEffects,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, MultiBufferOffset, NavigationOverlayKey,
+    NavigationTargetOverlay, SelectionEffects,
     actions::Paste,
     display_map::ToDisplayPoint,
     movement::{self, FindRange},
@@ -33,9 +33,7 @@ use gpui::{
     KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{
-    CharKind, CharScopeContext, CursorShape, Point, Selection, SelectionGoal, TransactionId,
-};
+use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use multi_buffer::ToPoint as _;
@@ -48,7 +46,9 @@ use settings::RegisterSetting;
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
-use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
+use state::{
+    HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, RecordedSelection, SearchState, VimGlobals,
+};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme_settings::ThemeSettings;
@@ -61,6 +61,11 @@ use crate::{
     normal::{GoToPreviousTab, GoToTab},
     state::ReplayableAction,
 };
+
+enum HelixJumpNavigationOverlay {}
+
+pub(crate) const HELIX_JUMP_OVERLAY_KEY: NavigationOverlayKey =
+    NavigationOverlayKey::unique::<HelixJumpNavigationOverlay>();
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
@@ -967,7 +972,9 @@ impl Vim {
                     Mode::Replace => vim.paste_replace(window, cx),
                     Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                         vim.selected_register.replace('+');
-                        vim.paste(&VimPaste::default(), window, cx);
+                        let mut action = VimPaste::default();
+                        action.preserve_clipboard = true;
+                        vim.paste(&action, window, cx);
                     }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
@@ -1082,10 +1089,6 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx)
-                });
-
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
@@ -1595,32 +1598,6 @@ impl Vim {
         .unwrap_or_default()
     }
 
-    fn editor_cursor_word(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<String> {
-        self.update_editor(cx, |_, editor, cx| {
-            let snapshot = &editor.snapshot(window, cx);
-            let selection = editor
-                .selections
-                .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
-
-            let snapshot = snapshot.buffer_snapshot();
-            let (range, kind) =
-                snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
-            if kind == Some(CharKind::Word) {
-                let text: String = snapshot.text_for_range(range).collect();
-                if !text.trim().is_empty() {
-                    return Some(text);
-                }
-            }
-
-            None
-        })
-        .unwrap_or_default()
-    }
-
     /// When doing an action that modifies the buffer, we start recording so that `.`
     /// will replay the action.
     pub fn start_recording(&mut self, cx: &mut Context<Self>) {
@@ -1759,11 +1736,118 @@ impl Vim {
     }
 
     fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.active_operator(), Some(Operator::HelixJump { .. })) {
+            self.clear_helix_jump_ui(window, cx);
+        }
         Vim::take_count(cx);
         Vim::take_forced_motion(cx);
         self.selected_register.take();
         self.operator_stack.clear();
         self.sync_vim_settings(window, cx);
+    }
+
+    fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(cx, move |_, editor, cx| {
+            editor.clear_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, cx);
+        });
+    }
+
+    fn apply_helix_jump_ui(
+        &mut self,
+        overlays: Vec<NavigationTargetOverlay>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.clear_helix_jump_ui(window, cx);
+        self.update_editor(cx, |_, editor, cx| {
+            editor.set_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, overlays, cx);
+        })
+        .is_some()
+    }
+
+    fn handle_helix_jump_input(
+        &mut self,
+        operator: Operator,
+        input_char: char,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Operator::HelixJump {
+            behaviour,
+            first_char,
+            labels,
+        } = operator
+        else {
+            return;
+        };
+
+        let input = input_char.to_ascii_lowercase();
+        self.pop_operator(window, cx);
+
+        if let Some(first) = first_char {
+            let first = first.to_ascii_lowercase();
+            if let Some(candidate) = labels.into_iter().find(|label| {
+                label.label[0].eq_ignore_ascii_case(&first)
+                    && label.label[1].eq_ignore_ascii_case(&input)
+            }) {
+                self.finish_helix_jump(candidate, behaviour, window, cx);
+            } else {
+                self.clear_helix_jump_ui(window, cx);
+            }
+        } else {
+            if !labels
+                .iter()
+                .any(|label| label.label[0].eq_ignore_ascii_case(&input))
+            {
+                self.clear_helix_jump_ui(window, cx);
+                return;
+            }
+
+            self.push_operator(
+                Operator::HelixJump {
+                    behaviour,
+                    first_char: Some(input),
+                    labels,
+                },
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn finish_helix_jump(
+        &mut self,
+        candidate: HelixJumpLabel,
+        behaviour: HelixJumpBehaviour,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| match behaviour {
+            HelixJumpBehaviour::Move => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchor_ranges([candidate.range.clone()])
+                });
+            }
+            HelixJumpBehaviour::Extend => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(&mut |map, selection| {
+                        let word_start = candidate.range.start.to_display_point(map);
+                        let word_end = candidate.range.end.to_display_point(map);
+                        let tail = selection.tail();
+
+                        if word_start >= tail {
+                            // Jumping forward: extend head to end of target word
+                            selection.set_head(word_end, SelectionGoal::None);
+                        } else {
+                            // Jumping backward: extend backward while keeping current extent
+                            // Use current end as tail to preserve the selection
+                            selection.set_head_tail(word_start, selection.end, SelectionGoal::None);
+                        }
+                    });
+                });
+            }
+        });
+        self.clear_helix_jump_ui(window, cx);
     }
 
     fn active_operator(&self) -> Option<Operator> {
@@ -1946,6 +2030,11 @@ impl Vim {
                     self.push_operator(Operator::SneakBackward { first_char }, window, cx);
                 }
             }
+            Some(operator @ Operator::HelixJump { .. }) => {
+                if let Some(input_char) = text.chars().next() {
+                    self.handle_helix_jump_input(operator, input_char, window, cx);
+                }
+            }
             Some(Operator::Replace) => match self.mode {
                 Mode::Normal => self.normal_replace(text, window, cx),
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
@@ -2120,7 +2209,9 @@ impl Vim {
             autoindent: self.should_autoindent(),
             cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
             line_mode: matches!(self.mode, Mode::VisualLine),
-            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
+            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace)
+                && !(self.mode.is_normal()
+                    && VimSettings::get_global(cx).show_edit_predictions_in_normal_mode),
         }
     }
 
@@ -2170,6 +2261,7 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
+    pub show_edit_predictions_in_normal_mode: bool,
 }
 
 /// Cursor shape configuration for insert mode.
@@ -2257,6 +2349,7 @@ impl Settings for VimSettings {
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
+            show_edit_predictions_in_normal_mode: vim.show_edit_predictions_in_normal_mode.unwrap(),
         }
     }
 }

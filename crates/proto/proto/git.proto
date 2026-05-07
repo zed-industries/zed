@@ -125,8 +125,11 @@ message UpdateRepository {
   repeated StashEntry stash_entries = 13;
   optional string remote_upstream_url = 14;
   optional string remote_origin_url = 15;
-  optional string original_repo_abs_path = 16;
+  reserved 16;
   repeated Worktree linked_worktrees = 17;
+  repeated Branch branch_list = 18;
+  optional string repository_dir_abs_path = 19;
+  optional string common_dir_abs_path = 20;
 }
 
 message RemoveRepository {
@@ -177,6 +180,7 @@ message GitCreateBranch {
   reserved 2;
   uint64 repository_id = 3;
   string branch_name = 4;
+  optional string base_branch = 5;
 }
 
 message GitChangeBranch {
@@ -211,6 +215,7 @@ message GitDeleteBranch {
   uint64 repository_id = 2;
   string branch_name = 3;
   bool is_remote = 4;
+  bool force = 5;
 }
 
 message GitDiff {
@@ -308,29 +313,6 @@ message GitCheckoutFiles {
   uint64 repository_id = 3;
   string commit = 4;
   repeated string paths = 5;
-}
-
-message GitFileHistory {
-  uint64 project_id = 1;
-  reserved 2;
-  uint64 repository_id = 3;
-  string path = 4;
-  uint64 skip = 5;
-  optional uint64 limit = 6;
-}
-
-message GitFileHistoryResponse {
-  repeated FileHistoryEntry entries = 1;
-  string path = 2;
-}
-
-message FileHistoryEntry {
-  string sha = 1;
-  string subject = 2;
-  string message = 3;
-  int64 commit_timestamp = 4;
-  string author_name = 5;
-  string author_email = 6;
 }
 
 // Move to `git.proto` once collab's min version is >=0.171.0.
@@ -691,4 +673,71 @@ message RunGitHook {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   GitHook hook = 3;
+}
+
+message GetCommitData {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  repeated string shas = 3;
+}
+
+message CommitData {
+  string sha = 1;
+  repeated string parents = 2;
+  string author_name = 3;
+  string author_email = 4;
+  int64 commit_timestamp = 5;
+  string subject = 6;
+  string message = 7;
+}
+
+message GetCommitDataResponse {
+  repeated CommitData commits = 1;
+}
+
+message GitLogSourceAll {}
+
+message GitLogSource {
+  oneof source {
+    GitLogSourceAll all = 1;
+    string branch = 2;
+    string sha = 3;
+    string path = 4;
+  }
+}
+
+message GetInitialGraphData {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  GitLogSource log_source = 3;
+
+  enum LogOrder {
+    DATE_ORDER = 0;
+    TOPO_ORDER = 1;
+    AUTHOR_DATE_ORDER = 2;
+    REVERSE_CHRONOLOGICAL = 3;
+  }
+  LogOrder log_order = 4;
+}
+
+message InitialGraphCommit {
+  string sha = 1;
+  repeated string parents = 2;
+  repeated string ref_names = 3;
+}
+
+message GetInitialGraphDataResponse {
+  repeated InitialGraphCommit commits = 1;
+}
+
+message SearchCommits {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  GitLogSource log_source = 3;
+  string query = 4;
+  bool case_sensitive = 5;
+}
+
+message SearchCommitsResponse {
+  repeated string shas = 1;
 }

@@ -293,7 +293,7 @@ pub(crate) fn parse_markdown_with_options(
                             attrs,
                         }
                     }
-                    pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
+                    pulldown_cmark::Tag::BlockQuote(kind) => MarkdownTag::BlockQuote(kind),
                     pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
                     pulldown_cmark::Tag::Item => MarkdownTag::Item,
                     pulldown_cmark::Tag::FootnoteDefinition(label) => {
@@ -652,7 +652,7 @@ pub enum MarkdownTag {
         attrs: Vec<(SharedString, Option<SharedString>)>,
     },
 
-    BlockQuote,
+    BlockQuote(Option<pulldown_cmark::BlockQuoteKind>),
 
     /// A code block.
     CodeBlock {
@@ -1299,5 +1299,34 @@ mod tests {
         assert!(parsed.heading_slugs.contains_key("foo"));
         assert!(parsed.heading_slugs.contains_key("foo-1"));
         assert!(parsed.heading_slugs.contains_key("foo-1-1"));
+    }
+
+    #[test]
+    fn test_gfm_alert_block_quote_kinds() {
+        use pulldown_cmark::BlockQuoteKind;
+
+        let markdown = "\n> [!NOTE]\n> A note.\n\n> [!TIP]\n> A tip.\n\n> [!IMPORTANT]\n> Important.\n\n> [!WARNING]\n> A warning.\n\n> [!CAUTION]\n> A caution.\n\n> Plain quote.\n";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        let block_quote_kinds: Vec<_> = parsed
+            .events
+            .iter()
+            .filter_map(|(_, event)| match event {
+                Start(BlockQuote(kind)) => Some(*kind),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            block_quote_kinds,
+            vec![
+                Some(BlockQuoteKind::Note),
+                Some(BlockQuoteKind::Tip),
+                Some(BlockQuoteKind::Important),
+                Some(BlockQuoteKind::Warning),
+                Some(BlockQuoteKind::Caution),
+                None,
+            ]
+        );
     }
 }

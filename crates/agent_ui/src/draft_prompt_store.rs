@@ -4,7 +4,7 @@
 //! but their unsent prompt text is kept separately here so we don't have to
 //! plumb draft-prompt storage through the native agent's thread database.
 
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::Context as _;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Task};

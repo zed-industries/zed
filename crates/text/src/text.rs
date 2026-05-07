@@ -38,7 +38,7 @@ use std::{
 };
 pub use subscription::*;
 pub use sum_tree::Bias;
-use sum_tree::{Dimensions, FilterCursor, SumTree, TreeMap, TreeSet};
+use sum_tree::{Dimensions, FilterCursor, SumTree, Summary, TreeMap, TreeSet};
 use undo_map::UndoMap;
 use util::debug_panic;
 
@@ -912,7 +912,8 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>(&None);
-        let mut new_fragments = old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right);
+        let mut new_fragments =
+            FragmentBuilder::new(old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right));
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
@@ -1044,7 +1045,7 @@ impl Buffer {
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
-        self.snapshot.fragments = new_fragments;
+        self.snapshot.fragments = new_fragments.to_sum_tree(&None);
         self.snapshot.insertions.edit(new_insertions, ());
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
@@ -1127,8 +1128,9 @@ impl Buffer {
         let mut old_fragments = self
             .fragments
             .cursor::<Dimensions<VersionedFullOffset, usize>>(&cx);
-        let mut new_fragments =
-            old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left);
+        let mut new_fragments = FragmentBuilder::new(
+            old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left),
+        );
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().0.full_offset();
@@ -1291,7 +1293,7 @@ impl Buffer {
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
-        self.snapshot.fragments = new_fragments;
+        self.snapshot.fragments = new_fragments.to_sum_tree(&None);
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.snapshot.insertions.edit(new_insertions, ());
@@ -1303,7 +1305,7 @@ impl Buffer {
         new_text: &str,
         timestamp: clock::Lamport,
         insertion_offset: &mut u32,
-        new_fragments: &mut SumTree<Fragment>,
+        new_fragments: &mut FragmentBuilder,
         new_insertions: &mut Vec<sum_tree::Edit<InsertionFragment>>,
         insertion_slices: &mut Vec<InsertionSlice>,
         new_ropes: &mut RopeBuilder,
@@ -2833,6 +2835,39 @@ impl BufferSnapshot {
         debug::GlobalDebugRanges::with_locked(|debug_ranges| {
             debug_ranges.insert(key, ranges, format!("{value:?}").into());
         });
+    }
+}
+
+struct FragmentBuilder {
+    fragments: Vec<Fragment>,
+    summary: FragmentSummary,
+}
+
+impl FragmentBuilder {
+    fn new(init: SumTree<Fragment>) -> Self {
+        Self {
+            summary: init.summary().clone(),
+            fragments: init.iter().cloned().collect(),
+        }
+    }
+    fn append(&mut self, items: SumTree<Fragment>, cx: &Option<clock::Global>) {
+        if !items.is_empty() {
+            self.summary.add_summary(items.summary(), cx);
+            self.fragments.extend(items.iter().cloned());
+        }
+    }
+    fn push(&mut self, fragment: Fragment, cx: &Option<clock::Global>) {
+        self.append(SumTree::from_item(fragment, cx), cx);
+    }
+    fn to_sum_tree(self, cx: &Option<clock::Global>) -> SumTree<Fragment> {
+        if self.fragments.len() > 1024 {
+            SumTree::from_par_iter(self.fragments, cx)
+        } else {
+            SumTree::from_iter(self.fragments, cx)
+        }
+    }
+    fn summary(&self) -> &FragmentSummary {
+        &self.summary
     }
 }
 

@@ -1,11 +1,11 @@
-use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx::Context};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
-    steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
+    steps::{self, FluentBuilder, NamedJob, TokenPermissions, dependant_job, named, release_job},
     vars::{self, JobOutput, StepOutput, assets},
 };
 
@@ -58,12 +58,14 @@ pub(crate) fn release() -> Workflow {
     };
 
     let upload_release_assets = upload_release_assets(&[&create_draft_release], &bundle);
-    let validate_release_assets = validate_release_assets(
+    let validate_release_assets = validate_release_assets(&[&upload_release_assets]);
+    let release_compliance = release_compliance_check(
         &[&upload_release_assets, &non_blocking_compliance_run],
         job_output,
     );
 
-    let auto_release_preview = auto_release_preview(&[&validate_release_assets]);
+    let (auto_release_preview, auto_release_published) =
+        auto_release_preview(&[&validate_release_assets, &release_compliance]);
 
     let test_jobs = [
         &macos_tests,
@@ -78,7 +80,9 @@ pub(crate) fn release() -> Workflow {
         &create_draft_release,
         &upload_release_assets,
         &validate_release_assets,
+        &release_compliance,
         &auto_release_preview,
+        &auto_release_published,
         &test_jobs,
         &bundle,
     );
@@ -108,6 +112,7 @@ pub(crate) fn release() -> Workflow {
         })
         .add_job(upload_release_assets.name, upload_release_assets.job)
         .add_job(validate_release_assets.name, validate_release_assets.job)
+        .add_job(release_compliance.name, release_compliance.job)
         .add_job(auto_release_preview.name, auto_release_preview.job)
         .add_job(push_slack_notification.name, push_slack_notification.job)
 }
@@ -185,7 +190,7 @@ pub(crate) fn add_compliance_steps(
     fn run_compliance_check(context: &ComplianceContext) -> (Step<Run>, StepOutput) {
         let job = named::bash(
             formatdoc! {r#"
-                cargo xtask compliance {target} --report-path "{COMPLIANCE_REPORT_PATH}"
+                cargo xtask compliance version {target} --report-path "{COMPLIANCE_REPORT_PATH}"
                 "#,
                 target = if context.tag_source().is_some() { r#""$LATEST_TAG" --branch main"# } else { r#""$GITHUB_REF_NAME""# },
             }
@@ -250,11 +255,11 @@ pub(crate) fn add_compliance_steps(
             ComplianceContext::Release {
                 non_blocking_outcome,
             } => Expression::new(format!(
-                "failure() || {prior_outcome} != 'success'",
+                "${{{{ failure() || {prior_outcome} != 'success' }}}}",
                 prior_outcome = non_blocking_outcome.expr()
             )),
             ComplianceContext::Scheduled { .. } | ComplianceContext::ReleaseNonBlocking => {
-                Expression::new("always()")
+                Expression::new("${{ always() }}")
             }
         })
         .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
@@ -308,7 +313,7 @@ fn compliance_check() -> (NamedJob, JobOutput) {
     (compliance_job, check_result)
 }
 
-fn validate_release_assets(deps: &[&NamedJob], context_check_result: JobOutput) -> NamedJob {
+fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
     let expected_assets: Vec<String> = assets::all().iter().map(|a| format!("\"{a}\"")).collect();
     let expected_assets_json = format!("[{}]", expected_assets.join(", "));
 
@@ -330,9 +335,16 @@ fn validate_release_assets(deps: &[&NamedJob], context_check_result: JobOutput) 
         "#,
     };
 
+    named::job(
+        dependant_job(deps).runs_on(runners::LINUX_SMALL).add_step(
+            named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
+        ),
+    )
+}
+
+fn release_compliance_check(deps: &[&NamedJob], non_blocking_outcome: JobOutput) -> NamedJob {
     let job = dependant_job(deps)
-        .runs_on(runners::LINUX_SMALL)
-        .add_step(named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)))
+        .runs_on(runners::LINUX_LARGE)
         .add_step(
             steps::checkout_repo()
                 .with_full_history()
@@ -340,34 +352,80 @@ fn validate_release_assets(deps: &[&NamedJob], context_check_result: JobOutput) 
         )
         .add_step(steps::cache_rust_dependencies_namespace());
 
-    named::job(
-        add_compliance_steps(
-            job,
-            ComplianceContext::Release {
-                non_blocking_outcome: context_check_result,
-            },
-        )
-        .0,
-    )
+    let (job, _) = add_compliance_steps(
+        job,
+        ComplianceContext::Release {
+            non_blocking_outcome,
+        },
+    );
+
+    named::job(job)
 }
 
-fn auto_release_preview(deps: &[&NamedJob]) -> NamedJob {
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+fn auto_release_preview(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
+    fn auto_release_preview(token: &StepOutput) -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            tag="$GITHUB_REF_NAME"
+            release_published=false
 
-    named::job(
+            if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-pre$ ]]; then
+                echo "::error::expected preview release tag in the form vMAJOR.MINOR.PATCH-pre, got $tag"
+                exit 1
+            fi
+
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            should_release=true
+
+            released_preview="$(script/get-released-version preview)"
+            if [[ -z "$released_preview" || "$released_preview" == "null" ]]; then
+                echo "::error::could not determine released preview version"
+                exit 1
+            fi
+
+            released_preview_major="$(echo "$released_preview" | cut -d. -f1)"
+            released_preview_minor="$(echo "$released_preview" | cut -d. -f2)"
+
+            if [[ "$released_preview_major" != "$major" || "$released_preview_minor" != "$minor" ]]; then
+                should_release=false
+                echo "Leaving $tag as a draft because it is the first preview release for v${major}.${minor}.x"
+            fi
+
+            if [[ "$should_release" == "true" ]]; then
+                gh release edit "$tag" --repo=zed-industries/zed --draft=false
+                release_published=true
+            fi
+
+            echo "release_published=$release_published" >> "$GITHUB_OUTPUT"
+        "#})
+        .id("auto-release-preview")
+        .add_env(("GITHUB_TOKEN", token))
+    }
+
+    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let auto_release_preview_step = auto_release_preview(&token);
+    let release_published = StepOutput::new(&auto_release_preview_step, "release_published");
+
+    let job = named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
             .cond(Expression::new(indoc::indoc!(
-                r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')"#
+                r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre')"#
             )))
             .add_step(authenticate)
             .add_step(
-                steps::script(
-                    r#"gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false"#,
-                )
-                .add_env(("GITHUB_TOKEN", &token)),
+                steps::checkout_repo()
+                    .with_token(&token)
+                    .with_ref(Context::github().ref_()),
             )
-    )
+            .add_step(auto_release_preview_step)
+            .outputs([(
+                release_published.name.to_owned(),
+                release_published.to_string(),
+            )]),
+    );
+    let release_published = release_published.as_job_output(&job);
+    (job, release_published)
 }
 
 pub(crate) fn download_workflow_artifacts() -> Step<Use> {
@@ -413,10 +471,14 @@ fn create_draft_release() -> NamedJob {
         )
     }
 
-    fn create_release() -> Step<Run> {
+    fn create_release(token: StepOutput) -> Step<Run> {
         named::bash("script/create-draft-release target/release-notes.md")
-            .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
+            .add_env(("GITHUB_TOKEN", token.to_string()))
     }
+
+    let (authenticate_step, token) = steps::authenticate_as_zippy()
+        .with_permissions([(TokenPermissions::Contents, Level::Write)])
+        .into();
 
     named::job(
         release_job(&[])
@@ -425,6 +487,7 @@ fn create_draft_release() -> NamedJob {
             // is able to diff between the current and previous tag.
             //
             // 25 was chosen arbitrarily.
+            .add_step(authenticate_step)
             .add_step(
                 steps::checkout_repo()
                     .with_custom_fetch_depth(25)
@@ -433,7 +496,7 @@ fn create_draft_release() -> NamedJob {
             .add_step(steps::script("script/determine-release-channel"))
             .add_step(steps::script("mkdir -p target/"))
             .add_step(generate_release_notes())
-            .add_step(create_release()),
+            .add_step(create_release(token)),
     )
 }
 
@@ -441,7 +504,9 @@ pub(crate) fn push_release_update_notification(
     create_draft_release_job: &NamedJob,
     upload_assets_job: &NamedJob,
     validate_assets_job: &NamedJob,
+    compliance_job: &NamedJob,
     auto_release_preview: &NamedJob,
+    auto_release_published: &JobOutput,
     test_jobs: &[&NamedJob],
     bundle_jobs: &ReleaseBundleJobs,
 ) -> NamedJob {
@@ -469,10 +534,19 @@ pub(crate) fn push_release_update_notification(
             format!("${{{{ needs.{}.result }}}}", validate_assets_job.name),
         ),
         (
+            "COMPLIANCE_RESULT".into(),
+            format!("${{{{ needs.{}.result }}}}", compliance_job.name),
+        ),
+        (
             "AUTO_RELEASE_RESULT".into(),
             format!("${{{{ needs.{}.result }}}}", auto_release_preview.name),
         ),
+        (
+            "AUTO_RELEASE_PUBLISHED".into(),
+            auto_release_published.to_string(),
+        ),
         ("RUN_URL".into(), CURRENT_ACTION_RUN_URL.to_string()),
+        ("TAG".into(), Context::github().ref_name().to_string()),
     ]
     .into_iter()
     .chain(
@@ -493,8 +567,6 @@ pub(crate) fn push_release_update_notification(
         .join("\n        ");
 
     let notification_script = formatdoc! {r#"
-        TAG="$GITHUB_REF_NAME"
-
         if [ "$DRAFT_RESULT" == "failure" ]; then
             echo "❌ Draft release creation failed for $TAG: $RUN_URL"
         else
@@ -518,12 +590,15 @@ pub(crate) fn push_release_update_notification(
                         echo "❌ Tests for $TAG failed: $RUN_URL"
                     fi
                 fi
+            elif [ "$COMPLIANCE_RESULT" == "failure" ]; then
+                # We already notify within that job
+                echo ""
             elif [ "$VALIDATE_RESULT" == "failure" ]; then
-                echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
-            elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
-                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
+                echo "❌ Release validation failed for $TAG: missing assets: $RUN_URL"
             elif [ "$AUTO_RELEASE_RESULT" == "failure" ]; then
                 echo "❌ Auto release failed for $TAG: $RUN_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "success" ] && [ "$AUTO_RELEASE_PUBLISHED" == "true" ]; then
+                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
             else
                 echo "👀 Release $TAG sitting freshly baked in the oven and waiting to be published: $RELEASE_URL"
             fi
@@ -535,6 +610,7 @@ pub(crate) fn push_release_update_notification(
         create_draft_release_job,
         upload_assets_job,
         validate_assets_job,
+        compliance_job,
         auto_release_preview,
     ];
     all_deps.extend(test_jobs.iter().copied());
@@ -574,15 +650,29 @@ pub(crate) enum MessageType {
     },
 }
 
+enum MessageSource {
+    String(String),
+    StepOutput(StepOutput),
+}
+
+impl MessageSource {
+    fn message(self) -> String {
+        match self {
+            MessageSource::String(string) => string,
+            MessageSource::StepOutput(output) => output.to_string(),
+        }
+    }
+}
+
 fn notify_slack(message: MessageType) -> Vec<Step<Run>> {
     match message {
-        MessageType::Static(message) => vec![send_slack_message(message)],
+        MessageType::Static(message) => vec![send_slack_message(MessageSource::String(message))],
         MessageType::Evaluated { script, env } => {
             let (generate_step, generated_message) = generate_slack_message(script, env);
 
             vec![
                 generate_step,
-                send_slack_message(generated_message.to_string()),
+                send_slack_message(MessageSource::StepOutput(generated_message)),
             ]
         }
     }
@@ -610,10 +700,15 @@ fn generate_slack_message(
     (generate_step, output)
 }
 
-fn send_slack_message(message: String) -> Step<Run> {
+fn send_slack_message(message_source: MessageSource) -> Step<Run> {
     named::bash(
         r#"curl -X POST -H 'Content-type: application/json' --data "$(jq -n --arg text "$SLACK_MESSAGE" '{"text": $text}')" "$SLACK_WEBHOOK""#
     )
+    .map(|this| match &message_source {
+        MessageSource::String(_) => this,
+        MessageSource::StepOutput(output) => this
+            .if_condition(Expression::new(format!("{message} != ''", message = output.expr()))),
+    })
     .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
-    .add_env(("SLACK_MESSAGE", message))
+    .add_env(("SLACK_MESSAGE", message_source.message()))
 }

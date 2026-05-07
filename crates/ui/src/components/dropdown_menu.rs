@@ -1,4 +1,4 @@
-use gpui::{AnyView, Corner, Entity, Pixels, Point};
+use gpui::{Anchor, AnyView, Entity, Pixels, Point};
 
 use crate::{ButtonLike, ContextMenu, PopoverMenu, prelude::*};
 
@@ -30,7 +30,7 @@ pub struct DropdownMenu {
     full_width: bool,
     disabled: bool,
     handle: Option<PopoverMenuHandle<ContextMenu>>,
-    attach: Option<Corner>,
+    attach: Option<Anchor>,
     offset: Option<Point<Pixels>>,
     tab_index: Option<isize>,
     chevron: bool,
@@ -117,7 +117,7 @@ impl DropdownMenu {
     }
 
     /// Defines which corner of the handle to attach the menu's anchor to.
-    pub fn attach(mut self, attach: Corner) -> Self {
+    pub fn attach(mut self, attach: Anchor) -> Self {
         self.attach = Some(attach);
         self
     }
@@ -215,7 +215,7 @@ impl RenderOnce for DropdownMenu {
         popover
             .attach(match self.attach {
                 Some(attach) => attach,
-                None => Corner::BottomRight,
+                None => Anchor::BottomRight,
             })
             .when_some(self.offset, |this, offset| this.offset(offset))
             .when_some(self.handle, |this, handle| this.with_handle(handle))

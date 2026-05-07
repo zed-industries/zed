@@ -6,7 +6,8 @@ use client::{
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement,
-    Render, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred, div,
+    Render, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, anchored, deferred,
+    div,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -433,7 +434,7 @@ impl PickerDelegate for ChannelModalDelegate {
                                     Some(
                                         deferred(
                                             anchored()
-                                                .anchor(gpui::Corner::TopRight)
+                                                .anchor(gpui::Anchor::TopRight)
                                                 .child(menu.clone()),
                                         )
                                         .with_priority(1),

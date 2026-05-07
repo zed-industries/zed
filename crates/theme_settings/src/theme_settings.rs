@@ -28,12 +28,12 @@ pub use crate::schema::{
 };
 use crate::settings::adjust_buffer_font_size;
 pub use crate::settings::{
-    AgentFontSize, BufferLineHeight, FontFamilyName, IconThemeName, IconThemeSelection,
-    ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, adjust_agent_buffer_font_size,
-    adjust_agent_ui_font_size, adjust_ui_font_size, adjusted_font_size, appearance_to_mode,
-    clamp_font_size, default_theme, observe_buffer_font_size_adjustment,
-    reset_agent_buffer_font_size, reset_agent_ui_font_size, reset_buffer_font_size,
-    reset_ui_font_size, set_icon_theme, set_mode, set_theme, setup_ui_font,
+    AgentBufferFontSize, AgentUiFontSize, BufferLineHeight, FontFamilyName, IconThemeName,
+    IconThemeSelection, ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings,
+    adjust_agent_buffer_font_size, adjust_agent_ui_font_size, adjust_ui_font_size,
+    adjusted_font_size, appearance_to_mode, clamp_font_size, default_theme,
+    observe_buffer_font_size_adjustment, reset_agent_buffer_font_size, reset_agent_ui_font_size,
+    reset_buffer_font_size, reset_ui_font_size, set_icon_theme, set_mode, set_theme, setup_ui_font,
 };
 pub use theme::UiDensity;
 
@@ -296,8 +296,11 @@ pub fn refine_theme(theme: &ThemeContent) -> Theme {
         AppearanceContent::Light => ThemeColors::light(),
         AppearanceContent::Dark => ThemeColors::dark(),
     };
-    let mut theme_colors_refinement =
-        theme_colors_refinement(&theme.style.colors, &status_colors_refinement);
+    let mut theme_colors_refinement = theme_colors_refinement(
+        &theme.style.colors,
+        &status_colors_refinement,
+        theme.appearance == AppearanceContent::Light,
+    );
     theme::apply_theme_color_defaults(&mut theme_colors_refinement, &refined_player_colors);
     refined_theme_colors.refine(&theme_colors_refinement);
 

@@ -13,10 +13,7 @@ use windows::{
     Win32::{
         Foundation::{LPARAM, WPARAM},
         Media::{timeBeginPeriod, timeEndPeriod},
-        System::Threading::{
-            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
-            THREAD_PRIORITY_TIME_CRITICAL,
-        },
+        System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL},
         UI::WindowsAndMessaging::PostMessageW,
     },
 };
@@ -163,12 +160,7 @@ impl PlatformDispatcher for WindowsDispatcher {
             // SAFETY: always safe to call
             let thread_handle = unsafe { GetCurrentThread() };
 
-            // SAFETY: thread_handle is a valid handle to a thread
-            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
-                .context("thread priority class")
-                .log_err();
-
-            // SAFETY: thread_handle is a valid handle to a thread
+            // SAFETY: thread_handle is a valid handle to the current thread
             unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
                 .context("thread priority")
                 .log_err();
