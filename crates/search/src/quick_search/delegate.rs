@@ -1,78 +1,28 @@
-mod picker_impl;
-
-use project::search::SearchInputKind;
-
-use gpui::AsyncApp;
-
-use settings::Settings;
-use text::Anchor;
-use ui::ActiveTheme;
-
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
-
-use project::search::SearchQuery;
-
-use util::paths::PathMatcher;
-
-use editor::scroll::Autoscroll;
-
-use editor::SelectionEffects;
-
-use editor::HighlightKey;
-
-use editor::RowHighlightOptions;
-
-use super::SearchMatchLineHighlight;
-
-use text::Point;
-
-use picker::Picker;
-
-use gpui::Context;
-
-use gpui::Window;
-
-use language::Buffer;
-
-use editor::EditorSettings;
-
-use gpui::App;
-
-use project::ProjectPath;
-
-use collections::HashSet;
-
-use project::search_history::SearchHistoryCursor;
-
-use ui::ContextMenu;
-
-use ui::PopoverMenuHandle;
-
-use super::InputPanel;
-
-use collections::HashMap;
-
-use std::cell::Cell;
-
-use std::cell::RefCell;
-
-use crate::SearchOptions;
-
-use super::SearchMatch;
-
-use ui_input::ErasedEditor;
-
 use std::sync::Arc;
 
-use editor::Editor;
-
-use project::Project;
-
-use gpui::Entity;
-
+use collections::{HashMap, HashSet};
+use editor::{
+    Editor, EditorSettings, HighlightKey, RowHighlightOptions, SelectionEffects, scroll::Autoscroll,
+};
+use gpui::{App, AsyncApp, Context, Entity, WeakEntity, Window};
+use language::Buffer;
+use picker::Picker;
+use project::search::{SearchInputKind, SearchQuery};
+use project::search_history::SearchHistoryCursor;
+use project::{Project, ProjectPath};
+use settings::Settings;
+use text::{Anchor, Point};
+use ui::{ActiveTheme, ContextMenu, PopoverMenuHandle};
+use ui_input::ErasedEditor;
+use util::paths::PathMatcher;
 use workspace::Workspace;
 
-use gpui::WeakEntity;
+use super::{InputPanel, SearchMatch, SearchMatchLineHighlight};
+use crate::SearchOptions;
+
+mod picker_impl;
 
 pub struct QuickSearchDelegate {
     pub(crate) workspace: WeakEntity<Workspace>,
