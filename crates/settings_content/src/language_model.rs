@@ -181,6 +181,9 @@ pub struct OpenCodeAvailableModel {
     pub custom_model_api_url: Option<String>,
     /// Supported reasoning effort levels, for example `["low", "medium", "high"].
     pub reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
+    /// When using OpenAiChat protocol, whether thinking tokens are sent as a dedicated `reasoning_content` field or inline in message text.
+    #[serde(default)]
+    pub interleaved_reasoning: bool,
 }
 
 #[with_fallible_options]

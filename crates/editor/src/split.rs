@@ -1280,6 +1280,18 @@ impl SplittableEditor {
             }
         }
     }
+
+    pub fn remove_excerpts_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<'_, SplittableEditor>,
+    ) {
+        let snapshot = self.rhs_multibuffer.read(cx).snapshot(cx);
+        let Some(path) = snapshot.path_for_buffer(buffer_id) else {
+            return;
+        };
+        self.remove_excerpts_for_path(path.clone(), cx);
+    }
 }
 
 #[cfg(test)]
