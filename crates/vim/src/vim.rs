@@ -2218,10 +2218,12 @@ impl Vim {
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
-            cursor_offset_on_selection: mode.is_visual() || mode.is_helix(),
-            dim_secondary_local_selections: mode.is_helix(),
-            line_mode: matches!(mode, Mode::VisualLine),
-            hide_edit_predictions: !matches!(mode, Mode::Insert | Mode::Replace),
+            cursor_offset_on_selection: self.mode.is_visual() ||self.mode.is_helix(),
+            dim_secondary_local_selections: self.mode.is_helix(),
+            line_mode: matches!(self.mode, Mode::VisualLine),
+            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace)
+                && !(self.mode.is_normal()
+                    && VimSettings::get_global(cx).show_edit_predictions_in_normal_mode),
         }
     }
 
@@ -2273,6 +2275,7 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
+    pub show_edit_predictions_in_normal_mode: bool,
 }
 
 /// Cursor shape configuration for insert mode.
@@ -2360,6 +2363,7 @@ impl Settings for VimSettings {
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
+            show_edit_predictions_in_normal_mode: vim.show_edit_predictions_in_normal_mode.unwrap(),
         }
     }
 }
