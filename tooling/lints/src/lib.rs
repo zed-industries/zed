@@ -26,6 +26,13 @@ use rustc_middle::hir::nested_filter;
 use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
+mod entity_update_in_render;
+mod notify_in_render;
+mod render_helpers;
+
+use entity_update_in_render::ENTITY_UPDATE_IN_RENDER;
+use notify_in_render::NOTIFY_IN_RENDER;
+
 // ---------------------------------------------------------------------------
 // Boilerplate: export the dylint ABI version symbol.
 // ---------------------------------------------------------------------------
@@ -38,9 +45,16 @@ dylint_linting::dylint_library!();
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint::LintStore) {
     dylint_linting::init_config(sess);
-    lint_store.register_lints(&[SHARED_STRING_FROM_STR_LITERAL, ASYNC_BLOCK_WITHOUT_AWAIT]);
+    lint_store.register_lints(&[
+        SHARED_STRING_FROM_STR_LITERAL,
+        ASYNC_BLOCK_WITHOUT_AWAIT,
+        ENTITY_UPDATE_IN_RENDER,
+        NOTIFY_IN_RENDER,
+    ]);
     lint_store.register_late_pass(|_| Box::new(SharedStringFromStrLiteral));
     lint_store.register_late_pass(|_| Box::new(AsyncBlockWithoutAwait));
+    lint_store.register_late_pass(|_| Box::new(entity_update_in_render::EntityUpdateInRender));
+    lint_store.register_late_pass(|_| Box::new(notify_in_render::NotifyInRender));
 }
 
 // ===========================================================================
