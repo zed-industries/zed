@@ -6,10 +6,13 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
+use std::any::TypeId;
+
 use anyhow::Context as _;
 use client::zed_urls;
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
+use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -53,7 +56,28 @@ actions!(
     ]
 );
 
+fn update_rebuild_dev_extension_visibility(cx: &mut App) {
+    let has_dev_extensions = ExtensionStore::global(cx)
+        .read(cx)
+        .dev_extensions()
+        .next()
+        .is_some();
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        if has_dev_extensions {
+            filter.show_action_types(&[TypeId::of::<RebuildDevExtension>()]);
+        } else {
+            filter.hide_action_types(&[TypeId::of::<RebuildDevExtension>()]);
+        }
+    });
+}
+
 pub fn init(cx: &mut App) {
+    update_rebuild_dev_extension_visibility(cx);
+    cx.observe(&ExtensionStore::global(cx), |_, cx| {
+        update_rebuild_dev_extension_visibility(cx);
+    })
+    .detach();
+
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -178,9 +202,6 @@ pub fn init(cx: &mut App) {
                     .collect::<Vec<_>>();
 
                 match dev_extensions.len() {
-                    0 => {
-                        workspace.show_error(&"No dev extensions are installed.", cx);
-                    }
                     1 => {
                         let extension_id = dev_extensions[0].id.clone();
                         ExtensionStore::global(cx).update(cx, |store, cx| {
