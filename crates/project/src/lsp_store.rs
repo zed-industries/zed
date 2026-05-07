@@ -1679,9 +1679,13 @@ impl LocalLspStore {
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                settings.formatter.as_ref()
-            }
+            (FormatTrigger::Manual, _)
+            | (
+                FormatTrigger::Save,
+                FormatOnSave::On
+                | FormatOnSave::Modifications
+                | FormatOnSave::ModificationsIfAvailable,
+            ) => settings.formatter.as_ref(),
         };
 
         let formatters = code_actions_on_format_formatters
@@ -1709,6 +1713,7 @@ impl LocalLspStore {
                 &adapters_and_servers,
                 &settings,
                 request_timeout,
+                trigger,
                 logger,
                 cx,
             )
@@ -1729,6 +1734,7 @@ impl LocalLspStore {
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         settings: &LanguageSettings,
         request_timeout: Duration,
+        trigger: FormatTrigger,
         logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
@@ -1871,10 +1877,19 @@ impl LocalLspStore {
                 };
 
                 let Some(language_server) = language_server else {
-                    log::debug!(
-                        "No language server found to format buffer '{:?}'. Skipping",
-                        buffer_path_abs.as_path().to_string_lossy()
-                    );
+                    if trigger == FormatTrigger::Manual {
+                        zlog::info!(
+                            logger =>
+                            "No language server found to format buffer '{:?}'. Skipping",
+                            buffer_path_abs.as_path().to_string_lossy()
+                        );
+                    } else {
+                        zlog::debug!(
+                            logger =>
+                            "No language server found to format buffer '{:?}'. Skipping",
+                            buffer_path_abs.as_path().to_string_lossy()
+                        );
+                    }
                     return Ok(());
                 };
 
@@ -1887,7 +1902,7 @@ impl LocalLspStore {
 
                 let edits = if let Some(ranges) = buffer.ranges.as_ref() {
                     zlog::trace!(logger => "formatting ranges");
-                    Self::format_ranges_via_lsp(
+                    let range_result = Self::format_ranges_via_lsp(
                         &lsp_store,
                         &buffer.handle,
                         ranges,
@@ -1896,8 +1911,40 @@ impl LocalLspStore {
                         &settings,
                         cx,
                     )
-                    .await
-                    .context("Failed to format ranges via language server")?
+                    .await;
+
+                    match range_result {
+                        Ok(edits) => edits,
+                        Err(err) => {
+                            if matches!(
+                                settings.format_on_save,
+                                FormatOnSave::ModificationsIfAvailable
+                            ) {
+                                zlog::debug!(
+                                    logger =>
+                                    "Falling back to full format - LSP does not support range formatting: {}",
+                                    err
+                                );
+                                Self::format_via_lsp(
+                                    &lsp_store,
+                                    &buffer.handle,
+                                    buffer_path_abs,
+                                    &language_server,
+                                    &settings,
+                                    cx,
+                                )
+                                .await
+                                .context("failed to format via language server")?
+                            } else {
+                                zlog::info!(
+                                    logger =>
+                                    "Skipping format - LSP does not support range formatting and format_on_save is not set to modifications_if_available: {}",
+                                    err
+                                );
+                                Vec::new()
+                            }
+                        }
+                    }
                 } else {
                     zlog::trace!(logger => "formatting full");
                     Self::format_via_lsp(
