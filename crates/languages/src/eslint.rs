@@ -254,7 +254,9 @@ impl LspAdapter for EsLintLspAdapter {
                 "mode": "auto"
             },
             "workspaceFolder": {
-                "uri": worktree_root,
+                "uri": Uri::from_file_path(worktree_root)
+                    .map(|uri| uri.as_str().to_owned())
+                    .unwrap_or_default(),
                 "name": worktree_root.file_name()
                     .unwrap_or(worktree_root.as_os_str())
                     .to_string_lossy(),
