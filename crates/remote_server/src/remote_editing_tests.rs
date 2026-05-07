@@ -11,7 +11,10 @@ use languages::rust_lang;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use git::repository::Worktree as GitWorktree;
+use git::{
+    Oid,
+    repository::{CommitData, Worktree as GitWorktree},
+};
 use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
@@ -29,11 +32,13 @@ use project::{
     search::{SearchQuery, SearchResult},
 };
 use remote::RemoteClient;
+use rpc::proto;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
 };
 use unindent::Unindent as _;
@@ -1624,6 +1629,108 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         worktree.snapshot().root_repo_common_dir().cloned()
     });
     assert_eq!(common_dir, None);
+}
+
+#[gpui::test]
+async fn test_remote_search_commits_streams_proto_chunks(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    const COMMIT_COUNT: usize = 900;
+    const RESPONSE_MAX_SIZE: usize = 100;
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+
+    let commit_data = (0..COMMIT_COUNT)
+        .map(|index| {
+            let sha = Oid::from_str(&format!("{:040x}", index + 1)).unwrap();
+            (
+                CommitData {
+                    sha,
+                    parents: Default::default(),
+                    author_name: SharedString::from("Author"),
+                    author_email: SharedString::from("author@example.com"),
+                    commit_timestamp: index as i64,
+                    subject: SharedString::from(format!("Subject {index}")),
+                    message: SharedString::from(format!("needle commit {index}")),
+                },
+                false,
+            )
+        })
+        .collect::<Vec<_>>();
+    let expected_shas = commit_data
+        .iter()
+        .map(|(commit_data, _)| commit_data.sha.to_string())
+        .collect::<HashSet<_>>();
+    fs.set_commit_data(Path::new(path!("/code/project1/.git")), commit_data);
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (remote_client, repository_id) = project.read_with(cx, |project, cx| {
+        let repository = project
+            .active_repository(cx)
+            .expect("remote project should have an active repository");
+        let repository_id = repository.read(cx).snapshot().id;
+        let remote_client = project
+            .remote_client()
+            .expect("project should have a remote client");
+        (remote_client, repository_id)
+    });
+    let proto_client = remote_client.read_with(cx, |remote_client, _| remote_client.proto_client());
+    let mut stream = proto_client
+        .request_stream(proto::SearchCommits {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            repository_id: repository_id.to_proto(),
+            log_source: Some(proto::GitLogSource {
+                source: Some(proto::git_log_source::Source::All(
+                    proto::GitLogSourceAll {},
+                )),
+            }),
+            query: "needle".to_string(),
+            case_sensitive: true,
+        })
+        .await
+        .expect("search commits stream should start");
+
+    let mut chunks = Vec::new();
+    while let Some(response) = futures::StreamExt::next(&mut stream).await {
+        chunks.push(response.expect("search commits chunk should succeed").shas);
+    }
+
+    assert!(
+        chunks.len() > 1,
+        "expected search results to stream in multiple chunks"
+    );
+    for chunk in chunks.iter().take(chunks.len() - 1) {
+        assert!(
+            chunk.len() <= RESPONSE_MAX_SIZE,
+            "non-final chunks should meet the target byte size"
+        );
+    }
+
+    let actual_shas = chunks.into_iter().flatten().collect::<HashSet<_>>();
+    assert_eq!(actual_shas, expected_shas);
 }
 
 #[gpui::test]

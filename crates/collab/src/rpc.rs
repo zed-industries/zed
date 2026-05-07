@@ -1,12 +1,13 @@
 mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
+use crate::entities::User;
 use crate::{
     AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId, User,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId,
         UserId,
     },
     executor::Executor,
@@ -945,10 +946,6 @@ impl Server {
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
-                }
-
-                if should_auto_subscribe_to_channels(&zed_version) {
-                    subscribe_user_to_channels(user.id, session).await?;
                 }
 
                 if let Some(incoming_call) =
@@ -2544,10 +2541,11 @@ async fn get_users(
         .map(UserId::from_proto)
         .collect();
     let users = session
-        .db()
-        .await
+        .app_state
+        .user_service
         .get_users_by_ids(user_ids)
-        .await?
+        .await?;
+    let users = users
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),
@@ -2570,13 +2568,19 @@ async fn fuzzy_search_users(
     let users = match query.len() {
         0 => vec![],
         1 | 2 => session
-            .db()
-            .await
+            .app_state
+            .user_service
             .get_user_by_github_login(&query)
             .await?
             .into_iter()
             .collect(),
-        _ => session.db().await.fuzzy_search_users(&query, 10).await?,
+        _ => {
+            session
+                .app_state
+                .user_service
+                .fuzzy_search_users(&query, 10)
+                .await?
+        }
     };
     let users = users
         .into_iter()
@@ -2746,10 +2750,6 @@ async fn remove_contact(
 
     response.send(proto::Ack {})?;
     Ok(())
-}
-
-fn should_auto_subscribe_to_channels(version: &ZedVersion) -> bool {
-    version.0.minor < 139
 }
 
 async fn subscribe_to_channels(
@@ -3167,9 +3167,16 @@ async fn get_channel_members(
     } else {
         request.limit
     };
-    let (members, users) = db
-        .get_channel_participant_details(channel_id, &request.query, limit, session.user_id())
+
+    let channel = db.get_channel(channel_id, session.user_id()).await?;
+
+    let (members, users) = session
+        .app_state
+        .user_service
+        .search_channel_members(&channel, &request.query, limit as u32)
         .await?;
+    let users = users.into_iter().map(proto::User::from).collect();
+
     response.send(proto::GetChannelMembersResponse { members, users })?;
     Ok(())
 }
@@ -4076,6 +4083,20 @@ where
                 tracing::error!("{:?}", error);
                 None
             }
+        }
+    }
+}
+
+impl From<User> for proto::User {
+    fn from(user: User) -> Self {
+        Self {
+            id: user.id.to_proto(),
+            avatar_url: format!(
+                "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
+                user.github_user_id
+            ),
+            github_login: user.github_login,
+            name: user.name,
         }
     }
 }

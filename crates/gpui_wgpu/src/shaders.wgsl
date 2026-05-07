@@ -87,7 +87,8 @@ struct GammaParams {
     gamma_ratios: vec4<f32>,
     grayscale_enhanced_contrast: f32,
     subpixel_enhanced_contrast: f32,
-    pad: vec2<f32>,
+    is_bgr: u32,
+    pad: u32,
 }
 
 @group(0) @binding(0) var<uniform> globals: GlobalParams;

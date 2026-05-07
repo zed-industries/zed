@@ -658,8 +658,22 @@ impl LspAdapter for PyrightLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
 
-            // If we have a detected toolchain, configure Pyright to use it
+            // If we have a detected toolchain, configure Pyright to use it - unless the user sets it themselves.
+            let should_insert_toolchain = || {
+                user_settings.as_object().is_none_or(|object| {
+                    [
+                        "venvPath",
+                        "venv",
+                        "python",
+                        "pythonPath",
+                        "defaultInterpreterPath",
+                    ]
+                    .into_iter()
+                    .any(|known_key| object.contains_key(known_key))
+                })
+            };
             if let Some(toolchain) = toolchain
+                && should_insert_toolchain()
                 && let Ok(env) =
                     serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
             {
@@ -881,7 +895,7 @@ impl ContextProvider for PythonContextProvider {
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
-                    .chain(module_target.into_iter())
+                    .chain(module_target)
                     .chain([toolchain]),
             ))
         })
@@ -1245,7 +1259,7 @@ fn micromamba_shell_name(kind: ShellKind) -> &'static str {
         ShellKind::Csh => "csh",
         ShellKind::Fish => "fish",
         ShellKind::Nushell => "nu",
-        ShellKind::PowerShell => "powershell",
+        ShellKind::PowerShell | ShellKind::Pwsh => "powershell",
         ShellKind::Cmd => "cmd.exe",
         // default / catch-all:
         _ => "posix",
@@ -1456,9 +1470,17 @@ impl ToolchainLister for PythonToolchainProvider {
                     // Activate micromamba shell in the child shell
                     // [required for micromamba]
                     if manager == "micromamba" {
-                        let shell = micromamba_shell_name(shell);
-                        activation_script
-                            .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                        match shell {
+                            ShellKind::PowerShell | ShellKind::Pwsh => {
+                                activation_script.push(format!(r#"(& {manager} shell hook --shell powershell) | Out-String | Invoke-Expression"#));
+                            }
+                            _ => {
+                                let shell_name = micromamba_shell_name(shell);
+                                activation_script.push(format!(
+                                    r#"eval "$({manager} shell hook --shell {shell_name})""#
+                                ));
+                            }
+                        }
                     }
 
                     if let Some(name) = &toolchain.environment.name {
@@ -2075,7 +2097,21 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     .unwrap_or_default();
 
             // If we have a detected toolchain, configure Pyright to use it
+            let should_insert_toolchain = || {
+                user_settings.as_object().is_none_or(|object| {
+                    [
+                        "venvPath",
+                        "venv",
+                        "python",
+                        "pythonPath",
+                        "defaultInterpreterPath",
+                    ]
+                    .into_iter()
+                    .any(|known_key| object.contains_key(known_key))
+                })
+            };
             if let Some(toolchain) = toolchain
+                && should_insert_toolchain()
                 && let Ok(env) = serde_json::from_value::<
                     pet_core::python_environment::PythonEnvironment,
                 >(toolchain.as_json.clone())
