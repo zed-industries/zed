@@ -26,6 +26,8 @@ use serde::Deserialize;
 use settings::{
     IntoGpui, Settings, SettingsContent, SettingsStore, initial_project_settings_content,
 };
+#[cfg(debug_assertions)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -64,6 +66,16 @@ const HEADER_GROUP_TAB_INDEX: isize = 3;
 
 const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
 const CONTENT_GROUP_TAB_INDEX: isize = 5;
+
+#[cfg(debug_assertions)]
+static SETTINGS_UI_WRITE_FAILURES_REMAINING: LazyLock<AtomicUsize> = LazyLock::new(|| {
+    AtomicUsize::new(
+        std::env::var("ZED_SETTINGS_UI_FAIL_WRITES")
+            .ok()
+            .and_then(|count| count.parse().ok())
+            .unwrap_or_default(),
+    )
+});
 
 actions!(
     settings_editor,
@@ -3968,25 +3980,31 @@ pub(crate) fn update_settings_file(
     telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
 
     let settings_window = window.root::<SettingsWindow>().flatten();
-    let update_result = match file {
-        SettingsUiFile::Project((worktree_id, rel_path)) => {
-            let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            if let Some(settings_window) = settings_window.clone() {
-                update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
-            } else {
-                Task::ready(Err(anyhow::anyhow!("No settings window found")))
+    let update_result = if should_fail_settings_ui_write() {
+        Task::ready(Err(anyhow::anyhow!(
+            "Temporary settings UI write failure injected by ZED_SETTINGS_UI_FAIL_WRITES"
+        )))
+    } else {
+        match file {
+            SettingsUiFile::Project((worktree_id, rel_path)) => {
+                let rel_path = rel_path.join(paths::local_settings_file_relative_path());
+                if let Some(settings_window) = settings_window.clone() {
+                    update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
+                } else {
+                    Task::ready(Err(anyhow::anyhow!("No settings window found")))
+                }
             }
+            SettingsUiFile::User => {
+                let completion = SettingsStore::global(cx)
+                    .update_settings_file_with_completion(<dyn fs::Fs>::global(cx), update);
+                cx.spawn(async move |_cx| {
+                    completion
+                        .await
+                        .context("Settings write task was canceled")?
+                })
+            }
+            SettingsUiFile::Server(_) => unimplemented!(),
         }
-        SettingsUiFile::User => {
-            let completion = SettingsStore::global(cx)
-                .update_settings_file_with_completion(<dyn fs::Fs>::global(cx), update);
-            cx.spawn(async move |_cx| {
-                completion
-                    .await
-                    .context("Settings write task was canceled")?
-            })
-        }
-        SettingsUiFile::Server(_) => unimplemented!(),
     };
 
     cx.spawn(async move |cx| {
@@ -4006,6 +4024,20 @@ pub(crate) fn update_settings_file(
         }
         result
     })
+}
+
+#[cfg(debug_assertions)]
+fn should_fail_settings_ui_write() -> bool {
+    SETTINGS_UI_WRITE_FAILURES_REMAINING
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+            remaining.checked_sub(1)
+        })
+        .is_ok()
+}
+
+#[cfg(not(debug_assertions))]
+fn should_fail_settings_ui_write() -> bool {
+    false
 }
 
 struct ProjectSettingsUpdateEntry {
