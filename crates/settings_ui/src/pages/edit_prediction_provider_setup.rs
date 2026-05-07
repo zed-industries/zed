@@ -1,6 +1,7 @@
 use codestral::{CODESTRAL_API_URL, codestral_api_key_state, codestral_api_url};
 use edit_prediction::{
     ApiKeyState,
+    deepseek_fim::{deepseek_fim_api_key_state, deepseek_fim_api_url},
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
 };
@@ -82,6 +83,30 @@ pub(crate) fn render_edit_prediction_setup_page(
                     settings_window
                         .render_sub_page_items_section(
                             open_ai_compatible_settings().iter().enumerate(),
+                            true,
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                ),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        ),
+        Some(
+            render_api_key_provider(
+                IconName::AiDeepSeek,
+                "DeepSeek FIM",
+                ApiKeyDocs::Link {
+                    dashboard_url: "https://platform.deepseek.com/api_keys".into(),
+                },
+                deepseek_fim_api_key_state(cx),
+                |cx| deepseek_fim_api_url(cx),
+                Some(
+                    settings_window
+                        .render_sub_page_items_section(
+                            deepseek_fim_settings().iter().enumerate(),
                             true,
                             window,
                             cx,
@@ -714,6 +739,107 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                 placeholder: Some("codestral-latest"),
                 ..Default::default()
             })),
+            files: USER,
+        }),
+    ])
+}
+
+fn deepseek_fim_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The URL of the DeepSeek FIM API.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .deepseek_fim
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .deepseek_fim
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.deepseek_fim.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some("https://api.deepseek.com/beta"),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The model string to pass to DeepSeek FIM.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .deepseek_fim
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .deepseek_fim
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.deepseek_fim.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some("deepseek-v4-pro"),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .deepseek_fim
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .deepseek_fim
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.deepseek_fim.max_output_tokens"),
+            }),
+            metadata: None,
             files: USER,
         }),
     ])

@@ -147,6 +147,13 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
+        EditPredictionProvider::DeepseekFim => {
+            if settings.deepseek_fim.is_some() {
+                Some(EditPredictionProviderConfig::Zed(EditPredictionModel::DeepseekFim))
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -183,6 +190,7 @@ impl EditPredictionProviderConfig {
                 EditPredictionModel::Zeta => "Zeta",
                 EditPredictionModel::Fim { .. } => "FIM",
                 EditPredictionModel::Mercury => "Mercury",
+                EditPredictionModel::DeepseekFim => "DeepSeek FIM",
             },
         }
     }

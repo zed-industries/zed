@@ -62,6 +62,7 @@ use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 
 pub mod cursor_excerpt;
+pub mod deepseek_fim;
 pub mod example_spec;
 pub mod fim;
 mod license_detection;
@@ -173,6 +174,7 @@ pub enum EditPredictionModel {
     Zeta,
     Fim { format: EditPredictionPromptFormat },
     Mercury,
+    DeepseekFim,
 }
 
 #[derive(Clone)]
@@ -949,6 +951,9 @@ impl EditPredictionStore {
                     }
                 }
             }
+            EditPredictionModel::DeepseekFim => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::AiDeepSeek)
+            }
         }
     }
 
@@ -1521,7 +1526,7 @@ impl EditPredictionStore {
                     zeta::edit_prediction_accepted(self, current_prediction, cx)
                 }
             }
-            EditPredictionModel::Fim { .. } => {}
+            EditPredictionModel::Fim { .. } | EditPredictionModel::DeepseekFim => {}
         }
     }
 
@@ -1882,7 +1887,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Fim { .. } => {}
+            EditPredictionModel::Fim { .. } | EditPredictionModel::DeepseekFim => {}
         }
     }
 
@@ -2110,7 +2115,8 @@ fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
         EditPredictionProvider::Zed
         | EditPredictionProvider::Mercury
         | EditPredictionProvider::Ollama
-        | EditPredictionProvider::OpenAiCompatibleApi => true,
+        | EditPredictionProvider::OpenAiCompatibleApi
+        | EditPredictionProvider::DeepseekFim => true,
         EditPredictionProvider::None
         | EditPredictionProvider::Copilot
         | EditPredictionProvider::Codestral => false,
@@ -2145,7 +2151,9 @@ impl EditPredictionStore {
 
         let (needs_acceptance_tracking, max_pending_predictions) =
             match all_language_settings(None, cx).edit_predictions.provider {
-                EditPredictionProvider::Zed | EditPredictionProvider::Mercury => (true, 2),
+                EditPredictionProvider::Zed
+                | EditPredictionProvider::Mercury
+                | EditPredictionProvider::DeepseekFim => (true, 2),
                 EditPredictionProvider::Ollama => (false, 1),
                 EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
                 EditPredictionProvider::None
@@ -2412,6 +2420,7 @@ impl EditPredictionStore {
                 self.mercury
                     .request_prediction(inputs, self.credentials_provider.clone(), cx)
             }
+            EditPredictionModel::DeepseekFim => deepseek_fim::request_prediction(inputs, cx),
         };
 
         cx.spawn(async move |this, cx| {

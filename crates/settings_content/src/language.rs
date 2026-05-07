@@ -87,6 +87,7 @@ pub enum EditPredictionProvider {
     Codestral,
     Ollama,
     OpenAiCompatibleApi,
+    DeepseekFim,
     Mercury,
 }
 
@@ -99,6 +100,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
+            | EditPredictionProvider::DeepseekFim
             | EditPredictionProvider::Mercury => false,
         }
     }
@@ -112,6 +114,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
+            EditPredictionProvider::DeepseekFim => Some("DeepSeek FIM"),
         }
     }
 }
@@ -137,6 +140,8 @@ pub struct EditPredictionSettingsContent {
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
+    /// Settings specific to DeepSeek FIM.
+    pub deepseek_fim: Option<DeepseekFimEditPredictionSettingsContent>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
     /// Controls whether Zed may collect training data when using Zed's Edit Predictions.
@@ -147,6 +152,23 @@ pub struct EditPredictionSettingsContent {
     /// - `"yes"`: allow data collection for files in open-source projects.
     /// - `"no"`: never allow data collection.
     pub allow_data_collection: Option<EditPredictionDataCollectionChoice>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct DeepseekFimEditPredictionSettingsContent {
+    /// Api URL to use for completions.
+    ///
+    /// Default: "https://api.deepseek.com/beta"
+    pub api_url: Option<String>,
+    /// The name of the model.
+    ///
+    /// Default: "deepseek-v4-pro"
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
 }
 
 #[with_fallible_options]

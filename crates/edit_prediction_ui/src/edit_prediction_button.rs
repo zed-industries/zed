@@ -323,6 +323,55 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::DeepseekFim => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("deepseek-fim")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::DeepseekFim,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Anchor::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("deepseek-fim-icon", IconName::AiDeepSeek)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                let settings = all_language_settings(None, cx);
+                                let tooltip_meta =
+                                    match settings.edit_predictions.deepseek_fim.as_ref() {
+                                        Some(settings)
+                                            if !settings.model.trim().is_empty() =>
+                                        {
+                                            format!("Powered by DeepSeek FIM ({})", settings.model)
+                                        }
+                                        _ => "Powered by DeepSeek FIM".to_string(),
+                                    };
+
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             provider @ (EditPredictionProvider::Zed | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
@@ -1475,6 +1524,17 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         .is_some()
     {
         providers.push(EditPredictionProvider::OpenAiCompatibleApi);
+    }
+
+    if edit_prediction::deepseek_fim::deepseek_fim_api_key_state(cx)
+        .read(cx)
+        .has_key()
+        || all_language_settings(None, cx)
+            .edit_predictions
+            .deepseek_fim
+            .is_some()
+    {
+        providers.push(EditPredictionProvider::DeepseekFim);
     }
 
     if edit_prediction::mercury::mercury_api_token(cx)

@@ -477,6 +477,8 @@ pub struct EditPredictionSettings {
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
+    /// Settings specific to DeepSeek FIM.
+    pub deepseek_fim: Option<OpenAiCompatibleEditPredictionSettings>,
     pub examples_dir: Option<Arc<Path>>,
     /// Controls whether training data collection is enabled.
     ///
@@ -834,6 +836,23 @@ impl settings::Settings for AllLanguageSettings {
                 prompt_format: openai_compatible_settings.prompt_format.unwrap(),
             });
 
+        let deepseek_fim_settings = edit_predictions
+            .deepseek_fim
+            .and_then(|deepseek_fim| {
+                deepseek_fim.model.filter(|model| !model.is_empty()).map(|model| {
+                    OpenAiCompatibleEditPredictionSettings {
+                        model,
+                        max_output_tokens: deepseek_fim.max_output_tokens.unwrap_or(256),
+                        api_url: deepseek_fim
+                            .api_url
+                            .filter(|url| !url.is_empty())
+                            .map(|url| url.into())
+                            .unwrap_or_else(|| "https://api.deepseek.com/beta".into()),
+                        prompt_format: settings::EditPredictionPromptFormat::DeepseekCoder,
+                    }
+                })
+            });
+
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
@@ -871,6 +890,7 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
+                deepseek_fim: deepseek_fim_settings,
                 examples_dir: edit_predictions.examples_dir,
                 allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },
