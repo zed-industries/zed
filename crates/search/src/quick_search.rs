@@ -3,6 +3,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::quick_search::delegate::QuickSearchDelegate;
 use crate::quick_search::state::{
     SavedQuickSearchLayout, StackedLayoutState, TelescopeLayoutState,
 };
@@ -149,29 +150,6 @@ impl Focusable for QuickSearch {
 }
 
 impl QuickSearch {
-    fn subscribe_filter_editor_refresh(
-        editor: &Arc<dyn ErasedEditor>,
-        quick_search: WeakEntity<Self>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Subscription {
-        editor.subscribe(
-            Box::new(move |event, window, cx| {
-                if matches!(event, ui_input::ErasedEditorEvent::BufferEdited) {
-                    quick_search
-                        .update(cx, |quick_search, cx| {
-                            quick_search.picker.update(cx, |picker, cx| {
-                                picker.refresh(window, cx);
-                            });
-                        })
-                        .log_err();
-                }
-            }),
-            window,
-            cx,
-        )
-    }
-
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
@@ -216,7 +194,6 @@ impl QuickSearch {
         excluded_files_editor.set_placeholder_text(EXCLUDE_PLACEHOLDER, window, cx);
 
         let focus_handle = cx.focus_handle();
-        let this_handle = cx.entity().downgrade();
 
         let initial_query = initial_query.or_else(|| {
             project
@@ -244,52 +221,19 @@ impl QuickSearch {
                 .max_height(None)
         });
 
+        let this = cx.entity().downgrade();
         let subscriptions = vec![
             cx.observe(&picker, |_, _, cx| cx.notify()),
-            cx.subscribe_in(&picker, window, |this, _, _: &DismissEvent, _, cx| {
-                this.save_history(cx);
-                cx.emit(DismissEvent);
-            }),
-            Self::subscribe_filter_editor_refresh(
-                &included_files_editor,
-                this_handle.clone(),
-                window,
-                cx,
-            ),
-            Self::subscribe_filter_editor_refresh(&excluded_files_editor, this_handle, window, cx),
+            save_history_on_dismiss(picker.clone(), window, cx),
+            refresh_picker_on_editor_edit(&included_files_editor, this.clone(), window, cx),
+            refresh_picker_on_editor_edit(&excluded_files_editor, this, window, cx),
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 if window.is_window_active() && !this.focus_handle.contains_focused(window, cx) {
                     this.save_history(cx);
                     cx.emit(DismissEvent);
                 }
             }),
-            cx.subscribe_in(
-                &preview_editor,
-                window,
-                |this, _, event: &EditorEvent, window, cx| {
-                    if matches!(event, EditorEvent::Edited { .. }) {
-                        this._autosave_task = Some(cx.spawn_in(window, async move |this, cx| {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(AUTOSAVE_DELAY_MS))
-                                .await;
-
-                            this.update_in(cx, |this, _window, cx| {
-                                let delegate = &this.picker.read(cx).delegate;
-                                if let Some(m) = delegate.matches.get(delegate.selected_index) {
-                                    let buffer = m.buffer.clone();
-                                    let project = delegate.project.clone();
-                                    let mut buffers = HashSet::default();
-                                    buffers.insert(buffer);
-                                    project
-                                        .update(cx, |p, cx| p.save_buffers(buffers, cx))
-                                        .detach_and_log_err(cx);
-                                }
-                            })
-                            .log_err();
-                        }));
-                    }
-                },
-            ),
+            auto_save_when_edited(&preview_editor, window, cx),
         ];
 
         let (modal_width, layout_mode, stacked, telescope) =
@@ -572,4 +516,74 @@ impl QuickSearch {
             })
             .detach_and_log_err(cx);
     }
+}
+
+fn auto_save_when_edited(
+    preview_editor: &Entity<Editor>,
+    window: &mut Window,
+    cx: &mut Context<'_, QuickSearch>,
+) -> Subscription {
+    cx.subscribe_in(
+        preview_editor,
+        window,
+        |this, _, event: &EditorEvent, window, cx| {
+            if matches!(event, EditorEvent::Edited { .. }) {
+                this._autosave_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    // TODO!(yara) this should hook into the normal autosave mechanic
+                    // not be done here
+                    cx.background_executor()
+                        .timer(Duration::from_millis(AUTOSAVE_DELAY_MS))
+                        .await;
+
+                    this.update_in(cx, |this, _window, cx| {
+                        let delegate = &this.picker.read(cx).delegate;
+                        if let Some(m) = delegate.matches.get(delegate.selected_index) {
+                            let buffer = m.buffer.clone();
+                            let project = delegate.project.clone();
+                            let mut buffers = HashSet::default();
+                            buffers.insert(buffer);
+                            project
+                                .update(cx, |p, cx| p.save_buffers(buffers, cx))
+                                .detach_and_log_err(cx);
+                        }
+                    })
+                    .log_err();
+                }));
+            }
+        },
+    )
+}
+
+fn refresh_picker_on_editor_edit(
+    editor: &Arc<dyn ErasedEditor>,
+    quick_search: WeakEntity<QuickSearch>,
+    window: &mut Window,
+    cx: &mut Context<'_, QuickSearch>,
+) -> Subscription {
+    editor.subscribe(
+        Box::new(move |event, window, cx| {
+            if matches!(event, ui_input::ErasedEditorEvent::BufferEdited) {
+                quick_search
+                    .update(cx, |quick_search, cx| {
+                        quick_search.picker.update(cx, |picker, cx| {
+                            picker.refresh(window, cx);
+                        });
+                    })
+                    .log_err();
+            }
+        }),
+        window,
+        cx,
+    )
+}
+
+fn save_history_on_dismiss(
+    picker: Entity<Picker<QuickSearchDelegate>>,
+    window: &mut Window,
+    cx: &mut Context<'_, QuickSearch>,
+) -> Subscription {
+    cx.subscribe_in(&picker, window, |this, _, _: &DismissEvent, _, cx| {
+        this.save_history(cx);
+        cx.emit(DismissEvent);
+    })
 }
