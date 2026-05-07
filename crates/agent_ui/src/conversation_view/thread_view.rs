@@ -6,7 +6,7 @@ use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry};
-use agent::SkillLoadingError;
+use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
@@ -469,17 +469,24 @@ impl ThreadView {
         ));
 
         // If this thread is backed by a NativeAgent, listen for skill loading
-        // errors so we can surface them as banners.
+        // errors so we can surface them as banners. The agent emits a single
+        // replacement-style event per project refresh, so we overwrite our
+        // local list rather than appending — this also clears stale errors
+        // once a user resolves them.
         if let Some(native_connection) = thread
             .read(cx)
             .connection()
             .clone()
             .downcast::<agent::NativeAgentConnection>()
         {
+            let project_id = thread.read(cx).project().entity_id();
             subscriptions.push(cx.subscribe(
                 &native_connection.0,
-                |this: &mut Self, _agent, error: &SkillLoadingError, cx| {
-                    this.skill_loading_errors.push(error.clone());
+                move |this: &mut Self, _agent, event: &SkillLoadingErrorsUpdated, cx| {
+                    if event.project_id != project_id {
+                        return;
+                    }
+                    this.skill_loading_errors = event.errors.clone();
                     cx.notify();
                 },
             ));

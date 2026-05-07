@@ -78,10 +78,21 @@ pub struct SkillLoadingError {
     pub message: SharedString,
 }
 
+/// Emitted whenever the set of skill loading errors for a project changes.
+/// The `errors` field is the full replacement list; subscribers should treat
+/// it as a snapshot rather than appending. An empty `errors` list means all
+/// previously-reported errors have been resolved.
+#[derive(Clone, Debug)]
+pub struct SkillLoadingErrorsUpdated {
+    pub project_id: EntityId,
+    pub errors: Vec<SkillLoadingError>,
+}
+
 struct ProjectState {
     project: Entity<Project>,
     project_context: Entity<ProjectContext>,
     skills: Arc<Vec<Skill>>,
+    skill_loading_errors: Vec<SkillLoadingError>,
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
     context_server_registry: Entity<ContextServerRegistry>,
@@ -282,7 +293,7 @@ pub struct NativeAgent {
     _watch_global_skills: Task<()>,
 }
 
-impl gpui::EventEmitter<SkillLoadingError> for NativeAgent {}
+impl gpui::EventEmitter<SkillLoadingErrorsUpdated> for NativeAgent {}
 
 impl NativeAgent {
     pub fn new(
@@ -549,6 +560,7 @@ impl NativeAgent {
                 project,
                 project_context,
                 skills: Arc::new(Vec::new()),
+                skill_loading_errors: Vec::new(),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
                 _maintain_project_context: cx.spawn(async move |this, cx| {
                     Self::maintain_project_context(
@@ -592,21 +604,29 @@ impl NativeAgent {
             })??;
             let (project_context, skills, skill_errors) = task.await;
             let skills = Arc::new(skills);
+            let skill_loading_errors: Vec<SkillLoadingError> = skill_errors
+                .into_iter()
+                .map(|skill_error| SkillLoadingError {
+                    path: skill_error.path,
+                    message: skill_error.message.into(),
+                })
+                .collect();
             this.update(cx, |this, cx| {
                 if let Some(state) = this.projects.get_mut(&project_id) {
                     state.skills = skills;
+                    state.skill_loading_errors = skill_loading_errors.clone();
                     state
                         .project_context
                         .update(cx, |current_project_context, _cx| {
                             *current_project_context = project_context;
                         });
                 }
-                for skill_error in skill_errors {
-                    cx.emit(SkillLoadingError {
-                        path: skill_error.path,
-                        message: skill_error.message.into(),
-                    });
-                }
+                // Always emit, even with an empty list, so subscribers can
+                // clear previously-displayed errors when they get resolved.
+                cx.emit(SkillLoadingErrorsUpdated {
+                    project_id,
+                    errors: skill_loading_errors,
+                });
                 // Skills appear in the slash-command list, so a change in
                 // the loaded skills needs to be pushed out to active sessions.
                 this.update_available_commands_for_project(project_id, cx);
