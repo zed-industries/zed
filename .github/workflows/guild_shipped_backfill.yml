@@ -1,0 +1,283 @@
+name: Guild Shipped Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (log changes without making them)"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+env:
+  GUILD_CONTRIBUTORS: |
+    0x-pankaj
+    11happy
+    AidanV
+    AmaanBilwar
+    CCXLV
+    HiteshRohira
+    MostlyKIGuess
+    OmChillure
+    Palanikannan1437
+    SeanDunford
+    Shivansh-25
+    SkandaBhat
+    Steven-Weng
+    TwistingTwists
+    YEDASAVG
+    Ziqi-Yang
+    alanpjohn
+    arjunkomath
+    austincummings
+    ayushk-1801
+    claiwe
+    criticic
+    ddoemonn
+    dibashthapa
+    dongdong867
+    emamulandalib
+    eureka928
+    feitreim
+    hagz0r
+    iam-liam
+    iksuddle
+    implabinash
+    imumesh18
+    ishaksebsib
+    lingyaochu
+    loadingalias
+    marcocondrache
+    mchisolm0
+    nairadithya
+    nihalxkumar
+    notJoon
+    polyesterswing
+    prayanshchh
+    prertik
+    razeghi71
+    rgbkrk
+    sarmadgulzar
+    seanstrom
+    th0jensen
+    theonly1me
+    tommyming
+    virajbhartiya
+
+jobs:
+  backfill:
+    name: Backfill Guild PRs to Project
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - name: Backfill merged PRs to project
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        with:
+          github-token: ${{ steps.generate-token.outputs.token }}
+          script: |
+            const dryRun = process.env.DRY_RUN === 'true';
+            console.log(dryRun ? 'DRY RUN — no changes will be made\n' : 'LIVE MODE — changes will be applied\n');
+
+            const contributors = process.env.GUILD_CONTRIBUTORS
+              .split('\n')
+              .map(c => c.trim())
+              .filter(c => c.length > 0);
+
+            console.log(`Found ${contributors.length} guild contributors`);
+
+            const projectQuery = await github.graphql(`
+              query {
+                organization(login: "zed-industries") {
+                  projectV2(number: 74) {
+                    id
+                  }
+                }
+              }
+            `);
+            const projectId = projectQuery.organization.projectV2.id;
+
+            const fieldQuery = await github.graphql(`
+              query($projectId: ID!) {
+                node(id: $projectId) {
+                  ... on ProjectV2 {
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2SingleSelectField {
+                          id
+                          name
+                          options {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { projectId });
+
+            const statusField = fieldQuery.node.fields.nodes.find(f => f.name === 'Status');
+            if (!statusField) throw new Error('Could not find Status field on project');
+
+            const shippedOption = statusField.options.find(o => o.name === 'Shipped by the Guild');
+            if (!shippedOption) throw new Error('Could not find "Shipped by the Guild" option in Status field');
+
+            const statusFieldId = statusField.id;
+            const shippedOptionId = shippedOption.id;
+
+            // Load all project items upfront for issue removal lookups
+            let projectItems = [];
+            let hasNextPage = true;
+            let cursor = null;
+
+            while (hasNextPage) {
+              const q = cursor
+                ? `query($projectId: ID!, $cursor: String!) {
+                    node(id: $projectId) { ... on ProjectV2 { items(first: 100, after: $cursor) {
+                      nodes { id content { ... on Issue { number } } }
+                      pageInfo { hasNextPage endCursor }
+                    } } }
+                  }`
+                : `query($projectId: ID!) {
+                    node(id: $projectId) { ... on ProjectV2 { items(first: 100) {
+                      nodes { id content { ... on Issue { number } } }
+                      pageInfo { hasNextPage endCursor }
+                    } } }
+                  }`;
+
+              const vars = cursor ? { projectId, cursor } : { projectId };
+              const result = await github.graphql(q, vars);
+              projectItems = projectItems.concat(result.node.items.nodes);
+              hasNextPage = result.node.items.pageInfo.hasNextPage;
+              cursor = result.node.items.pageInfo.endCursor;
+            }
+
+            console.log(`Loaded ${projectItems.length} existing items from project\n`);
+
+            let totalPRsAdded = 0;
+            let totalIssuesRemoved = 0;
+            let totalFailed = 0;
+
+            for (const contributor of contributors) {
+              console.log(`\nSearching PRs for: ${contributor}`);
+              const query = `repo:zed-industries/zed is:pr is:merged author:${contributor} merged:>=2026-03-02`;
+
+              let page = 1;
+              let hasMore = true;
+
+              while (hasMore) {
+                const searchResults = await github.rest.search.issuesAndPullRequests({
+                  q: query,
+                  per_page: 100,
+                  page: page,
+                });
+
+                const items = searchResults.data.items;
+                console.log(`  Page ${page}: ${items.length} PRs found`);
+
+                for (const item of items) {
+                  try {
+                    const pr = await github.rest.pulls.get({
+                      owner: 'zed-industries',
+                      repo: 'zed',
+                      pull_number: item.number,
+                    });
+
+                    if (dryRun) {
+                      console.log(`  [DRY RUN] Would add PR #${item.number}: ${item.title}`);
+                    } else {
+                      const addResult = await github.graphql(`
+                        mutation($projectId: ID!, $contentId: ID!) {
+                          addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+                            item { id }
+                          }
+                        }
+                      `, { projectId, contentId: pr.data.node_id });
+
+                      const itemId = addResult.addProjectV2ItemById.item.id;
+
+                      await github.graphql(`
+                        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                          updateProjectV2ItemFieldValue(input: {
+                            projectId: $projectId
+                            itemId: $itemId
+                            fieldId: $fieldId
+                            value: { singleSelectOptionId: $optionId }
+                          }) {
+                            projectV2Item { id }
+                          }
+                        }
+                      `, { projectId, itemId, fieldId: statusFieldId, optionId: shippedOptionId });
+
+                      console.log(`  ✓ Added PR #${item.number}: ${item.title}`);
+                    }
+                    totalPRsAdded++;
+
+                    // Check for issues closed by this PR
+                    const closingQuery = await github.graphql(`
+                      query($owner: String!, $repo: String!, $prNumber: Int!) {
+                        repository(owner: $owner, name: $repo) {
+                          pullRequest(number: $prNumber) {
+                            closingIssuesReferences(first: 50) {
+                              nodes { number title }
+                            }
+                          }
+                        }
+                      }
+                    `, { owner: 'zed-industries', repo: 'zed', prNumber: item.number });
+
+                    const closedIssues = closingQuery.repository.pullRequest.closingIssuesReferences.nodes;
+                    for (const issue of closedIssues) {
+                      const match = projectItems.find(pi => pi.content && pi.content.number === issue.number);
+                      if (!match) continue;
+
+                      if (dryRun) {
+                        console.log(`  [DRY RUN] Would remove issue #${issue.number} ("${issue.title}") from project`);
+                      } else {
+                        await github.graphql(`
+                          mutation($projectId: ID!, $itemId: ID!) {
+                            deleteProjectV2Item(input: {projectId: $projectId, itemId: $itemId}) {
+                              deletedItemId
+                            }
+                          }
+                        `, { projectId, itemId: match.id });
+                        console.log(`  ✓ Removed issue #${issue.number} ("${issue.title}") from project`);
+                      }
+                      totalIssuesRemoved++;
+                    }
+                  } catch (err) {
+                    totalFailed++;
+                    console.log(`  ✗ PR #${item.number}: ${err.message}`);
+                  }
+                }
+
+                hasMore = items.length === 100;
+                page++;
+              }
+
+              // Rate limit delay between contributors
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            console.log(`\n===== SUMMARY =====`);
+            console.log(`Mode: ${dryRun ? 'DRY RUN' : 'LIVE'}`);
+            console.log(`PRs ${dryRun ? 'to add' : 'added'}: ${totalPRsAdded}`);
+            console.log(`Issues ${dryRun ? 'to remove' : 'removed'}: ${totalIssuesRemoved}`);
+            console.log(`Failures: ${totalFailed}`);
