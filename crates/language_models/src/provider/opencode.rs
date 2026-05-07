@@ -658,7 +658,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 } else {
                     None
                 };
-                let openai_request = into_open_ai(
+                let mut openai_request = into_open_ai(
                     request,
                     self.model.id(),
                     false,
@@ -667,6 +667,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     reasoning_effort,
                     self.model.interleaved_reasoning(),
                 );
+                ensure_opencode_reasoning_content(&mut openai_request);
                 let stream = self.stream_openai_chat(openai_request, http_client, cx);
                 async move {
                     let mapper = OpenAiEventMapper::new();
@@ -715,6 +716,18 @@ impl LanguageModel for OpenCodeLanguageModel {
     }
 }
 
+fn ensure_opencode_reasoning_content(request: &mut open_ai::Request) {
+    for message in &mut request.messages {
+        if let open_ai::RequestMessage::Assistant {
+            reasoning_content, ..
+        } = message
+        {
+            if reasoning_content.as_deref().unwrap_or_default().is_empty() {
+                *reasoning_content = Some(" ".to_string()); // fallback for kimi models
+            }
+        }
+    }
+}
 struct ConfigurationView {
     api_key_editor: Entity<InputField>,
     state: Entity<State>,
