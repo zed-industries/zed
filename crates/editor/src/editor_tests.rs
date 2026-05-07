@@ -18,8 +18,8 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Task, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
+    VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
@@ -8173,7 +8173,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8578,7 +8578,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8604,7 +8604,7 @@ async fn test_rewrap_line_comment_in_go(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -8632,7 +8632,7 @@ async fn test_rewrap_line_comment_in_c(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
