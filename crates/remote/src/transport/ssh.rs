@@ -1150,7 +1150,7 @@ impl SshRemoteConnection {
         dest_path_str: &str,
         additional_args: Option<&[&str]>,
     ) -> util::command::Command {
-        // these arguments exist for "ssh" but don't exist / don't have the same semantic for "scp"
+        /// These arguments exist for `ssh` but don't exist / don't have the same semantic for `scp`.
         const SSH_DENY_ARGS_FOR_SCP: &[&str] = &["-X", "-Y"];
 
         let mut command = util::command::new_command("scp");
