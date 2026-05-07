@@ -29,7 +29,8 @@ use language::{
     LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
     LanguageToolchainStore, Override, Point,
     language_settings::{
-        CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
+        CompletionSettingsContent, FormatOnSave, FormatterList, LanguageSettingsContent,
+        LspInsertMode,
     },
     tree_sitter_python,
 };
@@ -14893,6 +14894,311 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
         "one\ntwo\nthree\n"
+    );
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_modifications_format_on_save(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("one\ntwo\nthree\n", window, cx)
+    });
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
+            );
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                ", ".to_string(),
+            )]))
+        })
+        .next()
+        .await;
+    save.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one, two\nthree\n"
+    );
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_modifications_format_no_changes(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    assert!(
+        !cx.read(|cx| editor.is_dirty(cx)),
+        "editor should not be dirty before save"
+    );
+
+    let _no_format_handler = fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("rangeFormatting must not be called when no lines are modified");
+        })
+        .next();
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+    cx.run_until_parked();
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_modifications_format_lsp_no_range_support(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(false)),
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("one\ntwo\nthree\n", window, cx)
+    });
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let _no_range_format_handler = fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("rangeFormatting must not be called when range formatting is unsupported");
+        })
+        .next();
+    let _no_format_handler = fake_server
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
+            panic!("full formatting must not be called for Modifications when range formatting is unsupported");
+        })
+        .next();
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+    cx.run_until_parked();
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_modifications_format_lsp_returns_empty_edits(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("aaa\nbbb\nccc\nddd\neee\n", window, cx)
+    });
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
+            );
+            Ok(Some(Vec::new()))
+        })
+        .next()
+        .await;
+    save.await;
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "aaa\nbbb\nccc\nddd\neee\n"
+    );
+}
+
+#[gpui::test]
+async fn test_modifications_format_multiple_hunks(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    // Set initial text and save without formatting to establish a clean baseline
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("line0\nline1\nline2\nline3\nline4\nline5\n", window, cx);
+    });
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+    // Make two non-adjacent edits to create two separate hunks
+    editor.update_in(cx, |editor, _window, cx| {
+        editor.buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(1, 0)..Point::new(1, 5), "LINE1"),
+                    (Point::new(4, 0)..Point::new(4, 5), "LINE4"),
+                ],
+                None,
+                cx,
+            );
+        });
+    });
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let request_count_clone = request_count.clone();
+    let mut responded_rx =
+        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| {
+            let count = request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap()
+                );
+                match count {
+                    0 => Ok(Some(vec![lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(1, 5), lsp::Position::new(1, 5)),
+                        "!".to_string(),
+                    )])),
+                    1 => Ok(Some(vec![lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(4, 5), lsp::Position::new(4, 5)),
+                        "!".to_string(),
+                    )])),
+                    _ => panic!("unexpected third range formatting request"),
+                }
+            }
+        });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    responded_rx.next().await;
+    responded_rx.next().await;
+    save.await;
+
+    assert_eq!(request_count.load(atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "line0\nLINE1!\nline2\nline3\nLINE4!\nline5\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 }
