@@ -6062,7 +6062,8 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
         tool.run(
             ToolInput::resolved(crate::EditFileToolInput {
                 path: "root/sensitive_config.txt".into(),
-                edits: vec![],
+                old_text: String::new(),
+                new_text: String::new(),
             }),
             event_stream,
             cx,
@@ -6494,7 +6495,8 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
         tool.run(
             ToolInput::resolved(crate::EditFileToolInput {
                 path: "root/README.md".into(),
-                edits: vec![],
+                old_text: String::new(),
+                new_text: String::new(),
             }),
             event_stream,
             cx,
@@ -6564,7 +6566,8 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
         tool.run(
             ToolInput::resolved(crate::EditFileToolInput {
                 path: "root/.zed/settings.json".into(),
-                edits: vec![],
+                old_text: String::new(),
+                new_text: String::new(),
             }),
             event_stream,
             cx,
