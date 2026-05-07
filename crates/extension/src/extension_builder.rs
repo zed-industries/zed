@@ -394,6 +394,14 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
+        if which::which("rustup").is_err() {
+            bail!(
+                "the `{RUST_TARGET}` target is not installed and `rustup` is not available. \
+                 Install the target via your package manager or add it to your Rust toolchain \
+                 configuration (e.g., `targets` in rust-toolchain.toml)."
+            );
+        }
+
         let output = util::command::new_command("rustup")
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
@@ -404,7 +412,7 @@ impl ExtensionBuilder {
         if !output.status.success() {
             bail!(
                 "failed to install the `{RUST_TARGET}` target: {}",
-                String::from_utf8_lossy(&rustc_output.stderr)
+                String::from_utf8_lossy(&output.stderr)
             );
         }
 
@@ -412,6 +420,21 @@ impl ExtensionBuilder {
     }
 
     async fn install_wasi_sdk_if_needed(&self) -> Result<PathBuf> {
+        if let Ok(sdk_path) = env::var("WASI_SDK_PATH") {
+            let path = PathBuf::from(&sdk_path);
+            let mut clang_path = path.clone();
+            clang_path.extend(["bin", &format!("clang{}", env::consts::EXE_SUFFIX)]);
+            if fs::metadata(&clang_path).is_ok_and(|metadata| metadata.is_file()) {
+                log::info!("using wasi-sdk from WASI_SDK_PATH: {}", path.display());
+                return Ok(clang_path);
+            }
+            log::warn!(
+                "WASI_SDK_PATH is set to {} but clang was not found at {}, falling back to download",
+                sdk_path,
+                clang_path.display()
+            );
+        }
+
         let url = if let Some(asset_name) = WASI_SDK_ASSET_NAME {
             format!("{WASI_SDK_URL}{asset_name}")
         } else {

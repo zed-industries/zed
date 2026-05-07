@@ -6030,6 +6030,7 @@ dependencies = [
  "util",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
+ "which 6.0.3",
  "ztracing",
 ]
 
