@@ -43,8 +43,9 @@
           cargo-nextest
           cargo-hakari
           cargo-machete
-		  cargo-dylint
-		  dylint-link
+		  # cargo-dylint # this does dynamic linking so extreemly painful on
+		  # nix...
+		  # dylint-link
           cargo-zigbuild
           # TODO: package protobuf-language-server for editing zed.proto
           # TODO: add other tools used in our scripts
