@@ -62,19 +62,19 @@ This matters more than it sounds: a skill author iterating on their `SKILL.md` s
 
 ## Frontmatter parsing
 
-### Strict validation, with `bail!` on cosmetic issues
+### Strict validation is a permanent design decision
 
 `name` must match `[a-z0-9-]{1,64}` and `description` must be 1–1024 characters and non-empty. If either fails, we reject the skill outright with a load error that surfaces in the UI.
 
-Some implementations are more lenient — they warn but load anyway, on the theory that interop is more important than rule enforcement. The spec arguably encourages this approach for cross-tool compatibility.
+Some implementations are more lenient — they warn but load anyway, on the theory that interop is more important than rule enforcement. **We are not doing that, and we are not going to.** This is not a feature gap we're tracking; it's a deliberate, permanent posture. The reasons:
 
-We deliberately go strict because:
+1. The validation rules in the spec are short, clear, and easy to follow. A skill that fails them is authored incorrectly, full stop. There is no "legitimately diverging" case worth accommodating.
+2. Surfacing the error loud-and-early is the *correct* user experience for an authoring system. The user fixes the typo and moves on. Silently loading a skill whose actual `name` doesn't match the directory — or whose `description` is missing — produces a worse outcome: a model that calls a skill with one name when the file says another, or a catalog entry that's blank or truncated.
+3. The interop argument cuts the wrong way. If we lenient-parse skills authored for tools that lenient-parse, we're encouraging skills that won't load cleanly on stricter tools (including this one when used by other people). The way to keep skills portable is to enforce the spec, not to paper over violations.
 
-1. The validation rules in the spec are short and easy to follow. A skill that fails them is almost certainly authored incorrectly, not legitimately diverging.
-2. Surfacing the error loud-and-early makes skill authoring better. The user fixes the typo and moves on, instead of silently getting an entry in the catalog that doesn't match what they wrote.
-3. Lenient parsing is additive. If we later get reports of legitimate skills failing to load, we can loosen specific checks without breaking anything that currently works.
+If you find yourself thinking "maybe we should loosen this check just for X," the answer is no. Send the user a clear error and let them fix the file.
 
-The only field beyond the spec that we honor is `disable-model-invocation` (see below). Unknown fields are silently ignored, which is the standard YAML behavior.
+The only field beyond the spec that we honor is `disable-model-invocation`. Unknown fields are silently ignored, which is the standard YAML behavior.
 
 ### One-skill-file-per-directory
 
@@ -233,7 +233,6 @@ The alternative — empty skill list for subagents — would mean a subagent los
 A few things that are common in other tools, that we deliberately deferred:
 
 - **Override warnings surfaced in the UI**: currently log-only.
-- **Lenient frontmatter parsing**: still strict.
 - **Compaction protection**: not applicable yet — the agent doesn't compact conversations. When that lands, skill tool outputs should be exempt.
 - **Per-skill picker dialog**: slash autocomplete should already surface skills, but a dedicated picker UI (with descriptions, search) would be a small UX win.
 - **`user-invocable: false`**: the model-only counterpart to `disable-model-invocation`. Defer until there's a real use case.
