@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::VecDeque,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use collections::HashMap;
 use futures::{StreamExt, channel::mpsc};
@@ -7,9 +11,10 @@ use gpui::{
 };
 use lsp::{
     IoKind, LanguageServer, LanguageServerId, LanguageServerName, LanguageServerSelector,
-    MessageType, TraceValue,
+    MessageType, RequestId, TraceValue,
 };
 use rpc::proto;
+use serde::Deserialize;
 use settings::WorktreeId;
 
 use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
@@ -17,6 +22,7 @@ use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
 const SEND_LINE: &str = "\n// Send:";
 const RECEIVE_LINE: &str = "\n// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
+const MAX_PENDING_REQUESTS: usize = MAX_STORED_LOG_ENTRIES;
 
 pub fn init(on_headless_host: bool, cx: &mut App) -> Entity<LogStore> {
     let log_store = cx.new(|cx| LogStore::new(on_headless_host, cx));
@@ -43,7 +49,7 @@ pub struct LogStore {
     on_headless_host: bool,
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
-    io_tx: mpsc::UnboundedSender<(LanguageServerId, IoKind, String)>,
+    io_tx: mpsc::UnboundedSender<(LanguageServerId, IoKind, String, Instant)>,
 }
 
 struct ProjectState {
@@ -188,12 +194,114 @@ impl LanguageServerKind {
 pub struct LanguageServerRpcState {
     pub rpc_messages: VecDeque<RpcMessage>,
     last_message_kind: Option<MessageKind>,
+    request_tracker: RpcRequestTracker,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default)]
+struct RpcRequestTracker {
+    pending_requests: HashMap<PendingRequestKey, Instant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PendingRequestKey {
+    kind: MessageKind,
+    id: RequestId,
+}
+
+#[derive(Deserialize)]
+struct RpcEnvelope<'a> {
+    id: Option<RequestId>,
+    method: Option<&'a str>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 enum MessageKind {
     Send,
     Receive,
+}
+
+impl MessageKind {
+    fn opposite(self) -> Self {
+        match self {
+            Self::Send => Self::Receive,
+            Self::Receive => Self::Send,
+        }
+    }
+}
+
+impl RpcRequestTracker {
+    fn observe(
+        &mut self,
+        kind: MessageKind,
+        message: &str,
+        observed_at: Instant,
+    ) -> Option<Duration> {
+        let envelope = serde_json::from_str::<RpcEnvelope>(message).ok()?;
+        let id = envelope.id?;
+        if envelope.method.is_some() {
+            self.insert(PendingRequestKey { kind, id }, observed_at);
+            None
+        } else {
+            self.pending_requests
+                .remove(&PendingRequestKey {
+                    kind: kind.opposite(),
+                    id,
+                })
+                .and_then(|started_at| observed_at.checked_duration_since(started_at))
+        }
+    }
+
+    fn insert(&mut self, key: PendingRequestKey, observed_at: Instant) {
+        if self.pending_requests.len() >= MAX_PENDING_REQUESTS
+            && !self.pending_requests.contains_key(&key)
+            && let Some(oldest_key) = self
+                .pending_requests
+                .iter()
+                .min_by_key(|(_, started_at)| **started_at)
+                .map(|(key, _)| key.clone())
+        {
+            self.pending_requests.remove(&oldest_key);
+        }
+        self.pending_requests.insert(key, observed_at);
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+pub struct TestRpcRequestTracker(RpcRequestTracker);
+
+#[cfg(feature = "test-support")]
+impl TestRpcRequestTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn observe(
+        &mut self,
+        received: bool,
+        message: &str,
+        observed_at: Instant,
+    ) -> Option<Duration> {
+        let kind = if received {
+            MessageKind::Receive
+        } else {
+            MessageKind::Send
+        };
+        self.0.observe(kind, message, observed_at)
+    }
+
+    pub fn pending_request_count(&self) -> usize {
+        self.0.pending_requests.len()
+    }
+
+    pub fn max_pending_requests() -> usize {
+        MAX_PENDING_REQUESTS
+    }
+}
+
+enum RpcTiming {
+    ObservedAt(Instant),
+    Forwarded(Option<Duration>),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -227,10 +335,10 @@ impl LogStore {
             io_tx,
         };
         cx.spawn(async move |log_store, cx| {
-            while let Some((server_id, io_kind, message)) = io_rx.next().await {
+            while let Some((server_id, io_kind, message, observed_at)) = io_rx.next().await {
                 if let Some(log_store) = log_store.upgrade() {
                     log_store.update(cx, |log_store, cx| {
-                        log_store.on_io(server_id, io_kind, &message, cx);
+                        log_store.on_io(server_id, io_kind, &message, observed_at, cx);
                     });
                 }
             }
@@ -331,13 +439,19 @@ impl LogStore {
                                             cx,
                                         );
                                     }
-                                    crate::LanguageServerLogType::Rpc { received } => {
+                                    crate::LanguageServerLogType::Rpc { received, elapsed } => {
                                         let kind = if *received {
                                             MessageKind::Receive
                                         } else {
                                             MessageKind::Send
                                         };
-                                        log_store.add_language_server_rpc(*id, kind, message, cx);
+                                        log_store.add_language_server_rpc(
+                                            *id,
+                                            kind,
+                                            message,
+                                            RpcTiming::Forwarded(*elapsed),
+                                            cx,
+                                        );
                                     }
                                 }
                             }
@@ -400,8 +514,9 @@ impl LogStore {
             let io_tx = self.io_tx.clone();
             let server_id = server.server_id();
             server_state.io_logs_subscription = Some(server.on_io(move |io_kind, message| {
+                let observed_at = Instant::now();
                 io_tx
-                    .unbounded_send((server_id, io_kind, message.to_string()))
+                    .unbounded_send((server_id, io_kind, message.to_string(), observed_at))
                     .ok();
             }));
         }
@@ -519,6 +634,7 @@ impl LogStore {
         language_server_id: LanguageServerId,
         kind: MessageKind,
         message: &str,
+        timing: RpcTiming,
         cx: &mut Context<'_, Self>,
     ) {
         let store_logs = !self.on_headless_host;
@@ -529,26 +645,42 @@ impl LogStore {
             return;
         };
 
+        let elapsed = match timing {
+            RpcTiming::ObservedAt(observed_at) => {
+                state.request_tracker.observe(kind, message, observed_at)
+            }
+            RpcTiming::Forwarded(elapsed) => elapsed,
+        };
+
         let received = kind == MessageKind::Receive;
         let rpc_log_lines = &mut state.rpc_messages;
-        if state.last_message_kind != Some(kind) {
+        if state.last_message_kind != Some(kind) || elapsed.is_some() {
             while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
                 rpc_log_lines.pop_front();
             }
-            let line_before_message = match kind {
-                MessageKind::Send => SEND_LINE,
-                MessageKind::Receive => RECEIVE_LINE,
+            let line_before_message = match (kind, elapsed) {
+                (MessageKind::Send, None) => SEND_LINE.to_string(),
+                (MessageKind::Receive, None) => RECEIVE_LINE.to_string(),
+                (MessageKind::Send, Some(elapsed)) => {
+                    format!("\n// Send (took {elapsed:?}):")
+                }
+                (MessageKind::Receive, Some(elapsed)) => {
+                    format!("\n// Receive (took {elapsed:?}):")
+                }
             };
             if store_logs {
                 rpc_log_lines.push_back(RpcMessage {
-                    message: line_before_message.to_string(),
+                    message: line_before_message.clone(),
                 });
             }
             // Do not send a synthetic message over the wire, it will be derived from the actual RPC message
             cx.emit(Event::NewServerLogEntry {
                 id: language_server_id,
-                kind: LanguageServerLogType::Rpc { received },
-                text: line_before_message.to_string(),
+                kind: LanguageServerLogType::Rpc {
+                    received,
+                    elapsed: None,
+                },
+                text: line_before_message,
             });
         }
 
@@ -565,7 +697,7 @@ impl LogStore {
         self.emit_event(
             Event::NewServerLogEntry {
                 id: language_server_id,
-                kind: LanguageServerLogType::Rpc { received },
+                kind: LanguageServerLogType::Rpc { received, elapsed },
                 text: message.to_owned(),
             },
             cx,
@@ -614,6 +746,7 @@ impl LogStore {
             .get_or_insert_with(|| LanguageServerRpcState {
                 rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                 last_message_kind: None,
+                request_tracker: RpcRequestTracker::default(),
             });
         Some(rpc_state)
     }
@@ -641,6 +774,7 @@ impl LogStore {
         language_server_id: LanguageServerId,
         io_kind: IoKind,
         message: &str,
+        observed_at: Instant,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let is_received = match io_kind {
@@ -658,7 +792,13 @@ impl LogStore {
             MessageKind::Send
         };
 
-        self.add_language_server_rpc(language_server_id, kind, message, cx);
+        self.add_language_server_rpc(
+            language_server_id,
+            kind,
+            message,
+            RpcTiming::ObservedAt(observed_at),
+            cx,
+        );
         cx.notify();
         Some(())
     }
