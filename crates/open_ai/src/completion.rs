@@ -113,6 +113,14 @@ pub fn into_open_ai(
                                     *reasoning_content = Some(reasoning);
                                 }
                             } else if reasoning_content.is_none() {
+                                log::warn!(
+                                    "Appending tool call '{}' to existing assistant message \
+                                    with interleaved_reasoning=true but no reasoning_content \
+                                    accumulated. Using blank string as workaround.
+                                    Check that the upstream API/proxy forwards \
+                                    `reasoning_content` in streaming responses.",
+                                    tool_use.name
+                                );
                                 *reasoning_content = Some(" ".to_string());
                             }
                         }
@@ -120,6 +128,14 @@ pub fn into_open_ai(
                         let mut reasoning_content = current_reasoning.take();
                         if interleaved_reasoning && reasoning_content.is_none() {
                             reasoning_content = Some(" ".to_string());
+                            log::warn!(
+                                "Creating assistant message with tool call '{}' \
+                                with interleaved_reasoning=true but no reasoning_content \
+                                accumulated. Using blank string as workaround.
+                                Check that the upstream API/proxy forwards \
+                                `reasoning_content` in streaming responses.",
+                                tool_use.name
+                            );
                         }
                         messages.push(crate::RequestMessage::Assistant {
                             content: None,
