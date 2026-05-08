@@ -841,7 +841,7 @@ impl NativeAgent {
             // Enforce the catalog size budget here so that skills which
             // don't fit produce a load error in the UI rather than being
             // silently swallowed by ProjectContext.
-            let (catalog_skills, budget_errors) = apply_skill_budget(&skills);
+            let (catalog_skills, budget_errors) = select_catalog_skills(&skills);
             skill_errors.extend(budget_errors);
 
             let project_context =
@@ -2626,7 +2626,9 @@ impl TerminalHandle for AcpTerminalHandle {
     }
 }
 
-/// Enforce the fixed catalog description budget. Walks `skills` in iteration
+/// Build the catalog the model sees in its system prompt: filter out hidden
+/// (`disable_model_invocation`) skills, then drop the rest if they would push
+/// the catalog past the description budget. Walks `skills` in iteration
 /// order, dropping any with `disable_model_invocation: true` (they belong to
 /// slash commands, not the model's catalog), and accumulating the remaining
 /// (visible) skills against the budget. Once the budget is exceeded, every
@@ -2636,7 +2638,7 @@ impl TerminalHandle for AcpTerminalHandle {
 /// Returns `SkillSummary` values rather than full `Skill`s so that the
 /// (potentially ~100KB) skill bodies aren't cloned just to be discarded by
 /// `ProjectContext::new`, which only needs the summary fields.
-fn apply_skill_budget(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadError>) {
+fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadError>) {
     let mut kept = Vec::new();
     let mut errors = Vec::new();
     let mut total_size = 0usize;
@@ -2808,7 +2810,7 @@ mod internal_tests {
     }
 
     #[test]
-    fn test_apply_skill_budget_emits_errors_for_dropped_skills() {
+    fn test_select_catalog_skills_emits_errors_for_dropped_skills() {
         // Each skill's name + description occupies ~10KB. With a 50KB
         // budget, only the first ~5 visible skills fit; the rest must
         // appear as load errors so the UI can surface them.
@@ -2828,7 +2830,7 @@ mod internal_tests {
             });
         }
 
-        let (kept, errors) = apply_skill_budget(&skills);
+        let (kept, errors) = select_catalog_skills(&skills);
 
         assert!(
             kept.len() < skills.len(),
@@ -2872,7 +2874,7 @@ mod internal_tests {
     }
 
     #[test]
-    fn test_apply_skill_budget_stops_packing_after_first_overflow() {
+    fn test_select_catalog_skills_stops_packing_after_first_overflow() {
         // Once a model-invocable skill overflows the budget, no later
         // skills should be admitted, even if they're small enough to fit
         // in the remaining sliver. This keeps the cutoff deterministic by
@@ -2920,7 +2922,7 @@ mod internal_tests {
         );
 
         let skills = vec![first.clone(), second.clone(), third.clone()];
-        let (kept, errors) = apply_skill_budget(&skills);
+        let (kept, errors) = select_catalog_skills(&skills);
 
         let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(kept_names, vec![first.name.as_str()]);
@@ -2936,9 +2938,9 @@ mod internal_tests {
     }
 
     #[test]
-    fn test_apply_skill_budget_excludes_hidden_skills_from_catalog() {
+    fn test_select_catalog_skills_excludes_hidden_skills_from_catalog() {
         // Hidden skills (`disable_model_invocation: true`) are slash-only and
-        // must not appear in the catalog returned by `apply_skill_budget`,
+        // must not appear in the catalog returned by `select_catalog_skills`,
         // even when they would otherwise fit in the budget. They also don't
         // count against the budget, so a hidden skill larger than the entire
         // budget shouldn't generate a load error or prevent later visible
@@ -2963,7 +2965,7 @@ mod internal_tests {
             disable_model_invocation: false,
         };
 
-        let (kept, errors) = apply_skill_budget(&[hidden, visible]);
+        let (kept, errors) = select_catalog_skills(&[hidden, visible]);
 
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
         let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();

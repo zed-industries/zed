@@ -82,7 +82,7 @@ impl ProjectContext {
 
     // Hidden skills (`disable_model_invocation: true`) and any skills
     // dropped to fit the catalog description budget are excluded
-    // upstream by `apply_skill_budget` in `agent.rs`, which already
+    // upstream by `select_catalog_skills` in `agent.rs`, which already
     // returns only catalog `SkillSummary` values.
     pub fn with_skills(mut self, skills: Vec<SkillSummary>) -> Self {
         self.has_skills = !skills.is_empty();
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn test_project_context_does_not_filter_by_budget() {
-        // The budget is enforced upstream in `agent.rs::apply_skill_budget`
+        // The budget is enforced upstream in `agent.rs::select_catalog_skills`
         // so that dropped skills can surface as load errors. ProjectContext
         // should accept whatever summaries it's given.
         let huge_description = "x".repeat(60 * 1024);
@@ -188,7 +188,7 @@ mod tests {
     }
 
     // Hidden-skill filtering used to live here, but it's now the
-    // responsibility of `apply_skill_budget` in `agent.rs`, which is the
+    // responsibility of `select_catalog_skills` in `agent.rs`, which is the
     // single source of truth for which skills enter the catalog.
     // `ProjectContext::new` simply converts whatever skills it receives
     // into summaries, so there's no behavior left to test at this layer.
