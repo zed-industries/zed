@@ -82,7 +82,7 @@ use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
 };
-pub use image_store::{ImageItem, ImageStore};
+pub use image_store::{ImageItem, ImageStore, ProjectImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
@@ -235,7 +235,7 @@ pub struct Project {
     worktree_store: Entity<WorktreeStore>,
     buffer_store: Entity<BufferStore>,
     context_server_store: Entity<ContextServerStore>,
-    image_store: Entity<ImageStore>,
+    image_store: Entity<ProjectImageStore>,
     lsp_store: Entity<LspStore>,
     _subscriptions: Vec<gpui::Subscription>,
     buffers_needing_diff: HashSet<WeakEntity<Buffer>>,
@@ -1233,7 +1233,7 @@ impl Project {
             });
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
-            let image_store = cx.new(|cx| ImageStore::local(worktree_store.clone(), cx));
+            let image_store = cx.new(|cx| ProjectImageStore::local(worktree_store.clone(), cx));
             cx.subscribe(&image_store, Self::on_image_store_event)
                 .detach();
 
@@ -1417,7 +1417,7 @@ impl Project {
                 )
             });
             let image_store = cx.new(|cx| {
-                ImageStore::remote(
+                ProjectImageStore::remote(
                     worktree_store.clone(),
                     remote.read(cx).proto_client(),
                     REMOTE_SERVER_PROJECT_ID,
@@ -1725,7 +1725,7 @@ impl Project {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         });
         let image_store = cx.new(|cx| {
-            ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
+            ProjectImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         });
 
         let environment =
@@ -3529,7 +3529,7 @@ impl Project {
 
     fn on_image_store_event(
         &mut self,
-        _: Entity<ImageStore>,
+        _: Entity<ProjectImageStore>,
         event: &ImageStoreEvent,
         cx: &mut Context<Self>,
     ) {

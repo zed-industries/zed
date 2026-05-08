@@ -49,6 +49,7 @@ pub enum ImageItemEvent {
 
 impl EventEmitter<ImageItemEvent> for ImageItem {}
 
+#[derive(Clone)]
 pub enum ImageStoreEvent {
     ImageAdded(Entity<ImageItem>),
 }
@@ -305,6 +306,86 @@ pub struct ImageStore {
         ProjectPath,
         postage::watch::Receiver<Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>>,
     >,
+}
+
+/// Per-project view of the host's [`ImageStore`].
+///
+/// In the target architecture (see `crates/project/HOST_PROJECT_SPLIT.md`), the
+/// inner `ImageStore` is host-owned (one per machine) and acts as the registry
+/// of all images known to that host. `ProjectImageStore` is per-`Project` and
+/// owns the relationship between this project and the host's registry.
+///
+/// Today (Phase 1, no host de-duplication) each `ProjectImageStore` constructs
+/// its own `ImageStore`, so the structure is in place but the registry is not
+/// yet shared across projects.
+pub struct ProjectImageStore {
+    image_store: Entity<ImageStore>,
+    _subscription: Subscription,
+}
+
+impl EventEmitter<ImageStoreEvent> for ProjectImageStore {}
+
+impl ProjectImageStore {
+    pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+        let image_store = cx.new(|cx| ImageStore::local(worktree_store, cx));
+        let subscription = cx.subscribe(&image_store, |_, _, event, cx| {
+            cx.emit(event.clone());
+        });
+        Self {
+            image_store,
+            _subscription: subscription,
+        }
+    }
+
+    pub fn remote(
+        worktree_store: Entity<WorktreeStore>,
+        upstream_client: AnyProtoClient,
+        project_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let image_store =
+            cx.new(|cx| ImageStore::remote(worktree_store, upstream_client, project_id, cx));
+        let subscription = cx.subscribe(&image_store, |_, _, event, cx| {
+            cx.emit(event.clone());
+        });
+        Self {
+            image_store,
+            _subscription: subscription,
+        }
+    }
+
+    /// The underlying host-side image registry. Will be host-shared in Phase 2.
+    pub fn host_store(&self) -> &Entity<ImageStore> {
+        &self.image_store
+    }
+
+    pub fn open_image(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<ImageItem>>> {
+        self.image_store
+            .update(cx, |store, cx| store.open_image(project_path, cx))
+    }
+
+    pub fn handle_create_image_for_peer(
+        &mut self,
+        envelope: TypedEnvelope<proto::CreateImageForPeer>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.image_store.update(cx, |store, cx| {
+            store.handle_create_image_for_peer(envelope, cx)
+        })
+    }
+
+    pub fn reload_images(
+        &self,
+        images: HashSet<Entity<ImageItem>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.image_store
+            .update(cx, |store, cx| store.reload_images(images, cx))
+    }
 }
 
 impl ImageStore {
