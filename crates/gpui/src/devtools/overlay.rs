@@ -549,7 +549,7 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
             rows.push(OverlayRow::plain("no notify sources in the last 5s"));
         } else {
             rows.push(OverlayRow::plain(
-                "rank source             caller                5s total visible tracked",
+                "rank source            caller               5s total age   live",
             ));
             for (index, (source, stats)) in notify_sources.into_iter().enumerate() {
                 let is_pinned = devtools.pinned_notify_sources.contains(&source);
@@ -564,6 +564,7 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
                         source,
                         stats,
                         devtools.notify_source_total_count(source),
+                        now,
                     ),
                     vec![
                         OverlayAction::from(SourceFilterAction::HideNotify(source)),
@@ -595,7 +596,7 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
             rows.push(OverlayRow::plain("no real renders in the last 1s"));
         } else {
             rows.push(OverlayRow::plain(
-                "rank view              phase         1s cost     reason",
+                "rank view            phase       r/s reuse age   cost  miss why",
             ));
             for (index, (source, stats)) in render_summary.top_sources.into_iter().enumerate() {
                 let is_pinned = devtools.pinned_render_sources.contains(&source);
@@ -605,7 +606,7 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
                     SourceFilterAction::PinRender(source)
                 };
                 rows.push(OverlayRow::actions(
-                    format_render_source(index + 1, source, stats),
+                    format_render_source(index + 1, source, stats, now),
                     vec![
                         OverlayAction::from(SourceFilterAction::HideRender(source)),
                         OverlayAction::from(pin_action),

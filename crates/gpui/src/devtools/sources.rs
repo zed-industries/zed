@@ -74,6 +74,7 @@ pub(super) struct NotifySourceStats {
     caller_column: u32,
     registered_window_count: usize,
     live_window_count: usize,
+    last_timestamp: Option<Instant>,
 }
 
 impl NotifySourceStats {
@@ -84,6 +85,7 @@ impl NotifySourceStats {
             caller_column: event.caller_column,
             registered_window_count: event.registered_window_count,
             live_window_count: event.live_window_count,
+            last_timestamp: Some(event.timestamp),
         }
     }
 
@@ -94,6 +96,7 @@ impl NotifySourceStats {
             caller_column: 0,
             registered_window_count: 0,
             live_window_count: 0,
+            last_timestamp: None,
         }
     }
 
@@ -102,6 +105,7 @@ impl NotifySourceStats {
         self.caller_column = event.caller_column;
         self.registered_window_count = event.registered_window_count;
         self.live_window_count = event.live_window_count;
+        self.last_timestamp = Some(event.timestamp);
     }
 }
 
@@ -209,6 +213,7 @@ pub(super) fn format_notify_source(
     source: NotifySourceKey,
     stats: NotifySourceStats,
     total_count: usize,
+    now: Instant,
 ) -> String {
     let caller = format!(
         "{}:{}:{}",
@@ -216,13 +221,19 @@ pub(super) fn format_notify_source(
         source.caller_line,
         stats.caller_column
     );
+    let age = stats
+        .last_timestamp
+        .and_then(|timestamp| event_age(now, timestamp))
+        .map(format_age)
+        .unwrap_or_else(|| "--".to_string());
     format!(
-        "{:<4} {:<18} {:<21} {:>4} {:>5} {:>7} {:>7} id {}",
+        "{:<4} {:<17} {:<20} 5s {:>3} total {:>5} age {:>5} live {:>3}/{:<3} id {}",
         index,
         short_type_name(source.entity_type),
         caller,
         stats.count,
         total_count,
+        age,
         stats.live_window_count,
         stats.registered_window_count,
         stats.entity_id.as_u64(),
@@ -262,6 +273,7 @@ pub(super) fn render_summary(
 ) -> RenderSummary {
     let mut summary = RenderSummary::default();
     let mut counts: FxHashMap<RenderSourceKey, RenderSourceStats> = FxHashMap::default();
+    let mut reuse_counts_by_type: FxHashMap<&'static str, usize> = FxHashMap::default();
 
     for event in devtools.renders.iter() {
         let Some(age) = event_age(now, event.timestamp) else {
@@ -273,6 +285,7 @@ pub(super) fn render_summary(
 
         if event.phase.is_reuse() {
             summary.reuse_count += 1;
+            *reuse_counts_by_type.entry(event.entity_type).or_insert(0) += 1;
         } else if event.phase.flashes() {
             let key = RenderSourceKey::from(event);
             if devtools.hidden_render_sources.contains(&key) {
@@ -298,6 +311,13 @@ pub(super) fn render_summary(
                 .render_source_last_stats(*source)
                 .unwrap_or_else(RenderSourceStats::empty)
         });
+    }
+
+    for (source, stats) in &mut counts {
+        stats.reuse_count = reuse_counts_by_type
+            .get(&source.entity_type)
+            .copied()
+            .unwrap_or(0);
     }
 
     let mut counts = counts.into_iter().collect::<Vec<_>>();
@@ -380,33 +400,39 @@ impl RenderSourceKey {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RenderSourceStats {
     count: usize,
+    reuse_count: usize,
     duration: Duration,
     sample_entity_id: EntityId,
     bounds: Option<Bounds<Pixels>>,
     cache_miss_reasons: CacheMissReasons,
     caching_disabled_by_inspector: bool,
+    last_timestamp: Option<Instant>,
 }
 
 impl RenderSourceStats {
     pub(super) fn from_event(event: &ViewRenderEvent) -> Self {
         Self {
             count: 0,
+            reuse_count: 0,
             duration: Duration::default(),
             sample_entity_id: event.entity_id,
             bounds: event.bounds,
             cache_miss_reasons: event.cache_miss_reasons,
             caching_disabled_by_inspector: event.caching_disabled_by_inspector,
+            last_timestamp: Some(event.timestamp),
         }
     }
 
     fn empty() -> Self {
         Self {
             count: 0,
+            reuse_count: 0,
             duration: Duration::default(),
             sample_entity_id: EntityId::from(0),
             bounds: None,
             cache_miss_reasons: CacheMissReasons::empty(),
             caching_disabled_by_inspector: false,
+            last_timestamp: None,
         }
     }
 
@@ -419,6 +445,7 @@ impl RenderSourceStats {
         self.bounds = event.bounds;
         self.cache_miss_reasons = event.cache_miss_reasons;
         self.caching_disabled_by_inspector = event.caching_disabled_by_inspector;
+        self.last_timestamp = Some(event.timestamp);
     }
 }
 
@@ -426,9 +453,21 @@ pub(super) fn format_render_source(
     index: usize,
     source: RenderSourceKey,
     stats: RenderSourceStats,
+    now: Instant,
 ) -> String {
+    let age = stats
+        .last_timestamp
+        .and_then(|timestamp| event_age(now, timestamp))
+        .map(format_age)
+        .unwrap_or_else(|| "--".to_string());
+    let total = stats.count + stats.reuse_count;
+    let miss_percent = if total == 0 {
+        None
+    } else {
+        Some((stats.count * 100) / total)
+    };
     let mut label = format!(
-        "{:<4} {:<17} {:<13} {:>3} ",
+        "{:<4} {:<15} {:<11} r/s{:>3} reuse{:>3} age{:>5} ",
         index,
         format!(
             "{}#{}",
@@ -437,21 +476,24 @@ pub(super) fn format_render_source(
         ),
         source.phase.as_str(),
         stats.count,
+        stats.reuse_count,
+        age,
     );
     if !stats.duration.is_zero() {
-        label.push_str(&format!("{:>6}ms", format_duration_ms(stats.duration)));
+        label.push_str(&format!("{:>5}ms", format_duration_ms(stats.duration)));
     } else {
-        label.push_str("     --");
+        label.push_str("   --");
     }
-    let mut reasons = Vec::new();
-    if !stats.cache_miss_reasons.is_empty() {
-        reasons.push(stats.cache_miss_reasons.labels().join("+"));
+
+    if let Some(miss_percent) = miss_percent {
+        label.push_str(&format!(" miss{:>3}%", miss_percent));
     }
-    if stats.caching_disabled_by_inspector {
-        reasons.push("inspector".to_string());
+
+    let chips = cache_miss_chips(stats);
+    if !chips.is_empty() {
+        label.push(' ');
+        label.push_str(&chips);
     }
-    label.push(' ');
-    label.push_str(&reasons.join("+"));
     if let Some(bounds) = stats.bounds {
         label.push_str(&format!(
             " {:.0}x{:.0}",
@@ -459,6 +501,19 @@ pub(super) fn format_render_source(
         ));
     }
     label
+}
+
+fn cache_miss_chips(stats: RenderSourceStats) -> String {
+    let mut chips = stats
+        .cache_miss_reasons
+        .labels()
+        .into_iter()
+        .map(|label| format!("[{}]", label))
+        .collect::<String>();
+    if stats.caching_disabled_by_inspector {
+        chips.push_str("[inspector]");
+    }
+    chips
 }
 
 pub(super) fn active_animation_count(
@@ -669,6 +724,29 @@ mod tests {
     }
 
     #[test]
+    fn notify_source_format_shows_last_age() {
+        let now = Instant::now();
+        let event = NotifyEvent {
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            caller_file: "crates/editor/src/editor.rs",
+            caller_line: 2111,
+            caller_column: 17,
+            registered_window_count: 2,
+            live_window_count: 1,
+            timestamp: now - Duration::from_millis(125),
+        };
+        let mut stats = NotifySourceStats::from_event(&event);
+        stats.count = 3;
+
+        let label = format_notify_source(1, NotifySourceKey::from(&event), stats, 9, now);
+        assert!(label.contains("5s   3"));
+        assert!(label.contains("total     9"));
+        assert!(label.contains("age 125ms"));
+        assert!(label.contains("live   1/2"));
+    }
+
+    #[test]
     fn notify_sources_ignore_events_after_snapshot_time() {
         let mut devtools = GpuiDevTools::new();
         let now = Instant::now();
@@ -777,6 +855,72 @@ mod tests {
             hidden_render_sources(&devtools, window_id, now),
             vec![(hidden_source, 1)]
         );
+    }
+
+    #[test]
+    fn render_summary_tracks_reuse_count_by_view_type() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+
+        devtools.renders.push(ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        });
+        for entity_id in [2, 3] {
+            devtools.renders.push(ViewRenderEvent {
+                window_id,
+                entity_id: EntityId::from(entity_id),
+                entity_type: "Editor",
+                phase: ViewRenderPhase::PrepaintReuse,
+                duration: None,
+                cache_miss_reasons: CacheMissReasons::empty(),
+                bounds: None,
+                caching_disabled_by_inspector: false,
+                timestamp: now,
+            });
+        }
+
+        let summary = render_summary(&devtools, window_id, now);
+        assert_eq!(summary.top_sources[0].1.count, 1);
+        assert_eq!(summary.top_sources[0].1.reuse_count, 2);
+    }
+
+    #[test]
+    fn render_source_format_shows_rate_age_reuse_ratio_and_chips() {
+        let now = Instant::now();
+        let mut reasons = CacheMissReasons::empty();
+        reasons.insert_bounds_changed();
+        reasons.insert_view_dirty();
+        let event = ViewRenderEvent {
+            window_id: WindowId::from(1),
+            entity_id: EntityId::from(42),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: Some(Duration::from_micros(1_200)),
+            cache_miss_reasons: reasons,
+            bounds: None,
+            caching_disabled_by_inspector: true,
+            timestamp: now - Duration::from_millis(25),
+        };
+        let mut stats = RenderSourceStats::from_event(&event);
+        stats.record_event(&event);
+        stats.reuse_count = 4;
+
+        let label = format_render_source(1, RenderSourceKey::from(&event), stats, now);
+        assert!(label.contains("r/s  1"));
+        assert!(label.contains("reuse  4"));
+        assert!(label.contains("age 25ms"));
+        assert!(label.contains("1.2ms"));
+        assert!(label.contains("miss 20%"));
+        assert!(label.contains("[bounds][dirty][inspector]"));
     }
 
     #[test]
