@@ -1645,6 +1645,7 @@ impl App {
                 if window.removed {
                     cx.window_handles.remove(&id);
                     cx.windows.remove(id);
+                    crate::devtools::forget_window(id);
                     if let Some(tracked) = cx.tracked_entities.remove(&id) {
                         for entity_id in tracked {
                             if let Some(windows) =

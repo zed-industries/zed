@@ -1,4 +1,5 @@
 mod events;
+mod format;
 mod overlay;
 mod ring_buffer;
 mod sources;
@@ -53,6 +54,14 @@ pub(crate) fn enabled() -> bool {
     *GPUI_DEVTOOLS_ENABLED
 }
 
+pub(super) fn event_age(now: Instant, timestamp: Instant) -> Option<Duration> {
+    if timestamp > now {
+        None
+    } else {
+        Some(now.duration_since(timestamp))
+    }
+}
+
 pub(crate) fn record_notify(event: NotifyEvent) {
     if !enabled() {
         return;
@@ -93,6 +102,14 @@ pub(crate) fn record_frame(event: FrameEvent) {
         devtools.window_state(window_id).recent_frames.push(event);
     }
     devtools.record_recording_duration(started_at, started_at.elapsed());
+}
+
+pub(crate) fn forget_window(window_id: WindowId) {
+    if !enabled() {
+        return;
+    }
+
+    GPUI_DEVTOOLS.write().forget_window(window_id);
 }
 
 pub(crate) fn record_dirty_path(event: DirtyPathEvent) {

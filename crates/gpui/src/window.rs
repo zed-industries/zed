@@ -2848,7 +2848,6 @@ impl Window {
                 draw_duration: diagnostics.draw_duration,
                 present_duration: diagnostics.present_duration,
                 scene_stats: stats,
-                devtools_induced: false,
                 timestamp: Instant::now(),
             });
         }

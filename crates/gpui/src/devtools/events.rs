@@ -46,7 +46,6 @@ pub(crate) struct FrameEvent {
     pub(crate) draw_duration: Option<Duration>,
     pub(crate) present_duration: Duration,
     pub(crate) scene_stats: SceneStats,
-    pub(crate) devtools_induced: bool,
     pub(crate) timestamp: Instant,
 }
 

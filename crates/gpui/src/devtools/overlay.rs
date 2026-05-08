@@ -12,7 +12,7 @@ use scheduler::Instant;
 
 pub(super) fn prepaint_window_overlay(window: &mut Window) {
     let window_id = window.handle.window_id();
-    let snapshot = snapshot::overlay_snapshot(window_id);
+    let snapshot = snapshot::update_and_snapshot_overlay(window_id);
     let prepaint_started_at = Instant::now();
     let hud_origin = GPUI_DEVTOOLS.write().window_state(window_id).hud_origin;
     let prepared_overlay = layout::prepaint_overlay(window, snapshot, hud_origin);
@@ -41,12 +41,4 @@ pub(super) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
     GPUI_DEVTOOLS
         .write()
         .record_paint_duration(paint_started_at, paint_duration);
-}
-
-fn event_age(now: Instant, timestamp: Instant) -> Option<std::time::Duration> {
-    if timestamp > now {
-        None
-    } else {
-        Some(now.duration_since(timestamp))
-    }
 }

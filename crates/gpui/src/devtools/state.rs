@@ -75,6 +75,10 @@ impl GpuiDevTools {
             .or_insert_with(WindowDevToolsState::new)
     }
 
+    pub(super) fn forget_window(&mut self, window_id: WindowId) {
+        self.windows.remove(&window_id);
+    }
+
     pub(super) fn pause(&mut self, now: Instant) {
         if self.paused_at.is_some() {
             return;
@@ -581,5 +585,17 @@ mod tests {
         assert_eq!(summary.count, 2);
         assert_eq!(summary.average, Duration::from_millis(2));
         assert_eq!(summary.max, Duration::from_millis(3));
+    }
+
+    #[test]
+    fn forget_window_removes_window_state() {
+        let mut devtools = GpuiDevTools::new();
+        let window_id = WindowId::from(1);
+
+        devtools.window_state(window_id);
+        assert!(devtools.windows.contains_key(&window_id));
+
+        devtools.forget_window(window_id);
+        assert!(!devtools.windows.contains_key(&window_id));
     }
 }

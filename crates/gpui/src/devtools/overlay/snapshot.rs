@@ -1,10 +1,8 @@
-use super::{
-    event_age,
-    rows::{OverlayRow, hud_rows},
-};
+use super::rows::{OverlayRow, hud_rows};
 use crate::{BorderStyle, Bounds, Pixels, WindowId};
 use scheduler::Instant;
 
+use super::super::event_age;
 use super::super::{FLASH_DURATION, GPUI_DEVTOOLS, state::RenderHeatCause};
 
 #[derive(Clone, Debug)]
@@ -35,7 +33,7 @@ pub(super) struct FlashOverlay {
     pub(super) opacity: f32,
 }
 
-pub(super) fn overlay_snapshot(window_id: WindowId) -> OverlaySnapshot {
+pub(super) fn update_and_snapshot_overlay(window_id: WindowId) -> OverlaySnapshot {
     let snapshot_started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     let now = devtools.paused_at.unwrap_or_else(Instant::now);

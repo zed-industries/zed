@@ -137,15 +137,12 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
     }
 
     for (line_index, row) in prepared_overlay.snapshot.rows.iter().enumerate() {
-        if matches!(row.kind, OverlayRowKind::Spacer) {
-            continue;
-        }
         let text_color = match row.kind {
             OverlayRowKind::Header => hsla(0.58, 0.44, 0.94, 1.),
             OverlayRowKind::ColumnHeader => hsla(0.58, 0.30, 0.74, 0.92),
             OverlayRowKind::SectionBar | OverlayRowKind::Toolbar => hsla(0.12, 0.62, 0.76, 1.),
             OverlayRowKind::Data => hsla(0.58, 0.38, 0.92, 0.96),
-            OverlayRowKind::Spacer => unreachable!(),
+            OverlayRowKind::Spacer => continue,
         };
         let row_indent = match row.kind {
             OverlayRowKind::ColumnHeader => data_row_text_indent(),

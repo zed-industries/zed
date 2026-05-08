@@ -1,15 +1,16 @@
-use super::event_age;
 use crate::{Pixels, WindowId, px};
 use scheduler::Instant;
 use std::time::Duration;
 
 use super::super::{
-    FRAME_RATE_WINDOW, HUD_MAX_LINE_CHARS, TOP_SOURCE_COUNT,
+    FRAME_RATE_WINDOW, HUD_MAX_LINE_CHARS, TOP_SOURCE_COUNT, event_age,
+    format::{
+        file_name, format_age, format_duration_ms, format_notify_source, format_render_source,
+        notify_column_header, render_column_header, short_type_name, truncate_chars,
+    },
     sources::{
-        NotifySourceKey, RenderSourceKey, active_animation_count, file_name, format_age,
-        format_duration_ms, format_notify_source, format_render_source, hidden_notify_sources,
-        hidden_render_sources, notify_column_header, render_column_header, render_summary,
-        short_type_name, top_dirty_path, top_notify_sources, truncate_chars,
+        NotifySourceKey, RenderSourceKey, active_animation_count, hidden_notify_sources,
+        hidden_render_sources, render_summary, top_dirty_path, top_notify_sources,
     },
     state::{GpuiDevTools, HudSection},
 };
@@ -331,16 +332,11 @@ pub(super) fn hud_rows(
                 format_duration_ms(frame.present_duration),
             )));
             rows.push(OverlayRow::plain(format!(
-                "views {} updates {} ops {} quads {}{}",
+                "views {} updates {} ops {} quads {}",
                 frame.dirty_view_count,
                 frame.invalidator_update_count,
                 frame.scene_stats.paint_operation_count,
                 frame.scene_stats.quad_count,
-                if frame.devtools_induced {
-                    " devtools"
-                } else {
-                    ""
-                },
             )));
         } else {
             rows.push(OverlayRow::plain("last frame --"));

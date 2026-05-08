@@ -87,11 +87,6 @@ impl AnyView {
     pub fn entity_id(&self) -> EntityId {
         self.entity.entity_id()
     }
-
-    /// Gets the type name of the underlying view.
-    pub fn entity_type_name(&self) -> &'static str {
-        self.type_name
-    }
 }
 
 impl PartialEq for AnyView {
