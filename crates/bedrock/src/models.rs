@@ -384,19 +384,15 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> u64 {
-        self.max_tokens()
-    }
-
-    pub fn max_tokens(&self) -> u64 {
         match self {
             Self::ClaudeHaiku4_5
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_7
-            | Self::ClaudeSonnet4_6 => 200_000,
+            | Self::ClaudeSonnet4_6 => 1_000_000,
+            Self::ClaudeOpus4_1 => 200_000,
             Self::Llama4Scout17B | Self::Llama4Maverick17B => 128_000,
             Self::Gemma3_4B | Self::Gemma3_12B | Self::Gemma3_27B => 128_000,
             Self::MagistralSmall | Self::MistralLarge3 | Self::PixtralLarge => 128_000,
@@ -524,18 +520,6 @@ impl Model {
             Self::KimiK2_5 => true,
             _ => false,
         }
-    }
-
-    pub fn supports_extended_context(&self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_7
-                | Self::ClaudeSonnet4_6
-        )
     }
 
     pub fn supports_caching(&self) -> bool {
@@ -1040,11 +1024,11 @@ mod tests {
     }
 
     #[test]
-    fn test_max_tokens() {
-        assert_eq!(Model::ClaudeSonnet4_5.max_tokens(), 200_000);
-        assert_eq!(Model::ClaudeOpus4_6.max_tokens(), 200_000);
-        assert_eq!(Model::Llama4Scout17B.max_tokens(), 128_000);
-        assert_eq!(Model::NovaPremier.max_tokens(), 1_000_000);
+    fn test_max_token_count() {
+        assert_eq!(Model::ClaudeSonnet4_5.max_token_count(), 1_000_000);
+        assert_eq!(Model::ClaudeOpus4_6.max_token_count(), 1_000_000);
+        assert_eq!(Model::Llama4Scout17B.max_token_count(), 128_000);
+        assert_eq!(Model::NovaPremier.max_token_count(), 1_000_000);
     }
 
     #[test]
