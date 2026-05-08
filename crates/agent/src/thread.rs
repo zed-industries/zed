@@ -984,6 +984,7 @@ pub struct Thread {
     ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    inherits_parent_settings: bool,
 }
 
 impl Thread {
@@ -1016,9 +1017,11 @@ impl Thread {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
         });
-        thread.inherit_parent_settings(parent_thread, cx);
         if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
+            thread.inherits_parent_settings = false;
             thread.apply_model_selection(&subagent_model, cx);
+        } else {
+            thread.inherit_parent_settings(parent_thread, cx);
         }
         thread
     }
@@ -1108,6 +1111,7 @@ impl Thread {
             draft_prompt: None,
             ui_scroll_position: None,
             running_subagents: Vec::new(),
+            inherits_parent_settings: true,
         }
     }
 
@@ -1364,6 +1368,7 @@ impl Thread {
                 offset_in_item: gpui::px(sp.offset_in_item),
             }),
             running_subagents: Vec::new(),
+            inherits_parent_settings: true,
         }
     }
 
@@ -1467,7 +1472,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_model(model.clone(), cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_settings {
+                        thread.set_model(model.clone(), cx);
+                    }
+                })
                 .ok();
         }
 
@@ -1488,7 +1497,9 @@ impl Thread {
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
-                    thread.set_summarization_model(model.clone(), cx)
+                    if thread.inherits_parent_settings {
+                        thread.set_summarization_model(model.clone(), cx)
+                    }
                 })
                 .ok();
         }
@@ -1504,7 +1515,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_thinking_enabled(enabled, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_settings {
+                        thread.set_thinking_enabled(enabled, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1520,7 +1535,9 @@ impl Thread {
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
-                    thread.set_thinking_effort(effort.clone(), cx)
+                    if thread.inherits_parent_settings {
+                        thread.set_thinking_effort(effort.clone(), cx)
+                    }
                 })
                 .ok();
         }
@@ -1536,7 +1553,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_speed(speed, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_settings {
+                        thread.set_speed(speed, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1652,7 +1673,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_settings {
+                        thread.set_profile(profile_id.clone(), cx);
+                    }
+                })
                 .ok();
         }
     }
