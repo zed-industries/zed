@@ -1442,7 +1442,7 @@ async fn hidden_edit_prediction_snippet_test_context(
     cx.update_editor(|editor, _, cx| {
         editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::Never);
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
+            project.snippets(cx).update(cx, |snippets, _cx| {
                 let snippet = project::snippet_provider::Snippet {
                     prefix: vec!["Theta".to_string(), "turnstile".to_string()],
                     body: "⊢".to_string(),

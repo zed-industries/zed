@@ -146,7 +146,7 @@ impl FileFinder {
                     return Some(Task::ready(Some(FoundPath::new(project_path, abs_path?))));
                 }
                 let abs_path = abs_path?;
-                if project.is_local() {
+                if project.is_local(cx) {
                     let fs = fs.clone();
                     Some(cx.background_spawn(async move {
                         if fs.is_file(&abs_path).await {
@@ -1472,8 +1472,8 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || project.is_local()
-                            || project.is_via_remote_server()
+                            || project.is_local(cx)
+                            || project.is_via_remote_server(cx)
                     }),
                     self.currently_opened_path.as_ref(),
                     None,

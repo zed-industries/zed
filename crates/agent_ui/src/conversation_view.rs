@@ -1973,7 +1973,7 @@ impl ConversationView {
                     }
                     _ = exit_status => {
                         if !previous_attempt
-                            && project.read_with(cx, |project, _| project.is_via_remote_server())
+                            && project.read_with(cx, |project, cx| project.is_via_remote_server(cx))
                             && method.0.as_ref() == GEMINI_TERMINAL_AUTH_METHOD_ID
                         {
                             return cx

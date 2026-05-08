@@ -97,7 +97,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(
             |workspace, action: &zed_actions::OpenWorktreeInNewWindow, window, cx| {
                 let path = action.path.clone();
-                let is_remote = !workspace.project().read(cx).is_local();
+                let is_remote = !workspace.project().read(cx).is_local(cx);
 
                 if is_remote {
                     let connection_options =

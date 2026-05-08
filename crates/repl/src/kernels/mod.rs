@@ -411,7 +411,7 @@ pub fn python_env_kernel_specifications(
     cx: &mut App,
 ) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
     let python_language = LanguageName::new_static("Python");
-    let is_remote = project.read(cx).is_remote();
+    let is_remote = project.read(cx).is_remote(cx);
     let wsl_distro = project
         .read(cx)
         .remote_connection_options(cx)

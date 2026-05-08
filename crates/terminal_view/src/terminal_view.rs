@@ -1456,7 +1456,7 @@ impl Item for TerminalView {
         };
 
         if let Some(paths) = dropped.downcast_ref::<ExternalPaths>() {
-            let is_local = project.read(cx).is_local();
+            let is_local = project.read(cx).is_local(cx);
             if is_local {
                 self.add_paths_to_terminal(paths.paths(), window, cx);
                 return true;
@@ -1989,7 +1989,7 @@ impl SearchableItem for TerminalView {
 /// local `is_dir` checks) is skipped -- returning `None` lets the remote shell
 /// open in the remote user's home directory by default.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    let is_remote = workspace.project().read(cx).is_remote();
+    let is_remote = workspace.project().read(cx).is_remote(cx);
     let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentFileDirectory => workspace
             .project()
@@ -2113,7 +2113,7 @@ mod tests {
         cx.read(|cx| {
             let workspace = workspace.read(cx);
 
-            assert!(workspace.project().read(cx).is_remote());
+            assert!(workspace.project().read(cx).is_remote(cx));
             assert!(workspace.worktrees(cx).next().is_none());
             assert_eq!(default_working_directory(workspace, cx), None);
         });

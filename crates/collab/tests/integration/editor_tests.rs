@@ -1576,7 +1576,7 @@ async fn test_share_project(
     let client_b_peer_id = client_b.peer_id().unwrap();
     let project_b = client_b.join_remote_project(initial_project.id, cx_b).await;
 
-    let replica_id_b = project_b.read_with(cx_b, |project, _| project.replica_id());
+    let replica_id_b = project_b.read_with(cx_b, |project, cx| project.replica_id(cx));
 
     executor.run_until_parked();
 

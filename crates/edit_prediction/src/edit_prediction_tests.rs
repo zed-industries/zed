@@ -2906,7 +2906,7 @@ async fn make_test_ep_store(
     let _server = FakeServer::for_client(42, &client, cx).await;
 
     let ep_store = cx.new(|cx| {
-        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
+        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(cx), cx);
         ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
 
         let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -2988,7 +2988,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     });
 
-    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(cx), cx));
 
     let buffer = project
         .update(cx, |project, cx| {

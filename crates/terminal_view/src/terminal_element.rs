@@ -1536,7 +1536,7 @@ impl InputHandler for TerminalInputHandler {
                 window.invalidate_character_coordinates();
                 let project = this.project().read(cx);
                 let telemetry = project.client().telemetry().clone();
-                telemetry.log_edit_event("terminal", project.is_via_remote_server());
+                telemetry.log_edit_event("terminal", project.is_via_remote_server(cx));
             })
             .ok();
     }

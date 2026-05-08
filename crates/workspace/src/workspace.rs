@@ -836,7 +836,7 @@ impl ProjectItemRegistry {
                     .entry_for_path(&project_path, cx)
                     .is_some_and(|entry| entry.is_file());
                 let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
-                let is_local = project.read(cx).is_local();
+                let is_local = project.read(cx).is_local(cx);
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
                 let project = project.clone();
@@ -1596,7 +1596,7 @@ impl Workspace {
             },
         )
         .detach();
-        if let Some(toolchain_store) = project.read(cx).toolchain_store() {
+        if let Some(toolchain_store) = project.read(cx).toolchain_store(cx) {
             cx.subscribe_in(
                 &toolchain_store,
                 window,
@@ -2993,7 +2993,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         if self.project.read(cx).is_via_collab()
-            || self.project.read(cx).is_via_remote_server()
+            || self.project.read(cx).is_via_remote_server(cx)
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
@@ -3062,7 +3062,7 @@ impl Workspace {
         T: 'static,
         F: 'static + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
-        if self.project.read(cx).is_local() {
+        if self.project.read(cx).is_local(cx) {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
@@ -3103,7 +3103,7 @@ impl Workspace {
         F: 'static + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
         let project = self.project.read(cx);
-        if project.is_local() || project.is_via_wsl_with_host_interop(cx) {
+        if project.is_local(cx) || project.is_via_wsl_with_host_interop(cx) {
             Task::ready(Ok(callback(self, window, cx)))
         } else {
             let env = self.project.read(cx).cli_environment(cx);
@@ -6807,7 +6807,7 @@ impl Workspace {
         let paths = PathList::new(&self.root_paths(cx));
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
-        } else if self.project.read(cx).is_local() {
+        } else if self.project.read(cx).is_local(cx) {
             if !paths.is_empty() || self.has_any_items_open(cx) {
                 WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
             } else {
@@ -6822,7 +6822,7 @@ impl Workspace {
         let Some(id) = self.database_id() else {
             return;
         };
-        if !self.project.read(cx).is_local() {
+        if !self.project.read(cx).is_local(cx) {
             return;
         }
         if let Some(manager) = HistoryManager::global(cx) {
@@ -7460,7 +7460,7 @@ impl Workspace {
         use session::Session;
 
         let client = project.read(cx).client();
-        let user_store = project.read(cx).user_store();
+        let user_store = project.read(cx).user_store(cx);
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         window.activate_window();
@@ -9148,7 +9148,7 @@ async fn join_channel_internal(
                     return None;
                 }
 
-                if (project.is_local() || project.is_via_remote_server())
+                if (project.is_local(cx) || project.is_via_remote_server(cx))
                     && project.visible_worktrees(cx).any(|tree| {
                         tree.read(cx)
                             .root_entry()

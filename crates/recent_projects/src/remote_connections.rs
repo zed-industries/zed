@@ -149,7 +149,7 @@ pub async fn open_remote_project(
                 .read(cx)
                 .project()
                 .read(cx)
-                .remote_client()
+                .remote_client(cx)
                 .and_then(|client| client.read(cx).remote_connection())
         });
 
@@ -427,7 +427,7 @@ pub async fn open_remote_project(
         .update(cx, |multi_workspace: &mut MultiWorkspace, _, cx| {
             let workspace = multi_workspace.workspace().clone();
             workspace.update(cx, |workspace, cx| {
-                if let Some(client) = workspace.project().read(cx).remote_client() {
+                if let Some(client) = workspace.project().read(cx).remote_client(cx) {
                     if let Some(extension_store) = ExtensionStore::try_global(cx) {
                         extension_store
                             .update(cx, |store, cx| store.register_remote_client(client, cx));
@@ -602,7 +602,7 @@ mod tests {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     let project = workspace.project().read(cx);
-                    assert!(project.is_remote(), "Project should be a remote project");
+                    assert!(project.is_remote(cx), "Project should be a remote project");
                 });
             })
             .unwrap();
@@ -814,7 +814,7 @@ mod tests {
                     let client = workspace
                         .project()
                         .read(cx)
-                        .remote_client()
+                        .remote_client(cx)
                         .expect("should have remote client");
                     client.update(cx, |client, cx| {
                         client.force_server_not_running(cx);
@@ -878,7 +878,7 @@ mod tests {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     assert!(
-                        workspace.project().read(cx).is_remote(),
+                        workspace.project().read(cx).is_remote(cx),
                         "project should be remote after reconnect"
                     );
                 });

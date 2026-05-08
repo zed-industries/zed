@@ -2764,7 +2764,7 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                project.environment().update(cx, |env, cx| {
+                project.environment(cx).update(cx, |env, cx| {
                     env.directory_environment(dir.as_path().into(), cx)
                 })
             }),
@@ -2792,7 +2792,7 @@ impl AcpThread {
                 let shell = project
                     .update(cx, |project, cx| {
                         project
-                            .remote_client()
+                            .remote_client(cx)
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());

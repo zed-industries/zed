@@ -193,7 +193,7 @@ impl ActivityIndicator {
             .detach();
 
             cx.subscribe(
-                &project.read(cx).environment().clone(),
+                &project.read(cx).environment(cx).clone(),
                 |_, _, event, cx| match event {
                     ProjectEnvironmentEvent::ErrorsUpdated => cx.notify(),
                 },

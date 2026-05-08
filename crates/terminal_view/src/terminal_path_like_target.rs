@@ -273,7 +273,7 @@ fn possible_open_target(
     }
 
     #[cfg(not(test))]
-    let enable_background_fs_checks = workspace.read(cx).project().read(cx).is_local();
+    let enable_background_fs_checks = workspace.read(cx).project().read(cx).is_local(cx);
     #[cfg(test)]
     let enable_background_fs_checks = background_fs_checks == BackgroundFsChecks::Enabled;
 

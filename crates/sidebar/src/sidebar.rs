@@ -178,7 +178,7 @@ impl ThreadEntryWorkspace {
     fn is_remote(&self, cx: &App) -> bool {
         match self {
             ThreadEntryWorkspace::Open(workspace) => {
-                !workspace.read(cx).project().read(cx).is_local()
+                !workspace.read(cx).project().read(cx).is_local(cx)
             }
             ThreadEntryWorkspace::Closed {
                 project_group_key, ..

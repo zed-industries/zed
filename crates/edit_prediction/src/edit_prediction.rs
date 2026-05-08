@@ -1030,7 +1030,7 @@ impl EditPredictionStore {
         let _project = project.clone();
         let project = project.read(cx);
 
-        let node = project.node_runtime().cloned();
+        let node = project.node_runtime(cx);
         if let Some(node) = node {
             let next_id = project.languages().next_language_server_id();
             let fs = project.fs().clone();

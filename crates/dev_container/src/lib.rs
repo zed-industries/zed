@@ -109,7 +109,7 @@ impl DevContainerContext {
         let use_podman = DevContainerSettings::get_global(cx).use_podman;
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
-        let environment = workspace.project().read(cx).environment().downgrade();
+        let environment = workspace.project().read(cx).environment(cx).downgrade();
         Some(Self {
             project_directory,
             use_podman,

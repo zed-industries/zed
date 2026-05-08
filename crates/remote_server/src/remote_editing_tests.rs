@@ -1332,7 +1332,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
 
-    let client = cx.read(|cx| project.read(cx).remote_client().unwrap());
+    let client = cx.read(|cx| project.read(cx).remote_client(cx).unwrap());
     client
         .update(cx, |client, cx| client.simulate_disconnect(cx))
         .detach();

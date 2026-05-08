@@ -3351,7 +3351,7 @@ impl GitPanel {
                 new_co_authors.push((name.clone(), email.clone()))
             }
         }
-        if !project.is_local()
+        if !project.is_local(cx)
             && !project.is_read_only(cx)
             && let Some(local_committer) = self.local_committer(room, cx)
         {

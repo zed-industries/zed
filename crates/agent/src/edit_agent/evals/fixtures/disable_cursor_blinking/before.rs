@@ -17792,7 +17792,7 @@ impl Editor {
                                     buffer.update(cx, |buffer, cx| {
                                         let language = buffer.language()?;
                                         let should_discard = project.update(cx, |project, cx| {
-                                            project.is_local()
+                                            project.is_local(cx)
                                                 && !project.has_language_servers_for(buffer, cx)
                                         });
                                         should_discard.not().then_some(language.clone())
@@ -19264,13 +19264,13 @@ impl CollaborationHub for Entity<Project> {
     }
 
     fn user_participant_indices<'a>(&self, cx: &'a App) -> &'a HashMap<u64, ParticipantIndex> {
-        self.read(cx).user_store().read(cx).participant_indices()
+        self.read(cx).user_store(cx).read(cx).participant_indices()
     }
 
     fn user_names(&self, cx: &App) -> HashMap<u64, SharedString> {
         let this = self.read(cx);
         let user_ids = this.collaborators().values().map(|c| c.user_id);
-        this.user_store().read_with(cx, |user_store, cx| {
+        this.user_store(cx).read_with(cx, |user_store, cx| {
             user_store.participant_names(user_ids, cx)
         })
     }
@@ -19457,7 +19457,7 @@ fn snippet_completions(
     cx: &mut App,
 ) -> Task<Result<Vec<Completion>>> {
     let languages = buffer.read(cx).languages_at(buffer_position);
-    let snippet_store = project.snippets().read(cx);
+    let snippet_store = project.snippets(cx).read(cx);
 
     let scopes: Vec<_> = languages
         .iter()

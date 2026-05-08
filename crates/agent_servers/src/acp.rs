@@ -670,7 +670,7 @@ impl AcpConnection {
         let original_command = command.clone();
         let (path, args, env) = project
             .read_with(cx, |project, cx| {
-                project.remote_client().and_then(|client| {
+                project.remote_client(cx).and_then(|client| {
                     let template = client
                         .read(cx)
                         .build_command_with_options(
@@ -696,8 +696,8 @@ impl AcpConnection {
         let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
         let mut child = builder.build_std_command(Some(path.clone()), &args);
         child.envs(env.clone());
-        if let Some(cwd) = project.read_with(cx, |project, _cx| {
-            if project.is_local() {
+        if let Some(cwd) = project.read_with(cx, |project, cx| {
+            if project.is_local(cx) {
                 root_dir.as_ref()
             } else {
                 None
@@ -2939,7 +2939,7 @@ mod tests {
 
 fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
     let context_server_store = project.read(cx).context_server_store().read(cx);
-    let is_local = project.read(cx).is_local();
+    let is_local = project.read(cx).is_local(cx);
     context_server_store
         .configured_server_ids()
         .iter()

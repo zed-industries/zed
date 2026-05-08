@@ -655,7 +655,7 @@ impl TitleBar {
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.project.read(cx).is_via_remote_server() {
+        if self.project.read(cx).is_via_remote_server(cx) {
             return self.render_remote_project_connection(cx);
         }
 

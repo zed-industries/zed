@@ -941,7 +941,7 @@ fn register_actions(
                 return;
             }
             // You need existing remote connection to open it this way
-            if workspace.project().read(cx).is_local() {
+            if workspace.project().read(cx).is_local(cx) {
                 return;
             }
             telemetry::event!("Project Opened");
@@ -1245,7 +1245,7 @@ fn register_actions(
     #[cfg(not(target_os = "windows"))]
     workspace.register_action(install_cli);
 
-    if workspace.project().read(cx).is_via_remote_server() {
+    if workspace.project().read(cx).is_via_remote_server(cx) {
         workspace.register_action({
             move |workspace, _: &OpenServerSettings, window, cx| {
                 let open_server_settings = workspace
@@ -2100,7 +2100,7 @@ pub fn open_new_ssh_project_from_project(
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
     let app_state = workspace.app_state().clone();
-    let Some(ssh_client) = workspace.project().read(cx).remote_client() else {
+    let Some(ssh_client) = workspace.project().read(cx).remote_client(cx) else {
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();

@@ -53,7 +53,7 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     cx.observe_new(move |project: &mut Project, _, cx| {
         let client = client.clone();
 
-        let Some(remote_client) = project.remote_client() else {
+        let Some(remote_client) = project.remote_client(cx) else {
             return;
         };
         remote_client.update(cx, |remote_client, cx| {

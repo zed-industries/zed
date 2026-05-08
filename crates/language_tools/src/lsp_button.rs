@@ -1260,7 +1260,7 @@ impl Render for LspButton {
         let is_via_ssh = state
             .workspace
             .upgrade()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server())
+            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server(cx))
             .unwrap_or(false);
 
         let mut has_errors = false;

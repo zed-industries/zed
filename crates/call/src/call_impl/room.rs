@@ -1235,7 +1235,7 @@ impl Room {
         let request = self.client.request(proto::ShareProject {
             room_id: self.id(),
             worktrees: project.read(cx).worktree_metadata_protos(cx),
-            is_ssh_project: project.read(cx).is_via_remote_server(),
+            is_ssh_project: project.read(cx).is_via_remote_server(cx),
             windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
             features: CURRENT_PROJECT_FEATURES
                 .iter()

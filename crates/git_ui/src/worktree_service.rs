@@ -334,7 +334,7 @@ pub fn handle_create_worktree(
     if remote_connection_options.is_some() {
         let is_disconnected = project
             .read(cx)
-            .remote_client()
+            .remote_client(cx)
             .is_some_and(|client| client.read(cx).is_disconnected());
         if is_disconnected {
             show_error_toast(

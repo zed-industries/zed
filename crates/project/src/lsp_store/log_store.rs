@@ -273,7 +273,7 @@ impl LogStore {
                             .retain(|_, state| state.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, move |log_store, project, event, cx| {
-                        let server_kind = if project.read(cx).is_local() {
+                        let server_kind = if project.read(cx).is_local(cx) {
                             LanguageServerKind::Local {
                                 project: project.downgrade(),
                             }

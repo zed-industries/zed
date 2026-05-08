@@ -16501,7 +16501,7 @@ impl Editor {
             }
         } else if let Some(name) = &action.name {
             let project = self.project().context("no project")?;
-            let snippet_store = project.read(cx).snippets().read(cx);
+            let snippet_store = project.read(cx).snippets(cx).read(cx);
             let snippet = snippet_store
                 .snippets_for(action.language.clone(), cx)
                 .into_iter()
@@ -22677,7 +22677,7 @@ impl Editor {
 
         // Get the current user's avatar URI from the project's user_store
         let user_avatar_uri = self.project.as_ref().and_then(|project| {
-            let user_store = project.read(cx).user_store();
+            let user_store = project.read(cx).user_store(cx);
             user_store
                 .read(cx)
                 .current_user()
@@ -25114,7 +25114,7 @@ impl Editor {
                 let (telemetry, is_via_ssh) = {
                     let project = project.read(cx);
                     let telemetry = project.client().telemetry().clone();
-                    let is_via_ssh = project.is_via_remote_server();
+                    let is_via_ssh = project.is_via_remote_server(cx);
                     (telemetry, is_via_ssh)
                 };
                 telemetry.log_edit_event("editor", is_via_ssh);
@@ -25819,7 +25819,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_remote_server(),
+                is_via_ssh = project.is_via_remote_server(cx),
             );
         } else {
             telemetry::event!(
@@ -25829,7 +25829,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_remote_server(),
+                is_via_ssh = project.is_via_remote_server(cx),
             );
         };
     }
@@ -27870,13 +27870,13 @@ impl CollaborationHub for Entity<Project> {
     }
 
     fn user_participant_indices<'a>(&self, cx: &'a App) -> &'a HashMap<u64, ParticipantIndex> {
-        self.read(cx).user_store().read(cx).participant_indices()
+        self.read(cx).user_store(cx).read(cx).participant_indices()
     }
 
     fn user_names(&self, cx: &App) -> HashMap<u64, SharedString> {
         let this = self.read(cx);
         let user_ids = this.collaborators().values().map(|c| c.user_id);
-        this.user_store().read(cx).participant_names(user_ids, cx)
+        this.user_store(cx).read(cx).participant_names(user_ids, cx)
     }
 }
 
@@ -28094,7 +28094,7 @@ fn has_strong_snippet_prefix_match(
     let query = query.to_lowercase();
     let is_word_char = |character| classifier.is_word(character);
     let languages = buffer.read(cx).languages_at(buffer_anchor);
-    let snippet_store = project.snippets().read(cx);
+    let snippet_store = project.snippets(cx).read(cx);
 
     languages.iter().any(|language| {
         snippet_store
@@ -28114,7 +28114,7 @@ fn snippet_completions(
     cx: &mut App,
 ) -> Task<Result<CompletionResponse>> {
     let languages = buffer.read(cx).languages_at(buffer_anchor);
-    let snippet_store = project.snippets().read(cx);
+    let snippet_store = project.snippets(cx).read(cx);
 
     let scopes: Vec<_> = languages
         .iter()

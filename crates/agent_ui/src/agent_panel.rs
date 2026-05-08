@@ -3437,7 +3437,7 @@ impl AgentPanel {
     }
 
     fn render_drag_target(&self, cx: &Context<Self>) -> Div {
-        let is_local = self.project.read(cx).is_local();
+        let is_local = self.project.read(cx).is_local(cx);
         div()
             .invisible()
             .absolute()

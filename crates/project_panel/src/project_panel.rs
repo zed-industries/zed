@@ -712,7 +712,7 @@ impl ProjectPanel {
             .detach();
 
             let trash_action = [TypeId::of::<Trash>()];
-            let is_remote = project.read(cx).is_remote();
+            let is_remote = project.read(cx).is_remote(cx);
 
             // Make sure the trash option is never displayed anywhere on remote
             // hosts since they may not support trashing. May want to dynamically
@@ -853,7 +853,7 @@ impl ProjectPanel {
                             let file_path = entry.path.clone();
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
-                            let is_via_ssh = project.read(cx).is_via_remote_server();
+                            let is_via_ssh = project.read(cx).is_via_remote_server(cx);
 
                             workspace
                                 .open_path_preview(
@@ -1042,9 +1042,9 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let is_read_only = project.is_read_only(cx);
-            let is_remote = project.is_remote();
+            let is_remote = project.is_remote(cx);
             let is_collab = project.is_via_collab();
-            let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
+            let is_local = project.is_local(cx) || project.is_via_wsl_with_host_interop(cx);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -6544,7 +6544,7 @@ impl Render for ProjectPanel {
             }
         };
 
-        let is_local = project.is_local();
+        let is_local = project.is_local(cx);
 
         if has_worktree {
             let item_count = self
@@ -6684,19 +6684,19 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::restore_file))
                         .on_action(cx.listener(Self::add_to_gitignore))
-                        .when(!project.is_remote(), |el| {
+                        .when(!project.is_remote(cx), |el| {
                             el.on_action(cx.listener(Self::trash))
                         })
                 })
                 .when(
-                    project.is_local() || project.is_via_wsl_with_host_interop(cx),
+                    project.is_local(cx) || project.is_via_wsl_with_host_interop(cx),
                     |el| {
                         el.on_action(cx.listener(Self::reveal_in_finder))
                             .on_action(cx.listener(Self::open_system))
                             .on_action(cx.listener(Self::open_in_terminal))
                     },
                 )
-                .when(project.is_via_remote_server(), |el| {
+                .when(project.is_via_remote_server(cx), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                         .on_action(cx.listener(Self::download_from_remote))
                 })

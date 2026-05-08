@@ -41,7 +41,7 @@ impl ThreadFeedbackState {
 
         let project = thread.read(cx).project().read(cx);
         let client = project.client();
-        let user_store = project.user_store();
+        let user_store = project.user_store(cx);
         let organization = user_store.read(cx).current_organization();
 
         if self.feedback == Some(feedback) {
@@ -103,7 +103,7 @@ impl ThreadFeedbackState {
 
         let project = thread.read(cx).project().read(cx);
         let client = project.client();
-        let user_store = project.user_store();
+        let user_store = project.user_store(cx);
         let organization = user_store.read(cx).current_organization();
 
         let session_id = thread.read(cx).session_id().clone();
@@ -433,7 +433,7 @@ impl ThreadView {
         });
 
         let show_codex_windows_warning = cfg!(windows)
-            && project.upgrade().is_some_and(|p| p.read(cx).is_local())
+            && project.upgrade().is_some_and(|p| p.read(cx).is_local(cx))
             && agent_id.as_ref() == "Codex";
 
         let title_editor = {
@@ -4995,7 +4995,7 @@ impl ThreadView {
 
         let enable_thread_feedback = util::maybe!({
             let project = thread.read(cx).project().read(cx);
-            let user_store = project.user_store();
+            let user_store = project.user_store(cx);
             if let Some(configuration) = user_store.read(cx).current_organization_configuration() {
                 if !configuration.is_agent_thread_feedback_enabled {
                     return false;

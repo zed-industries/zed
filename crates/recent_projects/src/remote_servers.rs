@@ -448,7 +448,7 @@ impl ProjectPicker {
                         .ok()?;
 
                     let remote_connection = project.read_with(cx, |project, cx| {
-                        project.remote_client()?.read(cx).connection()
+                        project.remote_client(cx)?.read(cx).connection()
                     })?;
 
                     let (paths, paths_with_positions) =
@@ -2718,7 +2718,7 @@ impl RemoteServerProjects {
         let is_local = self
             .workspace
             .upgrade()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .map(|workspace| workspace.read(cx).project().read(cx).is_local(cx))
             .unwrap_or(true);
 
         let modal_section = v_flex()

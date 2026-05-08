@@ -13776,7 +13776,7 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
+            project.snippets(cx).update(cx, |snippets, _cx| {
                 let snippet = project::snippet_provider::Snippet {
                     prefix: vec!["multi word".to_string()],
                     body: "this is many words".to_string(),
@@ -31114,7 +31114,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
 
     cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
+            project.snippets(cx).update(cx, |snippets, _cx| {
                 snippets.add_snippet_for_test(
                     None,
                     PathBuf::from("test_snippets.json"),
@@ -31834,7 +31834,7 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
 
     cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
+            project.snippets(cx).update(cx, |snippets, _cx| {
                 let snippet = project::snippet_provider::Snippet {
                     prefix: vec![], // no prefix needed!
                     body: "an Unspecified".to_string(),

@@ -1019,7 +1019,7 @@ impl RunningState {
         let is_windows = project.read(cx).path_style(cx).is_windows();
         let remote_shell = project
             .read(cx)
-            .remote_client()
+            .remote_client(cx)
             .as_ref()
             .and_then(|remote| remote.read(cx).shell());
 

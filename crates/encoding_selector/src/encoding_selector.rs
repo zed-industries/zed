@@ -76,7 +76,7 @@ impl EncodingSelector {
             );
             return Some(());
         }
-        if project.is_via_remote_server() {
+        if project.is_via_remote_server(cx) {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<EncodingSelector>(),
