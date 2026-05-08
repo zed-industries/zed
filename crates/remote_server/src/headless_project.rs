@@ -415,6 +415,14 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
+            WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
+                if let Some(summaries) = self.lsp_store.read(cx).diagnostic_summaries_for_worktree(
+                    worktree.read(cx).id(),
+                    REMOTE_SERVER_PROJECT_ID,
+                ) {
+                    self.session.send(summaries).log_err();
+                }
+            }
             _ => {}
         }
     }
@@ -573,6 +581,21 @@ impl HeadlessProject {
                         );
                     });
                 }
+                let lsp_store = lsp_store.read(cx);
+                if let Some(capabilities) = lsp_store.lsp_server_capabilities.get(id) {
+                    self.session
+                        .send(proto::StartLanguageServer {
+                            project_id: REMOTE_SERVER_PROJECT_ID,
+                            server: Some(proto::LanguageServer {
+                                id: id.to_proto(),
+                                name: name.to_string(),
+                                worktree_id: worktree_id.map(|id| id.to_proto()),
+                            }),
+                            capabilities: serde_json::to_string(capabilities)
+                                .expect("serializing server LSP capabilities"),
+                        })
+                        .log_err();
+                }
             }
             LspStoreEvent::LanguageServerRemoved(id) => {
                 let log_store = cx
@@ -604,6 +627,59 @@ impl HeadlessProject {
                         project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "lsp".to_string(),
                         message: message.clone(),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::RefreshInlayHints {
+                server_id,
+                request_id,
+            } => {
+                self.session
+                    .send(proto::RefreshInlayHints {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_id: server_id.to_proto(),
+                        request_id: request_id.map(|id| id as u64),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::RefreshSemanticTokens {
+                server_id,
+                request_id,
+            } => {
+                self.session
+                    .send(proto::RefreshSemanticTokens {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_id: server_id.to_proto(),
+                        request_id: request_id.map(|id| id as u64),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::RefreshCodeLens => {
+                self.session
+                    .send(proto::RefreshCodeLens {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::PullWorkspaceDiagnosticsRequested { server_id } => {
+                self.session
+                    .send(proto::PullWorkspaceDiagnostics {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_id: server_id.to_proto(),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::DiagnosticsSummariesUpdated {
+                worktree_id,
+                summary,
+                more_summaries,
+            } => {
+                self.session
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        worktree_id: worktree_id.to_proto(),
+                        summary: Some(summary.clone()),
+                        more_summaries: more_summaries.clone(),
                     })
                     .log_err();
             }

@@ -2826,6 +2826,38 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
+        // Announce all language servers that belong to this project. After
+        // Phase 2 the worktree filter actually narrows the list; in Phase 0
+        // every server in this project's lsp_store is owned by this project,
+        // so the filter is a no-op (but encodes the right invariant).
+        let my_worktree_ids: HashSet<WorktreeId> =
+            self.worktrees(cx).map(|w| w.read(cx).id()).collect();
+        let lsp_store = self.lsp_store.read(cx);
+        let server_announcements: Vec<_> = lsp_store
+            .language_server_statuses
+            .iter()
+            .filter(|(_, status)| {
+                status
+                    .worktree
+                    .map_or(true, |id| my_worktree_ids.contains(&id))
+            })
+            .filter_map(|(server_id, status)| {
+                let capabilities = lsp_store.lsp_server_capabilities.get(server_id)?;
+                Some(proto::StartLanguageServer {
+                    project_id,
+                    server: Some(proto::LanguageServer {
+                        id: server_id.to_proto(),
+                        name: status.name.to_string(),
+                        worktree_id: status.worktree.map(|id| id.to_proto()),
+                    }),
+                    capabilities: serde_json::to_string(capabilities)
+                        .expect("serializing server LSP capabilities"),
+                })
+            })
+            .collect();
+        for announcement in server_announcements {
+            self.collab_client.send(announcement).log_err();
+        }
         let initial_settings_protos = self
             .settings_observer
             .read(cx)
@@ -3691,9 +3723,30 @@ impl Project {
                     language_server_id: *server_id,
                 })
             }
-            LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => cx.emit(
-                Event::LanguageServerAdded(*server_id, name.clone(), *worktree_id),
-            ),
+            LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => {
+                cx.emit(Event::LanguageServerAdded(
+                    *server_id,
+                    name.clone(),
+                    *worktree_id,
+                ));
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    let lsp_store = self.lsp_store.read(cx);
+                    if let Some(capabilities) = lsp_store.lsp_server_capabilities.get(server_id) {
+                        self.collab_client
+                            .send(proto::StartLanguageServer {
+                                project_id: *remote_id,
+                                server: Some(proto::LanguageServer {
+                                    id: server_id.to_proto(),
+                                    name: name.to_string(),
+                                    worktree_id: worktree_id.map(|id| id.to_proto()),
+                                }),
+                                capabilities: serde_json::to_string(capabilities)
+                                    .expect("serializing server LSP capabilities"),
+                            })
+                            .log_err();
+                    }
+                }
+            }
             LspStoreEvent::LanguageServerRemoved(server_id) => {
                 cx.emit(Event::LanguageServerRemoved(*server_id))
             }
@@ -3712,18 +3765,75 @@ impl Project {
             LspStoreEvent::RefreshInlayHints {
                 server_id,
                 request_id,
-            } => cx.emit(Event::RefreshInlayHints {
-                server_id: *server_id,
-                request_id: *request_id,
-            }),
+            } => {
+                cx.emit(Event::RefreshInlayHints {
+                    server_id: *server_id,
+                    request_id: *request_id,
+                });
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::RefreshInlayHints {
+                            project_id: *remote_id,
+                            server_id: server_id.to_proto(),
+                            request_id: request_id.map(|id| id as u64),
+                        })
+                        .log_err();
+                }
+            }
             LspStoreEvent::RefreshSemanticTokens {
                 server_id,
                 request_id,
-            } => cx.emit(Event::RefreshSemanticTokens {
-                server_id: *server_id,
-                request_id: *request_id,
-            }),
-            LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
+            } => {
+                cx.emit(Event::RefreshSemanticTokens {
+                    server_id: *server_id,
+                    request_id: *request_id,
+                });
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::RefreshSemanticTokens {
+                            project_id: *remote_id,
+                            server_id: server_id.to_proto(),
+                            request_id: request_id.map(|id| id as u64),
+                        })
+                        .log_err();
+                }
+            }
+            LspStoreEvent::RefreshCodeLens => {
+                cx.emit(Event::RefreshCodeLens);
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::RefreshCodeLens {
+                            project_id: *remote_id,
+                        })
+                        .log_err();
+                }
+            }
+            LspStoreEvent::PullWorkspaceDiagnosticsRequested { server_id } => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::PullWorkspaceDiagnostics {
+                            project_id: *remote_id,
+                            server_id: server_id.to_proto(),
+                        })
+                        .log_err();
+                }
+            }
+            LspStoreEvent::DiagnosticsSummariesUpdated {
+                worktree_id,
+                summary,
+                more_summaries,
+            } => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::UpdateDiagnosticSummary {
+                            project_id: *remote_id,
+                            worktree_id: worktree_id.to_proto(),
+                            summary: Some(summary.clone()),
+                            more_summaries: more_summaries.clone(),
+                        })
+                        .log_err();
+                }
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
@@ -3975,7 +4085,17 @@ impl Project {
                 self.on_worktree_released(*id, cx);
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
-            WorktreeStoreEvent::WorktreeUpdateSent(_) => {}
+            WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    let summaries = self
+                        .lsp_store
+                        .read(cx)
+                        .diagnostic_summaries_for_worktree(worktree.read(cx).id(), *remote_id);
+                    if let Some(summaries) = summaries {
+                        self.collab_client.send(summaries).log_err();
+                    }
+                }
+            }
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, changes) => {
                 self.client()
                     .telemetry()
