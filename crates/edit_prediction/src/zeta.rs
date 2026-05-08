@@ -12,11 +12,10 @@ use cloud_llm_client::{
 use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, AppContext as _, Entity, Task, WeakEntity, prelude::*};
 use language::{
-    Buffer, BufferSnapshot, DiagnosticSeverity, OffsetRangeExt as _, ToOffset as _,
-    language_settings::all_language_settings, text_diff,
+    Buffer, BufferSnapshot, DiagnosticSeverity, EditPredictionPromptFormat, OffsetRangeExt as _,
+    ToOffset as _, ZetaVersion, language_settings::all_language_settings, text_diff,
 };
 use release_channel::AppVersion;
-use settings::EditPredictionPromptFormat;
 use text::{Anchor, Bias, Point};
 use ui::SharedString;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
@@ -106,10 +105,30 @@ pub fn request_prediction_with_zeta(
 
     let request_task = cx.background_spawn({
         async move {
-            let zeta_version = raw_config
+            let local_zeta_version = custom_server_settings
+                .as_ref()
+                .and_then(|settings| match settings.prompt_format {
+                    EditPredictionPromptFormat::Zeta(version) => Some(version),
+                    EditPredictionPromptFormat::Infer => {
+                        match settings.model.to_ascii_lowercase().as_str() {
+                            "zeta" | "zeta1" => Some(ZetaVersion::Zeta1),
+                            "zeta2" => Some(ZetaVersion::Zeta2),
+                            "zeta2.1" => Some(ZetaVersion::Zeta2_1),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let zeta_format = raw_config
                 .as_ref()
                 .map(|config| config.format)
-                .unwrap_or(ZetaFormat::default());
+                .or(match local_zeta_version {
+                    ZetaVersion::Zeta1 => None,
+                    ZetaVersion::Zeta2 => Some(ZetaFormat::V0211SeedCoder),
+                    ZetaVersion::Zeta2_1 => Some(ZetaFormat::V0318SeedMultiRegions),
+                })
+                .unwrap_or_default();
 
             let cursor_offset = position.to_offset(&snapshot);
             let (full_context_offset_range, prompt_input) = zeta2_prompt_input(
@@ -125,11 +144,7 @@ pub fn request_prediction_with_zeta(
                 repo_url,
             );
 
-            if prompt_input_contains_special_tokens(&prompt_input, zeta_version) {
-                return Err(anyhow::anyhow!("prompt contains special tokens"));
-            }
-
-            let formatted_prompt = format_zeta_prompt(&prompt_input, zeta_version);
+            let formatted_prompt = format_zeta_prompt(&prompt_input, zeta_format);
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx
@@ -149,8 +164,8 @@ pub fn request_prediction_with_zeta(
                 (if let Some(custom_settings) = &custom_server_settings {
                     let max_tokens = custom_settings.max_output_tokens * 4;
 
-                    Some(match custom_settings.prompt_format {
-                        EditPredictionPromptFormat::Zeta => {
+                    Some(match local_zeta_version {
+                        ZetaVersion::Zeta1 => {
                             let ranges = &prompt_input.excerpt_ranges;
                             let editable_range_in_excerpt = ranges.editable_350.clone();
                             let prompt = zeta1::format_zeta1_from_input(
@@ -186,11 +201,11 @@ pub fn request_prediction_with_zeta(
 
                             (request_id, parsed_output, None, None)
                         }
-                        EditPredictionPromptFormat::Zeta2 => {
+                        ZetaVersion::Zeta2 | ZetaVersion::Zeta2_1 => {
                             let Some(prompt) = formatted_prompt.clone() else {
                                 return Ok((None, None));
                             };
-                            let prefill = get_prefill(&prompt_input, zeta_version);
+                            let prefill = get_prefill(&prompt_input, zeta_format);
                             let prompt = format!("{prompt}{prefill}");
 
                             let (response_text, request_id) = send_custom_server_request(
@@ -198,7 +213,7 @@ pub fn request_prediction_with_zeta(
                                 custom_settings,
                                 prompt,
                                 max_tokens,
-                                stop_tokens_for_format(zeta_version)
+                                stop_tokens_for_format(zeta_format)
                                     .iter()
                                     .map(|token| token.to_string())
                                     .collect(),
@@ -214,14 +229,13 @@ pub fn request_prediction_with_zeta(
                                 let output = format!("{prefill}{response_text}");
                                 Some(parse_zeta2_model_output(
                                     &output,
-                                    zeta_version,
+                                    zeta_format,
                                     &prompt_input,
                                 )?)
                             };
 
                             (request_id, output_text, None, None)
                         }
-                        _ => anyhow::bail!("unsupported prompt format"),
                     })
                 } else if let Some(config) = &raw_config {
                     let Some(prompt) = format_zeta_prompt(&prompt_input, config.format) else {

@@ -84,6 +84,7 @@ pub enum ZetaFormat {
     #[default]
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
+    #[serde(alias = "Zeta2")]
     V0211SeedCoder,
     v0226Hashline,
     V0304VariableEdit,
@@ -93,6 +94,7 @@ pub enum ZetaFormat {
     /// Byte-exact marker spans; all intermediate markers emitted; repeated marker means no-edit.
     V0316SeedMultiRegions,
     /// V0316 with larger block sizes.
+    #[serde(alias = "Zeta2.1")]
     V0318SeedMultiRegions,
     /// V0316, but marker numbers are relative to the cursor block (e.g. -1, -0, +1).
     V0317SeedMultiRegions,
