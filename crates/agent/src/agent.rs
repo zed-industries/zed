@@ -2628,12 +2628,7 @@ impl TerminalHandle for AcpTerminalHandle {
 
 /// Build the catalog the model sees in its system prompt: filter out hidden
 /// (`disable_model_invocation`) skills, then drop the rest if they would push
-/// the catalog past the description budget. Walks `skills` in iteration
-/// order, dropping any with `disable_model_invocation: true` (they belong to
-/// slash commands, not the model's catalog), and accumulating the remaining
-/// (visible) skills against the budget. Once the budget is exceeded, every
-/// subsequent visible skill is dropped with a `SkillLoadError` so the UI can
-/// surface the failure.
+/// the catalog past the description budget.
 ///
 /// Returns `SkillSummary` values rather than full `Skill`s so that the
 /// (potentially ~100KB) skill bodies aren't cloned just to be discarded by
@@ -2663,8 +2658,10 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
             errors.push(SkillLoadError {
                 path: skill.skill_file_path.clone(),
                 message: format!(
-                    "Skill '{}' dropped from catalog: total skill description size would exceed the {}KB budget",
+                    "Skill '{}' ({:.1}KB description) dropped from catalog: previous skills used {:.1}KB of the {}KB budget",
                     skill.name,
+                    entry_size as f64 / 1024.0,
+                    total_size as f64 / 1024.0,
                     MAX_SKILL_DESCRIPTIONS_SIZE / 1024,
                 ),
             });
@@ -2868,6 +2865,14 @@ mod internal_tests {
             assert!(
                 error.message.contains("50KB") && error.message.contains("budget"),
                 "error message {:?} should describe the budget",
+                error.message,
+            );
+            let dropped_skill = &skills[original_index];
+            let entry_size = dropped_skill.name.len() + dropped_skill.description.len();
+            let entry_size_kb = format!("{:.1}KB", entry_size as f64 / 1024.0);
+            assert!(
+                error.message.contains(&entry_size_kb),
+                "error message {:?} should mention the dropped skill's size ({entry_size_kb})",
                 error.message,
             );
         }
