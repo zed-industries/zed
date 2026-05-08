@@ -20,9 +20,10 @@ use util::{ResultExt as _, maybe};
 use workspace::{
     Workspace,
     notifications::{
-        ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
+        Notification, NotificationId, SuppressEvent, show_app_notification,
         simple_message_notification::MessageNotification,
     },
+    workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
 use zed_actions::ShowUpdateNotification;
 
@@ -71,11 +72,26 @@ fn notify_release_notes_failed_to_show(
         |cx| {
             cx.new(move |cx| {
                 let url = release_notes_url(cx);
-                let mut prompt = ErrorMessagePrompt::new("Couldn't load release notes", cx);
-                if let Some(url) = url {
-                    prompt = prompt.with_link_button("View in Browser".to_string(), url);
+
+                struct ReleaseNotesError {
+                    url: Option<String>,
                 }
-                prompt
+                impl WorkspaceError for ReleaseNotesError {
+                    fn primary_message(&self) -> SharedString {
+                        "Couldn't load release notes".into()
+                    }
+                    fn severity(&self) -> ErrorSeverity {
+                        ErrorSeverity::Error
+                    }
+                    fn primary_action(&self) -> Option<ErrorAction> {
+                        self.url
+                            .clone()
+                            .map(|url| ErrorAction::link("View in Browser", url))
+                    }
+                }
+
+                let error = ReleaseNotesError { url };
+                MessageNotification::from_workspace_error(error, cx)
             })
         },
     );

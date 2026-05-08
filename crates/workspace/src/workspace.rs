@@ -25,6 +25,7 @@ mod theme_preview;
 mod toast_layer;
 mod toolbar;
 pub mod welcome;
+pub mod workspace_error;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -575,16 +576,16 @@ pub enum CloseIntent {
 #[derive(Clone)]
 pub struct Toast {
     id: NotificationId,
-    msg: Cow<'static, str>,
+    message: Cow<'static, str>,
     autohide: bool,
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut Window, &mut App)>)>,
 }
 
 impl Toast {
-    pub fn new<I: Into<Cow<'static, str>>>(id: NotificationId, msg: I) -> Self {
+    pub fn new<I: Into<Cow<'static, str>>>(id: NotificationId, message: I) -> Self {
         Toast {
             id,
-            msg: msg.into(),
+            message: message.into(),
             on_click: None,
             autohide: false,
         }
@@ -608,7 +609,7 @@ impl Toast {
 impl PartialEq for Toast {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
-            && self.msg == other.msg
+            && self.message == other.message
             && self.on_click.is_some() == other.on_click.is_some()
     }
 }
@@ -3000,7 +3001,8 @@ impl Workspace {
                     }
                     Err(err) => {
                         let rx = workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.show_portal_error(err.to_string(), cx);
+                            workspace
+                                .show_error(workspace_error::PortalError::new(err.to_string()), cx);
                             let prompt = workspace.on_prompt_for_open_path.take().unwrap();
                             let rx = prompt(workspace, lister, window, cx);
                             workspace.on_prompt_for_open_path = Some(prompt);
@@ -3056,7 +3058,8 @@ impl Workspace {
                 Ok(path) => path,
                 Err(err) => {
                     let rx = workspace.update_in(cx, |workspace, window, cx| {
-                        workspace.show_portal_error(err.to_string(), cx);
+                        workspace
+                            .show_error(workspace_error::PortalError::new(err.to_string()), cx);
 
                         let prompt = workspace.on_prompt_for_new_path.take().unwrap();
                         let rx = prompt(workspace, lister, suggested_name, window, cx);
@@ -3825,7 +3828,9 @@ impl Workspace {
         let project = self.project.read(cx);
         if project.is_via_collab() {
             self.show_error(
-                &anyhow!("You cannot add folders to someone else's project"),
+                workspace_error::StringWorkspaceError::new(
+                    "You cannot add folders to someone else's project",
+                ),
                 cx,
             );
             return;
@@ -9943,7 +9948,10 @@ pub fn open_paths(
                 workspace.update(cx, |workspace, cx| {
                     for item in open_task.iter().flatten() {
                         if let Err(e) = item {
-                            workspace.show_error(&e, cx);
+                            workspace.show_error(
+                                workspace_error::DisplayWorkspaceError::new_with_prefix(e),
+                                cx,
+                            );
                         }
                     }
                 });
@@ -10278,10 +10286,15 @@ async fn open_remote_project_inner(
         for error in project_path_errors {
             if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                 if let Some(path) = error.error_tag("path") {
-                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                    workspace.show_error(
+                        workspace_error::StringWorkspaceError::new(format!(
+                            "'{path}' does not exist"
+                        )),
+                        cx,
+                    )
                 }
             } else {
-                workspace.show_error(&error, cx)
+                workspace.show_error(workspace_error::DisplayWorkspaceError::new(&error), cx)
             }
         }
     });
