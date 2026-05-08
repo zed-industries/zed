@@ -1497,9 +1497,7 @@ impl Thread {
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
-                    if thread.inherits_parent_settings {
-                        thread.set_summarization_model(model.clone(), cx)
-                    }
+                    thread.set_summarization_model(model.clone(), cx)
                 })
                 .ok();
         }
