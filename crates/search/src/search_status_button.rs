@@ -1,8 +1,8 @@
 use editor::EditorSettings;
-use gpui::FocusHandle;
+use gpui::{App, FocusHandle};
 use settings::Settings as _;
 use ui::{ButtonCommon, Clickable, Context, Render, Tooltip, Window, prelude::*};
-use workspace::{ItemHandle, StatusItemView};
+use workspace::{HideStatusItem, ItemHandle, StatusItemView};
 
 pub const SEARCH_ICON: IconName = IconName::MagnifyingGlass;
 
@@ -61,5 +61,11 @@ impl StatusItemView for SearchButton {
         cx: &mut Context<Self>,
     ) {
         self.pane_item_focus_handle = active_pane_item.map(|item| item.item_focus_handle(cx));
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings.editor.search.get_or_insert_default().button = Some(false);
+        }))
     }
 }
