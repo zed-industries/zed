@@ -3,7 +3,8 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use cloud_api_types::internal_api::{
-    self, LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
+    self, LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody,
+    LookUpUsersByLegacyIdResponse,
 };
 use reqwest::RequestBuilder;
 use rpc::proto;
@@ -67,7 +68,7 @@ impl UserService for TransitionalUserService {
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        self.database_user_service
+        self.cloud_user_service
             .get_user_by_github_login(github_login)
             .await
     }
@@ -164,9 +165,20 @@ impl UserService for CloudUserService {
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        let _ = github_login;
+        let response_body: LookUpUserByGithubLoginResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/look_up_by_github_login",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&LookUpUserByGithubLoginBody {
+                        github_login: github_login.to_string(),
+                    }),
+            )
+            .await?;
 
-        unimplemented!("not yet implemented in Cloud")
+        Ok(response_body.user.map(User::from))
     }
 
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
