@@ -72,7 +72,7 @@ pub struct RulesLoadingError {
     pub message: SharedString,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillLoadingError {
     pub project_id: EntityId,
     pub path: PathBuf,

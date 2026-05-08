@@ -8692,9 +8692,7 @@ impl ThreadView {
                 let abs_path = error.path.clone();
                 let workspace = self.workspace.clone();
                 let path_label = error.path.display().to_string();
-                let target_path = error.path.clone();
-                let target_project_id = error.project_id;
-                let target_message = error.message.clone();
+                let target = error.clone();
                 Callout::new()
                     .icon(IconName::Warning)
                     .severity(Severity::Warning)
@@ -8724,13 +8722,12 @@ impl ThreadView {
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Dismiss"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.skill_loading_errors.retain(|e| {
-                                    e.project_id != target_project_id
-                                        || e.path != target_path
-                                        || e.message != target_message
-                                });
-                                cx.notify();
+                            .on_click(cx.listener({
+                                let target = target.clone();
+                                move |this, _, _, cx| {
+                                    this.skill_loading_errors.retain(|e| *e != target);
+                                    cx.notify();
+                                }
                             })),
                     )
             })
