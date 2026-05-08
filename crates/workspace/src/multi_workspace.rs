@@ -1428,11 +1428,17 @@ impl MultiWorkspace {
         let old_active_workspace = self.active_workspace.clone();
         let old_active_was_retained = self.active_workspace_is_retained();
         let workspace_was_retained = self.is_workspace_retained(&workspace);
+        let should_retain_workspaces = self.multi_workspace_enabled(cx);
+
+        if should_retain_workspaces && !old_active_was_retained {
+            let key = old_active_workspace.read(cx).project_group_key(cx);
+            self.retain_workspace(old_active_workspace.clone(), key, cx);
+        }
 
         if !workspace_was_retained {
             self.register_workspace(&workspace, window, cx);
 
-            if self.sidebar_open {
+            if should_retain_workspaces {
                 let key = workspace.read(cx).project_group_key(cx);
                 self.retain_workspace(workspace.clone(), key, cx);
             }
@@ -1445,7 +1451,7 @@ impl MultiWorkspace {
             group.last_active_workspace = Some(self.active_workspace.downgrade());
         }
 
-        if !self.sidebar_open && !old_active_was_retained {
+        if !should_retain_workspaces && !old_active_was_retained {
             self.detach_workspace(&old_active_workspace, cx);
         }
 
