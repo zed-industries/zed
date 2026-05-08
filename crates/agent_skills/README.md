@@ -257,6 +257,7 @@ A few things that are common in other tools, that we deliberately deferred:
 - `skill.rs` — types, frontmatter parsing, discovery, override merge.
 - `crates/agent/src/tools/skill_tool.rs` — the `skill` tool, the `<skill_content>` renderer, XML escape helper.
 - `crates/agent/src/agent.rs` — slash command registration (`build_available_commands_for_project`), slash command activation (`send_skill_invocation`), live reload (`watch_global_skills_directory` and `maintain_project_context`).
-- `crates/prompt_store/src/prompts.rs` — catalog construction (`ProjectContext::new`), where `disable-model-invocation` filtering happens.
+- `crates/agent/src/agent.rs::select_catalog_skills` — where `disable-model-invocation` filtering and the 50KB catalog budget are enforced.
+- `crates/prompt_store/src/prompts.rs` — `ProjectContext` (the type the system prompt is rendered against; receives the catalog from `select_catalog_skills`).
 - `crates/agent/src/templates/system_prompt.hbs` — catalog rendering in the system prompt.
 - `crates/agent/src/tools/tool_permissions.rs` — sensitive-path classification for skill files (`SensitiveSettingsKind::AgentSkills`) and the global-skills fast path used by `read_file` and `list_directory`.
