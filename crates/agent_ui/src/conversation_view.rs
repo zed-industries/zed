@@ -101,6 +101,11 @@ use crate::{
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
+/// How long after the last `PromptUpdated` event a draft's prompt is
+/// persisted to the kvp store. Exposed so test helpers can advance the
+/// simulated clock past it.
+pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
+
 mod thread_view;
 pub use thread_view::*;
 
@@ -1700,10 +1705,11 @@ impl ConversationView {
     /// short-circuits to a no-op — the metadata store handles kvp cleanup
     /// for promoted threads.
     fn schedule_draft_prompt_persist(&mut self, cx: &mut Context<Self>) {
-        const DEBOUNCE: Duration = Duration::from_millis(250);
         let thread_id = self.thread_id;
         self.draft_prompt_persist_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(DEBOUNCE).await;
+            cx.background_executor()
+                .timer(DRAFT_PROMPT_PERSIST_DEBOUNCE)
+                .await;
             let persist = this.update(cx, |this, cx| {
                 let thread = this.root_thread(cx)?;
                 let thread = thread.read(cx);

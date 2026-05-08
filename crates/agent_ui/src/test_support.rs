@@ -8,7 +8,6 @@ use settings::SettingsStore;
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use crate::AgentPanel;
 use crate::agent_panel;
@@ -178,9 +177,10 @@ pub fn type_draft_prompt(panel: &Entity<AgentPanel>, text: &str, cx: &mut Visual
         editor.set_text(text, window, cx);
     });
     cx.run_until_parked();
-    // Drain the debounced draft-prompt persist task. Must outlast the
-    // `DEBOUNCE` constant in `ConversationView::schedule_draft_prompt_persist`.
-    cx.executor().advance_clock(Duration::from_millis(500));
+    // Drain the debounced draft-prompt persist task so the kvp write has
+    // landed by the time we return.
+    cx.executor()
+        .advance_clock(crate::conversation_view::DRAFT_PROMPT_PERSIST_DEBOUNCE * 2);
     cx.run_until_parked();
 }
 
