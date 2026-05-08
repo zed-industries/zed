@@ -14349,13 +14349,13 @@ impl LspInstaller for SshLspAdapter {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         _: (),
         _: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        async { anyhow::bail!("SshLspAdapter does not support fetch_server_binary") }
     }
 }
 

@@ -623,8 +623,8 @@ pub trait LspInstaller {
         &self,
         _version: &Self::BinaryVersion,
         _container_dir: &PathBuf,
-        _delegate: &dyn LspAdapterDelegate,
-    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> {
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<Self> {
         async { None }
     }
 
@@ -632,8 +632,8 @@ pub trait LspInstaller {
         &self,
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>>;
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<Self>;
 
     fn cached_server_binary(
         &self,
@@ -686,11 +686,7 @@ where
 
         if let Some(binary) = cx
             .background_executor()
-            .await_on_background(self.check_if_version_installed(
-                &latest_version,
-                &container_dir,
-                delegate.as_ref(),
-            ))
+            .spawn(self.check_if_version_installed(&latest_version, &container_dir, &delegate))
             .await
         {
             log::debug!("language server {:?} is already installed", name.0);
@@ -701,11 +697,7 @@ where
             delegate.update_status(name.clone(), BinaryStatus::Downloading);
             let binary = cx
                 .background_executor()
-                .await_on_background(self.fetch_server_binary(
-                    latest_version,
-                    container_dir,
-                    delegate.as_ref(),
-                ))
+                .spawn(self.fetch_server_binary(latest_version, container_dir, delegate))
                 .await;
 
             delegate.update_status(name.clone(), BinaryStatus::None);
@@ -1421,13 +1413,15 @@ impl LspInstaller for FakeLspAdapter {
         Some(self.language_server_binary.clone())
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         _: (),
         _: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        unreachable!();
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        async {
+            unreachable!();
+        }
     }
 
     async fn cached_server_binary(
