@@ -16,7 +16,7 @@ use command_palette_hooks::{
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    ParentElement, Render, Styled, Task, TaskExt, WeakEntity, Window,
 };
 use persistence::CommandPaletteDB;
 use picker::Direction;

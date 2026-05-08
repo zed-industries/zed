@@ -2913,6 +2913,13 @@ impl CollabPanel {
                 if show_auto_watch || show_copy {
                     Some(
                         h_flex()
+                            .when_some(channel_link, |this, channel_link| {
+                                this.child(
+                                    CopyButton::new("copy-channel-link", channel_link)
+                                        .visible_on_hover("section-header")
+                                        .tooltip_label("Copy Channel Link"),
+                                )
+                            })
                             .when(has_auto_watch_flag, |this| {
                                 this.child(
                                     IconButton::new(
@@ -2950,13 +2957,6 @@ impl CollabPanel {
                                                 .ok();
                                         },
                                     )),
-                                )
-                            })
-                            .when_some(channel_link, |this, channel_link| {
-                                this.child(
-                                    CopyButton::new("copy-channel-link", channel_link)
-                                        .visible_on_hover("section-header")
-                                        .tooltip_label("Copy Channel Link"),
                                 )
                             })
                             .into_any_element(),
@@ -3829,6 +3829,12 @@ impl Panel for CollabPanel {
 
     fn activation_priority(&self) -> u32 {
         5
+    }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.collaboration_panel.get_or_insert_default().button = Some(false);
+        }))
     }
 }
 

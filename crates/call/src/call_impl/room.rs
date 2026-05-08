@@ -14,7 +14,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FutureExt as _,
-    ScreenCaptureSource, ScreenCaptureStream, Task, Timeout, WeakEntity,
+    ScreenCaptureSource, ScreenCaptureStream, Task, TaskExt, Timeout, WeakEntity,
 };
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -934,6 +934,11 @@ impl Room {
                             }
                             for sid in participant.video_tracks.keys() {
                                 cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: sid.clone() });
+                            }
+                            if !participant.video_tracks.is_empty() {
+                                cx.emit(Event::RemoteVideoTracksChanged {
+                                    participant_id: participant.peer_id,
+                                });
                             }
                             false
                         }

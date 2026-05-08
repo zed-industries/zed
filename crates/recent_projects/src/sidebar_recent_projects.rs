@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, Window,
+    Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use picker::{
     Picker, PickerDelegate,
