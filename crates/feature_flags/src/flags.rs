@@ -35,6 +35,18 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
+pub struct AgentPanelTerminalFeatureFlag;
+
+impl FeatureFlag for AgentPanelTerminalFeatureFlag {
+    const NAME: &'static str = "agent-panel-terminal";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(AgentPanelTerminalFeatureFlag);
+
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
