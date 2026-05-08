@@ -666,8 +666,11 @@ async fn build_buffer_diff(
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, TestAppContext};
-    use language::Buffer;
+    use language::{Buffer, Point};
+    use streaming_diff::LineOperation;
+    use text::{Buffer as TextBuffer, BufferId, Edit, ReplicaId};
 
+    use super::compute_hunks;
     use crate::Diff;
 
     #[gpui::test]
@@ -678,5 +681,159 @@ mod tests {
             buffer.set_text("HELLO!", cx);
         });
         cx.run_until_parked();
+    }
+
+    #[test]
+    fn test_compute_hunks_for_inserted_lines() -> anyhow::Result<()> {
+        let base = snapshot("alpha\ngamma\n", 1)?;
+        let buffer = snapshot("alpha\nbeta\ngamma\n", 2)?;
+
+        assert_eq!(
+            compute_hunks(
+                &base,
+                &buffer,
+                vec![
+                    LineOperation::Keep { lines: 1 },
+                    LineOperation::Insert { lines: 1 },
+                    LineOperation::Keep { lines: 2 },
+                ],
+            )
+            .into_inner(),
+            vec![Edit {
+                old: offset_range_for_rows(&base, 1..1),
+                new: offset_range_for_rows(&buffer, 1..2),
+            }]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_hunks_for_deleted_lines() -> anyhow::Result<()> {
+        let base = snapshot("alpha\nbeta\ngamma\n", 1)?;
+        let buffer = snapshot("alpha\ngamma\n", 2)?;
+
+        assert_eq!(
+            compute_hunks(
+                &base,
+                &buffer,
+                vec![
+                    LineOperation::Keep { lines: 1 },
+                    LineOperation::Delete { lines: 1 },
+                    LineOperation::Keep { lines: 2 },
+                ],
+            )
+            .into_inner(),
+            vec![Edit {
+                old: offset_range_for_rows(&base, 1..2),
+                new: offset_range_for_rows(&buffer, 1..1),
+            }]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_hunks_merges_adjacent_delete_insert_operations() -> anyhow::Result<()> {
+        let base = snapshot("alpha\nold one\nold two\nomega\n", 1)?;
+        let buffer = snapshot("alpha\nnew one\nnew two\nnew three\nomega\n", 2)?;
+
+        assert_eq!(
+            compute_hunks(
+                &base,
+                &buffer,
+                vec![
+                    LineOperation::Keep { lines: 1 },
+                    LineOperation::Delete { lines: 2 },
+                    LineOperation::Insert { lines: 3 },
+                    LineOperation::Keep { lines: 2 },
+                ],
+            )
+            .into_inner(),
+            vec![Edit {
+                old: offset_range_for_rows(&base, 1..3),
+                new: offset_range_for_rows(&buffer, 1..4),
+            }]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_hunks_flushes_trailing_deletions() -> anyhow::Result<()> {
+        let base = snapshot("alpha\nbeta\ngamma", 1)?;
+        let buffer = snapshot("alpha\n", 2)?;
+
+        assert_eq!(
+            compute_hunks(
+                &base,
+                &buffer,
+                vec![
+                    LineOperation::Keep { lines: 1 },
+                    LineOperation::Delete { lines: 2 },
+                ],
+            )
+            .into_inner(),
+            vec![Edit {
+                old: offset_range_for_rows(&base, 1..3),
+                new: offset_range_for_rows(&buffer, 1..1),
+            }]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_hunks_keeps_separate_non_adjacent_hunks() -> anyhow::Result<()> {
+        let base = snapshot("one\ntwo\nthree\nfour\n", 1)?;
+        let buffer = snapshot("one\nTWO\nthree\nFOUR\n", 2)?;
+
+        assert_eq!(
+            compute_hunks(
+                &base,
+                &buffer,
+                vec![
+                    LineOperation::Keep { lines: 1 },
+                    LineOperation::Delete { lines: 1 },
+                    LineOperation::Insert { lines: 1 },
+                    LineOperation::Keep { lines: 1 },
+                    LineOperation::Delete { lines: 1 },
+                    LineOperation::Insert { lines: 1 },
+                    LineOperation::Keep { lines: 1 },
+                ],
+            )
+            .into_inner(),
+            vec![
+                Edit {
+                    old: offset_range_for_rows(&base, 1..2),
+                    new: offset_range_for_rows(&buffer, 1..2),
+                },
+                Edit {
+                    old: offset_range_for_rows(&base, 3..4),
+                    new: offset_range_for_rows(&buffer, 3..4),
+                },
+            ]
+        );
+
+        Ok(())
+    }
+
+    fn snapshot(text: &str, buffer_id: u64) -> anyhow::Result<text::BufferSnapshot> {
+        Ok(
+            TextBuffer::new(ReplicaId::LOCAL, BufferId::new(buffer_id)?, text)
+                .snapshot()
+                .clone(),
+        )
+    }
+
+    fn offset_range_for_rows(
+        snapshot: &text::BufferSnapshot,
+        rows: std::ops::Range<u32>,
+    ) -> std::ops::Range<usize> {
+        offset_for_row(snapshot, rows.start)..offset_for_row(snapshot, rows.end)
+    }
+
+    fn offset_for_row(snapshot: &text::BufferSnapshot, row: u32) -> usize {
+        snapshot.point_to_offset(Point::new(row, 0).min(snapshot.max_point()))
     }
 }
