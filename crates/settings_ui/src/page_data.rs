@@ -5627,6 +5627,28 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Entry Click Behavior",
+                description: "Choose whether clicking a file entry opens its Git diff view or opens the file directly in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.entry_click_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .entry_click_behavior
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .entry_click_behavior = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Tree View",
                 description: "Enable to show entries in tree view list, disable to show in flat view list.",
                 field: Box::new(SettingField {

@@ -691,6 +691,13 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
 
+    /// What clicking a file entry in the Git panel should do.
+    /// `diff` opens the Git diff view for that file.
+    /// `open` opens the file directly in the editor.
+    ///
+    /// Default: diff
+    pub entry_click_behavior: Option<EntryClickBehavior>,
+
     /// Whether to show entries with tree or flat view in the panel
     ///
     /// Default: false
@@ -737,6 +744,29 @@ pub enum StatusStyle {
     #[default]
     Icon,
     LabelColor,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryClickBehavior {
+    /// Open the Git diff view for the clicked file entry.
+    #[default]
+    Diff,
+    /// Open the clicked file entry directly in the editor.
+    Open,
 }
 
 #[with_fallible_options]

@@ -61,7 +61,7 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle};
+use settings::{EntryClickBehavior, Settings, SettingsStore, StatusStyle};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -5620,8 +5620,15 @@ impl GitPanel {
                     if event.click_count() > 1 || event.modifiers().secondary() {
                         this.open_file(&Default::default(), window, cx)
                     } else {
-                        this.open_diff(&Default::default(), window, cx);
-                        this.focus_handle.focus(window, cx);
+                        match GitPanelSettings::get_global(cx).entry_click_behavior {
+                            EntryClickBehavior::Diff => {
+                                this.open_diff(&Default::default(), window, cx);
+                                this.focus_handle.focus(window, cx);
+                            }
+                            EntryClickBehavior::Open => {
+                                this.open_file(&Default::default(), window, cx)
+                            }
+                        }
                     }
                 })
             })

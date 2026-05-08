@@ -962,9 +962,16 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
-    /// Whether to show entries with tree or flat view in the panel
-    ///
-    /// Default: false
+    // What clicking a file entry in the Git panel should do.
+    // `diff` opens the Git diff view for that file.
+    // `open` opens the file directly in the editor.
+    //
+    // Choices: diff, open
+    // Default: diff
+    "entry_click_behavior": "diff",
+    // Whether to show entries with tree or flat view in the panel
+    //
+    // Default: false
     "tree_view": false,
     // Whether the git panel should open on startup.
     //
