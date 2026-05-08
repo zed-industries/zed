@@ -115,13 +115,26 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
 }
 
 fn is_agents_skills_path(path: &Path) -> bool {
+    // Compare case-insensitively so this classifier agrees with the
+    // `canonicalize`-based comparison in `sensitive_settings_kind` on
+    // case-insensitive filesystems (macOS/Windows by default). Otherwise a
+    // path like `.AGENTS/skills/foo/SKILL.md` would canonicalize to the same
+    // inode as `.agents/skills/foo/SKILL.md` but be classified differently,
+    // and a malicious skill could trivially bypass a case-sensitive check by
+    // using unusual casing. `.agents` and `skills` are pure ASCII, so
+    // `eq_ignore_ascii_case` is safe and stable across platforms.
+    fn matches_skills_root(agents: &OsStr, skills: &OsStr) -> bool {
+        agents
+            .to_str()
+            .is_some_and(|a| a.eq_ignore_ascii_case(".agents"))
+            && skills
+                .to_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case("skills"))
+    }
+
     let components: Vec<_> = path.components().map(|c| c.as_os_str()).collect();
-    let agents = OsStr::new(".agents");
-    let skills = OsStr::new("skills");
-    matches!(components.as_slice(),
-        [a, s, ..] if *a == agents && *s == skills)
-        || matches!(components.as_slice(),
-            [_, a, s, ..] if *a == agents && *s == skills)
+    matches!(components.as_slice(), [a, s, ..] if matches_skills_root(a, s))
+        || matches!(components.as_slice(), [_, a, s, ..] if matches_skills_root(a, s))
 }
 
 /// If `path` is an absolute path under the global skills directory
@@ -977,6 +990,18 @@ mod tests {
     fn is_agents_skills_path_deep_negative() {
         assert!(!is_agents_skills_path(Path::new(
             "some/random/place/.agents/skills/foo"
+        )));
+    }
+
+    #[test]
+    fn is_agents_skills_path_case_insensitive() {
+        use std::path::Path;
+        // Filesystems on macOS/Windows are case-insensitive by default; the
+        // classifier must agree.
+        assert!(is_agents_skills_path(Path::new(".AGENTS/skills/foo")));
+        assert!(is_agents_skills_path(Path::new(".agents/SKILLS/foo")));
+        assert!(is_agents_skills_path(Path::new(
+            "project/.AGENTS/SKILLS/foo"
         )));
     }
 }
