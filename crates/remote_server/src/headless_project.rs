@@ -214,7 +214,7 @@ impl HeadlessProject {
             .detach();
 
         let lsp_store = cx.new(|cx| {
-            let mut lsp_store = LspStore::new_local(
+            LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
@@ -229,9 +229,7 @@ impl HeadlessProject {
                 http_client.clone(),
                 fs.clone(),
                 cx,
-            );
-            lsp_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            lsp_store
+            )
         });
 
         AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
@@ -296,6 +294,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_profiling_data);
 
         session.add_entity_request_handler(Self::handle_add_worktree);
+        session.add_entity_request_handler(Self::handle_lsp_query);
         session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
 
         session.add_entity_request_handler(Self::handle_open_buffer_by_path);
@@ -571,7 +570,8 @@ impl HeadlessProject {
                     log_store.update(cx, |log_store, cx| {
                         log_store.add_language_server(
                             LanguageServerKind::LocalSsh {
-                                lsp_store: self.lsp_store.downgrade(),
+                                session: self.session.clone(),
+                                project_id: REMOTE_SERVER_PROJECT_ID,
                             },
                             *id,
                             Some(name.clone()),
@@ -707,6 +707,27 @@ impl HeadlessProject {
             }
             _ => {}
         }
+    }
+
+    /// Forwards `proto::LspQuery` rpc to the LSP store with the headless
+    /// session as the downstream peer. Mirrors `Project::handle_lsp_query`
+    /// for the headless side.
+    async fn handle_lsp_query(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspQuery>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let (lsp_store, session) = this.read_with(&cx, |this, _| {
+            (this.lsp_store.clone(), this.session.clone())
+        });
+        project::LspStore::process_lsp_query(
+            lsp_store,
+            session,
+            REMOTE_SERVER_PROJECT_ID,
+            envelope,
+            cx,
+        )
+        .await
     }
 
     pub async fn handle_add_worktree(

@@ -1137,6 +1137,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_update_buffer);
         client.add_entity_message_handler(Self::handle_update_worktree);
         client.add_entity_request_handler(Self::handle_synchronize_buffers);
+        client.add_entity_request_handler(Self::handle_lsp_query);
 
         client.add_entity_request_handler(Self::handle_search_candidate_buffers);
         client.add_entity_request_handler(Self::handle_open_buffer_by_id);
@@ -1638,6 +1639,7 @@ impl Project {
             remote_proto.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
 
             remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
+            remote_proto.add_entity_request_handler(Self::handle_lsp_query);
             BufferStore::init(&remote_proto);
             WorktreeStore::init_remote(&remote_proto);
             LspStore::init(&remote_proto);
@@ -2823,9 +2825,6 @@ impl Project {
         });
         self.retain_all_worktrees();
         self.send_worktree_project_updates(project_id, cx);
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.shared(project_id, self.collab_client.clone().into(), cx)
-        });
         // Announce all language servers that belong to this project. After
         // Phase 2 the worktree filter actually narrows the list; in Phase 0
         // every server in this project's lsp_store is owned by this project,
@@ -3013,8 +3012,6 @@ impl Project {
             self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.disconnected_from_host(cx)
             });
-            self.lsp_store
-                .update(cx, |lsp_store, _cx| lsp_store.disconnected_from_host());
         }
     }
 
@@ -4964,6 +4961,28 @@ impl Project {
         self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
+    /// Forwards a language-server log entry from the global `LogStore` to the
+    /// downstream peer when this project is collab-shared. Replaces the path
+    /// where `LogStore::emit_event` used to read `LspStore::downstream_client`
+    /// directly.
+    pub fn forward_language_server_log_to_peer(
+        &self,
+        server_id: LanguageServerId,
+        kind: LanguageServerLogType,
+        message: String,
+    ) {
+        if let ProjectClientState::Shared { remote_id } = &self.client_state {
+            self.collab_client
+                .send(proto::LanguageServerLog {
+                    project_id: *remote_id,
+                    language_server_id: server_id.to_proto(),
+                    message,
+                    log_type: Some(kind.to_proto()),
+                })
+                .ok();
+        }
+    }
+
     pub fn is_shared(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
@@ -5413,6 +5432,38 @@ impl Project {
     }
 
     // RPC message handlers
+
+    /// Forwards `proto::LspQuery` rpc to the LSP store while supplying the
+    /// downstream peer info. Lives on `Project` because the `LspStore` no
+    /// longer holds the downstream client. Silently acks when the project
+    /// is not shared, mirroring the previous LspStore-side behavior of
+    /// no-op'ing when `downstream_client` was `None`.
+    async fn handle_lsp_query(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspQuery>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let downstream = this.read_with(&cx, |project, _| {
+            project.remote_id().map(|project_id| {
+                (
+                    project.lsp_store.clone(),
+                    AnyProtoClient::from(project.collab_client.clone()),
+                    project_id,
+                )
+            })
+        });
+        let Some((lsp_store, downstream_client, downstream_project_id)) = downstream else {
+            return Ok(proto::Ack {});
+        };
+        LspStore::process_lsp_query(
+            lsp_store,
+            downstream_client,
+            downstream_project_id,
+            envelope,
+            cx,
+        )
+        .await
+    }
 
     async fn handle_unshare_project(
         this: Entity<Self>,
