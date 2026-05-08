@@ -1,7 +1,7 @@
 use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
-use std::{ops::Range, sync::atomic::AtomicBool};
+use std::{ops::Range};
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
@@ -182,7 +182,7 @@ impl<T> Outline<T> {
             Case::Smart,
             LengthPenalty::On,
             100,
-            &AtomicBool::new(false),
+            &Default::default(),
             executor
         ).await;
         matches.sort_unstable_by_key(|m| m.candidate_id);
