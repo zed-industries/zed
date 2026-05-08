@@ -5488,6 +5488,72 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_selected_commit_tags(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let commit_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let commits = vec![Arc::new(InitialGraphCommitData {
+            sha: commit_sha,
+            parents: smallvec![],
+            ref_names: vec![
+                SharedString::from("HEAD -> main"),
+                SharedString::from("origin/main"),
+                SharedString::from("tag: v1.0.0"),
+                SharedString::from("tag: v1.1.0"),
+            ],
+        })];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            assert_eq!(graph.graph_data.commits.len(), 1);
+            graph.selected_entry_idx = Some(0);
+            graph.copy_selected_commit_tags(&CopyCommitTags, window, cx);
+        });
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("v1.0.0 v1.1.0".to_string())
+        );
+    }
+
+    #[gpui::test]
     async fn test_git_graph_navigation(cx: &mut TestAppContext) {
         init_test(cx);
 
