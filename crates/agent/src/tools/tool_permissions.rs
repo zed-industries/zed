@@ -103,13 +103,10 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
 }
 
 fn is_agents_skills_path(path: &Path) -> bool {
-    let mut components = path.components().map(|component| component.as_os_str());
-    while let Some(component) = components.next() {
-        if component == OsStr::new(".agents") && components.next() == Some(OsStr::new("skills")) {
-            return true;
-        }
-    }
-    false
+    let components: Vec<_> = path.components().map(|c| c.as_os_str()).collect();
+    components
+        .windows(2)
+        .any(|w| w[0] == OsStr::new(".agents") && w[1] == OsStr::new("skills"))
 }
 
 /// If `path` is an absolute path under the global skills directory
@@ -918,5 +915,42 @@ mod tests {
                 resolved
             );
         });
+    }
+
+    #[test]
+    fn is_agents_skills_path_simple_positive() {
+        assert!(is_agents_skills_path(Path::new(
+            "foo/.agents/skills/my-skill/SKILL.md"
+        )));
+    }
+
+    #[test]
+    fn is_agents_skills_path_simple_negative() {
+        assert!(!is_agents_skills_path(Path::new("foo/bar/baz")));
+    }
+
+    #[test]
+    fn is_agents_skills_path_double_agents_regression() {
+        // Regression: when the first `.agents` was followed by something other
+        // than `skills`, the buggy implementation would consume that component
+        // and miss a later `.agents/skills` pair.
+        assert!(is_agents_skills_path(Path::new(
+            "foo/.agents/.agents/skills"
+        )));
+    }
+
+    #[test]
+    fn is_agents_skills_path_agents_without_skills() {
+        assert!(!is_agents_skills_path(Path::new("foo/.agents/other")));
+    }
+
+    #[test]
+    fn is_agents_skills_path_at_start() {
+        assert!(is_agents_skills_path(Path::new(".agents/skills")));
+    }
+
+    #[test]
+    fn is_agents_skills_path_trailing_agents() {
+        assert!(!is_agents_skills_path(Path::new("foo/.agents")));
     }
 }
