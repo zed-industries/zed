@@ -30,7 +30,7 @@ use util::{ResultExt, TryFutureExt as _};
 
 const CURRENT_ORGANIZATION_ID_KEY: &str = "current_organization_id";
 
-pub type UserId = u64;
+pub type LegacyUserId = u64;
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -57,7 +57,7 @@ pub struct ParticipantIndex(pub u32);
 
 #[derive(Default, Debug)]
 pub struct User {
-    pub id: UserId,
+    pub id: LegacyUserId,
     pub github_login: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
@@ -67,7 +67,7 @@ pub struct User {
 pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
-    pub user_id: UserId,
+    pub user_id: LegacyUserId,
     pub is_host: bool,
     pub committer_name: Option<String>,
     pub committer_email: Option<String>,
@@ -1055,7 +1055,7 @@ impl Collaborator {
         Ok(Self {
             peer_id: message.peer_id.context("invalid peer id")?,
             replica_id: ReplicaId::new(message.replica_id as u16),
-            user_id: message.user_id as UserId,
+            user_id: message.user_id as LegacyUserId,
             is_host: message.is_host,
             committer_name: message.committer_name,
             committer_email: message.committer_email,

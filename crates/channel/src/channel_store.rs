@@ -3,7 +3,7 @@ mod channel_index;
 use crate::channel_buffer::ChannelBuffer;
 use anyhow::{Context as _, Result, anyhow};
 use channel_index::ChannelIndex;
-use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, UserStore};
+use client::{ChannelId, Client, ClientSettings, LegacyUserId, Subscription, User, UserStore};
 use collections::{HashMap, HashSet};
 use futures::{Future, FutureExt, StreamExt, channel::mpsc, future::Shared};
 use gpui::{
@@ -39,7 +39,7 @@ pub struct ChannelStore {
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channel_states: HashMap<ChannelId, ChannelState>,
     favorite_channel_ids: Vec<ChannelId>,
-    outgoing_invites: HashSet<(ChannelId, UserId)>,
+    outgoing_invites: HashSet<(ChannelId, LegacyUserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenEntityHandle<ChannelBuffer>>,
     client: Arc<Client>,
@@ -632,7 +632,7 @@ impl ChannelStore {
     pub fn invite_member(
         &mut self,
         channel_id: ChannelId,
-        user_id: UserId,
+        user_id: LegacyUserId,
         role: proto::ChannelRole,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -694,7 +694,7 @@ impl ChannelStore {
     pub fn set_member_role(
         &mut self,
         channel_id: ChannelId,
-        user_id: UserId,
+        user_id: LegacyUserId,
         role: proto::ChannelRole,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -830,7 +830,7 @@ impl ChannelStore {
         false
     }
 
-    pub fn has_pending_channel_invite(&self, channel_id: ChannelId, user_id: UserId) -> bool {
+    pub fn has_pending_channel_invite(&self, channel_id: ChannelId, user_id: LegacyUserId) -> bool {
         self.outgoing_invites.contains(&(channel_id, user_id))
     }
 

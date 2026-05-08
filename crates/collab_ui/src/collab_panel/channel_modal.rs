@@ -1,6 +1,6 @@
 use channel::{ChannelMembership, ChannelStore};
 use client::{
-    ChannelId, User, UserId, UserStore,
+    ChannelId, LegacyUserId, User, UserStore,
     proto::{self, ChannelRole, ChannelVisibility},
 };
 use fuzzy::{StringMatchCandidate, match_strings};
@@ -459,7 +459,11 @@ impl PickerDelegate for ChannelModalDelegate {
 }
 
 impl ChannelModalDelegate {
-    fn member_status(&self, user_id: UserId, cx: &App) -> Option<proto::channel_member::Kind> {
+    fn member_status(
+        &self,
+        user_id: LegacyUserId,
+        cx: &App,
+    ) -> Option<proto::channel_member::Kind> {
         self.members
             .iter()
             .find_map(|membership| (membership.user.id == user_id).then_some(membership.kind))
@@ -489,7 +493,7 @@ impl ChannelModalDelegate {
 
     fn set_user_role(
         &mut self,
-        user_id: UserId,
+        user_id: LegacyUserId,
         new_role: ChannelRole,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -514,7 +518,7 @@ impl ChannelModalDelegate {
 
     fn remove_member(
         &mut self,
-        user_id: UserId,
+        user_id: LegacyUserId,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<()> {
