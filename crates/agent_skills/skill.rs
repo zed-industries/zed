@@ -138,15 +138,24 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
     }
 
     let after_opening = &content[3..];
-    let after_opening = after_opening.trim_start_matches([' ', '\t']);
-    let after_opening = after_opening.strip_prefix('\n').unwrap_or(after_opening);
+    let after_opening = after_opening.trim_start_matches([' ', '\t', '\r']);
+    let after_opening = after_opening
+        .strip_prefix("\r\n")
+        .or_else(|| after_opening.strip_prefix('\n'))
+        .unwrap_or(after_opening);
 
-    let Some(end_idx) = after_opening.find("\n---") else {
-        anyhow::bail!("SKILL.md missing closing frontmatter delimiter (---)");
-    };
+    let (end_idx, delimiter_len) =
+        match (after_opening.find("\r\n---"), after_opening.find("\n---")) {
+            (Some(crlf_idx), Some(lf_idx)) if crlf_idx + 1 == lf_idx => (crlf_idx, 6),
+            (_, Some(lf_idx)) => (lf_idx, 4),
+            (Some(crlf_idx), None) => (crlf_idx, 6),
+            (None, None) => {
+                anyhow::bail!("SKILL.md missing closing frontmatter delimiter (---)");
+            }
+        };
 
     let frontmatter_yaml = &after_opening[..end_idx];
-    let body = &after_opening[end_idx + 4..];
+    let body = &after_opening[end_idx + delimiter_len..];
 
     let metadata: SkillMetadata =
         serde_yaml::from_str(frontmatter_yaml).context("Invalid YAML frontmatter")?;
@@ -626,6 +635,40 @@ description: A skill with no body content
 
         let skill = result.expect("Whitespace-only body should be allowed");
         assert!(skill.content.trim().is_empty());
+    }
+
+    #[test]
+    fn test_parse_skill_with_crlf_line_endings() {
+        let content = "---\r\nname: crlf-skill\r\ndescription: A skill with CRLF line endings\r\n---\r\n\r\n# CRLF Skill\r\n\r\nDo the thing.\r\n";
+
+        let result = parse_skill(
+            Path::new("/skills/crlf-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        let skill = result.expect("CRLF document should parse successfully");
+
+        assert_eq!(skill.name, "crlf-skill");
+        assert_eq!(skill.description, "A skill with CRLF line endings");
+        assert!(skill.content.contains("# CRLF Skill"));
+        assert!(skill.content.contains("Do the thing."));
+    }
+
+    #[test]
+    fn test_parse_skill_with_mixed_line_endings() {
+        let content = "---\r\nname: mixed-skill\r\ndescription: Frontmatter uses CRLF, body uses LF\r\n---\r\n\n# Mixed Skill\n\nBody uses LF only.\n";
+
+        let result = parse_skill(
+            Path::new("/skills/mixed-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        let skill = result.expect("Mixed line endings should parse successfully");
+
+        assert_eq!(skill.name, "mixed-skill");
+        assert_eq!(skill.description, "Frontmatter uses CRLF, body uses LF");
+        assert!(skill.content.contains("# Mixed Skill"));
+        assert!(skill.content.contains("Body uses LF only."));
     }
 
     #[gpui::test]
