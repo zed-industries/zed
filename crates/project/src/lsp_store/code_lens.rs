@@ -438,10 +438,7 @@ impl Project {
             let cursor_point = range.start.to_point(&snapshot);
             tagged.retain(|_, action| {
                 let start = action.range.start.to_point(&snapshot);
-                let end = action.range.end.to_point(&snapshot);
-                (cursor_point.row > start.row
-                    || (cursor_point.row == start.row && cursor_point.column >= start.column))
-                    && cursor_point.row <= end.row
+                cursor_point.row == start.row && cursor_point.column >= start.column
             });
             let resolve_tasks = lsp_store.update(cx, |lsp_store, cx| {
                 tagged
