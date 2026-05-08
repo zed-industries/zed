@@ -8589,9 +8589,11 @@ impl ThreadView {
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         let workspace = self.workspace.clone();
-        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            open_link(text, &workspace, window, cx);
-        })
+        MarkdownElement::new(markdown, style)
+            .edge_scroll_list(self.list_state.clone())
+            .on_url_click(move |text, window, cx| {
+                open_link(text, &workspace, window, cx);
+            })
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {

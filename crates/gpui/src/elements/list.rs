@@ -773,9 +773,14 @@ impl StateInner {
         let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
-        let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
+        let current_scroll = self.scroll_top(scroll_top);
+        let new_scroll_top = (current_scroll - delta.y)
             .max(px(0.))
             .min(scroll_max);
+
+        if new_scroll_top == current_scroll {
+            return;
+        }
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
