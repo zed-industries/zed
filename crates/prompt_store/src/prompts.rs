@@ -50,20 +50,10 @@ pub struct ProjectContext {
 }
 
 impl ProjectContext {
-    pub fn new(
-        worktrees: Vec<WorktreeContext>,
-        default_user_rules: Vec<UserRulesContext>,
-        skills: Vec<SkillSummary>,
-    ) -> Self {
+    pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
-
-        // Hidden skills (`disable_model_invocation: true`) and any skills
-        // dropped to fit the catalog description budget are excluded
-        // upstream by `apply_skill_budget` in `agent.rs`, which already
-        // returns only catalog `SkillSummary` values.
-        let has_skills = !skills.is_empty();
 
         Self {
             worktrees,
@@ -74,9 +64,19 @@ impl ProjectContext {
             arch: std::env::consts::ARCH.to_string(),
             shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
                 .to_string(),
-            skills,
-            has_skills,
+            skills: Vec::new(),
+            has_skills: false,
         }
+    }
+
+    // Hidden skills (`disable_model_invocation: true`) and any skills
+    // dropped to fit the catalog description budget are excluded
+    // upstream by `apply_skill_budget` in `agent.rs`, which already
+    // returns only catalog `SkillSummary` values.
+    pub fn with_skills(mut self, skills: Vec<SkillSummary>) -> Self {
+        self.has_skills = !skills.is_empty();
+        self.skills = skills;
+        self
     }
 }
 
@@ -156,14 +156,14 @@ mod tests {
         };
         let summary = SkillSummary::from(&skill);
 
-        let context = ProjectContext::new(vec![], vec![], vec![summary]);
+        let context = ProjectContext::new(vec![], vec![]).with_skills(vec![summary]);
         assert_eq!(context.skills.len(), 1);
         assert_eq!(context.skills[0].description, huge_description);
     }
 
     #[test]
     fn test_empty_skills_sets_has_skills_false() {
-        let context = ProjectContext::new(vec![], vec![], Vec::<SkillSummary>::new());
+        let context = ProjectContext::new(vec![], vec![]);
         assert!(!context.has_skills);
         assert!(context.skills.is_empty());
     }

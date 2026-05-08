@@ -518,7 +518,7 @@ impl NativeAgent {
             return project_id;
         }
 
-        let project_context = cx.new(|_| ProjectContext::new(vec![], vec![], vec![]));
+        let project_context = cx.new(|_| ProjectContext::new(vec![], vec![]));
         self.register_project_with_initial_context(project.clone(), project_context, cx);
         if let Some(state) = self.projects.get_mut(&project_id) {
             state.project_context_needs_refresh.send(()).ok();
@@ -791,7 +791,7 @@ impl NativeAgent {
             skill_errors.extend(budget_errors);
 
             let project_context =
-                ProjectContext::new(worktrees, default_user_rules, catalog_skills);
+                ProjectContext::new(worktrees, default_user_rules).with_skills(catalog_skills);
             (project_context, skills, skill_errors)
         })
     }
