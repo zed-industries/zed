@@ -2043,10 +2043,11 @@ impl GitGraph {
         };
         let short_sha = commit.data.sha.display_short();
         let tag_names = commit.data.tag_names();
+        let copy_tag_label = "Copy Tag";
         let copy_tag_label: SharedString = match tag_names.as_slice() {
-            [] => "Copy Tag".into(),
-            [tag_name] => format!("Copy Tag: {tag_name}").into(),
-            _ => "Copy Tag…".into(),
+            [] => copy_tag_label.into(),
+            [tag_name] => format!("{copy_tag_label}: {tag_name}").into(),
+            _ => format!("{copy_tag_label}…").into(),
         };
         let copy_tag_disabled = tag_names.is_empty();
 
