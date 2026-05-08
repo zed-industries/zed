@@ -90,7 +90,7 @@ impl AgentTool for SaveFileTool {
 
             let input_paths = input.paths;
 
-            let fs = project.read_with(cx, |project, cx| project.fs(cx).clone());
+            let fs = project.read_with(cx, |project, cx| project.fs(cx));
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let mut confirmation_paths: Vec<String> = Vec::new();

@@ -2186,7 +2186,7 @@ fn open_local_file(
                     tree.abs_path().join(settings_relative_path.as_std_path())
                 });
 
-                let fs = project.read_with(cx, |project, cx| project.fs(cx).clone());
+                let fs = project.read_with(cx, |project, cx| project.fs(cx));
 
                 fs.metadata(&full_path)
                     .await

@@ -2200,7 +2200,7 @@ impl AcpThread {
             cx,
         );
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
-        let git_store = self.project.read(cx).git_store(cx).clone();
+        let git_store = self.project.read(cx).git_store(cx);
 
         let message_id = UserMessageId::new();
 
@@ -2450,7 +2450,7 @@ impl AcpThread {
         // Cancel any in-progress generation before restoring
         let cancel_task = self.cancel(cx);
         let rewind = self.rewind(id.clone(), cx);
-        let git_store = self.project.read(cx).git_store(cx).clone();
+        let git_store = self.project.read(cx).git_store(cx);
 
         cx.spawn(async move |_, cx| {
             cancel_task.await;
@@ -2509,7 +2509,7 @@ impl AcpThread {
     }
 
     fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let git_store = self.project.read(cx).git_store(cx).clone();
+        let git_store = self.project.read(cx).git_store(cx);
 
         let Some((_, message)) = self.last_user_message() else {
             return Task::ready(Ok(()));

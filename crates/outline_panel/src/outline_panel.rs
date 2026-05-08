@@ -2732,7 +2732,7 @@ impl OutlinePanel {
             let mut root_entries = HashSet::default();
             let mut new_buffers = HashMap::<BufferId, BufferOutlines>::default();
             let Ok(buffer_excerpts) = outline_panel.update(cx, |outline_panel, cx| {
-                let git_store = outline_panel.project.read(cx).git_store(cx).clone();
+                let git_store = outline_panel.project.read(cx).git_store(cx);
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
                 let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);

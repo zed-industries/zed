@@ -237,7 +237,7 @@ async fn setup_project(
         })
         .await?;
 
-    let buffer_store = project.read_with(cx, |project, cx| project.buffer_store(cx).clone());
+    let buffer_store = project.read_with(cx, |project, cx| project.buffer_store(cx));
     cx.subscribe(&buffer_store, {
         let project = project.downgrade();
         let ep_store = ep_store.downgrade();

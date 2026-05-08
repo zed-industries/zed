@@ -1549,7 +1549,7 @@ impl AgentPanel {
             return;
         }
 
-        let agent_server_store = self.project.read(cx).agent_server_store(cx).clone();
+        let agent_server_store = self.project.read(cx).agent_server_store(cx);
         let context_server_store = self.project.read(cx).context_server_store(cx);
         let fs = self.fs.clone();
 
@@ -2898,7 +2898,7 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let agent_server_store = self.project.read(cx).agent_server_store(cx).clone();
+        let agent_server_store = self.project.read(cx).agent_server_store(cx);
 
         let focus_handle = self.focus_handle(cx);
 

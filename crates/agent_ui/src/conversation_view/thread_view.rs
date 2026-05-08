@@ -3759,7 +3759,7 @@ impl ThreadView {
                         let favorite_key = thread.model().map(|model| {
                             (model.provider_id().0.to_string(), model.id().0.to_string())
                         });
-                        let fs = thread.project().read(cx).fs(cx).clone();
+                        let fs = thread.project().read(cx).fs(cx);
                         update_settings_file(fs, cx, move |settings, _| {
                             if let Some(agent) = settings.agent.as_mut() {
                                 if let Some(default_model) = agent.default_model.as_mut() {
@@ -3908,7 +3908,7 @@ impl ThreadView {
                                                         model.id().0.to_string(),
                                                     )
                                                 });
-                                                let fs = thread.project().read(cx).fs(cx).clone();
+                                                let fs = thread.project().read(cx).fs(cx);
                                                 update_settings_file(fs, cx, move |settings, _| {
                                                     if let Some(agent) = settings.agent.as_mut() {
                                                         if let Some(default_model) =
@@ -8861,7 +8861,7 @@ impl ThreadView {
             let favorite_key = thread
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs(cx).clone();
+            let fs = thread.project().read(cx).fs(cx);
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
                     if let Some(default_model) = agent.default_model.as_mut() {
@@ -8915,7 +8915,7 @@ impl ThreadView {
             let favorite_key = thread
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs(cx).clone();
+            let fs = thread.project().read(cx).fs(cx);
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
                     if let Some(default_model) = agent.default_model.as_mut() {

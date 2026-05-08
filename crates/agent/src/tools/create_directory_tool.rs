@@ -91,7 +91,7 @@ impl AgentTool for CreateDirectoryTool {
 
             let destination_path: Arc<str> = input.path.as_str().into();
 
-            let fs = project.read_with(cx, |project, cx| project.fs(cx).clone());
+            let fs = project.read_with(cx, |project, cx| project.fs(cx));
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let symlink_escape_target = project.read_with(cx, |project, cx| {

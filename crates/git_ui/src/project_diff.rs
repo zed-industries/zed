@@ -2758,7 +2758,7 @@ mod tests {
 
         // Select project A explicitly and open the diff.
         workspace.update(cx, |workspace, cx| {
-            let git_store = workspace.project().read(cx).git_store(cx).clone();
+            let git_store = workspace.project().read(cx).git_store(cx);
             git_store.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_worktree(worktree_a_id, cx);
             });
@@ -2778,7 +2778,7 @@ mod tests {
 
         // Switch the explicit active repository to project B and re-run the diff action.
         workspace.update(cx, |workspace, cx| {
-            let git_store = workspace.project().read(cx).git_store(cx).clone();
+            let git_store = workspace.project().read(cx).git_store(cx);
             git_store.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_worktree(worktree_b_id, cx);
             });

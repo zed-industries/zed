@@ -1,10 +1,31 @@
 # Host / Project split
 
-> Status: **in progress**. This document describes the target
-> architecture and the staged migration plan for splitting
-> `crates/project/src/project.rs` into a `Host` (machine-bound services)
-> and `Project` (per-workspace state). Read top to bottom before making
-> changes.
+> Status: **in progress** (Phase 1 accessor migration complete). This
+> document describes the target architecture and the staged migration
+> plan for splitting `crates/project/src/project.rs` into a `Host`
+> (machine-bound services) and `Project` (per-workspace state). Read
+> top to bottom before making changes.
+>
+> **Phase 1 progress**: `Host` exists in `crates/project/src/host.rs`
+> as `Entity<Host>` owning every host-shaped store (fs, languages,
+> node, user_store, collab_client, remote_client, environment,
+> snippets, plus worktree/buffer/image/lsp/dap/breakpoint/bookmark/git/
+> task/settings_observer/agent_server/context_server/toolchain stores).
+> `Project` holds a single `host: Entity<Host>` field; all host-shaped
+> public accessors take `cx: &App` and forward via
+> `self.host.read(cx).X.clone()`. Internal Project method bodies use
+> `self.X(cx)` to get the entity. The is_local / is_via_remote_server
+> / is_remote / replica_id boolean accessors that read remote_client
+> also take `cx` now. Construction of host-shaped entities still
+> happens inside Project::local / Project::remote /
+> Project::from_join_project_response (which also build the Host with
+> clones of those entities); a future commit can move construction
+> into `Host::local` / `Host::remote` / `Host::collab` proper.
+>
+> Phase 2 will introduce a host registry so multiple `Project`s can
+> share a `Host` for the same machine, plus the lifecycle / refcount
+> work for `cx.on_app_quit` shutdown. None of that work is started
+> yet.
 >
 > **Phase 1 strategy update**: We chose Flavor 1 (per-project state
 > lives directly on `Project`) over Flavor 2 (`ProjectXxxStore`

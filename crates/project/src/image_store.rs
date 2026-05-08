@@ -132,7 +132,7 @@ impl ImageItem {
         cx: &mut AsyncApp,
     ) -> Result<ImageMetadata> {
         let (fs, image_path) = cx.update(|cx| {
-            let fs = project.read(cx).fs(cx).clone();
+            let fs = project.read(cx).fs(cx);
             let image_path = image
                 .read(cx)
                 .abs_path(cx)

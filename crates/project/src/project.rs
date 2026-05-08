@@ -2677,7 +2677,7 @@ impl Project {
         new_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<CreatedEntry>> {
-        let worktree_store = self.worktree_store(cx).clone();
+        let worktree_store = self.worktree_store(cx);
         let Some((worktree, old_path, is_dir)) = worktree_store
             .read(cx)
             .worktree_and_entry_for_id(entry_id, cx)
@@ -5066,22 +5066,22 @@ impl Project {
             };
         let searcher = if query.is_opened_only() {
             project_search::Search::open_buffers_only(
-                self.buffer_store(cx).clone(),
-                self.worktree_store(cx).clone(),
+                self.buffer_store(cx),
+                self.worktree_store(cx),
                 project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
             )
         } else {
             match client {
                 Some((client, remote_id)) => project_search::Search::remote(
-                    self.buffer_store(cx).clone(),
-                    self.worktree_store(cx).clone(),
+                    self.buffer_store(cx),
+                    self.worktree_store(cx),
                     project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
                     (client, remote_id, self.remotely_created_models.clone()),
                 ),
                 None => project_search::Search::local(
-                    self.fs(cx).clone(),
-                    self.buffer_store(cx).clone(),
-                    self.worktree_store(cx).clone(),
+                    self.fs(cx),
+                    self.buffer_store(cx),
+                    self.worktree_store(cx),
                     project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
                     cx,
                 ),
@@ -5392,7 +5392,7 @@ impl Project {
     pub fn resolve_abs_path(&self, path: &str, cx: &App) -> Task<Option<ResolvedPath>> {
         if self.is_local(cx) {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
-            let fs = self.fs(cx).clone();
+            let fs = self.fs(cx);
             cx.background_spawn(async move {
                 let metadata = fs.metadata(&expanded).await.ok().flatten();
 
@@ -5507,7 +5507,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DirectoryItem>>> {
         if self.is_local(cx) {
-            DirectoryLister::Local(cx.entity(), self.fs(cx).clone()).list_directory(query, cx)
+            DirectoryLister::Local(cx.entity(), self.fs(cx)).list_directory(query, cx)
         } else if let Some(session) = self.host.read(cx).remote_client.as_ref() {
             let request = proto::ListRemoteDirectory {
                 dev_server_id: REMOTE_SERVER_PROJECT_ID,
@@ -5815,7 +5815,7 @@ impl Project {
         let downstream = this.read_with(&cx, |project, cx| {
             project.remote_id().map(|project_id| {
                 (
-                    project.lsp_store(cx).clone(),
+                    project.lsp_store(cx),
                     AnyProtoClient::from(project.collab_client.clone()),
                     project_id,
                 )
@@ -5909,7 +5909,7 @@ impl Project {
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let (lsp_store, active_entry) = this.read_with(&cx, |project, cx| {
-            (project.lsp_store(cx).clone(), project.active_entry)
+            (project.lsp_store(cx), project.active_entry)
         });
         let project_transaction =
             LspStore::process_apply_code_action(lsp_store, envelope, active_entry, cx.clone())
@@ -5930,7 +5930,7 @@ impl Project {
     ) -> Result<proto::ApplyCodeActionKindResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let (lsp_store, active_entry) = this.read_with(&cx, |project, cx| {
-            (project.lsp_store(cx).clone(), project.active_entry)
+            (project.lsp_store(cx), project.active_entry)
         });
         let project_transaction =
             LspStore::process_apply_code_action_kind(lsp_store, envelope, active_entry, cx.clone())
@@ -5950,7 +5950,7 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::FormatBuffersResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
-        let lsp_store = this.read_with(&cx, |project, cx| project.lsp_store(cx).clone());
+        let lsp_store = this.read_with(&cx, |project, cx| project.lsp_store(cx));
         let project_transaction =
             LspStore::process_format_buffers(lsp_store, envelope, cx.clone()).await?;
         let serialized = this.update(&mut cx, |project, cx| {
@@ -5969,7 +5969,7 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
-        let lsp_store = this.read_with(&cx, |project, cx| project.lsp_store(cx).clone());
+        let lsp_store = this.read_with(&cx, |project, cx| project.lsp_store(cx));
         let buffer =
             LspStore::process_open_buffer_for_symbol(lsp_store, envelope, cx.clone()).await?;
         this.update(&mut cx, |project, cx| {
@@ -6001,7 +6001,7 @@ impl Project {
         cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let (lsp_store, active_entry) = this.read_with(&cx, |project, cx| {
-            (project.lsp_store(cx).clone(), project.active_entry)
+            (project.lsp_store(cx), project.active_entry)
         });
         LspStore::process_rename_project_entry(lsp_store, envelope, active_entry, cx).await
     }
@@ -6015,7 +6015,7 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
-        let lsp_store = this.read_with(&cx, |project, cx| project.lsp_store(cx).clone());
+        let lsp_store = this.read_with(&cx, |project, cx| project.lsp_store(cx));
         let registered =
             LspStore::process_register_buffer_with_language_servers(lsp_store, envelope, &mut cx)?;
         if let Some((buffer_id, handle)) = registered {
@@ -6044,7 +6044,7 @@ impl Project {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let buffer_id = T::buffer_id_from_proto(&envelope.payload)?;
         let (lsp_store, active_entry) = this.read_with(&cx, |project, cx| {
-            (project.lsp_store(cx).clone(), project.active_entry)
+            (project.lsp_store(cx), project.active_entry)
         });
         let buffer_handle = lsp_store.update(&mut cx, |lsp_store, cx| {
             lsp_store.buffer_store().read(cx).get_existing(buffer_id)
@@ -6091,7 +6091,7 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
-        let git_store = this.read_with(&cx, |project, cx| project.git_store(cx).clone());
+        let git_store = this.read_with(&cx, |project, cx| project.git_store(cx));
         let buffer =
             GitStore::process_open_commit_message_buffer(git_store, envelope, cx.clone()).await?;
         let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
@@ -6343,7 +6343,7 @@ impl Project {
                 cx.background_spawn(this.collab_client.request(payload))
                     .detach_and_log_err(cx);
             }
-            this.buffer_store(cx).clone()
+            this.buffer_store(cx)
         });
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
@@ -6353,7 +6353,7 @@ impl Project {
         envelope: TypedEnvelope<proto::TrustWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        if this.read_with(&cx, |project, cx| project.is_via_collab()) {
+        if this.read_with(&cx, |project, _cx| project.is_via_collab()) {
             return Ok(proto::Ack {});
         }
 
@@ -6380,7 +6380,7 @@ impl Project {
         envelope: TypedEnvelope<proto::RestrictWorktrees>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        if this.read_with(&cx, |project, cx| project.is_via_collab()) {
+        if this.read_with(&cx, |project, _cx| project.is_via_collab()) {
             return Ok(proto::Ack {});
         }
 
@@ -6407,7 +6407,7 @@ impl Project {
         envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let buffer_store = this.read_with(&mut cx, |this, cx| this.buffer_store(cx).clone());
+        let buffer_store = this.read_with(&mut cx, |this, cx| this.buffer_store(cx));
         BufferStore::handle_find_search_candidates_chunk(buffer_store, envelope, cx).await
     }
 
@@ -6417,7 +6417,7 @@ impl Project {
         envelope: TypedEnvelope<proto::FindSearchCandidatesCancelled>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let buffer_store = this.read_with(&mut cx, |this, cx| this.buffer_store(cx).clone());
+        let buffer_store = this.read_with(&mut cx, |this, cx| this.buffer_store(cx));
         BufferStore::handle_find_search_candidates_cancel(buffer_store, envelope, cx).await
     }
 
@@ -6433,7 +6433,7 @@ impl Project {
                 cx.background_spawn(ssh.read(cx).proto_client().request(payload))
                     .detach_and_log_err(cx);
             }
-            this.buffer_store(cx).clone()
+            this.buffer_store(cx)
         });
         BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
@@ -6664,7 +6664,7 @@ impl Project {
 
         let handle = message.handle;
         let buffer_store = this.read_with(&cx, |this, cx| this.buffer_store(cx));
-        let client = this.read_with(&cx, |this, cx| this.client());
+        let client = this.read_with(&cx, |this, _cx| this.client());
         let task = cx.spawn(async move |cx| {
             let results = this.update(cx, |this, cx| {
                 this.search_impl(query, cx).matching_buffers(cx)

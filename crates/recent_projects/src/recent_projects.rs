@@ -335,7 +335,7 @@ pub fn init(cx: &mut App) {
         let create_new_window = open_wsl.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let handle = cx.entity().downgrade();
-            let fs = workspace.project().read(cx).fs(cx).clone();
+            let fs = workspace.project().read(cx).fs(cx);
             workspace.toggle_modal(window, cx, |window, cx| {
                 RemoteServerProjects::wsl(create_new_window, fs, window, handle, cx)
             });
@@ -346,7 +346,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|open_wsl: &remote::OpenWslPath, cx| {
         let open_wsl = open_wsl.clone();
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            let fs = workspace.project().read(cx).fs(cx).clone();
+            let fs = workspace.project().read(cx).fs(cx);
             add_wsl_distro(fs, &open_wsl.distro, cx);
             let open_options = OpenOptions {
                 requesting_window: window.window_handle().downcast::<MultiWorkspace>(),
@@ -443,7 +443,7 @@ pub fn init(cx: &mut App) {
                 return;
             }
             let handle = cx.entity().downgrade();
-            let fs = workspace.project().read(cx).fs(cx).clone();
+            let fs = workspace.project().read(cx).fs(cx);
             workspace.toggle_modal(window, cx, |window, cx| {
                 RemoteServerProjects::new(create_new_window, fs, window, handle, cx)
             })
@@ -469,7 +469,7 @@ pub fn init(cx: &mut App) {
                 return;
             }
 
-            let fs = workspace.project().read(cx).fs(cx).clone();
+            let fs = workspace.project().read(cx).fs(cx);
             let configs = find_devcontainer_configs(workspace, cx);
             let app_state = workspace.app_state().clone();
             let dev_container_context = DevContainerContext::from_workspace(workspace, cx);
@@ -1102,7 +1102,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let worktree_id = folder.worktree_id;
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        let git_store = workspace.project().read(cx).git_store(cx).clone();
+                        let git_store = workspace.project().read(cx).git_store(cx);
                         git_store.update(cx, |git_store, cx| {
                             git_store.set_active_repo_for_worktree(worktree_id, cx);
                         });

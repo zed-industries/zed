@@ -718,7 +718,7 @@ impl GitPanel {
         let project = workspace.project().clone();
         let app_state = workspace.app_state().clone();
         let fs = app_state.fs.clone();
-        let git_store = project.read(cx).git_store(cx).clone();
+        let git_store = project.read(cx).git_store(cx);
         let active_repository = project.read(cx).active_repository(cx);
 
         cx.new(|cx| {
@@ -3495,7 +3495,7 @@ impl GitPanel {
             let project = self.project.read(cx);
             active_repo.open_commit_buffer(
                 Some(project.languages().clone()),
-                project.buffer_store(cx).clone(),
+                project.buffer_store(cx),
                 cx,
             )
         });

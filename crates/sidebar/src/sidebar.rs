@@ -646,7 +646,7 @@ impl Sidebar {
         )
         .detach();
 
-        let git_store = workspace.read(cx).project().read(cx).git_store(cx).clone();
+        let git_store = workspace.read(cx).project().read(cx).git_store(cx);
         cx.subscribe_in(
             &git_store,
             window,
@@ -989,7 +989,7 @@ impl Sidebar {
 
         let agent_server_store = workspaces
             .first()
-            .map(|ws| ws.read(cx).project().read(cx).agent_server_store(cx).clone());
+            .map(|ws| ws.read(cx).project().read(cx).agent_server_store(cx));
 
         let query = self.filter_editor.read(cx).text(cx);
 
@@ -4607,8 +4607,7 @@ impl Sidebar {
             .read(cx)
             .project()
             .read(cx)
-            .agent_server_store(cx)
-            .clone();
+            .agent_server_store(cx);
 
         let workspace_handle = active_workspace.downgrade();
         let multi_workspace = self.multi_workspace.clone();

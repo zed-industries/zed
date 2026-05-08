@@ -2367,7 +2367,7 @@ impl Editor {
                     _ => {}
                 },
             ));
-            let git_store = project.read(cx).git_store(cx).clone();
+            let git_store = project.read(cx).git_store(cx);
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
                 if let GitStoreEvent::RepositoryAdded = event {

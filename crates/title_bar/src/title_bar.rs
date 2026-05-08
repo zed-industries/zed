@@ -375,7 +375,7 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store(cx).clone();
+        let git_store = project.read(cx).git_store(cx);
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
@@ -562,7 +562,7 @@ impl TitleBar {
             PopoverMenu::new("remote-project-menu")
                 .menu(move |window, cx| {
                     let workspace_entity = workspace.upgrade()?;
-                    let fs = workspace_entity.read(cx).project().read(cx).fs(cx).clone();
+                    let fs = workspace_entity.read(cx).project().read(cx).fs(cx);
                     Some(recent_projects::RemoteServerProjects::popover(
                         fs,
                         workspace.clone(),

@@ -58,7 +58,7 @@ impl BranchDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let git_store = project.read(cx).git_store(cx).clone();
+        let git_store = project.read(cx).git_store(cx);
         let repo = git_store.read(cx).active_repository();
         let git_store_subscription = cx.subscribe_in(
             &git_store,

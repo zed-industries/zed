@@ -540,11 +540,11 @@ impl MentionSet {
         };
 
         let server = Rc::new(agent::NativeAgentServer::new(
-            project.read(cx).fs(cx).clone(),
+            project.read(cx).fs(cx),
             thread_store,
         ));
         let delegate =
-            AgentServerDelegate::new(project.read(cx).agent_server_store(cx).clone(), None);
+            AgentServerDelegate::new(project.read(cx).agent_server_store(cx), None);
         let connection = server.connect(delegate, project.clone(), cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;

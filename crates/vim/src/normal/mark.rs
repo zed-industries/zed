@@ -403,7 +403,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         let path = Path::new(path!("/first.rs"));
-        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx).clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
         fs.as_fake().insert_file(path, "one".into()).await;
         let path = Path::new(path!("/second.rs"));
         fs.as_fake().insert_file(path, "two".into()).await;

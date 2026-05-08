@@ -294,7 +294,7 @@ mod conflict_set_tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (git_store, buffer) = project.update(cx, |project, cx| {
             (
-                project.git_store(cx).clone(),
+                project.git_store(cx),
                 project.open_local_buffer(path!("/project/a.txt"), cx),
             )
         });
@@ -397,7 +397,7 @@ mod conflict_set_tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (git_store, buffer) = project.update(cx, |project, cx| {
             (
-                project.git_store(cx).clone(),
+                project.git_store(cx),
                 project.open_local_buffer(path!("/project/a.txt"), cx),
             )
         });
@@ -513,7 +513,7 @@ mod conflict_set_tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (git_store, buffer) = project.update(cx, |project, cx| {
             (
-                project.git_store(cx).clone(),
+                project.git_store(cx),
                 project.open_local_buffer(path!("/project/a.txt"), cx),
             )
         });

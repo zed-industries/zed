@@ -587,7 +587,7 @@ impl ProjectPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store(cx).clone();
+        let git_store = project.read(cx).git_store(cx);
         let path_style = project.read(cx).path_style(cx);
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();

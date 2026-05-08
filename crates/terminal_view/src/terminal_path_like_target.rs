@@ -354,7 +354,7 @@ fn possible_open_target(
             Vec::new()
         };
 
-    let fs = workspace.read(cx).project().read(cx).fs(cx).clone();
+    let fs = workspace.read(cx).project().read(cx).fs(cx);
     let background_fs_checks_task = cx.background_spawn(async move {
         for mut path_to_check in fs_paths_to_check {
             if let Some(fs_path_to_check) = fs.canonicalize(&path_to_check.path).await.ok()

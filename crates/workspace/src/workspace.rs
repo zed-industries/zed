@@ -5813,7 +5813,7 @@ impl Workspace {
         });
 
         if focus_changed && let Some(project_path) = &active_entry {
-            let git_store_entity = self.project.read(cx).git_store(cx).clone();
+            let git_store_entity = self.project.read(cx).git_store(cx);
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);
             });
@@ -7469,7 +7469,7 @@ impl Workspace {
             workspace_store,
             client,
             user_store,
-            fs: project.read(cx).fs(cx).clone(),
+            fs: project.read(cx).fs(cx),
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
             session,
@@ -7802,7 +7802,7 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let fs = self.project().read(cx).fs(cx).clone();
+        let fs = self.project().read(cx).fs(cx);
         let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
@@ -7826,7 +7826,7 @@ impl Workspace {
             }
         };
 
-        let fs = self.project().read(cx).fs(cx).clone();
+        let fs = self.project().read(cx).fs(cx);
         settings::update_settings_file(fs, cx, move |settings, _cx| {
             theme_settings::set_mode(settings, next_mode);
         });

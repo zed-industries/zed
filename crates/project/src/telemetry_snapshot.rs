@@ -15,7 +15,7 @@ pub struct TelemetrySnapshot {
 
 impl TelemetrySnapshot {
     pub fn new(project: &Entity<Project>, cx: &mut App) -> Task<TelemetrySnapshot> {
-        let git_store = project.read(cx).git_store(cx).clone();
+        let git_store = project.read(cx).git_store(cx);
         let worktree_snapshots: Vec<_> = project
             .read(cx)
             .visible_worktrees(cx)

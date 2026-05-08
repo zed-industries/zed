@@ -740,7 +740,7 @@ pub fn init(cx: &mut App) {
             div.when_some(
                 resolve_file_history_target(workspace, window, cx),
                 |div, (repo_id, log_source)| {
-                    let git_store = workspace.project().read(cx).git_store(cx).clone();
+                    let git_store = workspace.project().read(cx).git_store(cx);
                     let workspace = workspace.weak_handle();
 
                     div.on_action(move |_: &git::FileHistory, window, cx| {
@@ -779,7 +779,7 @@ pub fn init(cx: &mut App) {
                                     let selected_repo_id = repo.read(cx).id;
 
                                     let git_store =
-                                        workspace.project().read(cx).git_store(cx).clone();
+                                        workspace.project().read(cx).git_store(cx);
                                     open_or_reuse_graph(
                                         workspace,
                                         selected_repo_id,
@@ -806,7 +806,7 @@ pub fn init(cx: &mut App) {
                                     let selected_repo_id = repo.read(cx).id;
 
                                     let git_store =
-                                        workspace.project().read(cx).git_store(cx).clone();
+                                        workspace.project().read(cx).git_store(cx);
                                     open_or_reuse_graph(
                                         workspace,
                                         selected_repo_id,
@@ -3120,7 +3120,7 @@ impl workspace::SerializableItem for GitGraph {
 
         let window_handle = window.window_handle();
         let project = project.read(cx);
-        let git_store = project.git_store(cx).clone();
+        let git_store = project.git_store(cx);
         let wait = project.wait_for_initial_scan(cx);
 
         cx.spawn(async move |cx| {
@@ -4270,7 +4270,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 first_repository.read(cx).id,
-                project.read(cx).git_store(cx).clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -4660,7 +4660,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store(cx).clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak.clone(),
                 None,
                 window,
@@ -4838,7 +4838,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store(cx).clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -4946,7 +4946,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store(cx).clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -5033,7 +5033,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store(cx).clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -5112,7 +5112,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store(cx).clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,

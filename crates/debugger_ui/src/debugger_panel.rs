@@ -308,7 +308,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task_store = workspace.project().read(cx).task_store(cx).clone();
+        let task_store = workspace.project().read(cx).task_store(cx);
         let Some(task_inventory) = task_store.read(cx).task_inventory() else {
             return;
         };

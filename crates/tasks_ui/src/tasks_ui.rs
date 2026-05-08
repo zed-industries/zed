@@ -146,7 +146,7 @@ pub fn toggle_modal(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
-    let task_store = workspace.project().read(cx).task_store(cx).clone();
+    let task_store = workspace.project().read(cx).task_store(cx);
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace
         .project()

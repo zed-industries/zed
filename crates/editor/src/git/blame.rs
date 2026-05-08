@@ -233,7 +233,7 @@ impl GitBlame {
             }
         });
 
-        let git_store = project.read(cx).git_store(cx).clone();
+        let git_store = project.read(cx).git_store(cx);
         let git_store_subscription =
             cx.subscribe(&git_store, move |this, _, event, cx| match event {
                 GitStoreEvent::RepositoryUpdated(_, _, _)

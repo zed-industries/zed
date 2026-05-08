@@ -1466,7 +1466,7 @@ async fn test_copy_file_into_remote_project(
     cx.run_until_parked();
 
     let local_fs = project
-        .read_with(cx, |project, cx| project.fs(cx).clone())
+        .read_with(cx, |project, cx| project.fs(cx))
         .as_fake();
     local_fs
         .insert_tree(

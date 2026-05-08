@@ -373,7 +373,7 @@ impl NotebookEditor {
             .worktree_for_id(self.worktree_id, cx)
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
-        let fs = self.project.read(cx).fs(cx).clone();
+        let fs = self.project.read(cx).fs(cx);
         let view = cx.entity();
 
         self.kernel_specification = Some(spec.clone());
@@ -1482,7 +1482,7 @@ impl project::ProjectItem for NotebookItem {
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
-        let fs = project.read(cx).fs(cx).clone();
+        let fs = project.read(cx).fs(cx);
         let languages = project.read(cx).languages().clone();
 
         if path.path.extension().unwrap_or_default() == "ipynb" {
@@ -1743,7 +1743,7 @@ impl Item for NotebookEditor {
     ) -> Task<Result<()>> {
         let notebook = self.to_notebook(cx);
         let path = self.notebook_item.read(cx).path.clone();
-        let fs = project.read(cx).fs(cx).clone();
+        let fs = project.read(cx).fs(cx);
 
         self.mark_as_saved(cx);
 
@@ -1763,7 +1763,7 @@ impl Item for NotebookEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let notebook = self.to_notebook(cx);
-        let fs = project.read(cx).fs(cx).clone();
+        let fs = project.read(cx).fs(cx);
 
         let abs_path = project.read(cx).absolute_path(&path, cx);
 

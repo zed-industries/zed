@@ -95,7 +95,7 @@ impl ActivityIndicator {
             })
             .detach();
 
-            let fs = project.read(cx).fs(cx).clone();
+            let fs = project.read(cx).fs(cx);
             let mut job_events = fs.subscribe_to_jobs();
             cx.spawn(async move |this, cx| {
                 while let Some(job_event) = job_events.next().await {
@@ -193,7 +193,7 @@ impl ActivityIndicator {
             .detach();
 
             cx.subscribe(
-                &project.read(cx).environment(cx).clone(),
+                &project.read(cx).environment(cx),
                 |_, _, event, cx| match event {
                     ProjectEnvironmentEvent::ErrorsUpdated => cx.notify(),
                 },
@@ -201,7 +201,7 @@ impl ActivityIndicator {
             .detach();
 
             cx.subscribe(
-                &project.read(cx).git_store(cx).clone(),
+                &project.read(cx).git_store(cx),
                 |_, _, event: &GitStoreEvent, cx| {
                     if let project::git_store::GitStoreEvent::JobsUpdated = event {
                         cx.notify()

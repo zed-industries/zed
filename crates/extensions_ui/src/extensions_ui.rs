@@ -1000,7 +1000,7 @@ impl ExtensionsPage {
             let extension_versions = extension_versions_task.await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let fs = workspace.project().read(cx).fs(cx).clone();
+                let fs = workspace.project().read(cx).fs(cx);
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let delegate = ExtensionVersionSelectorDelegate::new(
                         fs,
