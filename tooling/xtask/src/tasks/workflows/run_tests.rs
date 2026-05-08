@@ -528,10 +528,13 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>) -> NamedJob {
         .runs_on(runner)
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_cargo_config(platform))
-        .when(
-            platform == Platform::Linux || platform == Platform::Mac,
-            |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-        )
+        .when(platform == Platform::Mac, |this| {
+            this.add_step(steps::disable_macos_gatekeeper())
+                .add_step(steps::cache_rust_dependencies_namespace())
+        })
+        .when(platform == Platform::Linux, |this| {
+            this.add_step(steps::cache_rust_dependencies_namespace())
+        })
         .when(
             platform == Platform::Linux,
             steps::install_linux_dependencies,
@@ -587,7 +590,8 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
             .when(platform == Platform::Mac, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
+                this.add_step(steps::disable_macos_gatekeeper())
+                    .add_step(steps::cache_rust_dependencies_namespace())
             })
             .when(platform == Platform::Linux, |this| {
                 use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
@@ -626,6 +630,7 @@ fn build_visual_tests_binary() -> NamedJob {
             .runs_on(runners::MAC_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Mac))
+            .add_step(steps::disable_macos_gatekeeper())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(cargo_build_visual_tests())
             .add_step(steps::cleanup_cargo_config(Platform::Mac)),
