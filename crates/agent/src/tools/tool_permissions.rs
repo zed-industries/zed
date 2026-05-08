@@ -537,15 +537,9 @@ pub enum DirtyBufferDecision {
 /// action; the caller is responsible for actually saving or reloading the
 /// buffer before continuing.
 pub fn authorize_dirty_buffer(
-    path: &Path,
     event_stream: &ToolCallEventStream,
     cx: &mut App,
 ) -> Task<Result<DirtyBufferDecision>> {
-    let path_display = path.to_string_lossy();
-    let title = format!(
-        "Unsaved changes in {}",
-        util::markdown::MarkdownInlineCode(&path_display),
-    );
     let message =
         "File has unsaved changes. Do you want to save or discard them before the agent continues?"
             .to_string();
@@ -563,7 +557,7 @@ pub fn authorize_dirty_buffer(
         ),
     ];
 
-    let prompt = event_stream.prompt_for_decision(title, Some(message), options, cx);
+    let prompt = event_stream.prompt_for_decision(None, Some(message), options, cx);
     cx.spawn(async move |_cx| {
         let option_id = prompt.await?;
         match option_id.0.as_ref() {

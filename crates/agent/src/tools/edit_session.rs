@@ -5,12 +5,13 @@ mod streaming_parser;
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::{ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::Result;
 use collections::HashSet;
+use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::language_settings::{self, FormatOnSave};
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
@@ -949,7 +950,7 @@ async fn ensure_buffer_saved(
     });
 
     if is_dirty && matches!(mode, EditSessionMode::Edit) {
-        resolve_dirty_buffer_for_edit(buffer, abs_path, context, event_stream, cx).await?;
+        resolve_dirty_buffer_for_edit(buffer, context, event_stream, cx).await?;
     }
 
     if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime)
@@ -965,15 +966,42 @@ async fn ensure_buffer_saved(
 /// then performs the chosen action so the edit can proceed.
 async fn resolve_dirty_buffer_for_edit(
     buffer: &Entity<Buffer>,
-    abs_path: &PathBuf,
     context: &EditSessionContext,
     event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<(), String> {
-    let decision = cx
-        .update(|cx| super::tool_permissions::authorize_dirty_buffer(abs_path, event_stream, cx))
-        .await
-        .map_err(|e| e.to_string())?;
+    let (manual_resolve_tx, manual_resolve_rx) = oneshot::channel::<()>();
+    let _buffer_subscription = cx.update(|cx| {
+        let mut tx = Some(manual_resolve_tx);
+        cx.subscribe(buffer, move |buffer, event: &BufferEvent, cx| {
+            if matches!(
+                event,
+                BufferEvent::Saved | BufferEvent::Reloaded | BufferEvent::DirtyChanged
+            ) && !buffer.read(cx).is_dirty()
+                && let Some(tx) = tx.take()
+            {
+                tx.send(()).ok();
+            }
+        })
+    });
+
+    let prompt = cx.update(|cx| super::tool_permissions::authorize_dirty_buffer(event_stream, cx));
+
+    let decision = futures::select_biased! {
+        _ = manual_resolve_rx.fuse() => {
+            None
+        }
+        decision = prompt.fuse() => {
+            Some(decision.map_err(|e| e.to_string())?)
+        }
+    };
+
+    let Some(decision) = decision else {
+        event_stream.update_fields(
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+        );
+        return Ok(());
+    };
 
     match decision {
         super::tool_permissions::DirtyBufferDecision::Save => {

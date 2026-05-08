@@ -3880,17 +3880,19 @@ impl ToolCallEventStream {
     /// actions (for example, "Save" vs "Discard" for a dirty buffer).
     pub fn prompt_for_decision(
         &self,
-        title: impl Into<String>,
+        title: Option<String>,
         message: Option<String>,
         options: Vec<acp::PermissionOption>,
         cx: &mut App,
     ) -> Task<Result<acp::PermissionOptionId>> {
-        let title = title.into();
         let options = acp_thread::PermissionOptions::Flat(options);
         let stream = self.stream.clone();
         let tool_use_id = self.tool_use_id.clone();
         cx.spawn(async move |_cx| {
-            let mut fields = acp::ToolCallUpdateFields::new().title(title);
+            let mut fields = acp::ToolCallUpdateFields::new();
+            if let Some(title) = title {
+                fields = fields.title(title);
+            }
             if let Some(message) = message {
                 fields = fields.content(vec![acp::ToolCallContent::from(message)]);
             }

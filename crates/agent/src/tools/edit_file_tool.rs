@@ -2025,6 +2025,92 @@ mod tests {
         assert_eq!(on_disk, "replaced content");
     }
 
+    /// When the buffer is dirty and the user resolves it manually — e.g.
+    /// pressing `cmd-s` while the prompt is visible — the prompt is
+    /// dismissed automatically and the edit proceeds against the saved
+    /// content. The user shouldn't have to also click a button.
+    #[gpui::test]
+    async fn test_streaming_dirty_buffer_resolved_externally(cx: &mut TestAppContext) {
+        let (edit_tool, project, action_log, fs, _thread) =
+            setup_test(cx, json!({"test.txt": "original content"})).await;
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
+
+        cx.update(|cx| {
+            read_tool.clone().run(
+                ToolInput::resolved(crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                }),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/test.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/test.txt".into(),
+                    edits: vec![Edit {
+                        old_text: "original content plus user edit".into(),
+                        new_text: "replaced content".into(),
+                    }],
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+
+        // Simulate the user saving the buffer manually (e.g. cmd-s) while
+        // the prompt is visible. The tool should detect the buffer became
+        // clean and proceed without the user clicking anything.
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+
+        // The prompt's response channel should drop without a click; the
+        // tool dismisses the prompt by transitioning the tool call status
+        // to `InProgress`.
+        let dismiss = stream_rx.expect_update_fields().await;
+        assert_eq!(dismiss.status, Some(acp::ToolCallStatus::InProgress));
+        drop(auth);
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "replaced content");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/test.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "replaced content");
+    }
+
     #[gpui::test]
     async fn test_streaming_overlapping_edits_resolved_sequentially(cx: &mut TestAppContext) {
         // Edit 1's replacement introduces text that contains edit 2's

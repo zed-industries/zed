@@ -1,4 +1,4 @@
-use crate::{AcpThread, AuthorizationKind};
+use crate::AcpThread;
 use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -640,6 +640,8 @@ mod test_support {
     use futures::{channel::oneshot, future::try_join_all};
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
+
+    use crate::AuthorizationKind;
 
     use super::*;
 
