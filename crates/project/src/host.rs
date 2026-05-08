@@ -18,10 +18,11 @@ use std::{collections::BTreeSet, sync::Arc};
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Subscription};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
+use rpc::proto;
 use snippet_provider::SnippetProvider;
 use util::paths::PathStyle;
 
@@ -50,6 +51,12 @@ use crate::{
 /// share `Host`s across `Project`s targeting the same machine via a
 /// registry; this struct's shape is designed for that future.
 pub struct Host {
+    /// `cx.on_release` / `cx.on_app_quit` subscriptions retained for
+    /// the lifetime of this `Host`. Used to shut down
+    /// `remote_client`-spawned processes when the host is released or
+    /// the application quits. Phase 2 makes this the single source of
+    /// truth for SSH/WSL process shutdown across shared `Project`s.
+    _subscriptions: Vec<Subscription>,
     // Machine identity / I/O primitives.
     pub fs: Arc<dyn Fs>,
     pub languages: Arc<LanguageRegistry>,
@@ -214,6 +221,7 @@ impl Host {
             });
 
             Self {
+                _subscriptions: Vec::new(),
                 fs,
                 languages,
                 node: Some(node),
@@ -392,6 +400,10 @@ impl Host {
             });
 
             Self {
+                _subscriptions: vec![
+                    cx.on_release(Self::release_remote_client),
+                    cx.on_app_quit(|host, cx| host.on_app_quit_shutdown(cx)),
+                ],
                 fs,
                 languages,
                 node: Some(node),
@@ -538,6 +550,7 @@ impl Host {
                 cx.new(|cx| ContextServerStore::local(worktree_store.clone(), None, false, cx));
 
             Self {
+                _subscriptions: Vec::new(),
                 fs,
                 languages,
                 node: None,
@@ -559,6 +572,45 @@ impl Host {
                 agent_server_store,
                 context_server_store,
                 toolchain_store: None,
+            }
+        })
+    }
+
+    /// Synchronously take and shut down `remote_client`. Used both as
+    /// the `on_release` callback (Project drops, Host drops, last
+    /// reference gone) and as the body of the `on_app_quit` handler
+    /// (whole app shutting down). The shutdown future is dropped on
+    /// release; on app-quit the caller awaits it.
+    fn release_remote_client(&mut self, cx: &mut App) {
+        let Some(remote) = self.remote_client.take() else {
+            return;
+        };
+        let shutdown = remote.update(cx, |client, cx| {
+            client.shutdown_processes(
+                Some(proto::ShutdownRemoteServer {}),
+                cx.background_executor().clone(),
+            )
+        });
+        cx.background_spawn(async move {
+            if let Some(shutdown) = shutdown {
+                shutdown.await;
+            }
+        })
+        .detach();
+    }
+
+    fn on_app_quit_shutdown(&mut self, cx: &mut Context<Self>) -> gpui::Task<()> {
+        let shutdown = self.remote_client.take().and_then(|client| {
+            client.update(cx, |client, cx| {
+                client.shutdown_processes(
+                    Some(proto::ShutdownRemoteServer {}),
+                    cx.background_executor().clone(),
+                )
+            })
+        });
+        cx.background_executor().spawn(async move {
+            if let Some(shutdown) = shutdown {
+                shutdown.await;
             }
         })
     }

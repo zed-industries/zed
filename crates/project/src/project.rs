@@ -1390,27 +1390,11 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![
-                    cx.on_release(Self::release),
-                    cx.on_app_quit(|this, cx| {
-                        let shutdown = this.host.update(cx, |host, cx| {
-                            host.remote_client.take().and_then(|client| {
-                                client.update(cx, |client, cx| {
-                                    client.shutdown_processes(
-                                        Some(proto::ShutdownRemoteServer {}),
-                                        cx.background_executor().clone(),
-                                    )
-                                })
-                            })
-                        });
-
-                        cx.background_executor().spawn(async move {
-                            if let Some(shutdown) = shutdown {
-                                shutdown.await;
-                            }
-                        })
-                    }),
-                ],
+                // SSH-process shutdown is registered on `Host` itself
+                // (both `on_release` and `on_app_quit`) — see
+                // `host::Host::remote`. Project only needs to clean up
+                // its own collab/shared state on release.
+                _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
                 languages,
                 collab_client: client,
@@ -1757,23 +1741,11 @@ impl Project {
     }
 
     fn release(&mut self, cx: &mut App) {
-        let remote_client = self.host.update(cx, |host, _| host.remote_client.take());
-        if let Some(client) = remote_client {
-            let shutdown = client.update(cx, |client, cx| {
-                client.shutdown_processes(
-                    Some(proto::ShutdownRemoteServer {}),
-                    cx.background_executor().clone(),
-                )
-            });
-
-            cx.background_spawn(async move {
-                if let Some(shutdown) = shutdown {
-                    shutdown.await;
-                }
-            })
-            .detach()
-        }
-
+        // Remote-client shutdown lives on `Host` (see
+        // `host::Host::remote`); when the last `Project` drops its
+        // `Entity<Host>`, Host's own `on_release` runs and triggers
+        // `shutdown_processes`. Project only handles the collab /
+        // shared lifecycle here.
         match &self.client_state {
             ProjectClientState::Local => {}
             ProjectClientState::Shared { .. } => {
