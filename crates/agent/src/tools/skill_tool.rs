@@ -5,6 +5,7 @@ use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
@@ -37,22 +38,20 @@ pub fn render_skill_envelope(skill: &Skill) -> String {
     };
     let directory = skill.directory_path.to_string_lossy();
 
+    // `write!`/`writeln!` into a `String` are infallible, so `.unwrap()` here
+    // matches the local precedent (see `list_directory_tool.rs`).
     let mut out = String::new();
-    out.push_str(&format!(
-        "<skill_content name=\"{}\">\n",
-        xml_escape(&skill.name)
-    ));
-    out.push_str(&format!("<source>{}</source>\n", xml_escape(source)));
+    writeln!(out, "<skill_content name=\"{}\">", xml_escape(&skill.name)).unwrap();
+    writeln!(out, "<source>{}</source>", xml_escape(source)).unwrap();
     if let Some(worktree) = worktree {
-        out.push_str(&format!(
-            "<worktree>{}</worktree>\n",
+        writeln!(
+            out,
+            "<worktree>{}</worktree>",
             xml_escape(worktree.as_ref())
-        ));
+        )
+        .unwrap();
     }
-    out.push_str(&format!(
-        "<directory>{}</directory>\n",
-        xml_escape(&directory)
-    ));
+    writeln!(out, "<directory>{}</directory>", xml_escape(&directory)).unwrap();
     out.push_str("Relative paths in this skill resolve against <directory>.\n\n");
     out.push_str(&xml_escape(skill.content.trim()));
     out.push_str("\n</skill_content>\n");
