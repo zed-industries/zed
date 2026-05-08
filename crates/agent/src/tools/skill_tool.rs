@@ -9,38 +9,12 @@ use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
-/// XML-escape a string so it is safe to inject into element text or an
-/// attribute value. We escape all five XML predefined entities so the same
-/// helper works in both positions; double quotes and apostrophes are
-/// harmless in element text but required inside attributes.
-///
-/// This is what prevents a malicious skill author from breaking out of the
+/// XML-escape a string so a malicious skill author cannot break out of the
 /// `<skill_content>` envelope (or the `<available_skills>` catalog) by
 /// embedding closing tags or attribute terminators in their skill name,
 /// description, body, or filenames.
 pub(crate) fn xml_escape(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut run_start = 0;
-    for (i, &b) in bytes.iter().enumerate() {
-        // UTF-8 continuation/leading bytes for multi-byte sequences all have
-        // the high bit set, so they cannot collide with these ASCII bytes.
-        // That makes a byte-level scan safe, and slicing the original `&str`
-        // at these indices preserves UTF-8 boundaries.
-        let entity = match b {
-            b'&' => "&amp;",
-            b'<' => "&lt;",
-            b'>' => "&gt;",
-            b'"' => "&quot;",
-            b'\'' => "&apos;",
-            _ => continue,
-        };
-        output.push_str(&input[run_start..i]);
-        output.push_str(entity);
-        run_start = i + 1;
-    }
-    output.push_str(&input[run_start..]);
-    output
+    quick_xml::escape::escape(input).into_owned()
 }
 
 /// Render a skill's body wrapped in the `<skill_content>` envelope.
