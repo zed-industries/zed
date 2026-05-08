@@ -3036,19 +3036,25 @@ impl Project {
         });
     }
 
-    #[inline]
     pub fn create_buffer(
         &mut self,
         language: Option<Arc<Language>>,
         project_searchable: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        self.buffer_store(cx).update(cx, |buffer_store, cx| {
+        let task = self.buffer_store(cx).update(cx, |buffer_store, cx| {
             buffer_store.create_buffer(language, project_searchable, cx)
+        });
+        // Pathless buffers don't match the worktree-membership rule the
+        // `BufferAdded` handler uses to claim, so the initiating Project
+        // must claim them explicitly once the load completes.
+        cx.spawn(async move |this, cx| {
+            let buffer = task.await?;
+            this.update(cx, |this, cx| this.claim_buffer(&buffer, cx))?;
+            Ok(buffer)
         })
     }
 
-    #[inline]
     pub fn create_local_buffer(
         &mut self,
         text: &str,
@@ -3059,9 +3065,14 @@ impl Project {
         if self.is_remote(cx) {
             panic!("called create_local_buffer on a remote project")
         }
-        self.buffer_store(cx).update(cx, |buffer_store, cx| {
+        let buffer = self.buffer_store(cx).update(cx, |buffer_store, cx| {
             buffer_store.create_local_buffer(text, language, project_searchable, cx)
-        })
+        });
+        // Pre-claim before the queued `BufferAdded` event reaches our
+        // subscriber so the path-based handler sees the buffer as
+        // already-owned and skips re-registering its subscription.
+        self.claim_buffer(&buffer, cx);
+        buffer
     }
 
     pub fn open_path(
@@ -3328,6 +3339,26 @@ impl Project {
         Ok(())
     }
 
+    /// Idempotently mark `buffer` as owned by this Project and run the
+    /// one-time `register_buffer` setup (buffer-event subscription, diff
+    /// recalculation, etc). Used by:
+    ///
+    /// - `on_buffer_store_event`'s path-based claim for file-backed
+    ///   buffers in our worktrees.
+    /// - Pre-claim call sites (`create_local_buffer`, `create_buffer`,
+    ///   `handle_create_buffer_for_peer`) for buffers whose ownership
+    ///   isn't expressible via the worktree-membership rule.
+    ///
+    /// Calling twice for the same buffer is safe — the second call's
+    /// `HashSet::insert` returns `false` and `register_buffer` is
+    /// skipped, avoiding a double subscription.
+    fn claim_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        let buffer_id = buffer.read(cx).remote_id();
+        if self.buffers.insert(buffer_id) {
+            self.register_buffer(buffer, cx).log_err();
+        }
+    }
+
     pub fn open_image(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -3484,18 +3515,28 @@ impl Project {
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                // Idempotent claim: if `set_buffers_from_proto` (or a
-                // direct call site) has already pushed this buffer into
-                // `self.buffers`, skip re-registering. In Phase 2
-                // sharing, sibling Projects subscribed to the same host
-                // BufferStore would also receive this event; today every
-                // Project claims every buffer it sees because each
-                // Project still has its own host.
-                let buffer_id = buffer.read(cx).remote_id();
-                if !self.buffers.insert(buffer_id) {
-                    return;
+                // Path-based ownership: claim only buffers whose file
+                // lives in one of *this* Project's worktrees. This is
+                // the safe default when several Projects share a host
+                // BufferStore in Phase 2 — each Project picks up only
+                // its own file-backed buffers from the broadcast event.
+                //
+                // Pathless buffers (scratch/`create_local_buffer`,
+                // `create_buffer`) and peer-streamed buffers are claimed
+                // explicitly by their initiating call site via
+                // `claim_buffer`. `claim_buffer` is idempotent, so the
+                // pre-claim path and the path-based handler can both run
+                // for the same buffer without double-registering its
+                // event subscription.
+                let owned_by_path = if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                    let worktree_id = file.worktree_id(cx);
+                    self.worktrees(cx).any(|w| w.read(cx).id() == worktree_id)
+                } else {
+                    false
+                };
+                if owned_by_path {
+                    self.claim_buffer(buffer, cx);
                 }
-                self.register_buffer(buffer, cx).log_err();
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 // Only act if this Project actually owns the buffer.
@@ -4916,7 +4957,7 @@ impl Project {
                     self.buffer_store(cx),
                     self.worktree_store(cx),
                     project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
-                    (client, remote_id, self.remotely_created_models.clone()),
+                    (client, remote_id, cx.weak_entity()),
                 ),
                 None => project_search::Search::local(
                     self.fs(cx),
@@ -6074,11 +6115,19 @@ impl Project {
                 .with_context(|| format!("unknown peer {peer_id:?}"))?
                 .replica_id;
             this.forget_shared_buffers_for(&peer_id);
-            this.buffer_store(cx).update(cx, |buffer_store, cx| {
-                for buffer in buffer_store.buffers() {
-                    buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
-                }
-            });
+            // Iterate this Project's owned buffers, not the host
+            // BufferStore's full set: in Phase 2 sharing, a peer leaving
+            // *this* Project shouldn't strip its replica from buffers
+            // owned by a sibling Project on the same host.
+            let buffer_store = this.buffer_store(cx);
+            let buffers: Vec<Entity<Buffer>> = this
+                .buffers
+                .iter()
+                .filter_map(|id| buffer_store.read(cx).get(*id))
+                .collect();
+            for buffer in buffers {
+                buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
+            }
             this.git_store(cx).update(cx, |git_store, _| {
                 git_store.forget_shared_diffs_for(&peer_id);
             });
@@ -6316,30 +6365,28 @@ impl Project {
         &mut self,
         cx: &mut Context<Self>,
     ) -> RemotelyCreatedModelGuard {
-        Self::retain_remotely_created_models_impl(
-            &self.remotely_created_models,
-            &self.buffer_store(cx),
-            &self.worktree_store(cx),
-            cx,
-        )
-    }
-
-    fn retain_remotely_created_models_impl(
-        models: &Arc<Mutex<RemotelyCreatedModels>>,
-        buffer_store: &Entity<BufferStore>,
-        worktree_store: &Entity<WorktreeStore>,
-        cx: &mut App,
-    ) -> RemotelyCreatedModelGuard {
+        // The retained snapshot exists to keep buffers/worktrees alive
+        // for the duration of an in-flight remote operation. Capture
+        // *this* Project's view (its owned buffer ids and worktree
+        // handles) so a sibling Project's models on the same shared
+        // host store aren't kept alive by our retention.
+        let buffer_store = self.buffer_store(cx);
+        let buffers: Vec<Entity<Buffer>> = self
+            .buffers
+            .iter()
+            .filter_map(|id| buffer_store.read(cx).get(*id))
+            .collect();
+        let worktrees: Vec<Entity<Worktree>> = self.worktrees(cx).collect();
         {
-            let mut remotely_create_models = models.lock();
+            let mut remotely_create_models = self.remotely_created_models.lock();
             if remotely_create_models.retain_count == 0 {
-                remotely_create_models.buffers = buffer_store.read(cx).buffers().collect();
-                remotely_create_models.worktrees = worktree_store.read(cx).worktrees().collect();
+                remotely_create_models.buffers = buffers;
+                remotely_create_models.worktrees = worktrees;
             }
             remotely_create_models.retain_count += 1;
         }
         RemotelyCreatedModelGuard {
-            remote_models: Arc::downgrade(&models),
+            remote_models: Arc::downgrade(&self.remotely_created_models),
         }
     }
 
@@ -6349,14 +6396,23 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            this.buffer_store(cx).update(cx, |buffer_store, cx| {
+            let added = this.buffer_store(cx).update(cx, |buffer_store, cx| {
                 buffer_store.handle_create_buffer_for_peer(
                     envelope,
                     this.replica_id(cx),
                     this.capability(),
                     cx,
                 )
-            })
+            })?;
+            // Peer-streamed buffers belong to whichever Project this RPC
+            // routes to (RPC handlers are per-Project entities). Claim
+            // explicitly so pathless peer buffers and buffers in
+            // worktrees we don't yet have aren't dropped on the floor by
+            // the path-based `BufferAdded` handler.
+            if let Some(buffer) = added {
+                this.claim_buffer(&buffer, cx);
+            }
+            anyhow::Ok(())
         })
     }
 

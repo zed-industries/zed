@@ -1211,13 +1211,19 @@ impl BufferStore {
         })
     }
 
+    /// Returns `Some(buffer)` when this envelope completed a buffer
+    /// (i.e., the per-buffer state is now whole and `add_buffer` has
+    /// fired). Callers (typically `Project::handle_create_buffer_for_peer`)
+    /// use the returned handle to claim the buffer in their per-project
+    /// owned set before the queued `BufferAdded` event reaches their
+    /// subscriber.
     pub fn handle_create_buffer_for_peer(
         &mut self,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
         replica_id: ReplicaId,
         capability: Capability,
         cx: &mut Context<Self>,
-    ) -> Result<()> {
+    ) -> Result<Option<Entity<Buffer>>> {
         let remote = self
             .as_remote_mut()
             .context("buffer store is not a remote")?;
@@ -1225,10 +1231,11 @@ impl BufferStore {
         if let Some(buffer) =
             remote.handle_create_buffer_for_peer(envelope, replica_id, capability, cx)?
         {
-            self.add_buffer(buffer, cx)?;
+            self.add_buffer(buffer.clone(), cx)?;
+            Ok(Some(buffer))
+        } else {
+            Ok(None)
         }
-
-        Ok(())
     }
 
     pub async fn handle_update_buffer_file(
