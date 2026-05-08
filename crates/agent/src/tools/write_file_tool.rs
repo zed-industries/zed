@@ -1091,6 +1091,212 @@ mod tests {
         );
     }
 
+    /// When the buffer has unsaved user edits and the user picks
+    /// "Discard my edits", the pending edits are reverted to match disk
+    /// and the agent's overwrite proceeds.
+    #[gpui::test]
+    async fn test_streaming_write_dirty_buffer_discard(cx: &mut TestAppContext) {
+        let (write_tool, project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": "on disk content"})).await;
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/file.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/file.txt".into(),
+                    content: "agent overwrote it".into(),
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+
+        // Verify the prompt is the overwrite-mode prompt.
+        let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
+        let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
+        else {
+            panic!("expected text body, got: {:?}", content.first());
+        };
+        let acp::ContentBlock::Text(text) = &text.content else {
+            panic!("expected text body, got: {:?}", text.content);
+        };
+        assert!(
+            text.text.contains("overwrite"),
+            "expected overwrite-mode prompt, got: {:?}",
+            text.text,
+        );
+
+        // Verify both option ids are present (option_id is the stable contract).
+        let option_ids: Vec<&str> = match &auth.options {
+            acp_thread::PermissionOptions::Flat(opts) => {
+                opts.iter().map(|o| o.option_id.0.as_ref()).collect()
+            }
+            other => panic!("expected flat options, got: {other:?}"),
+        };
+        assert!(option_ids.contains(&"keep"), "options: {option_ids:?}");
+        assert!(option_ids.contains(&"discard"), "options: {option_ids:?}");
+
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("discard"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let EditSessionOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "agent overwrote it");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/file.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "agent overwrote it");
+    }
+
+    /// When the buffer has unsaved user edits and the user picks
+    /// "Keep my edits", the overwrite is cancelled with an error and the
+    /// user's pending edits are preserved.
+    #[gpui::test]
+    async fn test_streaming_write_dirty_buffer_keep(cx: &mut TestAppContext) {
+        let (write_tool, project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": "on disk content"})).await;
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/file.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/file.txt".into(),
+                    content: "agent overwrote it".into(),
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("keep"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .unwrap();
+
+        let EditSessionOutput::Error { error, .. } = task.await.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            error.contains("keep") || error.contains("cancelled"),
+            "expected cancel-style error message, got: {error:?}",
+        );
+
+        // The user's in-memory edits are preserved.
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_eq!(buffer_text, "on disk content plus user edit");
+
+        // The on-disk content is untouched.
+        let on_disk = fs.load(path!("/root/file.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "on disk content");
+    }
+
+    /// When the user manually saves the buffer (e.g. cmd-s) while the
+    /// overwrite prompt is visible, that's treated as "Keep my edits":
+    /// the user just deliberately persisted their work, so we cancel the
+    /// agent's overwrite to avoid clobbering it.
+    #[gpui::test]
+    async fn test_streaming_write_dirty_buffer_resolved_externally(cx: &mut TestAppContext) {
+        let (write_tool, project, _action_log, fs, _thread) =
+            setup_test(cx, json!({"file.txt": "on disk content"})).await;
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/file.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "root/file.txt".into(),
+                    content: "agent overwrote it".into(),
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+
+        // User saves manually while the prompt is up.
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+
+        // The prompt is dismissed by transitioning to InProgress.
+        let dismiss = stream_rx.expect_update_fields().await;
+        assert_eq!(dismiss.status, Some(acp::ToolCallStatus::InProgress));
+        drop(auth);
+
+        // The overwrite is cancelled with an error.
+        let EditSessionOutput::Error { error, .. } = task.await.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            error.contains("saved") || error.contains("cancelled"),
+            "expected cancel-on-manual-save error, got: {error:?}",
+        );
+
+        // The user's edits were saved to disk and not clobbered.
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/file.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "on disk content plus user edit");
+    }
+
     async fn setup_test_with_fs(
         cx: &mut TestAppContext,
         fs: Arc<project::FakeFs>,
