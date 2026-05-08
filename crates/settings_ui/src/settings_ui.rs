@@ -3979,7 +3979,7 @@ impl ProjectSettingsUpdateQueue {
                 .await?;
         }
 
-        let buffer_store = project.read_with(cx, |project, _cx| project.buffer_store().clone())?;
+        let buffer_store = project.read_with(cx, |project, cx| project.buffer_store(cx).clone())?;
 
         let cached_buffer = settings_window
             .read_with(cx, |settings_window, _| {
@@ -5183,7 +5183,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx).clone());
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5217,7 +5217,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx).clone());
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5261,7 +5261,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx).clone());
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5340,7 +5340,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx).clone());
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5390,7 +5390,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx).clone());
         let buffer = buffer_store
             .update(cx, |store, cx| {
                 store.open_buffer(setup.project_path.clone(), cx)

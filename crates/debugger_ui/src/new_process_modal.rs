@@ -87,7 +87,7 @@ impl NewProcessModal {
         let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
             return;
         };
-        let task_store = workspace.project().read(cx).task_store().clone();
+        let task_store = workspace.project().read(cx).task_store(cx).clone();
         let languages = workspace.app_state().languages.clone();
 
         cx.spawn_in(window, async move |workspace, cx| {

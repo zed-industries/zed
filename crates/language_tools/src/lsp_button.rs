@@ -441,7 +441,7 @@ impl LanguageServerState {
 
                             let project = workspace.read(cx).project().clone();
                             let path_style = project.read(cx).path_style(cx);
-                            let buffer_store = project.read(cx).buffer_store().clone();
+                            let buffer_store = project.read(cx).buffer_store(cx).clone();
 
                             let buffers = state_for_restart
                                 .update(cx, |state, cx| {

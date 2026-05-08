@@ -3495,7 +3495,7 @@ impl GitPanel {
             let project = self.project.read(cx);
             active_repo.open_commit_buffer(
                 Some(project.languages().clone()),
-                project.buffer_store().clone(),
+                project.buffer_store(cx).clone(),
                 cx,
             )
         });

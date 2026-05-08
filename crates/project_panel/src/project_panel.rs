@@ -2243,7 +2243,7 @@ impl ProjectPanel {
                     .update(cx, |panel, cx| {
                         panel.project.update(cx, |project, cx| {
                             if let Some(buffer_id) = project
-                                .buffer_store()
+                                .buffer_store(cx)
                                 .read(cx)
                                 .buffer_id_for_project_path(&project_path)
                             {

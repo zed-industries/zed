@@ -129,7 +129,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
         .unwrap();
 
     let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
+        project.dap_store(cx).update(cx, |dap_store, cx| {
             dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
@@ -281,7 +281,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
         .unwrap();
 
     let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
+        project.dap_store(cx).update(cx, |dap_store, cx| {
             dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
@@ -627,7 +627,7 @@ async fn test_handle_start_debugging_reverse_request(
 
     let child_session = project.update(cx, |project, cx| {
         project
-            .dap_store()
+            .dap_store(cx)
             .read(cx)
             .session_by_id(SessionId(1))
             .unwrap()
@@ -683,7 +683,7 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     .await;
 
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-    let dap_store = project.update(cx, |project, _| project.dap_store());
+    let dap_store = project.update(cx, |project, cx| project.dap_store(cx));
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -789,7 +789,7 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     .await;
 
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-    let dap_store = project.update(cx, |project, _| project.dap_store());
+    let dap_store = project.update(cx, |project, cx| project.dap_store(cx));
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -1408,7 +1408,7 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
 
     project.update(cx, |project, cx| {
         assert!(
-            project.dap_store().read(cx).sessions().count() == 0,
+            project.dap_store(cx).read(cx).sessions().count() == 0,
             "Session wouldn't exist if it was shutdown"
         );
     });
@@ -1734,7 +1734,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     // Clean up
     let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
+        project.dap_store(cx).update(cx, |dap_store, cx| {
             dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
@@ -2338,7 +2338,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
 
     // Clean up
     let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
+        project.dap_store(cx).update(cx, |dap_store, cx| {
             dap_store.shutdown_session(session.read(cx).session_id(), cx)
         })
     });
@@ -2406,7 +2406,7 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
 
     let child_session = project.update(cx, |project, cx| {
         project
-            .dap_store()
+            .dap_store(cx)
             .read(cx)
             .session_by_id(SessionId(1))
             .unwrap()
@@ -2435,7 +2435,7 @@ async fn test_adapter_shutdown_with_child_sessions_on_app_quit(
     executor.run_until_parked();
 
     project.update(cx, |project, cx| {
-        let store = project.dap_store().read(cx);
+        let store = project.dap_store(cx).read(cx);
         assert!(store.session_by_id(parent_session_id).is_some());
         assert!(store.session_by_id(child_session_id).is_some());
     });

@@ -20,7 +20,7 @@ pub fn init(cx: &mut App) {
                     if let Some((task_source_kind, mut last_scheduled_task)) = workspace
                         .project()
                         .read(cx)
-                        .task_store()
+                        .task_store(cx)
                         .read(cx)
                         .task_inventory()
                         .and_then(|inventory| {
@@ -146,7 +146,7 @@ pub fn toggle_modal(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
-    let task_store = workspace.project().read(cx).task_store().clone();
+    let task_store = workspace.project().read(cx).task_store(cx).clone();
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace
         .project()
@@ -197,7 +197,7 @@ where
                 let Some(task_inventory) = workspace
                     .project()
                     .read(cx)
-                    .task_store()
+                    .task_store(cx)
                     .read(cx)
                     .task_inventory()
                     .cloned()

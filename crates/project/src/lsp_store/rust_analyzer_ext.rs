@@ -90,7 +90,7 @@ pub fn cancel_flycheck(
     let lsp_store = project.read(cx).lsp_store();
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
-            project.buffer_store().update(cx, |buffer_store, cx| {
+            project.buffer_store(cx).update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(buffer_path, cx)
             })
         })
@@ -139,7 +139,7 @@ pub fn run_flycheck(
     let lsp_store = project.read(cx).lsp_store();
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
-            project.buffer_store().update(cx, |buffer_store, cx| {
+            project.buffer_store(cx).update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(buffer_path, cx)
             })
         })
@@ -196,7 +196,7 @@ pub fn clear_flycheck(
     let lsp_store = project.read(cx).lsp_store();
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
-            project.buffer_store().update(cx, |buffer_store, cx| {
+            project.buffer_store(cx).update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(buffer_path, cx)
             })
         })

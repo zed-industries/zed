@@ -2938,7 +2938,7 @@ mod tests {
 }
 
 fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
-    let context_server_store = project.read(cx).context_server_store().read(cx);
+    let context_server_store = project.read(cx).context_server_store(cx).read(cx);
     let is_local = project.read(cx).is_local(cx);
     context_server_store
         .configured_server_ids()

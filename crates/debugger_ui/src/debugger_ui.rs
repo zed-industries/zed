@@ -135,7 +135,7 @@ pub fn init(cx: &mut App) {
             .register_action(
                 |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {
                     workspace.project().update(cx, |project, cx| {
-                        project.dap_store().update(cx, |store, cx| {
+                        project.dap_store(cx).update(cx, |store, cx| {
                             store.shutdown_sessions(cx).detach();
                         })
                     })

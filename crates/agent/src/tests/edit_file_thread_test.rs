@@ -32,7 +32,7 @@ async fn test_edit_file_tool_in_thread_context(cx: &mut TestAppContext) {
 
     let project = project::Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| crate::ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
@@ -223,7 +223,7 @@ async fn test_streaming_edit_json_parse_error_does_not_cause_unsaved_changes(
 
     let project = project::Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| crate::ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());

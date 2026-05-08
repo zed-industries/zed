@@ -196,7 +196,7 @@ impl LogStore {
                             this.projects.remove(&weak_project);
                         }
                     }),
-                    cx.subscribe(&project.read(cx).dap_store(), {
+                    cx.subscribe(&project.read(cx).dap_store(cx), {
                         let weak_project = project.downgrade();
                         move |this, dap_store, event, cx| match event {
                             dap_store::DapStoreEvent::DebugClientStarted(session_id) => {

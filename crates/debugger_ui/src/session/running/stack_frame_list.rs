@@ -443,7 +443,7 @@ impl StackFrameList {
                         let active_debug_line_pane = workspace
                             .project()
                             .read(cx)
-                            .breakpoint_store()
+                            .breakpoint_store(cx)
                             .read(cx)
                             .active_debug_line_pane_id()
                             .and_then(|id| workspace.pane_for_entity_id(id));
@@ -489,13 +489,13 @@ impl StackFrameList {
                         workspace
                             .project()
                             .read(cx)
-                            .breakpoint_store()
+                            .breakpoint_store(cx)
                             .update(cx, |store, _cx| {
                                 store.set_active_debug_pane_id(pane_id);
                             });
                     }
 
-                    let breakpoint_store = workspace.project().read(cx).breakpoint_store();
+                    let breakpoint_store = workspace.project().read(cx).breakpoint_store(cx);
 
                     breakpoint_store.update(cx, |store, cx| {
                         store.set_active_position(

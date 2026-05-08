@@ -1110,7 +1110,7 @@ fn full_mention_for_directory(
                         .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
 
                     let open_task = project.update(cx, |project, cx| {
-                        project.buffer_store().update(cx, |buffer_store, cx| {
+                        project.buffer_store(cx).update(cx, |buffer_store, cx| {
                             let project_path = ProjectPath {
                                 worktree_id,
                                 path: worktree_path,

@@ -67,7 +67,7 @@ impl Workspace {
 
             self.project().update(cx, |project, cx| {
                 if let Some(task_inventory) =
-                    project.task_store().read(cx).task_inventory().cloned()
+                    project.task_store(cx).read(cx).task_inventory().cloned()
                 {
                     task_inventory.update(cx, |inventory, _| {
                         inventory.task_scheduled(task_source_kind, resolved_task);
@@ -179,7 +179,7 @@ impl Workspace {
 
         let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
             let project = project.read(cx);
-            let task_store = project.task_store();
+            let task_store = project.task_store(cx);
             let Some(inventory) = task_store.read(cx).task_inventory().cloned() else {
                 return;
             };

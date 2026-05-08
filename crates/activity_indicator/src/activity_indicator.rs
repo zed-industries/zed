@@ -395,7 +395,7 @@ impl ActivityIndicator {
         if let Some(session) = self
             .project
             .read(cx)
-            .dap_store()
+            .dap_store(cx)
             .read(cx)
             .sessions()
             .find(|s| !s.read(cx).is_started())

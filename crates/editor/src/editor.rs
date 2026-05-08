@@ -2335,7 +2335,7 @@ impl Editor {
             ));
             if let Some(task_inventory) = project
                 .read(cx)
-                .task_store()
+                .task_store(cx)
                 .read(cx)
                 .task_inventory()
                 .cloned()
@@ -2350,7 +2350,7 @@ impl Editor {
             };
 
             project_subscriptions.push(cx.subscribe_in(
-                &project.read(cx).breakpoint_store(),
+                &project.read(cx).breakpoint_store(cx),
                 window,
                 |editor, _, event, window, cx| match event {
                     BreakpointStoreEvent::ClearDebugLines => {
@@ -2416,7 +2416,7 @@ impl Editor {
         };
 
         let breakpoint_store = match (&mode, project.as_ref()) {
-            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store(cx)),
             _ => None,
         };
 
@@ -2759,7 +2759,7 @@ impl Editor {
         if let Some(dap_store) = editor
             .project
             .as_ref()
-            .map(|project| project.read(cx).dap_store())
+            .map(|project| project.read(cx).dap_store(cx))
         {
             let weak_editor = cx.weak_entity();
 
@@ -7179,7 +7179,7 @@ impl Editor {
     ) -> Task<Vec<task::DebugScenario>> {
         maybe!({
             let project = self.project()?;
-            let dap_store = project.read(cx).dap_store();
+            let dap_store = project.read(cx).dap_store(cx);
             let mut scenarios = vec![];
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);
@@ -9759,7 +9759,7 @@ impl Editor {
             );
         }
         project.update(cx, |project, cx| {
-            project.task_store().update(cx, |task_store, cx| {
+            project.task_store(cx).update(cx, |task_store, cx| {
                 task_store.task_context_for_location(captured_task_variables, location, cx)
             })
         })

@@ -1585,7 +1585,7 @@ impl Workspace {
         .detach();
 
         cx.subscribe_in(
-            &project.read(cx).breakpoint_store(),
+            &project.read(cx).breakpoint_store(cx),
             window,
             |workspace, _, event, window, cx| match event {
                 BreakpointStoreEvent::BreakpointsUpdated(_, _)
@@ -6730,7 +6730,7 @@ impl Workspace {
 
                 let breakpoints = self.project.update(cx, |project, cx| {
                     project
-                        .breakpoint_store()
+                        .breakpoint_store(cx)
                         .read(cx)
                         .all_source_breakpoints(cx)
                 });
@@ -6976,7 +6976,7 @@ impl Workspace {
             let _ = project
                 .update(cx, |project, cx| {
                     project
-                        .breakpoint_store()
+                        .breakpoint_store(cx)
                         .update(cx, |breakpoint_store, cx| {
                             breakpoint_store
                                 .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)

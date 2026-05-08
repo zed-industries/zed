@@ -4194,7 +4194,7 @@ mod tests {
         let project = Project::test(fs.clone(), worktree_paths.iter().copied(), cx).await;
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
         let model = Arc::new(FakeLanguageModel::default());
         let thread = cx.new(|cx| {
             crate::Thread::new(

@@ -1255,7 +1255,7 @@ mod tests {
                 .unwrap()
         });
         project.update(cx, |project, cx| {
-            if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
+            if let Some(task_inventory) = project.task_store(cx).read(cx).task_inventory().cloned() {
                 task_inventory.update(cx, |inventory, _| {
                     let (kind, task) = scheduled_task;
                     inventory.task_scheduled(kind, task);

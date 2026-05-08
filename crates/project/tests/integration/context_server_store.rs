@@ -217,7 +217,7 @@ async fn test_context_server_maintain_servers_loop(cx: &mut TestAppContext) {
     let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, cx| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -456,7 +456,7 @@ async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
     let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, _| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -579,7 +579,7 @@ async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
     let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, _| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -675,7 +675,7 @@ async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
     let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, _| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -800,7 +800,7 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
 
     let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
 
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
 
     set_context_server_configuration(
         vec![(

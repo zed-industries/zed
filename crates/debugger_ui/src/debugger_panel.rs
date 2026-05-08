@@ -159,7 +159,7 @@ impl DebugPanel {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
 
                 workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
-                    workspace.project().read(cx).breakpoint_store().update(
+                    workspace.project().read(cx).breakpoint_store(cx).update(
                         cx,
                         |breakpoint_store, cx| {
                             breakpoint_store.clear_breakpoints(cx);
@@ -183,7 +183,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let dap_store = self.project.read(cx).dap_store();
+        let dap_store = self.project.read(cx).dap_store(cx);
         let Some(adapter) = DapRegistry::global(cx).adapter(&scenario.adapter) else {
             return;
         };
@@ -220,7 +220,7 @@ impl DebugPanel {
         if let Some(inventory) = self
             .project
             .read(cx)
-            .task_store()
+            .task_store(cx)
             .read(cx)
             .task_inventory()
             .cloned()
@@ -308,7 +308,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task_store = workspace.project().read(cx).task_store().clone();
+        let task_store = workspace.project().read(cx).task_store(cx).clone();
         let Some(task_inventory) = task_store.read(cx).task_inventory() else {
             return;
         };
@@ -379,7 +379,7 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store();
+        let dap_store_handle = self.project.read(cx).dap_store(cx);
         let label = curr_session.read(cx).label();
         let quirks = curr_session.read(cx).quirks();
         let adapter = curr_session.read(cx).adapter();
@@ -440,7 +440,7 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store();
+        let dap_store_handle = self.project.read(cx).dap_store(cx);
         let label = self.label_for_child_session(&parent_session, request, cx);
         let adapter = parent_session.read(cx).adapter();
         let quirks = parent_session.read(cx).quirks();
@@ -498,7 +498,7 @@ impl DebugPanel {
         let should_prompt = self
             .project
             .update(cx, |this, cx| {
-                let session = this.dap_store().read(cx).session_by_id(session_id);
+                let session = this.dap_store(cx).read(cx).session_by_id(session_id);
                 session.map(|session| !session.read(cx).is_terminated())
             })
             .unwrap_or_default();
@@ -1874,7 +1874,7 @@ impl Render for DebugPanel {
                     let has_breakpoints = self
                         .project
                         .read(cx)
-                        .breakpoint_store()
+                        .breakpoint_store(cx)
                         .read(cx)
                         .all_source_breakpoints(cx)
                         .values()

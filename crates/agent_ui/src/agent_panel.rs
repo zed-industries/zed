@@ -963,7 +963,7 @@ impl AgentPanel {
         let workspace = workspace.weak_handle();
 
         let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
 
         let thread_store = ThreadStore::global(cx);
 
@@ -1550,7 +1550,7 @@ impl AgentPanel {
         }
 
         let agent_server_store = self.project.read(cx).agent_server_store(cx).clone();
-        let context_server_store = self.project.read(cx).context_server_store();
+        let context_server_store = self.project.read(cx).context_server_store(cx);
         let fs = self.fs.clone();
 
         self.configuration = Some(cx.new(|cx| {

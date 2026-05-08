@@ -883,7 +883,7 @@ mod tests {
 
             let Some(task_inventory) = project
                 .read(cx)
-                .task_store()
+                .task_store(cx)
                 .read(cx)
                 .task_inventory()
                 .cloned()

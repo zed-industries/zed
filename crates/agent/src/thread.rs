@@ -4292,7 +4292,7 @@ mod tests {
 
         cx.update(|cx| {
             let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
-            let context_server_store = project.read(cx).context_server_store();
+            let context_server_store = project.read(cx).context_server_store(cx);
             let context_server_registry =
                 cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
 

@@ -84,9 +84,9 @@ impl BreakpointList {
         cx: &mut App,
     ) -> Entity<Self> {
         let project = project.read(cx);
-        let breakpoint_store = project.breakpoint_store();
+        let breakpoint_store = project.breakpoint_store(cx);
         let worktree_store = project.worktree_store();
-        let dap_store = project.dap_store();
+        let dap_store = project.dap_store(cx);
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
 

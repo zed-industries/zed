@@ -1080,7 +1080,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .expect("should have one global task");
     project.update(cx, |project, cx| {
         let task_inventory = project
-            .task_store()
+            .task_store(cx)
             .read(cx)
             .task_inventory()
             .cloned()
@@ -12617,7 +12617,7 @@ fn get_all_tasks(
     cx: &mut App,
 ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
     let new_tasks = project.update(cx, |project, cx| {
-        project.task_store().update(cx, |task_store, cx| {
+        project.task_store(cx).update(cx, |task_store, cx| {
             task_store.task_inventory().unwrap().update(cx, |this, cx| {
                 this.used_and_current_resolved_tasks(task_contexts, cx)
             })
