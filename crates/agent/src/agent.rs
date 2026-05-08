@@ -907,7 +907,7 @@ impl NativeAgent {
         &mut self,
         project: Entity<Project>,
         event: &project::Event,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let project_id = project.entity_id();
         let Some(state) = self.projects.get_mut(&project_id) else {
@@ -918,7 +918,7 @@ impl NativeAgent {
                 state.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
-                let skills_enabled = _cx.has_flag::<SkillsFeatureFlag>();
+                let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
                 let skills_prefix = RelPath::unix(project_skills_relative_path()).unwrap();
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
@@ -1419,9 +1419,11 @@ impl NativeAgent {
     /// Activate a skill in response to a `/skill-name` slash command. The
     /// skill body is wrapped in the same `<skill_content>` envelope the
     /// model-driven `skill` tool uses, so the conversation looks the same
-    /// regardless of who initiated the load. Any extra content the user
-    /// added after the command (file mentions, etc.) is preserved in the
-    /// model's context as a sibling user message.
+    /// regardless of who initiated the load. Any text the user typed after
+    /// the command on the same line — plus any additional content blocks
+    /// they attached (file mentions, etc.) — is appended to the same user
+    /// message after the skill envelope, so the model sees the skill
+    /// instructions followed by the user's request.
     fn send_skill_invocation(
         &self,
         message_id: UserMessageId,
@@ -1444,36 +1446,47 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
-            // Push any non-command content blocks (file mentions, etc.) the
-            // user attached to their slash invocation. We skip the first
-            // block because it is the literal `/cmd` text — we don't want
-            // to add `/skill-name` as a user message in the model context.
-            thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(
-                    message_id,
-                    original_content.into_iter().skip(1),
-                    path_style,
-                    cx,
-                );
-            });
-
-            // Inject the rendered skill body as an additional user message.
-            // The model sees a wrapped `<skill_content>` envelope identical
-            // to what the tool path produces.
+            // Build the model-context message: skill envelope first, then
+            // anything the user wrote after the slash command. The first
+            // text block has its leading `/cmd` stripped so the literal
+            // command name isn't echoed into the model's context, but any
+            // text the user typed after it on the same line is preserved
+            // verbatim and appended after the envelope.
             let envelope = crate::tools::render_skill_envelope(&skill);
-            let block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
-            let injected_id = acp_thread::UserMessageId::new();
+            let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
 
+            let mut user_blocks = original_content;
+            if let Some(acp::ContentBlock::Text(text_content)) = user_blocks.first_mut() {
+                let stripped = strip_slash_command_prefix(&text_content.text);
+                if stripped.trim().is_empty() {
+                    user_blocks.remove(0);
+                } else {
+                    text_content.text = stripped;
+                }
+            }
+
+            let mut combined = Vec::with_capacity(user_blocks.len() + 1);
+            combined.push(envelope_block.clone());
+            combined.extend(user_blocks);
+
+            // UI: show the rendered envelope as a sibling user message so
+            // the user can see what context was loaded for the skill. The
+            // user's own typed message is already rendered by the normal
+            // prompt flow, so we don't push it to the UI again here.
+            let injected_id = acp_thread::UserMessageId::new();
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.push_user_content_block_with_indent(
-                    Some(injected_id.clone()),
-                    block.clone(),
+                    Some(injected_id),
+                    envelope_block,
                     true,
                     cx,
                 );
             });
+
+            // Model context: a single user message containing the skill
+            // envelope followed by the user's appended content.
             thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(injected_id, [block], path_style, cx);
+                thread.push_acp_user_block(message_id, combined, path_style, cx);
             });
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
@@ -1668,6 +1681,26 @@ impl<'a> Command<'a> {
             })
         }
     }
+}
+
+/// Strip a leading `/cmd` slash command from the start of a text block,
+/// returning whatever text comes after it. Mirrors the parsing in
+/// [`Command::parse`]: leading whitespace is ignored when locating the `/`,
+/// then everything up to (and including) the first whitespace inside the
+/// stripped text is dropped. The remainder is preserved verbatim — including
+/// any embedded newlines — because users may format their continuation
+/// intentionally.
+///
+/// If the input doesn't begin with `/`, it is returned unchanged so callers
+/// degrade gracefully rather than silently mangling unrelated text.
+fn strip_slash_command_prefix(text: &str) -> String {
+    let trimmed_start = text.trim_start();
+    let Some(rest) = trimmed_start.strip_prefix('/') else {
+        return text.to_string();
+    };
+    rest.split_once(char::is_whitespace)
+        .map(|(_, after)| after.to_string())
+        .unwrap_or_default()
 }
 
 struct NativeAgentModelSelector {
@@ -4263,6 +4296,47 @@ mod internal_tests {
 
             LanguageModelRegistry::test(cx);
         });
+    }
+
+    #[test]
+    fn test_strip_slash_command_prefix_keeps_inline_args() {
+        // The bug being guarded against: skill slash invocation used to
+        // discard the entire first text block, which threw away anything
+        // the user typed on the same line as the command.
+        assert_eq!(
+            strip_slash_command_prefix("/fix-review #1, #2, #3"),
+            "#1, #2, #3",
+        );
+    }
+
+    #[test]
+    fn test_strip_slash_command_prefix_preserves_newlines() {
+        // Continuations across newlines are common when users compose
+        // structured prompts; the first newline is the command terminator,
+        // but everything after it must reach the model verbatim.
+        assert_eq!(
+            strip_slash_command_prefix("/fix-review\nline 1\nline 2"),
+            "line 1\nline 2",
+        );
+    }
+
+    #[test]
+    fn test_strip_slash_command_prefix_command_only_is_empty() {
+        assert_eq!(strip_slash_command_prefix("/fix-review"), "");
+        assert_eq!(strip_slash_command_prefix("/fix-review "), "");
+    }
+
+    #[test]
+    fn test_strip_slash_command_prefix_ignores_leading_whitespace() {
+        assert_eq!(strip_slash_command_prefix("   /fix-review hello"), "hello",);
+    }
+
+    #[test]
+    fn test_strip_slash_command_prefix_passes_through_non_command_text() {
+        // Defense in depth: if somehow we're called with a non-slash-prefixed
+        // block, the safe behavior is to return it unchanged rather than
+        // silently mangling unrelated user text.
+        assert_eq!(strip_slash_command_prefix("hello world"), "hello world",);
     }
 }
 
