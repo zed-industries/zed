@@ -228,7 +228,7 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
 }
 
 #[gpui::test]
-async fn test_auto_watch_turns_off_when_following_collaborator(
+async fn test_auto_watch_is_disabled_when_following_collaborator(
     executor: BackgroundExecutor,
     user_a: &mut TestAppContext,
     user_b: &mut TestAppContext,
