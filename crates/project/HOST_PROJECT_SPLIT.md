@@ -1,11 +1,20 @@
 # Host / Project split
 
-> Status: **in progress** — Phase 0 partially complete (5 of 10 stores),
-> Phase 1 started (1 of 3 view stores). This document describes the
-> target architecture and the staged migration plan for splitting
+> Status: **in progress**. This document describes the target
+> architecture and the staged migration plan for splitting
 > `crates/project/src/project.rs` into a `Host` (machine-bound services)
 > and `Project` (per-workspace state). Read top to bottom before making
 > changes.
+>
+> **Phase 1 strategy update**: We chose Flavor 1 (per-project state
+> lives directly on `Project`) over Flavor 2 (`ProjectXxxStore`
+> wrappers). `Project` already has the per-project methods
+> (`project.worktrees()`, `project.open_buffer()`, etc.) and is the
+> per-project entity. A `ProjectImageStore` wrapper was introduced and
+> reverted because the wrapper layer added boilerplate without holding
+> any state that wasn't already on `Project`. Per-project state moves
+> directly to `Project`'s fields; the host-side store shrinks to the
+> registry/scanner/inbound-rpc role.
 >
 > Progress checkpoints (commits on `host-project-refactor`):
 > - `BreakpointStore`, `TaskStore`, `SettingsObserver`, `DapStore` —
@@ -14,9 +23,10 @@
 > - `BufferStore` — Phase 0 partial (inbound rpc forwards moved out;
 >   `create_buffer_for_peer` and `LocalBufferStore::save_local_buffer` /
 >   `local_worktree_entry_changed` still use `downstream_client`).
-> - `ProjectImageStore` — Phase 1 wrapper introduced; `ImageStore` is
->   still the actual data store underneath. Sets the wrapping pattern.
-> - `GitStore`, `WorktreeStore`, `LspStore` — not started.
+> - `WorktreeStore` — in progress.
+> - `BufferStore` Phase 1, `GitStore`, `LspStore` — not started.
+> - `ImageStore` — already dumb; per-project state will live on
+>   `Project` when we have a host registry to point at.
 
 ## Why
 
@@ -104,66 +114,52 @@ pub struct Project {
 - **Buffers are de-duplicated per host.** Two `Project`s on the same
   host opening the same file see the same `Entity<Buffer>`.
 
-### Per-project view stores
+### Per-project state lives on `Project`, not in wrapper entities
 
-First-class entities (not `Vec` fields) so we have a stable type for
-per-project methods.
-
-The pragmatic introduction pattern, demonstrated on `ProjectImageStore`,
-is to start with a thin wrapper around the existing store. The wrapper
-holds an `Entity<XxxStore>`, exposes the per-project method surface,
-and re-emits the inner store's events so existing subscribers keep
-working against the wrapper. The inner store keeps its existing logic
-(including any `downstream_client` / `shared` / `unshared` machinery
-for stores that haven't finished Phase 0 yet).
+`Project` itself is the per-project entity. It already has the
+per-project method surface (`project.worktrees()`,
+`project.open_buffer()`, `project.find_or_create_worktree()`, etc.) and
+these methods continue to live on `Project`. Per-project state moves
+from inside the host-shaped stores up to direct fields on `Project`.
 
 ```rust
-pub struct ProjectImageStore {
-    image_store: Entity<ImageStore>,
-    _subscription: Subscription,
-}
+pub struct Project {
+    host: Entity<Host>,
 
-impl ProjectImageStore {
-    pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
-        let image_store = cx.new(|cx| ImageStore::local(worktree_store, cx));
-        let subscription = cx.subscribe(&image_store, |_, _, event, cx| {
-            cx.emit(event.clone());
-        });
-        Self { image_store, _subscription: subscription }
-    }
+    // Per-project worktree state (was inside WorktreeStore):
+    worktrees: Vec<Entity<Worktree>>,           // strong handles
+    retain_worktrees: bool,                     // collab share retention
 
-    pub fn host_store(&self) -> &Entity<ImageStore> { &self.image_store }
+    // Per-project buffer state (was inside BufferStore):
+    shared_buffers: HashMap<PeerId, HashMap<BufferId, SharedBuffer>>,
+    non_searchable_buffers: HashSet<BufferId>,
 
-    // ...delegating methods for the per-project surface...
+    // ... other per-project state (active_entry, search histories, etc.)
 }
 ```
 
-In the eventual target shape, the wrapper grows beyond delegation to
-own per-project state (strong handles to this project's slice, etc.):
+The host-level stores keep only the host-shaped pieces:
 
 ```rust
-pub struct ProjectWorktreeStore {
-    host: Entity<Host>,
-    worktrees: Vec<Entity<Worktree>>,   // strong; this project's slice
-    next_worktree_id: WorktreeIdCounter,
-}
-
-pub struct ProjectBufferStore {
-    host: Entity<Host>,
-    opened_buffers: HashMap<BufferId, Entity<Buffer>>, // strong
-}
-
-pub struct ProjectImageStore {
-    host: Entity<Host>,
-    opened_images: HashMap<ImageId, Entity<ImageItem>>, // strong
+pub struct WorktreeStore {  // owned by Host
+    next_entry_id, next_worktree_id,
+    worktrees: Vec<WeakEntity<Worktree>>,       // weak registry, no retain flag
+    loading_worktrees,
+    state: WorktreeStoreState { Local | Remote },
+    scanning_enabled, initial_scan_complete,
 }
 ```
 
-Per-project methods (`worktrees()`, `entry_for_id`,
-`find_or_create_worktree`, `add_worktree`, `remove_worktree`,
-`opened_buffers`, etc.) move from the host-level stores onto these.
-Host stores keep only cross-project methods (registry, scanner, ID
-allocation, inbound rpc handlers).
+A `ProjectXxxStore` wrapper entity is *not* introduced. The
+`ProjectImageStore` wrapper was tried and reverted: it held only an
+`Entity<ImageStore>` and re-emitted events, providing no value beyond
+the Project entity that already exists.
+
+Note: methods that used to be on the host-shaped store but operate on
+per-project state move to `Project`. Methods that operate on the
+host-shaped state stay on the store. Some methods (e.g.
+`find_or_create_worktree`) bridge — they call into the host registry to
+load, then attach the result to `Project`'s strong handle list.
 
 ## What we're deleting
 
