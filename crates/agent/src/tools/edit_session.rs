@@ -949,8 +949,8 @@ async fn ensure_buffer_saved(
         (current, dirty)
     });
 
-    if is_dirty && matches!(mode, EditSessionMode::Edit) {
-        resolve_dirty_buffer_for_edit(buffer, context, event_stream, cx).await?;
+    if is_dirty {
+        resolve_dirty_buffer(buffer, mode, context, event_stream, cx).await?;
     }
 
     if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime)
@@ -962,10 +962,17 @@ async fn ensure_buffer_saved(
     Ok(false)
 }
 
-/// Prompts the user to save or discard a dirty buffer's pending changes,
-/// then performs the chosen action so the edit can proceed.
-async fn resolve_dirty_buffer_for_edit(
+/// Prompts the user about how to handle a dirty buffer that the agent
+/// wants to edit (`EditSessionMode::Edit`) or overwrite
+/// (`EditSessionMode::Write`), and performs the chosen action so the
+/// edit session can proceed (or returns `Err` to cancel).
+///
+/// If the user resolves the dirty state externally (e.g. cmd-s or
+/// reload) while the prompt is visible, the prompt is dismissed
+/// automatically.
+async fn resolve_dirty_buffer(
     buffer: &Entity<Buffer>,
+    mode: EditSessionMode,
     context: &EditSessionContext,
     event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
@@ -985,7 +992,13 @@ async fn resolve_dirty_buffer_for_edit(
         })
     });
 
-    let prompt = cx.update(|cx| super::tool_permissions::authorize_dirty_buffer(event_stream, cx));
+    let prompt_kind = match mode {
+        EditSessionMode::Edit => super::tool_permissions::DirtyBufferPromptKind::Edit,
+        EditSessionMode::Write => super::tool_permissions::DirtyBufferPromptKind::Overwrite,
+    };
+    let prompt = cx.update(|cx| {
+        super::tool_permissions::authorize_dirty_buffer(prompt_kind, event_stream, cx)
+    });
 
     let decision = futures::select_biased! {
         _ = manual_resolve_rx.fuse() => {
@@ -1000,7 +1013,15 @@ async fn resolve_dirty_buffer_for_edit(
         event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
-        return Ok(());
+        return match mode {
+            EditSessionMode::Edit => Ok(()),
+            EditSessionMode::Write => Err(
+                "The user saved their unsaved changes while the prompt was visible; \
+                 the file overwrite was cancelled to preserve them. Ask the user how \
+                 they'd like to proceed before retrying."
+                    .to_string(),
+            ),
+        };
     };
 
     match decision {
@@ -1019,6 +1040,16 @@ async fn resolve_dirty_buffer_for_edit(
                 })
                 .await
                 .map_err(|e| format!("Failed to discard unsaved changes: {e}"))?;
+        }
+        super::tool_permissions::DirtyBufferDecision::Keep => {
+            let error = "The user chose to keep their unsaved changes; the file overwrite \
+             was cancelled. Ask the user how they'd like to proceed before \
+             retrying."
+                .to_string();
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
+            );
+            return Err(error);
         }
     }
     Ok(())
