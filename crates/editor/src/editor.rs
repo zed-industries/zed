@@ -2411,7 +2411,7 @@ impl Editor {
             };
 
         let bookmark_store = match (&mode, project.as_ref()) {
-            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).bookmark_store()),
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).bookmark_store(cx)),
             _ => None,
         };
 

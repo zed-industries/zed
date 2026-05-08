@@ -227,7 +227,6 @@ pub struct Project {
     dap_store: Entity<DapStore>,
     agent_server_store: Entity<AgentServerStore>,
 
-    bookmark_store: Entity<BookmarkStore>,
     breakpoint_store: Entity<BreakpointStore>,
     collab_client: Arc<client::Client>,
     join_project_response_message_id: u32,
@@ -1410,7 +1409,6 @@ impl Project {
                 settings_observer,
                 fs,
                 remote_client: None,
-                bookmark_store,
                 breakpoint_store,
                 dap_store,
                 agent_server_store,
@@ -1653,7 +1651,6 @@ impl Project {
                 image_store,
                 lsp_store,
                 context_server_store,
-                bookmark_store,
                 breakpoint_store,
                 dap_store,
                 join_project_response_message_id: 0,
@@ -2029,7 +2026,6 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                bookmark_store: bookmark_store.clone(),
                 breakpoint_store: breakpoint_store.clone(),
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
@@ -2317,8 +2313,8 @@ impl Project {
     }
 
     #[inline]
-    pub fn bookmark_store(&self) -> Entity<BookmarkStore> {
-        self.bookmark_store.clone()
+    pub fn bookmark_store(&self, cx: &App) -> Entity<BookmarkStore> {
+        self.host.read(cx).bookmark_store.clone()
     }
 
     #[inline]

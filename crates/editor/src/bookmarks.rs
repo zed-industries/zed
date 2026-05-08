@@ -178,7 +178,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let bookmark_store = workspace.project().read(cx).bookmark_store();
+        let bookmark_store = workspace.project().read(cx).bookmark_store(cx);
         cx.spawn_in(window, async move |workspace, cx| {
             let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store, cx)
                 .await

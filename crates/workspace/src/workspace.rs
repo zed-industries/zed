@@ -6723,7 +6723,7 @@ impl Workspace {
             WorkspaceLocation::Location(location, paths) => {
                 let bookmarks = self.project.update(cx, |project, cx| {
                     project
-                        .bookmark_store()
+                        .bookmark_store(cx)
                         .read(cx)
                         .all_serialized_bookmarks(cx)
                 });
@@ -6966,7 +6966,7 @@ impl Workspace {
 
             project
                 .update(cx, |project, cx| {
-                    project.bookmark_store().update(cx, |bookmark_store, cx| {
+                    project.bookmark_store(cx).update(cx, |bookmark_store, cx| {
                         bookmark_store.load_serialized_bookmarks(serialized_workspace.bookmarks, cx)
                     })
                 })
@@ -7570,7 +7570,7 @@ impl Workspace {
     pub fn clear_bookmarks(&mut self, _: &ClearBookmarks, _: &mut Window, cx: &mut Context<Self>) {
         self.project()
             .read(cx)
-            .bookmark_store()
+            .bookmark_store(cx)
             .update(cx, |bookmark_store, cx| {
                 bookmark_store.clear_bookmarks(cx);
             });
