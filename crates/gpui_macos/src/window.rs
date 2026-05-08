@@ -324,10 +324,7 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
 /// This function is not thread safe. Callers must ensure this is called on the AppKit main
 /// thread because it reads the active AppKit window and updates GPUI window state associated
 /// with Objective-C objects.
-pub(crate) unsafe fn set_active_window_cursor_style(
-    style: CursorStyle,
-    cursor_hidden: &AtomicBool,
-) {
+pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
     // SAFETY: The caller guarantees AppKit main-thread access. The class check ensures the
     // window has our WINDOW_STATE_IVAR before reading it.
     unsafe {
@@ -345,9 +342,6 @@ pub(crate) unsafe fn set_active_window_cursor_style(
         };
 
         let Some(active_window) = active_window else {
-            if !matches!(style, CursorStyle::None) {
-                unhide_cursor(cursor_hidden);
-            }
             return;
         };
 
@@ -359,22 +353,6 @@ pub(crate) unsafe fn set_active_window_cursor_style(
                 window_state.native_window,
                 invalidateCursorRectsForView: window_state.native_view.as_ptr()
             ];
-        }
-    }
-}
-
-/// Unhides the cursor if this GPUI platform instance has hidden it.
-///
-/// # Safety
-///
-/// Must be called on the AppKit main thread.
-unsafe fn unhide_cursor(cursor_hidden: &AtomicBool) {
-    unsafe {
-        if cursor_hidden
-            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
-            let _: () = msg_send![class!(NSCursor), unhide];
         }
     }
 }
@@ -496,7 +474,7 @@ struct MacWindowState {
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
-    cursor_hidden: Arc<AtomicBool>,
+    cursor_visible: Arc<AtomicBool>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -698,7 +676,7 @@ impl MacWindow {
             tabbing_identifier,
             ..
         }: WindowParams,
-        cursor_hidden: Arc<AtomicBool>,
+        cursor_visible: Arc<AtomicBool>,
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
@@ -816,7 +794,7 @@ impl MacWindow {
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
-                cursor_hidden,
+                cursor_visible,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -1850,26 +1828,7 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
         let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
 
         let window_state = get_window_state(this);
-        let cursor_style;
-        let cursor_hidden;
-
-        {
-            let window_state = window_state.lock();
-
-            if matches!(window_state.cursor_style, CursorStyle::None) {
-                if window_state
-                    .cursor_hidden
-                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    let _: () = msg_send![class!(NSCursor), hide];
-                }
-                return;
-            }
-
-            cursor_style = window_state.cursor_style;
-            cursor_hidden = window_state.cursor_hidden.clone();
-        };
+        let cursor_style = window_state.lock().cursor_style;
 
         let cursor: id = match cursor_style {
             CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
@@ -1905,10 +1864,7 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
             CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
             CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
             CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-            CursorStyle::None => unreachable!(),
         };
-
-        unhide_cursor(&cursor_hidden);
 
         let bounds = NSView::bounds(this as *const Object as id);
         let _: () = msg_send![this, addCursorRect: bounds cursor: cursor];
@@ -2140,6 +2096,20 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
+        // AppKit unhides the cursor on the next mouse movement; mirror that here.
+        if matches!(
+            event,
+            PlatformInput::MouseMove(_)
+                | PlatformInput::MouseDown(_)
+                | PlatformInput::MouseUp(_)
+                | PlatformInput::MousePressure(_)
+                | PlatformInput::MouseExited(_)
+                | PlatformInput::ScrollWheel(_)
+                | PlatformInput::Pinch(_)
+        ) {
+            lock.cursor_visible.store(true, Ordering::Relaxed);
+        }
+
         match &mut event {
             PlatformInput::MouseDown(
                 event @ MouseDownEvent {
@@ -2364,6 +2334,9 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     let window_state = unsafe { get_window_state(this) };
     let lock = window_state.lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
+
+    // AppKit also unhides the cursor on activation changes, so mirror that here.
+    lock.cursor_visible.store(true, Ordering::Relaxed);
 
     // When opening a pop-up while the application isn't active, Cocoa sends a spurious
     // `windowDidBecomeKey` message to the previous key window even though that window

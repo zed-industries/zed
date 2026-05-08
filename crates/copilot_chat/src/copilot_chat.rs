@@ -9,6 +9,7 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use gpui::TaskExt;
 use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::HttpRequestExt;

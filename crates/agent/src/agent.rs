@@ -37,7 +37,7 @@ use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
-    WeakEntity,
+    TaskExt, WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{AgentId, Project, ProjectItem, ProjectPath, Worktree};
@@ -1298,9 +1298,12 @@ impl NativeAgentConnection {
                                 options,
                                 response,
                                 context: _,
+                                kind,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(tool_call, options, cx)
+                                    thread.request_tool_call_authorization(
+                                        tool_call, options, kind, cx,
+                                    )
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp_thread::RequestPermissionOutcome::Selected(outcome) =
