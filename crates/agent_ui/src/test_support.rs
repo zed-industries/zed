@@ -8,6 +8,7 @@ use settings::SettingsStore;
 use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use crate::AgentPanel;
 use crate::agent_panel;
@@ -167,12 +168,19 @@ pub fn send_message(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
 /// editor. This mirrors how a real user would type into the panel, so the
 /// editor-observer chain (`cx.observe(&message_editor)` → `set_draft_prompt`
 /// → `PromptUpdated` → kvp write) fires naturally.
+///
+/// Advances the simulated clock past the kvp-write debounce so the
+/// persisted prompt actually lands in the kvp store before this returns.
 pub fn type_draft_prompt(panel: &Entity<AgentPanel>, text: &str, cx: &mut VisualTestContext) {
     let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
     let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
     message_editor.update_in(cx, |editor, window, cx| {
         editor.set_text(text, window, cx);
     });
+    cx.run_until_parked();
+    // Drain the debounced draft-prompt persist task. Must outlast the
+    // `DEBOUNCE` constant in `ConversationView::schedule_draft_prompt_persist`.
+    cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
 }
 

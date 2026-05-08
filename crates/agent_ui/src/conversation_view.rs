@@ -505,6 +505,10 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    /// Debounces draft-prompt writes to the kvp store. Each `PromptUpdated`
+    /// event drops the previous task (cancelling the in-flight delay) and
+    /// schedules a new one, so a burst of typing collapses into one write.
+    draft_prompt_persist_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -751,6 +755,7 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            draft_prompt_persist_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -1671,26 +1676,54 @@ impl ConversationView {
                 cx.notify();
             }
             AcpThreadEvent::PromptUpdated => {
-                if !is_subagent {
-                    let thread_ref = thread.read(cx);
-                    if thread_ref.is_draft_thread() {
-                        let thread_id = self.thread_id;
-                        match thread_ref.draft_prompt() {
-                            Some(prompt) if !prompt.is_empty() => {
-                                crate::draft_prompt_store::write(thread_id, prompt, cx)
-                                    .detach_and_log_err(cx);
-                            }
-                            _ => {
-                                crate::draft_prompt_store::delete(thread_id, cx)
-                                    .detach_and_log_err(cx);
-                            }
-                        }
-                    }
+                if !is_subagent && thread.read(cx).is_draft_thread() {
+                    self.schedule_draft_prompt_persist(cx);
                 }
                 cx.notify();
             }
         }
         cx.notify();
+    }
+
+    /// Schedules a debounced write of this draft's current prompt blocks to
+    /// the kvp store. Called from the [`AcpThreadEvent::PromptUpdated`]
+    /// handler.
+    ///
+    /// The actual write happens after a short delay; if another
+    /// `PromptUpdated` arrives in the meantime, the previous task is
+    /// dropped (cancelling its delay) and a new one is scheduled. Bursts of
+    /// typing therefore collapse into a single kvp write of the latest
+    /// prompt state.
+    ///
+    /// Re-reads `is_draft_thread()` and `draft_prompt()` at write time so a
+    /// promotion (first message sent) that races the timer correctly
+    /// short-circuits to a no-op — the metadata store handles kvp cleanup
+    /// for promoted threads.
+    fn schedule_draft_prompt_persist(&mut self, cx: &mut Context<Self>) {
+        const DEBOUNCE: Duration = Duration::from_millis(250);
+        let thread_id = self.thread_id;
+        self.draft_prompt_persist_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(DEBOUNCE).await;
+            let persist = this.update(cx, |this, cx| {
+                let thread = this.root_thread(cx)?;
+                let thread = thread.read(cx);
+                if !thread.is_draft_thread() {
+                    return None;
+                }
+                let snapshot: Vec<acp::ContentBlock> = thread
+                    .draft_prompt()
+                    .map(|p| p.to_vec())
+                    .unwrap_or_default();
+                Some(if snapshot.is_empty() {
+                    crate::draft_prompt_store::delete(thread_id, cx)
+                } else {
+                    crate::draft_prompt_store::write(thread_id, &snapshot, cx)
+                })
+            });
+            if let Ok(Some(persist)) = persist {
+                persist.await.log_err();
+            }
+        }));
     }
 
     fn authenticate(

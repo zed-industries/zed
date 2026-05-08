@@ -428,81 +428,6 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
 }
 
-/// Rewrites `[@Something](scheme://...)` mention links as `@Something` so the
-/// sidebar's draft-title preview doesn't show raw markdown link syntax.
-fn clean_mention_links(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut remaining = input;
-
-    while let Some(start) = remaining.find("[@") {
-        result.push_str(&remaining[..start]);
-        let after_bracket = &remaining[start + 1..];
-        if let Some(close_bracket) = after_bracket.find("](") {
-            let mention = &after_bracket[..close_bracket];
-            let after_link_start = &after_bracket[close_bracket + 2..];
-            if let Some(close_paren) = after_link_start.find(')') {
-                result.push_str(mention);
-                remaining = &after_link_start[close_paren + 1..];
-                continue;
-            }
-        }
-        result.push_str("[@");
-        remaining = &remaining[start + 2..];
-    }
-    result.push_str(remaining);
-    result
-}
-
-/// Collapses whitespace and truncates raw editor text for display as a draft
-/// label in the sidebar.
-fn truncate_draft_label(raw: &str) -> Option<SharedString> {
-    let first_line = raw.lines().next().unwrap_or("");
-    let cleaned = clean_mention_links(first_line);
-    let mut text: String = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.is_empty() {
-        return None;
-    }
-    const MAX_CHARS: usize = 250;
-    if let Some((truncate_at, _)) = text.char_indices().nth(MAX_CHARS) {
-        text.truncate(truncate_at);
-    }
-    Some(text.into())
-}
-
-/// Reads the current editor text for a draft thread, cleaning and truncating
-/// it for use as a sidebar title.
-///
-/// Prefers the live message editor's text (when the thread's `ConversationView`
-/// is loaded), and otherwise falls back to the persisted draft prompt in the
-/// kvp store so drafts restored from disk — but not yet opened — still show
-/// a meaningful title instead of the generic default.
-fn read_draft_text(
-    workspace: Option<&Entity<Workspace>>,
-    thread_id: ThreadId,
-    cx: &App,
-) -> Option<SharedString> {
-    let from_editor = workspace
-        .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-        .and_then(|panel| panel.read(cx).editor_text(thread_id, cx));
-    if let Some(raw) = from_editor
-        && let Some(label) = truncate_draft_label(&raw)
-    {
-        return Some(label);
-    }
-
-    let blocks = agent_ui::draft_prompt_store::read(thread_id, cx)?;
-    let raw = blocks
-        .iter()
-        .filter_map(|block| match block {
-            acp::ContentBlock::Text(text) => Some(text.text.as_str()),
-            acp::ContentBlock::ResourceLink(link) => Some(link.uri.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    truncate_draft_label(&raw)
-}
-
 fn workspace_has_agent_panel_terminals(workspace: &Entity<Workspace>, cx: &App) -> bool {
     workspace
         .read(cx)
@@ -1499,7 +1424,11 @@ impl Sidebar {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace),
                         ThreadEntryWorkspace::Closed { .. } => None,
                     };
-                    if let Some(text) = read_draft_text(workspace, thread.metadata.thread_id, cx) {
+                    if let Some(text) = agent_ui::draft_prompt_store::display_label_for_draft(
+                        workspace,
+                        thread.metadata.thread_id,
+                        cx,
+                    ) {
                         thread.metadata.title = Some(text);
                     }
                 }
@@ -4758,7 +4687,12 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.new_thread(&agent_ui::NewThread, window, cx);
+                // Bypass `new_thread` / `new_entry` so we can attribute
+                // the trigger to "sidebar" for telemetry. `new_entry`'s
+                // terminal-vs-thread routing isn't needed here — this
+                // method only ever creates threads (terminals go through
+                // `create_new_terminal`).
+                panel.activate_new_thread(true, "sidebar", window, cx);
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);

@@ -586,44 +586,6 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     assert_eq!(width1, px(420.0));
 }
 
-#[test]
-fn test_clean_mention_links() {
-    // Simple mention link.
-    assert_eq!(
-        super::clean_mention_links("check [@Button.tsx](file:///path/to/Button.tsx)"),
-        "check @Button.tsx"
-    );
-
-    // Multiple mention links.
-    assert_eq!(
-        super::clean_mention_links(
-            "look at [@foo.rs](file:///foo.rs) and [@bar.rs](file:///bar.rs)"
-        ),
-        "look at @foo.rs and @bar.rs"
-    );
-
-    // No mention links — passthrough.
-    assert_eq!(
-        super::clean_mention_links("plain text with no mentions"),
-        "plain text with no mentions"
-    );
-
-    // Incomplete link syntax — preserved as-is.
-    assert_eq!(
-        super::clean_mention_links("broken [@mention without closing"),
-        "broken [@mention without closing"
-    );
-
-    // Regular markdown link (no `@`) — not touched.
-    assert_eq!(
-        super::clean_mention_links("see [docs](https://example.com)"),
-        "see [docs](https://example.com)"
-    );
-
-    // Empty input.
-    assert_eq!(super::clean_mention_links(""), "");
-}
-
 #[gpui::test]
 async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppContext) {
     // A regression test to ensure that restoring a serialized archive view does not panic.
@@ -3033,13 +2995,10 @@ async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let draft_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
 
-    // Type into the (active) draft's message editor.
-    let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
-    let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
-    message_editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("Fix the login bug", window, cx);
-    });
-    cx.run_until_parked();
+    // Type into the (active) draft's message editor. The helper drains the
+    // kvp-write debounce, so by the time it returns the prompt is on disk
+    // — important for Phase 2 below, which exercises the kvp fallback.
+    agent_ui::test_support::type_draft_prompt(&panel, "Fix the login bug", cx);
 
     // Park the draft by pressing Cmd-N while it has content.
     panel.update_in(cx, |panel, window, cx| {
