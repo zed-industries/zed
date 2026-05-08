@@ -3172,49 +3172,46 @@ async fn test_remove_draft_deletes_metadata_row(cx: &mut TestAppContext) {
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
     cx.run_until_parked();
 
-    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
     // Open a draft with content, park it by pressing Cmd-N.
     let connection = StubAgentConnection::new();
     agent_ui::test_support::open_draft_with_connection(&panel, connection, cx);
     cx.run_until_parked();
     let draft_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
-    let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
-    let editor = thread_view.read_with(cx, |view, _| view.message_editor.clone());
-    editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("will be discarded", window, cx);
-    });
-    cx.run_until_parked();
+    agent_ui::test_support::type_draft_prompt(&panel, "will be discarded", cx);
     panel.update_in(cx, |panel, window, cx| {
         panel.new_thread(&NewThread, window, cx);
     });
     cx.run_until_parked();
 
     // The parked draft is visible.
-    let draft_visible = sidebar.read_with(cx, |sidebar, _| {
+    let draft_index = sidebar.read_with(cx, |sidebar, _| {
         sidebar
             .contents
             .entries
             .iter()
-            .any(|e| matches!(e, ListEntry::Thread(t) if t.metadata.thread_id == draft_id))
+            .position(|e| matches!(e, ListEntry::Thread(t) if t.metadata.thread_id == draft_id))
+            .expect("parked draft should be visible before removal")
     });
-    assert!(
-        draft_visible,
-        "parked draft should be visible before removal"
-    );
 
-    // Remove the parked draft via the sidebar's remove_draft.
+    // Select the parked draft and dispatch the action a real user would
+    // (Shift-Backspace, bound to `ArchiveSelectedThread`). The handler
+    // routes to `remove_draft` for parked drafts.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.remove_draft(draft_id, &workspace, window, cx);
+        sidebar.selection = Some(draft_index);
+        sidebar.archive_selected_thread(&agent_ui::ArchiveSelectedThread, window, cx);
     });
     cx.run_until_parked();
 
-    // Metadata row for the removed draft should be gone.
+    // Metadata row and persisted draft prompt should both be gone.
     cx.update(|_window, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         assert!(
             store.entry(draft_id).is_none(),
             "removed draft metadata should be deleted"
+        );
+        assert!(
+            agent_ui::draft_prompt_store::read(draft_id, cx).is_none(),
+            "removed draft's kvp prompt should also be deleted"
         );
     });
     // And the row should be gone from the sidebar.
@@ -8448,170 +8445,6 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
             .iter()
             .any(|s| s.contains("Main Project Thread")),
         "main project thread should still be visible, got: {entries_after:?}"
-    );
-}
-
-// TODO: Restore this test once linked worktree draft entries are re-implemented.
-// The draft-in-sidebar approach was reverted in favor of just the + button toggle.
-#[gpui::test]
-// TODO: NativeAgent doesn't connect synchronously in this test harness, so
-// the linked-worktree draft's metadata row isn't written before we check for
-// it. Either wire in agent_panel::init so NativeAgent has an LLM-free stub
-// path, or refactor the test to open a stub-backed draft in the linked
-// worktree panel.
-#[ignore = "pending stub-backed draft creation for linked worktree panels"]
-async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestAppContext) {
-    init_test(cx);
-    let fs = FakeFs::new(cx.executor());
-
-    fs.insert_tree(
-        "/project",
-        serde_json::json!({
-            ".git": {
-                "worktrees": {
-                    "feature-a": {
-                        "commondir": "../../",
-                        "HEAD": "ref: refs/heads/feature-a",
-                    },
-                },
-            },
-            "src": {},
-        }),
-    )
-    .await;
-
-    fs.insert_tree(
-        "/wt-feature-a",
-        serde_json::json!({
-            ".git": "gitdir: /project/.git/worktrees/feature-a",
-            "src": {},
-        }),
-    )
-    .await;
-
-    fs.add_linked_worktree_for_repo(
-        Path::new("/project/.git"),
-        false,
-        git::repository::Worktree {
-            path: PathBuf::from("/wt-feature-a"),
-            ref_name: Some("refs/heads/feature-a".into()),
-            sha: "aaa".into(),
-            is_main: false,
-            is_bare: false,
-        },
-    )
-    .await;
-
-    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
-
-    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
-
-    main_project
-        .update(cx, |p, cx| p.git_scans_complete(cx))
-        .await;
-    worktree_project
-        .update(cx, |p, cx| p.git_scans_complete(cx))
-        .await;
-
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
-    // Open the linked worktree as a separate workspace (simulates cmd-o).
-    let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(worktree_project.clone(), window, cx)
-    });
-    add_agent_panel(&worktree_workspace, cx);
-    cx.run_until_parked();
-
-    // Explicitly create a draft thread from the linked worktree workspace.
-    // Auto-created drafts use the group's first workspace (the main one),
-    // so a user-created draft is needed to make the linked worktree reachable.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.create_new_thread(&worktree_workspace, window, cx);
-    });
-    cx.run_until_parked();
-
-    // Switch back to the main workspace.
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        let main_ws = mw.workspaces().next().unwrap().clone();
-        mw.activate(main_ws, None, window, cx);
-    });
-    cx.run_until_parked();
-
-    sidebar.update_in(cx, |sidebar, _window, cx| {
-        sidebar.update_entries(cx);
-    });
-    cx.run_until_parked();
-
-    // The linked worktree workspace must be reachable from some sidebar entry.
-    let worktree_ws_id = worktree_workspace.entity_id();
-    let reachable: Vec<gpui::EntityId> = sidebar.read_with(cx, |sidebar, cx| {
-        let mw = multi_workspace.read(cx);
-        sidebar
-            .contents
-            .entries
-            .iter()
-            .flat_map(|entry| entry.reachable_workspaces(mw, cx))
-            .map(|ws| ws.entity_id())
-            .collect()
-    });
-    assert!(
-        reachable.contains(&worktree_ws_id),
-        "linked worktree workspace should be reachable, but reachable are: {reachable:?}"
-    );
-
-    // Find the parked draft sidebar row that belongs to the linked worktree.
-    // The linked worktree's panel has an active ephemeral draft, but because
-    // the user switched away to the main workspace, the linked worktree is
-    // no longer the MultiWorkspace's active workspace, so its draft is NOT
-    // the one we hide via the "active workspace" filter — it renders as a
-    // row.
-    let draft_ix = sidebar.read_with(cx, |sidebar, _| {
-        sidebar
-            .contents
-            .entries
-            .iter()
-            .position(|entry| match entry {
-                ListEntry::Thread(thread) if thread.is_draft => matches!(
-                    &thread.workspace,
-                    ThreadEntryWorkspace::Open(ws) if ws.entity_id() == worktree_ws_id
-                ),
-                _ => false,
-            })
-            .expect("expected a draft thread entry for the linked worktree")
-    });
-
-    // Verify the linked worktree workspace is still part of the
-    // MultiWorkspace.
-    assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        2
-    );
-
-    // Select the parked draft row and dismiss it with Shift-Backspace.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.selection = Some(draft_ix);
-        // `archive_selected_thread` routes to `remove_draft` when the
-        // selected entry is a parked draft.
-        sidebar.archive_selected_thread(&agent_ui::ArchiveSelectedThread, window, cx);
-    });
-    cx.run_until_parked();
-
-    // After dismissal, no draft row for the linked worktree should remain.
-    let has_draft_for_worktree = sidebar.read_with(cx, |sidebar, _| {
-        sidebar.contents.entries.iter().any(|entry| match entry {
-            ListEntry::Thread(thread) if thread.is_draft => matches!(
-                &thread.workspace,
-                ThreadEntryWorkspace::Open(ws) if ws.entity_id() == worktree_ws_id
-            ),
-            _ => false,
-        })
-    });
-    assert!(
-        !has_draft_for_worktree,
-        "draft row for the linked worktree should be gone after dismissal"
     );
 }
 
