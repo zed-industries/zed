@@ -20,16 +20,26 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 /// description, body, or filenames.
 pub(crate) fn xml_escape(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
-    for c in input.chars() {
-        match c {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            '"' => output.push_str("&quot;"),
-            '\'' => output.push_str("&apos;"),
-            _ => output.push(c),
-        }
+    let bytes = input.as_bytes();
+    let mut run_start = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        // UTF-8 continuation/leading bytes for multi-byte sequences all have
+        // the high bit set, so they cannot collide with these ASCII bytes.
+        // That makes a byte-level scan safe, and slicing the original `&str`
+        // at these indices preserves UTF-8 boundaries.
+        let entity = match b {
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'"' => "&quot;",
+            b'\'' => "&apos;",
+            _ => continue,
+        };
+        output.push_str(&input[run_start..i]);
+        output.push_str(entity);
+        run_start = i + 1;
     }
+    output.push_str(&input[run_start..]);
     output
 }
 
@@ -366,6 +376,14 @@ mod tests {
             xml_escape("<a href=\"x\">&'</a>"),
             "&lt;a href=&quot;x&quot;&gt;&amp;&apos;&lt;/a&gt;"
         );
+    }
+
+    #[test]
+    fn test_xml_escape_preserves_multibyte_utf8() {
+        let escaped = xml_escape("<a>café 🦀</a>");
+        assert_eq!(escaped, "&lt;a&gt;café 🦀&lt;/a&gt;");
+        assert!(escaped.contains("café"));
+        assert!(escaped.contains("🦀"));
     }
 
     #[gpui::test]
