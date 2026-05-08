@@ -160,7 +160,26 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
     // through candidates so that occurrences like `---trailing` or `----` are
     // skipped in favor of a later valid closer.
     let mut found = None;
+
+    // Handle the empty-frontmatter case where the closing `---` sits on the
+    // line immediately after the opener. `match_indices("\n---")` below would
+    // miss this because the `---` is at offset 0 of `frontmatter_region` and
+    // therefore not preceded by a newline within the region itself.
+    if frontmatter_region.starts_with("---") {
+        let after_dashes = &frontmatter_region[3..];
+        if after_dashes.is_empty() {
+            found = Some((0usize, 3usize));
+        } else if after_dashes.starts_with("\r\n") {
+            found = Some((0usize, 5usize));
+        } else if after_dashes.starts_with('\n') {
+            found = Some((0usize, 4usize));
+        }
+    }
+
     for (idx, _) in frontmatter_region.match_indices("\n---") {
+        if found.is_some() {
+            break;
+        }
         let after_dashes = idx + 4;
         let rest = &frontmatter_region[after_dashes..];
         let valid_terminator =
@@ -458,6 +477,38 @@ description: Test
                 .unwrap_err()
                 .to_string()
                 .contains("missing closing frontmatter delimiter")
+        );
+    }
+
+    #[test]
+    fn test_parse_empty_frontmatter_closing_on_next_line() {
+        // An empty frontmatter (closer immediately after the opener) is a real
+        // authoring case. Parsing should ultimately fail because the empty YAML
+        // doc lacks `name` and `description`, but the error must be the proper
+        // YAML/missing-field error rather than "missing closing frontmatter
+        // delimiter" — the closer is right there.
+        let content = "---\n---\nbody\n";
+
+        let result = parse_skill(
+            Path::new("/skills/test/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_chain = format!("{:?}", err);
+        assert!(
+            !err_chain.contains("missing closing frontmatter delimiter"),
+            "Error should NOT be the missing-closer error since the closer is present: {}",
+            err_chain
+        );
+        assert!(
+            err_chain.contains("missing field")
+                || err_chain.contains("name")
+                || err_chain.contains("description")
+                || err_chain.contains("Invalid YAML"),
+            "Error should mention missing name/description field or invalid YAML: {}",
+            err_chain
         );
     }
 
