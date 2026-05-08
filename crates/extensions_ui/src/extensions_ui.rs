@@ -1944,3 +1944,105 @@ impl Item for ExtensionsPage {
         f(*event)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use extension_host::ExtensionSettings;
+    use collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_extension_settings_default_auto_install() {
+        let settings = ExtensionSettings {
+            auto_install_extensions: HashMap::default(),
+            auto_update_extensions: HashMap::default(),
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_install("unknown-extension"));
+        assert!(settings.should_auto_update("unknown-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_install_false() {
+        let mut auto_install = HashMap::default();
+        auto_install.insert(Arc::from("test-extension"), false);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: auto_install,
+            auto_update_extensions: HashMap::default(),
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(!settings.should_auto_install("test-extension"));
+        assert!(settings.should_auto_install("other-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_install_true() {
+        let mut auto_install = HashMap::default();
+        auto_install.insert(Arc::from("test-extension"), true);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: auto_install,
+            auto_update_extensions: HashMap::default(),
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_install("test-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_update_false() {
+        let mut auto_update = HashMap::default();
+        auto_update.insert(Arc::from("test-extension"), false);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: HashMap::default(),
+            auto_update_extensions: auto_update,
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(!settings.should_auto_update("test-extension"));
+        assert!(settings.should_auto_update("other-extension"));
+    }
+
+    #[test]
+    fn test_extension_settings_auto_update_true() {
+        let mut auto_update = HashMap::default();
+        auto_update.insert(Arc::from("test-extension"), true);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: HashMap::default(),
+            auto_update_extensions: auto_update,
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_update("test-extension"));
+    }
+
+    #[test]
+    fn test_multiple_extensions_settings() {
+        let mut auto_install = HashMap::default();
+        auto_install.insert(Arc::from("ext1"), true);
+        auto_install.insert(Arc::from("ext2"), false);
+
+        let mut auto_update = HashMap::default();
+        auto_update.insert(Arc::from("ext1"), false);
+        auto_update.insert(Arc::from("ext3"), true);
+
+        let settings = ExtensionSettings {
+            auto_install_extensions: auto_install,
+            auto_update_extensions: auto_update,
+            granted_capabilities: Vec::new(),
+        };
+
+        assert!(settings.should_auto_install("ext1"));
+        assert!(!settings.should_auto_install("ext2"));
+        assert!(settings.should_auto_install("ext4"));
+
+        assert!(!settings.should_auto_update("ext1"));
+        assert!(settings.should_auto_update("ext3"));
+        assert!(settings.should_auto_update("ext2"));
+    }
+}
