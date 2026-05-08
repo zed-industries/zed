@@ -792,8 +792,6 @@ async fn test_collaborating_with_code_actions(
                 params.text_document.uri,
                 lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
-            assert_eq!(params.range.start, lsp::Position::new(0, 0));
-            assert_eq!(params.range.end, lsp::Position::new(0, 0));
             Ok(None)
         });
     cx_a.background_executor
@@ -808,14 +806,12 @@ async fn test_collaborating_with_code_actions(
     });
     cx_b.focus(&editor_b);
 
-    let mut requests = fake_language_server
-        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
-            assert_eq!(params.range.start, lsp::Position::new(1, 31));
-            assert_eq!(params.range.end, lsp::Position::new(1, 31));
 
             Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                 lsp::CodeAction {
@@ -860,10 +856,8 @@ async fn test_collaborating_with_code_actions(
                     ..Default::default()
                 },
             )]))
-        });
-    cx_a.background_executor
-        .advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
-    requests.next().await;
+        },
+    );
 
     // Toggle code actions and wait for them to display.
     editor_b.update_in(cx_b, |editor, window, cx| {

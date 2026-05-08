@@ -2652,7 +2652,7 @@ impl EditorElement {
 
         let icon_size = ui::IconSize::XSmall;
         let mut button = self.editor.update(cx, |editor, cx| {
-            if !editor.has_available_code_actions_for_selection() {
+            if !editor.has_cached_code_actions_at_cursor(cx) {
                 return None;
             }
             let active = editor

@@ -37601,6 +37601,232 @@ fn setup_syntax_highlighting_with_theme(
 }
 
 #[gpui::test]
+async fn test_viewport_code_action_cache_populated_on_edit(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let request_count = Arc::new(AtomicUsize::new(0));
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let ˇx = 1;
+            let y = 2;
+        }
+    "});
+
+    let count = request_count.clone();
+    cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, params, _| {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, atomic::Ordering::SeqCst);
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Extract variable".to_string(),
+                    kind: Some(lsp::CodeActionKind::REFACTOR),
+                    diagnostics: Some(vec![lsp::Diagnostic {
+                        range: lsp::Range::new(
+                            lsp::Position::new(
+                                params.range.start.line,
+                                params.range.start.character,
+                            ),
+                            lsp::Position::new(params.range.end.line, params.range.end.character),
+                        ),
+                        message: "unused variable".to_string(),
+                        ..Default::default()
+                    }]),
+                    ..Default::default()
+                },
+            )]))
+        }
+    });
+
+    cx.update_editor(|editor, _, _| {
+        assert!(editor.code_action_cache.buffers.is_empty());
+    });
+
+    cx.simulate_keystroke("a");
+    cx.executor().advance_clock(CODE_ACTIONS_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.code_action_cache.buffers.is_empty(),
+            "Cache should be populated after edit"
+        );
+    });
+    assert!(
+        request_count.load(atomic::Ordering::SeqCst) >= 1,
+        "At least one code action request should have been made"
+    );
+}
+
+#[gpui::test]
+async fn test_viewport_code_action_cache_hit_avoids_refetch(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let request_count = Arc::new(AtomicUsize::new(0));
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let ˇx = 1;
+        }
+    "});
+
+    let count = request_count.clone();
+    cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, _, _| {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, atomic::Ordering::SeqCst);
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Quick fix".to_string(),
+                    kind: Some(lsp::CodeActionKind::QUICKFIX),
+                    ..Default::default()
+                },
+            )]))
+        }
+    });
+
+    // First edit: populates the cache
+    cx.simulate_keystroke("a");
+    cx.executor().advance_clock(CODE_ACTIONS_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    let count_after_first = request_count.load(atomic::Ordering::SeqCst);
+    assert!(count_after_first >= 1);
+
+    // Move cursor within the same cached row range — should not trigger new LSP request
+    cx.update_editor(|editor, window, cx| {
+        editor.refresh_code_actions_for_viewport(
+            CodeActionRefreshReason::NewLinesShown,
+            window,
+            cx,
+        );
+    });
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let count_after_second = request_count.load(atomic::Ordering::SeqCst);
+    assert_eq!(
+        count_after_first, count_after_second,
+        "Cache hit should not trigger additional LSP requests"
+    );
+}
+
+#[gpui::test]
+async fn test_viewport_code_action_cache_invalidated_on_edit(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let request_count = Arc::new(AtomicUsize::new(0));
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let ˇx = 1;
+        }
+    "});
+
+    let count = request_count.clone();
+    cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, _, _| {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, atomic::Ordering::SeqCst);
+            Ok(Some(vec![]))
+        }
+    });
+
+    // First edit populates cache
+    cx.simulate_keystroke("a");
+    cx.executor().advance_clock(CODE_ACTIONS_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    let count_after_first = request_count.load(atomic::Ordering::SeqCst);
+    assert!(count_after_first >= 1);
+
+    // Second edit should invalidate and re-fetch
+    cx.simulate_keystroke("b");
+    cx.executor().advance_clock(CODE_ACTIONS_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    let count_after_second = request_count.load(atomic::Ordering::SeqCst);
+    assert!(
+        count_after_second > count_after_first,
+        "Edit should invalidate cache and trigger new LSP request"
+    );
+}
+
+#[gpui::test]
+async fn test_viewport_code_action_cache_returns_actions_for_row(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let ˇx = 1;
+            let y = 2;
+        }
+    "});
+
+    cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, _, _| async move {
+        Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+            lsp::CodeAction {
+                title: "Fix warning".to_string(),
+                kind: Some(lsp::CodeActionKind::QUICKFIX),
+                ..Default::default()
+            },
+        )]))
+    });
+
+    cx.simulate_keystroke("a");
+    cx.executor().advance_clock(CODE_ACTIONS_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let (buffer_snapshot, _) = snapshot
+            .buffer_line_for_row(MultiBufferRow(1))
+            .expect("row 1 should exist");
+        let buffer_id = buffer_snapshot.remote_id();
+
+        let actions = editor.cached_code_actions_for_row(buffer_id, 1);
+        assert!(
+            actions.is_some(),
+            "Should find cached code actions for row within fetched range"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;

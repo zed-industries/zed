@@ -106,28 +106,63 @@ impl Editor {
         let toggle_task = cx.spawn_in(window, async move |editor, cx| {
             let (resolved_tasks, debug_scenarios, task_context) = runnable_task.await?;
 
-            let code_actions = if let Some(CodeActionSource::RunMenu(_)) = &deployed_from {
-                None
-            } else {
-                editor.update(cx, |editor, _cx| match &editor.code_actions_for_selection {
-                    CodeActionsForSelection::None => None,
-                    CodeActionsForSelection::Fetching(task) => Some(task.clone()),
-                    CodeActionsForSelection::Ready(action_fetch_ready) => {
-                        Some(Task::ready(Some(action_fetch_ready.clone())).shared())
+            let code_actions: Option<Rc<[AvailableCodeAction]>> =
+                if let Some(CodeActionSource::RunMenu(_)) = &deployed_from {
+                    None
+                } else {
+                    let fetch_tasks = editor.update_in(cx, |editor, window, cx| {
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let line_end_column = buffer_snapshot.line_len(buffer_row);
+                        let start_offset =
+                            buffer_snapshot.point_to_offset(text::Point::new(buffer_row, 0));
+                        let end_offset = buffer_snapshot
+                            .point_to_offset(text::Point::new(buffer_row, line_end_column));
+                        let start_anchor = buffer_snapshot.anchor_before(start_offset);
+                        let end_anchor = buffer_snapshot.anchor_after(end_offset);
+
+                        let providers = editor.code_action_providers.clone();
+                        let tasks: Vec<_> = providers
+                            .iter()
+                            .map(|provider| {
+                                provider.code_actions(&buffer, start_anchor..end_anchor, window, cx)
+                            })
+                            .collect();
+                        (providers, tasks)
+                    })?;
+
+                    let (providers, tasks) = fetch_tasks;
+                    let all_results = future::join_all(tasks).await;
+
+                    let cached = editor.update(cx, |editor, _cx| {
+                        editor.cached_code_actions_for_row(buffer_id, buffer_row)
+                    })?;
+
+                    let mut actions: Vec<AvailableCodeAction> =
+                        cached.map(|rc| rc.to_vec()).unwrap_or_default();
+
+                    for (provider, provider_actions) in providers.iter().zip(all_results) {
+                        if let Some(provider_actions) = provider_actions.log_err() {
+                            for action in provider_actions {
+                                let is_duplicate = actions.iter().any(|a| {
+                                    a.action.server_id == action.server_id
+                                        && a.action.lsp_action == action.lsp_action
+                                });
+                                if !is_duplicate {
+                                    actions.push(AvailableCodeAction {
+                                        action,
+                                        provider: provider.clone(),
+                                    });
+                                }
+                            }
+                        }
                     }
-                })?
-            };
-            let code_actions = match code_actions {
-                Some(code_actions) => code_actions
-                    .await
-                    .filter(|ActionFetchReady { location, .. }| {
-                        let snapshot = location.buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                        let point_range = location.range.to_point(&snapshot);
-                        (point_range.start.row..=point_range.end.row).contains(&buffer_row)
-                    })
-                    .map(|ActionFetchReady { actions, .. }| actions),
-                None => None,
-            };
+
+                    if actions.is_empty() {
+                        None
+                    } else {
+                        Some(Rc::from(actions))
+                    }
+                };
 
             editor.update_in(cx, |editor, window, cx| {
                 let spawn_straight_away = quick_launch
@@ -267,11 +302,64 @@ impl Editor {
             && EditorSettings::get_global(cx).toolbar.code_actions
     }
 
-    pub fn has_available_code_actions_for_selection(&self) -> bool {
-        if let CodeActionsForSelection::Ready(ready) = &self.code_actions_for_selection {
-            !ready.actions.is_empty()
+    fn cursor_buffer_position_for_cache(&self, cx: &App) -> Option<(BufferId, BufferRow)> {
+        let newest = self.selections.newest_anchor();
+        if newest.head().diff_base_anchor().is_some() {
+            return None;
+        }
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let head_point = newest.head().to_point(&snapshot);
+        let (buffer_snapshot, range) =
+            snapshot.buffer_line_for_row(MultiBufferRow(head_point.row))?;
+        Some((buffer_snapshot.remote_id(), range.start.row))
+    }
+
+    pub fn has_cached_code_actions_at_cursor(&self, cx: &App) -> bool {
+        let Some((buffer_id, buffer_row)) = self.cursor_buffer_position_for_cache(cx) else {
+            return false;
+        };
+        self.code_action_cache
+            .buffers
+            .get(&buffer_id)
+            .is_some_and(|cached| {
+                cached
+                    .actions
+                    .iter()
+                    .any(|a| a.row_range.start <= buffer_row && buffer_row < a.row_range.end)
+            })
+    }
+
+    pub(crate) fn cursor_within_cached_code_action_rows(&self, cx: &App) -> bool {
+        let Some((buffer_id, buffer_row)) = self.cursor_buffer_position_for_cache(cx) else {
+            return false;
+        };
+        self.code_action_cache
+            .buffers
+            .get(&buffer_id)
+            .is_some_and(|cached| {
+                cached.fetched_rows.start <= buffer_row && buffer_row < cached.fetched_rows.end
+            })
+    }
+
+    pub(super) fn cached_code_actions_for_row(
+        &self,
+        buffer_id: BufferId,
+        buffer_row: BufferRow,
+    ) -> Option<Rc<[AvailableCodeAction]>> {
+        let cached = self.code_action_cache.buffers.get(&buffer_id)?;
+        let actions: Vec<AvailableCodeAction> = cached
+            .actions
+            .iter()
+            .filter(|a| {
+                let range = a.diagnostic_row_range.as_ref().unwrap_or(&a.row_range);
+                range.start <= buffer_row && buffer_row < range.end
+            })
+            .map(|a| a.available.clone())
+            .collect();
+        if actions.is_empty() {
+            None
         } else {
-            false
+            Some(Rc::from(actions))
         }
     }
 
@@ -324,92 +412,154 @@ impl Editor {
             .into_any_element()
     }
 
-    pub(super) fn refresh_code_actions_for_selection(
+    pub(crate) fn refresh_code_actions_for_viewport(
         &mut self,
+        reason: CodeActionRefreshReason,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.code_actions_for_selection = CodeActionsForSelection::Fetching(
-            cx.spawn_in(window, async move |editor, cx| {
-                cx.background_executor()
-                    .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
-                    .await;
+        if self.code_action_providers.is_empty() {
+            return;
+        }
 
-                let (start_buffer, start, _, end, _newest_selection) = editor
-                    .update(cx, |editor, cx| {
-                        let newest_selection = editor.selections.newest_anchor().clone();
-                        if newest_selection.head().diff_base_anchor().is_some() {
-                            return None;
-                        }
-                        let display_snapshot = editor.display_snapshot(cx);
-                        let newest_selection_adjusted =
-                            editor.selections.newest_adjusted(&display_snapshot);
-                        let buffer = editor.buffer.read(cx);
-
-                        let (start_buffer, start) =
-                            buffer.text_anchor_for_position(newest_selection_adjusted.start, cx)?;
-                        let (end_buffer, end) =
-                            buffer.text_anchor_for_position(newest_selection_adjusted.end, cx)?;
-
-                        Some((start_buffer, start, end_buffer, end, newest_selection))
-                    })
-                    .ok()
-                    .flatten()
-                    .filter(|(start_buffer, _, end_buffer, _, _)| start_buffer == end_buffer)?;
-
-                let (providers, tasks) = editor
-                    .update_in(cx, |editor, window, cx| {
-                        let providers = editor.code_action_providers.clone();
-                        let tasks = editor
-                            .code_action_providers
-                            .iter()
-                            .map(|provider| {
-                                provider.code_actions(&start_buffer, start..end, window, cx)
-                            })
-                            .collect::<Vec<_>>();
-                        (providers, tasks)
-                    })
-                    .ok()?;
-
-                let mut actions = Vec::new();
-                for (provider, provider_actions) in
-                    providers.into_iter().zip(future::join_all(tasks).await)
-                {
-                    if let Some(provider_actions) = provider_actions.log_err() {
-                        actions.extend(provider_actions.into_iter().map(|action| {
-                            AvailableCodeAction {
-                                action,
-                                provider: provider.clone(),
-                            }
-                        }));
-                    }
-                }
-
-                editor
-                    .update(cx, |editor, cx| {
-                        let new_actions = if actions.is_empty() {
-                            editor.code_actions_for_selection = CodeActionsForSelection::None;
-                            None
-                        } else {
-                            let new_actions = ActionFetchReady {
-                                location: Location {
-                                    buffer: start_buffer,
-                                    range: start..end,
-                                },
-                                actions: Rc::from(actions),
-                            };
-                            editor.code_actions_for_selection =
-                                CodeActionsForSelection::Ready(new_actions.clone());
-                            Some(new_actions)
-                        };
-                        cx.notify();
-                        new_actions
-                    })
-                    .ok()
-                    .flatten()
-            })
-            .shared(),
+        let debounce = match reason {
+            CodeActionRefreshReason::BufferEdited => CODE_ACTIONS_DEBOUNCE_TIMEOUT,
+            CodeActionRefreshReason::NewLinesShown => Duration::from_millis(100),
+            CodeActionRefreshReason::ProvidersChanged => Duration::ZERO,
+        };
+        let invalidate = matches!(
+            reason,
+            CodeActionRefreshReason::BufferEdited | CodeActionRefreshReason::ProvidersChanged
         );
+
+        let visible_ranges = self.visible_buffer_ranges(cx);
+        let multi_buffer = self.buffer.read(cx);
+        self.code_action_cache
+            .buffers
+            .retain(|id, _| multi_buffer.buffer(*id).is_some());
+        self.code_action_cache
+            .refresh_tasks
+            .retain(|id, _| multi_buffer.buffer(*id).is_some());
+
+        for (buffer_snapshot, visible_offset_range, _) in visible_ranges {
+            let buffer_id = buffer_snapshot.remote_id();
+            let Some(buffer_handle) = multi_buffer.buffer(buffer_id) else {
+                continue;
+            };
+
+            let visible_start_point = buffer_snapshot.offset_to_point(visible_offset_range.start.0);
+            let visible_end_point = buffer_snapshot.offset_to_point(visible_offset_range.end.0);
+            let visible_rows = visible_start_point.row..visible_end_point.row + 1;
+
+            let version = buffer_snapshot.version().clone();
+
+            let cache_covers_visible_rows = !invalidate
+                && self
+                    .code_action_cache
+                    .buffers
+                    .get(&buffer_id)
+                    .is_some_and(|cached| {
+                        cached.version == version
+                            && cached.fetched_rows.start <= visible_rows.start
+                            && cached.fetched_rows.end >= visible_rows.end
+                    });
+            if cache_covers_visible_rows {
+                continue;
+            }
+
+            let visible_row_count = visible_rows.end - visible_rows.start;
+            let margin = visible_row_count / 2;
+            let max_row = buffer_snapshot.max_point().row;
+            let fetch_start_row = visible_rows.start.saturating_sub(margin);
+            let fetch_end_row = (visible_rows.end + margin).min(max_row + 1);
+
+            let fetch_end_last_row = (fetch_end_row.saturating_sub(1)).min(max_row);
+            let fetch_start_offset =
+                buffer_snapshot.point_to_offset(text::Point::new(fetch_start_row, 0));
+            let fetch_end_offset = buffer_snapshot.point_to_offset(text::Point::new(
+                fetch_end_last_row,
+                buffer_snapshot.line_len(fetch_end_last_row),
+            ));
+
+            let start_anchor = buffer_snapshot.anchor_before(fetch_start_offset);
+            let end_anchor = buffer_snapshot.anchor_after(fetch_end_offset);
+
+            let task = cx.spawn_in(window, {
+                let buffer_handle = buffer_handle.clone();
+                async move |editor, cx| {
+                    if !debounce.is_zero() {
+                        cx.background_executor().timer(debounce).await;
+                    }
+
+                    let providers_and_tasks = editor
+                        .update_in(cx, |editor, window, cx| {
+                            let providers = editor.code_action_providers.clone();
+                            let tasks = providers
+                                .iter()
+                                .map(|provider| {
+                                    provider.code_actions(
+                                        &buffer_handle,
+                                        start_anchor..end_anchor,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            (providers, tasks)
+                        })
+                        .log_err();
+
+                    let Some((providers, tasks)) = providers_and_tasks else {
+                        return;
+                    };
+
+                    let all_results = future::join_all(tasks).await;
+
+                    editor
+                        .update(cx, |editor, cx| {
+                            let buffer_snapshot = buffer_handle.read(cx).snapshot();
+                            let current_version = buffer_snapshot.version().clone();
+                            let fetch_start_row = start_anchor.to_point(&buffer_snapshot).row;
+                            let fetch_end_row = end_anchor.to_point(&buffer_snapshot).row + 1;
+                            let fetch_rows = fetch_start_row..fetch_end_row;
+
+                            let mut cached_actions = Vec::new();
+                            for (provider, provider_actions) in providers.iter().zip(all_results) {
+                                if let Some(provider_actions) = provider_actions.log_err() {
+                                    for action in provider_actions {
+                                        let diagnostic_row_range =
+                                            extract_diagnostic_row_range(&action);
+                                        let start_point =
+                                            action.range.start.to_point(&buffer_snapshot);
+                                        let end_point = action.range.end.to_point(&buffer_snapshot);
+                                        cached_actions.push(CachedCodeAction {
+                                            row_range: start_point.row..end_point.row + 1,
+                                            diagnostic_row_range,
+                                            available: AvailableCodeAction {
+                                                action,
+                                                provider: provider.clone(),
+                                            },
+                                        });
+                                    }
+                                }
+                            }
+
+                            editor.code_action_cache.buffers.insert(
+                                buffer_id,
+                                BufferCodeActions {
+                                    version: current_version,
+                                    fetched_rows: fetch_rows,
+                                    actions: cached_actions,
+                                },
+                            );
+                            cx.notify();
+                        })
+                        .log_err();
+                }
+            });
+
+            self.code_action_cache.refresh_tasks.insert(buffer_id, task);
+        }
     }
 
     fn debug_scenarios(

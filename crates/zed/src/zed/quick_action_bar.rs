@@ -134,7 +134,7 @@ impl Render for QuickActionBar {
             editor_value.edit_predictions_enabled_at_cursor(cx);
         let supports_minimap = editor_value.supports_minimap(cx);
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
-        let has_available_code_actions = editor_value.has_available_code_actions_for_selection();
+        let has_available_code_actions = editor_value.has_cached_code_actions_at_cursor(cx);
         let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
 

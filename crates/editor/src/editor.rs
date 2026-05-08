@@ -1097,16 +1097,36 @@ pub(crate) struct DiffReviewOverlay {
     _subscription: Subscription,
 }
 
-enum CodeActionsForSelection {
-    None,
-    Fetching(Shared<Task<Option<ActionFetchReady>>>),
-    Ready(ActionFetchReady),
+#[derive(Default)]
+struct CodeActionCache {
+    buffers: HashMap<BufferId, BufferCodeActions>,
+    refresh_tasks: HashMap<BufferId, Task<()>>,
 }
 
-#[derive(Clone)]
-struct ActionFetchReady {
-    location: Location,
-    actions: Rc<[AvailableCodeAction]>,
+struct BufferCodeActions {
+    version: clock::Global,
+    fetched_rows: Range<BufferRow>,
+    actions: Vec<CachedCodeAction>,
+}
+
+struct CachedCodeAction {
+    row_range: Range<BufferRow>,
+    diagnostic_row_range: Option<Range<BufferRow>>,
+    available: AvailableCodeAction,
+}
+
+enum CodeActionRefreshReason {
+    NewLinesShown,
+    BufferEdited,
+    ProvidersChanged,
+}
+
+fn extract_diagnostic_row_range(action: &CodeAction) -> Option<Range<BufferRow>> {
+    let LspAction::Action(lsp_action) = &action.lsp_action else {
+        return None;
+    };
+    let diagnostic = lsp_action.diagnostics.as_ref()?.first()?;
+    Some(diagnostic.range.start.line..diagnostic.range.end.line + 1)
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
@@ -1203,7 +1223,7 @@ pub struct Editor {
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
-    code_actions_for_selection: CodeActionsForSelection,
+    code_action_cache: CodeActionCache,
     runnables_for_selection_toggle: Task<()>,
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
@@ -2209,7 +2229,11 @@ impl Editor {
                             editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             refresh_linked_ranges(editor, window, cx);
-                            editor.refresh_code_actions_for_selection(window, cx);
+                            editor.refresh_code_actions_for_viewport(
+                                CodeActionRefreshReason::ProvidersChanged,
+                                window,
+                                cx,
+                            );
                             editor.refresh_document_highlights(cx);
                         }
                     }
@@ -2458,7 +2482,7 @@ impl Editor {
             next_completion_id: 0,
             next_inlay_id: 0,
             code_action_providers,
-            code_actions_for_selection: CodeActionsForSelection::None,
+            code_action_cache: CodeActionCache::default(),
             runnables_for_selection_toggle: Task::ready(()),
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
@@ -18533,7 +18557,11 @@ impl Editor {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
-                self.refresh_code_actions_for_selection(window, cx);
+                self.refresh_code_actions_for_viewport(
+                    CodeActionRefreshReason::BufferEdited,
+                    window,
+                    cx,
+                );
                 self.refresh_single_line_folds(window, cx);
                 let snapshot = self.snapshot(window, cx);
                 self.refresh_matching_bracket_highlights(&snapshot, cx);
@@ -19971,6 +19999,7 @@ impl Editor {
         self.colorize_brackets(false, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         self.resolve_visible_code_lenses(cx);
+        self.refresh_code_actions_for_viewport(CodeActionRefreshReason::NewLinesShown, window, cx);
         if !self.buffer().read(cx).is_singleton() || self.needs_initial_data_update {
             self.needs_initial_data_update = false;
             self.update_lsp_data(None, window, cx);

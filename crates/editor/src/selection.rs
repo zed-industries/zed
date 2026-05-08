@@ -715,9 +715,17 @@ impl Editor {
 
             hide_hover(self, cx);
 
-            self.refresh_code_actions_for_selection(window, cx);
+            cx.notify();
             self.refresh_document_highlights(cx);
             refresh_linked_ranges(self, window, cx);
+
+            if !self.cursor_within_cached_code_action_rows(cx) {
+                self.refresh_code_actions_for_viewport(
+                    CodeActionRefreshReason::NewLinesShown,
+                    window,
+                    cx,
+                );
+            }
 
             self.refresh_selected_text_highlights(&display_map, false, window, cx);
             self.refresh_matching_bracket_highlights(&display_map, cx);
