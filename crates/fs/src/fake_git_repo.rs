@@ -11,8 +11,8 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
+        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitDiff,
+        CommitOptions, CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
         GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
         Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
@@ -26,7 +26,7 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool, time::Duration};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -77,6 +77,10 @@ pub struct FakeGitRepositoryState {
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
+    pub worktrees: Vec<Worktree>,
+    pub commit_diffs: HashMap<String, CommitDiff>,
+    pub commit_load_delay_ms: HashMap<String, u64>,
+    pub commit_load_calls: Vec<String>,
 }
 
 impl FakeGitRepositoryState {
@@ -101,6 +105,10 @@ impl FakeGitRepositoryState {
             commit_data: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
+            worktrees: Vec::new(),
+            commit_diffs: Default::default(),
+            commit_load_delay_ms: Default::default(),
+            commit_load_calls: Default::default(),
         }
     }
 }
@@ -196,10 +204,32 @@ impl GitRepository for FakeGitRepository {
 
     fn load_commit(
         &self,
-        _commit: String,
+        commit: String,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
+        let executor = self.executor.clone();
+        let fut = self.with_state_async(false, move |state| {
+            state.commit_load_calls.push(commit.clone());
+            let delay_ms = state
+                .commit_load_delay_ms
+                .get(&commit)
+                .copied()
+                .unwrap_or_default();
+            let diff = state
+                .commit_diffs
+                .get(&commit)
+                .cloned()
+                .context("commit diff not configured")?;
+            Ok((delay_ms, diff))
+        });
+        async move {
+            let (delay_ms, diff) = fut.await?;
+            if delay_ms > 0 {
+                executor.timer(Duration::from_millis(delay_ms)).await;
+            }
+            Ok(diff)
+        }
+        .boxed()
     }
 
     fn set_index_text(
