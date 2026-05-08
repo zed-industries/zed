@@ -3064,6 +3064,66 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_global_skills_dir_created_after_startup(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+
+        // Intentionally do NOT pre-create `skills_dir`. The watcher should
+        // attach to the deepest existing ancestor and react when the
+        // directory is created later.
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // No skills directory exists yet, so no skills should be loaded.
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            assert!(
+                state.skills.is_empty(),
+                "expected no skills before the global skills dir exists, got {:?}",
+                state.skills
+            );
+        });
+
+        // Create the global skills directory and a skill within it. The
+        // ancestor watcher should pick this up without a restart.
+        let new_skill_dir = skills_dir.join("late-skill");
+        fs.create_dir(&new_skill_dir).await.unwrap();
+        fs.insert_file(
+            &new_skill_dir.join("SKILL.md"),
+            b"---\nname: late-skill\ndescription: Created after startup\n---\n\nbody".to_vec(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project.entity_id()).unwrap();
+            assert_eq!(state.skills.len(), 1);
+            assert_eq!(state.skills[0].name, "late-skill");
+            assert_eq!(state.skills[0].description, "Created after startup");
+        });
+    }
+
+    #[gpui::test]
     async fn test_skills_appear_as_slash_commands(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
