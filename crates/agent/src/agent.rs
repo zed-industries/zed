@@ -498,13 +498,11 @@ impl NativeAgent {
                 }) as _,
                 cx,
             );
-            // Register the skill tool last so its `SkillsLookup` reflects
-            // the latest `state.skills` for this project at invocation
-            // time, rather than a snapshot taken when the thread was
-            // built. Without this, skills added after thread creation
-            // (e.g. by the SKILL.md watcher) would be advertised in the
-            // system prompt but rejected when the model invokes the
-            // `skill` tool by name.
+            // The `SkillsLookup::Dynamic` closure resolves `state.skills` at
+            // invocation time, so skills added or removed by the SKILL.md
+            // watcher after the thread is constructed are still visible to
+            // the model — without this, the catalog and tool would drift
+            // out of sync until the session was reopened.
             if cx.has_flag::<SkillsFeatureFlag>() {
                 thread.add_tool(SkillTool::new(skills_lookup_for_project(
                     weak.clone(),
