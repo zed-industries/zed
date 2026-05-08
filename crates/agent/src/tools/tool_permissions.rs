@@ -9,7 +9,7 @@ use project::{Project, ProjectPath};
 use settings::Settings;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -97,38 +97,15 @@ async fn canonicalize_with_ancestors(path: &Path, fs: &dyn Fs) -> Option<PathBuf
 }
 
 /// Returns the canonicalized global agent skills directory
-/// (`~/.agents/skills`), caching the result for the lifetime of the process.
+/// (`~/.agents/skills`).
 ///
-/// `canonicalize_with_ancestors` does async filesystem I/O on every call, and
-/// the global skills directory is effectively constant for the lifetime of the
-/// process. Caching avoids paying that cost on every file-tool invocation.
-///
-/// The cache stores `Option<PathBuf>` (matching the return type) so that a
-/// canonicalization failure is also cached — re-attempting on every call
-/// would defeat the purpose.
+/// Recomputed on every call rather than cached: the underlying
+/// `canonicalize_with_ancestors` is a few `stat` syscalls (which the OS
+/// page cache already handles), and a process-wide cache would either go
+/// stale if the user moved `~/.agents/skills`, or pollute across tests
+/// using different `FakeFs` instances.
 async fn canonical_global_skills_dir(fs: &dyn Fs) -> Option<PathBuf> {
-    static CACHE: OnceLock<Mutex<Option<Option<PathBuf>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(None));
-
-    {
-        let guard = cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(cached) = guard.as_ref() {
-            return cached.clone();
-        }
-    }
-
-    // Compute outside the lock — `canonicalize_with_ancestors` is async and
-    // performs I/O, so we must not hold the lock across `.await`.
-    let canonical = canonicalize_with_ancestors(&agent_skills::global_skills_dir(), fs).await;
-
-    let mut guard = cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // Another caller may have raced us; first-wins is fine.
-    let entry = guard.get_or_insert_with(|| canonical.clone());
-    entry.clone()
+    canonicalize_with_ancestors(&agent_skills::global_skills_dir(), fs).await
 }
 
 fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[PathBuf]) -> bool {
