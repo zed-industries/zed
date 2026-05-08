@@ -23,14 +23,6 @@ impl Editor {
         self.use_autoclose = autoclose;
     }
 
-    pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
-        self.use_auto_surround = auto_surround;
-    }
-
-    pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
-        self.auto_replace_emoji_shortcode = auto_replace;
-    }
-
     pub fn replay_insert_event(
         &mut self,
         text: &str,
@@ -69,90 +61,6 @@ impl Editor {
         }
 
         self.handle_input(text, window, cx);
-    }
-
-    pub fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut pending: String = window
-            .pending_input_keystrokes()
-            .into_iter()
-            .flatten()
-            .filter_map(|keystroke| keystroke.key_char.clone())
-            .collect();
-
-        if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
-            pending = "".to_string();
-        }
-
-        let existing_pending = self
-            .text_highlights(HighlightKey::PendingInput, cx)
-            .map(|(_, ranges)| ranges.to_vec());
-        if existing_pending.is_none() && pending.is_empty() {
-            return;
-        }
-        let transaction =
-            self.transact(window, cx, |this, window, cx| {
-                let selections = this
-                    .selections
-                    .all::<MultiBufferOffset>(&this.display_snapshot(cx));
-                let edits = selections
-                    .iter()
-                    .map(|selection| (selection.end..selection.end, pending.clone()));
-                this.edit(edits, cx);
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(selections.into_iter().enumerate().map(|(ix, sel)| {
-                        sel.start + ix * pending.len()..sel.end + ix * pending.len()
-                    }));
-                });
-                if let Some(existing_ranges) = existing_pending {
-                    let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
-                    this.edit(edits, cx);
-                }
-            });
-
-        let snapshot = self.snapshot(window, cx);
-        let ranges = self
-            .selections
-            .all::<MultiBufferOffset>(&snapshot.display_snapshot)
-            .into_iter()
-            .map(|selection| {
-                snapshot.buffer_snapshot().anchor_after(selection.end)
-                    ..snapshot
-                        .buffer_snapshot()
-                        .anchor_before(selection.end + pending.len())
-            })
-            .collect();
-
-        if pending.is_empty() {
-            self.clear_highlights(HighlightKey::PendingInput, cx);
-        } else {
-            self.highlight_text(
-                HighlightKey::PendingInput,
-                ranges,
-                HighlightStyle {
-                    underline: Some(UnderlineStyle {
-                        thickness: px(1.),
-                        color: None,
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                cx,
-            );
-        }
-
-        self.ime_transaction = self.ime_transaction.or(transaction);
-        if let Some(transaction) = self.ime_transaction {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.group_until_transaction(transaction, cx);
-            });
-        }
-
-        if self
-            .text_highlights(HighlightKey::PendingInput, cx)
-            .is_none()
-        {
-            self.ime_transaction.take();
-        }
     }
 
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1039,6 +947,90 @@ impl Editor {
         self.replace_selections("", None, window, cx, true);
     }
 
+    pub(super) fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut pending: String = window
+            .pending_input_keystrokes()
+            .into_iter()
+            .flatten()
+            .filter_map(|keystroke| keystroke.key_char.clone())
+            .collect();
+
+        if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
+            pending = "".to_string();
+        }
+
+        let existing_pending = self
+            .text_highlights(HighlightKey::PendingInput, cx)
+            .map(|(_, ranges)| ranges.to_vec());
+        if existing_pending.is_none() && pending.is_empty() {
+            return;
+        }
+        let transaction =
+            self.transact(window, cx, |this, window, cx| {
+                let selections = this
+                    .selections
+                    .all::<MultiBufferOffset>(&this.display_snapshot(cx));
+                let edits = selections
+                    .iter()
+                    .map(|selection| (selection.end..selection.end, pending.clone()));
+                this.edit(edits, cx);
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(selections.into_iter().enumerate().map(|(ix, sel)| {
+                        sel.start + ix * pending.len()..sel.end + ix * pending.len()
+                    }));
+                });
+                if let Some(existing_ranges) = existing_pending {
+                    let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
+                    this.edit(edits, cx);
+                }
+            });
+
+        let snapshot = self.snapshot(window, cx);
+        let ranges = self
+            .selections
+            .all::<MultiBufferOffset>(&snapshot.display_snapshot)
+            .into_iter()
+            .map(|selection| {
+                snapshot.buffer_snapshot().anchor_after(selection.end)
+                    ..snapshot
+                        .buffer_snapshot()
+                        .anchor_before(selection.end + pending.len())
+            })
+            .collect();
+
+        if pending.is_empty() {
+            self.clear_highlights(HighlightKey::PendingInput, cx);
+        } else {
+            self.highlight_text(
+                HighlightKey::PendingInput,
+                ranges,
+                HighlightStyle {
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }
+
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self
+            .text_highlights(HighlightKey::PendingInput, cx)
+            .is_none()
+        {
+            self.ime_transaction.take();
+        }
+    }
+
     pub(super) fn linked_editing_ranges_for(
         &self,
         query_range: Range<text::Anchor>,
@@ -1283,6 +1275,10 @@ impl Editor {
         });
     }
 
+    fn set_use_auto_surround(&mut self, auto_surround: bool) {
+        self.use_auto_surround = auto_surround;
+    }
+
     fn find_possible_emoji_shortcode_at_position(
         snapshot: &MultiBufferSnapshot,
         position: Point,
@@ -1393,6 +1389,11 @@ impl Editor {
         map.insert(buffer_id, linked_ranges);
         self.linked_edit_ranges = linked_editing_ranges::LinkedEditingRanges(map);
         Some(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
+        self.auto_replace_emoji_shortcode = auto_replace;
     }
 }
 
