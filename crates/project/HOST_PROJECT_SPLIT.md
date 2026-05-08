@@ -23,7 +23,10 @@
 > - `BufferStore` — Phase 0 partial (inbound rpc forwards moved out;
 >   `create_buffer_for_peer` and `LocalBufferStore::save_local_buffer` /
 >   `local_worktree_entry_changed` still use `downstream_client`).
-> - `WorktreeStore` — in progress.
+> - `WorktreeStore` — Phase 0 done. `downstream_client`,
+>   `shared`/`unshared`, `send_project_updates` removed. Strong/Weak
+>   handle retention and the `retain_worktrees` flag still live on
+>   `WorktreeStore` (Phase 1 deferred — see Phase 1 GC notes below).
 > - `BufferStore` Phase 1, `GitStore`, `LspStore` — not started.
 > - `ImageStore` — already dumb; per-project state will live on
 >   `Project` when we have a host registry to point at.
@@ -160,6 +163,44 @@ per-project state move to `Project`. Methods that operate on the
 host-shaped state stay on the store. Some methods (e.g.
 `find_or_create_worktree`) bridge — they call into the host registry to
 load, then attach the result to `Project`'s strong handle list.
+
+### Phase 1 GC subtlety (worktrees / buffers)
+
+The Strong/Weak distinction on `WorktreeStore` (and the analogous
+`opened_buffers` weak-handle behavior on `BufferStore`) encodes a real
+GC policy that needs to migrate intact:
+
+- A *visible* worktree is retained by the store unconditionally.
+- An *invisible* worktree (e.g. a single file opened outside any
+  visible root) is retained only when the project is collab-shared.
+- When the project becomes shared, all worktrees are promoted to
+  strong. When unshared, invisible worktrees are demoted to weak so
+  they can be garbage-collected once their last external strong holder
+  drops them.
+
+Naïvely moving strong handles to `Project` ("project always pins all
+its worktrees") *changes* this policy: invisible worktrees would
+outlive their callers, leaking until the project itself drops. Phase 1
+for `WorktreeStore` therefore isn't just relocation — it requires a
+conscious migration of the GC policy. Options:
+
+1. **Mirror today.** `Project` holds a `Vec<WorktreeHandle>` with the
+   same Strong/Weak distinction, plus its own `retain_worktrees` flag.
+   The store becomes a pure weak registry. No semantic change, but no
+   real simplification either.
+2. **Always-strong on `Project`, observe-release for cleanup.**
+   `Project` keeps strong refs for everything; it watches for the
+   *last external* user releasing an invisible worktree and drops it
+   itself. Different mechanism, similar outcome, but more moving
+   parts.
+3. **Defer.** Leave the Strong/Weak machinery on the store for now;
+   revisit once Phase 2 (shared `Host`) forces the GC question by
+   making "who keeps a worktree alive" cross-project.
+
+The current state is option 3 — Phase 0 of `WorktreeStore` is done,
+but the retention machinery stays on the store. The same applies to
+`BufferStore`'s `opened_buffers: HashMap<BufferId, OpenBuffer>` (which
+holds weak entries) and its `shared_buffers` per-peer state.
 
 ## What we're deleting
 
