@@ -1167,13 +1167,13 @@ impl ChannelStore {
                         .iter()
                         .filter_map(|user_id| {
                             users
-                                .binary_search_by_key(&user_id, |user| &user.id)
+                                .binary_search_by_key(&user_id, |user| &user.legacy_id)
                                 .ok()
                                 .map(|ix| users[ix].clone())
                         })
                         .collect();
 
-                    participants.sort_by_key(|u| u.id);
+                    participants.sort_by_key(|u| u.legacy_id);
 
                     this.channel_participants
                         .insert(ChannelId(entry.channel_id), participants);
