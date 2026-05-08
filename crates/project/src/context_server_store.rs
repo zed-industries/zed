@@ -320,6 +320,15 @@ impl ContextServerStore {
         session.add_entity_request_handler(Self::handle_get_context_server_command);
     }
 
+    /// Set the back-reference to the owning `Project`. Used by
+    /// `Project::local` / `remote` / `from_join_project_response` after
+    /// the `Project` entity is created (the `ContextServerStore` itself
+    /// is constructed inside `Host::local` etc., before the `Project`
+    /// exists).
+    pub fn set_project(&mut self, weak_project: WeakEntity<Project>) {
+        self.project = Some(weak_project);
+    }
+
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient) {
         if let ContextServerStoreState::Local {
             downstream_client, ..

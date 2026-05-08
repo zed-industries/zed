@@ -1196,13 +1196,55 @@ impl Project {
         flags: LocalProjectFlags,
         cx: &mut App,
     ) -> Entity<Self> {
+        let host = host::Host::local(
+            client.clone(),
+            node,
+            user_store,
+            languages.clone(),
+            fs,
+            env,
+            flags.watch_global_configs,
+            cx,
+        );
         cx.new(|cx: &mut Context<Self>| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
-            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
-            let worktree_store =
-                cx.new(|cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx)));
+
+            // Pull entity refs out of `Host` so we can subscribe and run
+            // Project-level wiring without holding a borrow of `cx`.
+            let (
+                worktree_store,
+                buffer_store,
+                breakpoint_store,
+                dap_store,
+                image_store,
+                git_store,
+                settings_observer,
+                lsp_store,
+                context_server_store,
+            ) = {
+                let host = host.read(cx);
+                (
+                    host.worktree_store.clone(),
+                    host.buffer_store.clone(),
+                    host.breakpoint_store.clone(),
+                    host.dap_store.clone(),
+                    host.image_store.clone(),
+                    host.git_store.clone(),
+                    host.settings_observer.clone(),
+                    host.lsp_store.clone(),
+                    host.context_server_store.clone(),
+                )
+            };
+
+            // Now that the `Project` entity exists, fill in the back-ref
+            // on `ContextServerStore` (Host construction left it `None`).
+            let weak_self = cx.weak_entity();
+            context_server_store.update(cx, |store, _| {
+                store.set_project(weak_self);
+            });
+
             if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
@@ -1212,162 +1254,20 @@ impl Project {
                     cx,
                 );
             }
+
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
-
-            let weak_self = cx.weak_entity();
-            let context_server_store = cx.new(|cx| {
-                ContextServerStore::local(
-                    worktree_store.clone(),
-                    Some(weak_self.clone()),
-                    false,
-                    cx,
-                )
-            });
-
-            let environment = cx.new(|cx| {
-                ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
-            });
-            let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
-            let toolchain_store = cx.new(|cx| {
-                ToolchainStore::local(
-                    languages.clone(),
-                    worktree_store.clone(),
-                    environment.clone(),
-                    manifest_tree.clone(),
-                    cx,
-                )
-            });
-
-            let buffer_store = cx.new(|cx| BufferStore::local(worktree_store.clone(), cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
-
-            let bookmark_store =
-                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
-
-            let breakpoint_store =
-                cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
             cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
                 .detach();
-
-            let dap_store = cx.new(|cx| {
-                DapStore::new_local(
-                    client.http_client(),
-                    node.clone(),
-                    fs.clone(),
-                    environment.clone(),
-                    toolchain_store.read(cx).as_language_toolchain_store(),
-                    worktree_store.clone(),
-                    breakpoint_store.clone(),
-                    false,
-                    cx,
-                )
-            });
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
-
-            let image_store = cx.new(|cx| ImageStore::local(worktree_store.clone(), cx));
             cx.subscribe(&image_store, Self::on_image_store_event)
                 .detach();
-
-            let prettier_store = cx.new(|cx| {
-                PrettierStore::new(
-                    node.clone(),
-                    fs.clone(),
-                    languages.clone(),
-                    worktree_store.clone(),
-                    cx,
-                )
-            });
-
-            let git_store = cx.new(|cx| {
-                GitStore::local(
-                    &worktree_store,
-                    buffer_store.clone(),
-                    environment.clone(),
-                    fs.clone(),
-                    cx,
-                )
-            });
             cx.subscribe(&git_store, Self::on_git_store_event).detach();
-
-            let task_store = cx.new(|cx| {
-                TaskStore::local(
-                    buffer_store.downgrade(),
-                    worktree_store.clone(),
-                    toolchain_store.read(cx).as_language_toolchain_store(),
-                    environment.clone(),
-                    git_store.clone(),
-                    cx,
-                )
-            });
-
-            let settings_observer = cx.new(|cx| {
-                SettingsObserver::new_local(
-                    fs.clone(),
-                    worktree_store.clone(),
-                    task_store.clone(),
-                    flags.watch_global_configs,
-                    cx,
-                )
-            });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
-
-            let lsp_store = cx.new(|cx| {
-                LspStore::new_local(
-                    buffer_store.clone(),
-                    worktree_store.clone(),
-                    prettier_store.clone(),
-                    toolchain_store
-                        .read(cx)
-                        .as_local_store()
-                        .expect("Toolchain store to be local")
-                        .clone(),
-                    environment.clone(),
-                    manifest_tree,
-                    languages.clone(),
-                    client.http_client(),
-                    fs.clone(),
-                    cx,
-                )
-            });
-
-            let agent_server_store = cx.new(|cx| {
-                AgentServerStore::local(
-                    node.clone(),
-                    fs.clone(),
-                    environment.clone(),
-                    client.http_client(),
-                    cx,
-                )
-            });
-
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
-
-            let host = cx.new(|_| host::Host {
-                fs: fs.clone(),
-                languages: languages.clone(),
-                node: Some(node.clone()),
-                user_store: user_store.clone(),
-                collab_client: client.clone(),
-                remote_client: None,
-                environment: environment.clone(),
-                snippets: snippets.clone(),
-                worktree_store: worktree_store.clone(),
-                buffer_store: buffer_store.clone(),
-                image_store: image_store.clone(),
-                lsp_store: lsp_store.clone(),
-                dap_store: dap_store.clone(),
-                breakpoint_store: breakpoint_store.clone(),
-                bookmark_store: bookmark_store.clone(),
-                git_store: git_store.clone(),
-                task_store: task_store.clone(),
-                settings_observer: settings_observer.clone(),
-                agent_server_store: agent_server_store.clone(),
-                context_server_store: context_server_store.clone(),
-                toolchain_store: Some(toolchain_store.clone()),
-            });
 
             Self {
                 host,
