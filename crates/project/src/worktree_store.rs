@@ -1056,19 +1056,25 @@ impl WorktreeStore {
         }
     }
 
-    /// Sets up `observe_updates` on each worktree so that local changes stream
-    /// out to the given downstream peer. Used by the listener side
-    /// (`Project::send_worktree_project_updates` and `HeadlessProject`) when
-    /// they want to start mirroring this store's worktrees outbound.
+    /// Sets up `observe_updates` on the supplied worktrees so that local
+    /// changes stream out to the given downstream peer. Used by the
+    /// listener side (`Project::send_worktree_project_updates` and
+    /// `HeadlessProject`) when they want to start mirroring outbound.
+    ///
+    /// Callers pass *their* worktrees (filtered to a single Project's
+    /// view) rather than iterating the host store's full set: in Phase 2
+    /// the host store may contain worktrees owned by sibling Projects,
+    /// and observing those under another Project's `project_id` would
+    /// silently leak their updates into the wrong collab share.
     ///
     /// Idempotent (calling on a worktree replaces its observer).
     pub fn observe_worktrees_for_downstream(
         &mut self,
+        worktrees: impl IntoIterator<Item = Entity<Worktree>>,
         downstream_client: AnyProtoClient,
         project_id: u64,
         cx: &mut Context<Self>,
     ) {
-        let worktrees = self.worktrees().collect::<Vec<_>>();
         for worktree in worktrees {
             worktree.update(cx, |worktree, cx| {
                 let client = downstream_client.clone();
@@ -1093,9 +1099,17 @@ impl WorktreeStore {
         }
     }
 
-    /// Stops downstream observation on every worktree.
-    pub fn stop_observing_worktrees(&mut self, cx: &mut Context<Self>) {
-        for worktree in self.worktrees() {
+    /// Stops downstream observation on the supplied worktrees. Mirrors
+    /// `observe_worktrees_for_downstream`'s shape: callers pass *their*
+    /// worktrees (filtered to a single Project's view) so that, in Phase
+    /// 2, ending one Project's collab share doesn't tear down a sibling
+    /// Project's observers on the same shared host store.
+    pub fn stop_observing_worktrees(
+        &mut self,
+        worktrees: impl IntoIterator<Item = Entity<Worktree>>,
+        cx: &mut Context<Self>,
+    ) {
+        for worktree in worktrees {
             worktree.update(cx, |worktree, _| worktree.stop_observing_updates());
         }
     }

@@ -2674,10 +2674,12 @@ impl Project {
     /// re-entering a collab-shared state.
     fn send_worktree_project_updates(&mut self, project_id: u64, cx: &mut Context<Self>) {
         let downstream_client: AnyProtoClient = self.collab_client.clone().into();
-        let metadata = self
-            .worktree_store(cx)
-            .read(cx)
-            .worktree_metadata_protos(cx);
+        // Use this Project's filtered metadata, not the host's full set:
+        // in Phase 2, the shared `WorktreeStore` may contain worktrees
+        // owned by sibling Projects on the same host, and announcing
+        // them under our `project_id` would silently leak those
+        // worktrees into our collab share.
+        let metadata = self.worktree_metadata_protos(cx);
         let update = proto::UpdateProject {
             project_id,
             worktrees: metadata,
@@ -2696,8 +2698,14 @@ impl Project {
                 update_project.await?;
             }
             this.update(cx, |this, cx| {
+                let worktrees: Vec<_> = this.worktrees(cx).collect();
                 this.worktree_store(cx).update(cx, |store, cx| {
-                    store.observe_worktrees_for_downstream(downstream_client, project_id, cx);
+                    store.observe_worktrees_for_downstream(
+                        worktrees,
+                        downstream_client,
+                        project_id,
+                        cx,
+                    );
                 });
                 anyhow::Ok(())
             })
@@ -2895,8 +2903,12 @@ impl Project {
             self.client_state = ProjectClientState::Local;
             self.collaborators.clear();
             self.client_subscriptions.clear();
+            // Stop observing only THIS project's worktrees: in Phase 2
+            // sharing, the host's `WorktreeStore` may also hold sibling
+            // Projects' worktrees that are still actively shared.
+            let our_worktrees: Vec<_> = self.worktrees(cx).collect();
             self.worktree_store(cx).update(cx, |store, cx| {
-                store.stop_observing_worktrees(cx);
+                store.stop_observing_worktrees(our_worktrees, cx);
             });
             self.release_invisible_worktrees(cx);
             self.forget_shared_buffers();

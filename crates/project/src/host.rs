@@ -203,34 +203,18 @@ impl Host {
         watch_global_configs: bool,
         cx: &mut App,
     ) -> Entity<Self> {
-        // The `HostRegistry` infrastructure (HostKey, get_or_build) is in
-        // place for Phase 2 sharing, but actual dedup is gated behind
-        // making the underlying stores tolerant of multi-`Project`
-        // lifecycles on a shared host: today, `WorktreeStore::add` /
-        // `BufferStore::add_buffer` / etc. assume a single tenant on
-        // join, and a second `Project::local` reaching into the shared
-        // stores breaks tests like `collab::test_project_reconnect`.
-        // Each call still builds a fresh `Host` until that work is
-        // done; the registry call site below is intentionally a no-op
-        // dedup but keeps the structural wiring exercised so Phase 2
-        // can flip a single switch.
-        let host = Self::build_local(
-            client,
-            node,
-            user_store,
-            languages,
-            fs,
-            env,
-            watch_global_configs,
-            cx,
-        );
-        if !cx.has_global::<HostRegistry>() {
-            cx.set_global(HostRegistry::default());
-        }
-        cx.global_mut::<HostRegistry>()
-            .hosts
-            .insert(HostKey::Local, host.downgrade());
-        host
+        HostRegistry::get_or_build(cx, HostKey::Local, move |cx| {
+            Self::build_local(
+                client,
+                node,
+                user_store,
+                languages,
+                fs,
+                env,
+                watch_global_configs,
+                cx,
+            )
+        })
     }
 
     fn build_local(
