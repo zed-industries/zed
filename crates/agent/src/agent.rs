@@ -2516,6 +2516,7 @@ fn apply_skill_budget(skills: &[Skill]) -> (Vec<Skill>, Vec<SkillLoadError>) {
     let mut kept = Vec::with_capacity(skills.len());
     let mut errors = Vec::new();
     let mut total_size = 0usize;
+    let mut budget_exceeded = false;
 
     for skill in skills {
         if skill.disable_model_invocation {
@@ -2524,10 +2525,16 @@ fn apply_skill_budget(skills: &[Skill]) -> (Vec<Skill>, Vec<SkillLoadError>) {
         }
 
         let entry_size = skill.name.len() + skill.description.len();
-        if total_size.saturating_add(entry_size) <= MAX_SKILL_DESCRIPTIONS_SIZE {
+        if !budget_exceeded && total_size.saturating_add(entry_size) <= MAX_SKILL_DESCRIPTIONS_SIZE
+        {
             total_size += entry_size;
             kept.push(skill.clone());
         } else {
+            // Once any model-invocable skill overflows the budget, stop
+            // packing entirely so the cutoff is deterministic by sort order
+            // rather than dependent on which skills happen to be small
+            // enough to fit in the remaining space.
+            budget_exceeded = true;
             errors.push(SkillLoadError {
                 path: skill.skill_file_path.clone(),
                 message: format!(
@@ -2715,6 +2722,70 @@ mod internal_tests {
                 error.message,
             );
         }
+    }
+
+    #[test]
+    fn test_apply_skill_budget_stops_packing_after_first_overflow() {
+        // Once a model-invocable skill overflows the budget, no later
+        // skills should be admitted, even if they're small enough to fit
+        // in the remaining sliver. This keeps the cutoff deterministic by
+        // sort order rather than dependent on individual skill sizes.
+        let half_description = "a".repeat(MAX_SKILL_DESCRIPTIONS_SIZE / 2);
+        let big_description = "b".repeat(MAX_SKILL_DESCRIPTIONS_SIZE);
+        let small_description = "c".repeat(100);
+
+        let first = Skill {
+            name: "skill-01-first".to_string(),
+            description: half_description,
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/skill-01-first"),
+            skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
+            content: "body".to_string(),
+            disable_model_invocation: false,
+        };
+        let second = Skill {
+            name: "skill-02-overflows".to_string(),
+            description: big_description,
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/skill-02-overflows"),
+            skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
+            content: "body".to_string(),
+            disable_model_invocation: false,
+        };
+        let third = Skill {
+            name: "skill-03-would-fit".to_string(),
+            description: small_description,
+            source: SkillSource::Global,
+            directory_path: PathBuf::from("/skills/skill-03-would-fit"),
+            skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
+            content: "body".to_string(),
+            disable_model_invocation: false,
+        };
+
+        // Sanity-check the test setup: the third skill is small enough
+        // that a greedy packer would have squeezed it in alongside the
+        // first one.
+        let leftover_after_first =
+            MAX_SKILL_DESCRIPTIONS_SIZE - (first.name.len() + first.description.len());
+        assert!(
+            third.name.len() + third.description.len() <= leftover_after_first,
+            "third skill must fit in the leftover sliver for this test to be meaningful",
+        );
+
+        let skills = vec![first.clone(), second.clone(), third.clone()];
+        let (kept, errors) = apply_skill_budget(&skills);
+
+        let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(kept_names, vec![first.name.as_str()]);
+
+        let error_paths: Vec<&Path> = errors.iter().map(|e| e.path.as_path()).collect();
+        assert_eq!(
+            error_paths,
+            vec![
+                second.skill_file_path.as_path(),
+                third.skill_file_path.as_path(),
+            ],
+        );
     }
 
     #[test]
