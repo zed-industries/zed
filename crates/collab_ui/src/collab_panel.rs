@@ -2913,6 +2913,13 @@ impl CollabPanel {
                 if show_auto_watch || show_copy {
                     Some(
                         h_flex()
+                            .when_some(channel_link, |this, channel_link| {
+                                this.child(
+                                    CopyButton::new("copy-channel-link", channel_link)
+                                        .visible_on_hover("section-header")
+                                        .tooltip_label("Copy Channel Link"),
+                                )
+                            })
                             .when(has_auto_watch_flag, |this| {
                                 this.child(
                                     IconButton::new(
@@ -2950,13 +2957,6 @@ impl CollabPanel {
                                                 .ok();
                                         },
                                     )),
-                                )
-                            })
-                            .when_some(channel_link, |this, channel_link| {
-                                this.child(
-                                    CopyButton::new("copy-channel-link", channel_link)
-                                        .visible_on_hover("section-header")
-                                        .tooltip_label("Copy Channel Link"),
                                 )
                             })
                             .into_any_element(),
