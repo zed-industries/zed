@@ -717,8 +717,10 @@ impl NativeAgent {
         // worktrees pick up their skills without restarting.
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
         let worktree_store = project.read(cx).worktree_store();
-        let project_skills_tasks: Vec<_> = if skills_enabled {
-            worktrees
+        let project_skills_task = if skills_enabled {
+            let project_skills_futures: Vec<
+                futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,
+            > = worktrees
                 .iter()
                 .filter_map(|worktree| {
                     let worktree_id = worktree.read(cx).id();
@@ -740,24 +742,28 @@ impl NativeAgent {
                         .map(|local| local.scan_complete());
                     let skills_dir = abs_path.join(project_skills_relative_path());
                     let fs = fs.clone();
-                    Some(cx.background_spawn(async move {
-                        if let Some(scan_complete) = scan_complete {
-                            scan_complete.await;
+                    Some(
+                        async move {
+                            if let Some(scan_complete) = scan_complete {
+                                scan_complete.await;
+                            }
+                            load_skills_from_directory(
+                                &fs,
+                                &skills_dir,
+                                SkillSource::ProjectLocal {
+                                    worktree_id,
+                                    worktree_root_name,
+                                },
+                            )
+                            .await
                         }
-                        load_skills_from_directory(
-                            &fs,
-                            &skills_dir,
-                            SkillSource::ProjectLocal {
-                                worktree_id,
-                                worktree_root_name,
-                            },
-                        )
-                        .await
-                    }))
+                        .boxed(),
+                    )
                 })
-                .collect()
+                .collect();
+            cx.background_spawn(async move { future::join_all(project_skills_futures).await })
         } else {
-            Vec::new()
+            Task::ready(Vec::new())
         };
         let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
             prompt_store.read_with(cx, |prompt_store, cx| {
@@ -810,7 +816,7 @@ impl NativeAgent {
 
             // Load and merge skills
             let global_skills = global_skills_task.await;
-            let project_skills_results = future::join_all(project_skills_tasks).await;
+            let project_skills_results = project_skills_task.await;
             let (skills, mut skill_errors) =
                 merge_skills(global_skills, project_skills_results.into_iter().flatten());
 
