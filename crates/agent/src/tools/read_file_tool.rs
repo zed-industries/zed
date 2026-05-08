@@ -18,6 +18,26 @@ fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent
     LanguageModelToolResultContent::from(e.to_string())
 }
 
+/// Build a vector where `offsets[N]` is the byte offset at which line `N+1`
+/// begins (1-indexed). Line 1 begins at offset 0, and each `\n` we see
+/// advances to the next line. This mirrors how
+/// `Buffer::text_for_range(Point::new(start_row, 0)..Point::new(end_row, 0))`
+/// works on the buffer-backed path: callers slice between line starts (or to
+/// end-of-content for the trailing line).
+///
+/// `content.bytes()` is correct here even for UTF-8 — `\n` is a single byte
+/// (0x0A) and never appears inside multi-byte UTF-8 sequences, so the byte
+/// offsets we record are valid string boundaries.
+fn line_start_offsets(content: &str) -> Vec<usize> {
+    let mut offsets = vec![0];
+    for (i, byte) in content.bytes().enumerate() {
+        if byte == b'\n' {
+            offsets.push(i + 1);
+        }
+    }
+    offsets
+}
+
 /// Read a file under the global skills directory directly via the filesystem,
 /// bypassing project/worktree resolution. Used for skill resources that live
 /// outside any worktree.
@@ -42,16 +62,30 @@ async fn read_global_skill_file(
 
     let result_text = if start_line.is_some() || end_line.is_some() {
         // Mirror the line-range semantics of the buffer-backed path: 1-indexed,
-        // start clamped to >= 1, end exclusive of the next line.
+        // start clamped to >= 1, end exclusive of the next line, and always
+        // returning at least one line. Slicing on byte offsets preserves
+        // original line terminators (e.g. CRLF stays CRLF) and includes the
+        // trailing newline of the last returned line when present, matching
+        // the behavior of `Buffer::text_for_range`.
         let start = start_line.unwrap_or(1).max(1);
-        let start_idx = (start as usize).saturating_sub(1);
-        let end_idx = end_line
-            .map(|end| (end as usize).max(start as usize))
-            .unwrap_or(usize::MAX);
-        let lines: Vec<&str> = content.lines().collect();
-        let slice_end = end_idx.min(lines.len());
-        let slice_start = start_idx.min(slice_end);
-        lines[slice_start..slice_end].join("\n")
+        let mut end = end_line.unwrap_or(u32::MAX);
+        if end < start {
+            end = start;
+        }
+
+        let line_starts = line_start_offsets(&content);
+        // Line N's start (1-indexed) is `line_starts[N - 1]`. To slice up to
+        // but not including the start of line `end + 1`, we look up
+        // `line_starts[(end + 1) - 1]` = `line_starts[end]`. When `end` is
+        // past the last recorded line start, slice to end-of-content.
+        let start_idx = (start as usize).saturating_sub(1).min(line_starts.len());
+        let end_byte = line_starts
+            .get(end as usize)
+            .copied()
+            .unwrap_or(content.len());
+        let start_byte = line_starts.get(start_idx).copied().unwrap_or(content.len());
+        let start_byte = start_byte.min(end_byte);
+        content[start_byte..end_byte].to_string()
     } else {
         content
     };
@@ -1489,7 +1523,189 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "line two\nline three");
+        // Mirrors the buffer-backed path: lines 2-3 inclusive, WITH trailing
+        // newline of the last returned line.
+        assert_eq!(text.as_ref(), "line two\nline three\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_zero_start(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(0),
+                    end_line: Some(2),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "Line 1\nLine 2\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_zero_end(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(1),
+                    end_line: Some(0),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "Line 1\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_inverted(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(3),
+                    end_line: Some(2),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "Line 3\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_crlf(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"line one\r\nline two\r\nline three\r\n".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(1),
+                    end_line: Some(2),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "line one\r\nline two\r\n");
     }
 
     #[gpui::test]
