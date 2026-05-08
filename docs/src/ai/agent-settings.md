@@ -31,6 +31,7 @@ You can assign distinct and specific models for the following AI-powered feature
 - Thread summary model: Used for generating thread summaries
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
+- Subagent model: Used for subagents spawned by the Agent Panel
 
 ```json [settings]
 {
@@ -50,12 +51,16 @@ You can assign distinct and specific models for the following AI-powered feature
     "thread_summary_model": {
       "provider": "google",
       "model": "gemini-2.0-flash"
+    },
+    "subagent_model": {
+      "provider": "zed.dev",
+      "model": "gpt-5-mini"
     }
   }
 }
 ```
 
-> If a custom model isn't set for one of these features, they automatically fall back to using the default model.
+> If a custom model isn't set for one of these features, they automatically fall back to using the default model. Subagents are the exception: when `subagent_model` isn't set, subagents inherit the model and model settings from their parent thread.
 
 ### Alternative Models for Inline Assists {#alternative-assists}
 
