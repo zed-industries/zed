@@ -1,10 +1,9 @@
 use anyhow::Result;
-use buffer_diff::{BufferDiff, BufferDiffUpdate};
+use buffer_diff::{BufferDiff, BufferDiffUpdate, build_diff_options};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
-    Anchor, Buffer, Capability, DiffOptions, LanguageRegistry, OffsetRangeExt as _, Point,
-    TextBuffer,
+    Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, TextBuffer,
 };
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
@@ -462,6 +461,12 @@ impl PendingDiff {
 
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
+        let language = self.new_buffer.read(cx).language().cloned();
+        let diff_options = build_diff_options(
+            language.as_ref().map(|language| language.name()),
+            language.as_ref().map(|language| language.default_scope()),
+            cx,
+        );
         self.update_diff = cx.spawn(async move |diff, cx| {
             let update = cx
                 .background_spawn({
@@ -474,7 +479,7 @@ impl PendingDiff {
                             base_snapshot.as_rope(),
                             snapshot,
                             hunks,
-                            Some(DiffOptions::default()),
+                            diff_options,
                         )
                     }
                 })

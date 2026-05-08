@@ -61,8 +61,17 @@ impl BufferDiffUpdate {
         let hunks = edits.into_iter().map(|edit| {
             let buffer_range = buffer_snapshot.anchor_after(edit.new.start)
                 ..buffer_snapshot.anchor_after(edit.new.end);
+            let base_line_count = line_count_for_range(base_snapshot, edit.old.clone());
+            let buffer_line_count =
+                line_count_for_range(buffer_snapshot.as_rope(), edit.new.clone());
 
-            let (base_word_diffs, buffer_word_diffs) = if let Some(options) = &diff_options {
+            let (base_word_diffs, buffer_word_diffs) = if let Some(options) = &diff_options
+                && base_line_count > 0
+                && base_line_count == buffer_line_count
+                && base_line_count <= options.max_word_diff_line_count
+                && edit.old.len() <= options.max_word_diff_len
+                && edit.new.len() <= options.max_word_diff_len
+            {
                 word_diffs(
                     base_snapshot,
                     edit.old.clone(),
@@ -1142,7 +1151,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
     }
 }
 
-fn build_diff_options(
+pub fn build_diff_options(
     language: Option<LanguageName>,
     language_scope: Option<language::LanguageScope>,
     cx: &App,
@@ -1502,10 +1511,13 @@ fn process_patch_hunk(
 
     let base_line_count = line_item_count.saturating_sub(buffer_row_range.len());
 
+    let buffer_byte_range = buffer_range.to_offset(buffer);
     let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
         && !buffer_row_range.is_empty()
         && base_line_count == buffer_row_range.len()
         && diff_options.max_word_diff_line_count >= base_line_count
+        && diff_base_byte_range.len() <= diff_options.max_word_diff_len
+        && buffer_byte_range.len() <= diff_options.max_word_diff_len
     {
         word_diffs(
             diff_base,
@@ -1526,6 +1538,16 @@ fn process_patch_hunk(
         base_word_diffs,
         buffer_word_diffs,
     }
+}
+
+fn line_count_for_range(text: &Rope, range: Range<usize>) -> usize {
+    if range.is_empty() {
+        return 0;
+    }
+
+    let start = text.offset_to_point(range.start);
+    let end = text.offset_to_point(range.end);
+    (end.row - start.row) as usize + usize::from(end.column > 0)
 }
 
 fn word_diffs(
