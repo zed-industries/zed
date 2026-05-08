@@ -31,7 +31,7 @@ You can assign distinct and specific models for the following AI-powered feature
 - Thread summary model: Used for generating thread summaries
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
-- Subagent model: Used for subagents spawned by the Agent Panel
+- Subagent model: Used for subagents spawned by the Agent Panel. If not set, the subagent will inherit the model settings from the parent thread.
 
 ```json [settings]
 {
