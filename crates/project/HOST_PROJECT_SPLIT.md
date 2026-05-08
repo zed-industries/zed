@@ -20,9 +20,31 @@
 > - `BreakpointStore`, `TaskStore`, `SettingsObserver`, `DapStore` —
 >   Phase 0 done.
 > - `BookmarkStore` — already dumb, no work needed.
-> - `BufferStore` — Phase 0 partial (inbound rpc forwards moved out;
->   `create_buffer_for_peer` and `LocalBufferStore::save_local_buffer` /
->   `local_worktree_entry_changed` still use `downstream_client`).
+> - `BufferStore` — Phase 0 *and* Phase 1 done. `shared_buffers`,
+>   `create_buffer_for_peer`, `serialize_project_transaction_for_peer`,
+>   `forget_shared_buffers` and friends, plus `register_shared_lsp_handle`
+>   moved to `Project` / `HeadlessProject` behind a new
+>   `PeerBufferAccess` trait. The cascade rpc handlers
+>   (`handle_apply_code_action`, `handle_apply_code_action_kind`,
+>   `handle_format_buffers`, `handle_open_buffer_for_symbol`,
+>   `handle_register_buffer_with_language_servers`,
+>   `handle_open_commit_message_buffer`, plus the BufferStore handlers
+>   `handle_synchronize_buffers` / `handle_close_buffer` /
+>   `handle_reload_buffers`) all moved to `Project` /
+>   `HeadlessProject`. `LspCommand` gained a parallel
+>   `response_to_proto_project` trait method (default delegates via
+>   `lsp_store.update`) so the impls that need `PeerBufferAccess`
+>   (PerformRename, GetReferences, the location-link family,
+>   GoToParentModule, GetLspRunnables) can override it; their
+>   `PerformRename`/`GoToParentModule`/`GetLspRunnables` rpc
+>   registrations moved from `LspStore::handle_lsp_command::<T>` to
+>   `Project::handle_lsp_command_with_project::<T>` /
+>   `HeadlessProject::handle_lsp_command_with_project::<T>`. The
+>   `LocalBufferStore::save_local_buffer` /
+>   `local_worktree_entry_changed` paths now emit
+>   `BufferStoreEvent::UpdateBufferFileForwarded` /
+>   `BufferStoreEvent::BufferSavedForwarded`. The `downstream_client`
+>   field, `pub fn shared`, and `pub fn unshared` are gone.
 > - `WorktreeStore` — Phase 0 *and* Phase 1 done. `downstream_client`,
 >   `shared`/`unshared`, `send_project_updates`, `retain_worktrees`
 >   flag, and the `WorktreeHandle::Strong/Weak` storage all moved out.
@@ -337,7 +359,17 @@ order:
    delete the `downstream_client` field. `handle_open_commit_message_buffer`
    is the remaining cascade item; it stays on `GitStore` until
    `BufferStore` Phase 1 moves `create_buffer_for_peer` to `Project`.
-9. `BufferStore` Phase 1 — the move that everything above unblocks.
+9. `BufferStore` Phase 1 *(done)* — `shared_buffers` and the per-peer
+   methods moved to `Project` / `HeadlessProject` behind a new
+   `PeerBufferAccess` trait. The cascade rpc handlers (LspStore /
+   GitStore / BufferStore inbound) followed. `LspCommand::response_to_proto`
+   gained a parallel `response_to_proto_project` (default delegates via
+   `lsp_store.update`); the few impls that need per-peer buffer state
+   override it. Phase 0 finish removed the residual
+   `BufferStore::downstream_client` field by converting
+   `LocalBufferStore::save_local_buffer` and `local_worktree_entry_changed`
+   to event-based broadcast. After this commit, `BufferStore` has no
+   collab awareness and no per-project state.
 10. `ImageStore` — already dumb; just needs per-project state on
     Project once that pattern is established.
 
