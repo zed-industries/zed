@@ -298,6 +298,14 @@ fn show_hover(
     editor.hover_state.closest_mouse_distance = None;
 
     if !ignore_timeout {
+        // Don't request again if the location is the same as the previous request
+        if let Some(triggered_from) = &editor.hover_state.triggered_from
+            && triggered_from
+                .cmp(&anchor, &snapshot.buffer_snapshot())
+                .is_eq()
+        {
+            return None;
+        }
         if same_info_hover(editor, &snapshot, anchor)
             || same_diagnostic_hover(editor, &snapshot, anchor)
             || editor.hover_state.diagnostic_popover.is_some()
@@ -309,14 +317,7 @@ fn show_hover(
         }
     }
 
-    // Don't request again if the location is the same as the previous request
-    if let Some(triggered_from) = &editor.hover_state.triggered_from
-        && triggered_from
-            .cmp(&anchor, &snapshot.buffer_snapshot())
-            .is_eq()
-    {
-        return None;
-    }
+    editor.hover_state.triggered_from = Some(anchor);
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
     let all_diagnostics_active = editor.all_diagnostics_active();

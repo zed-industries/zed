@@ -358,6 +358,7 @@ pub fn show_link_definition(
     } else {
         editor.hide_hovered_link(cx)
     }
+    hovered_link_state.last_trigger_point = trigger_point.clone();
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
