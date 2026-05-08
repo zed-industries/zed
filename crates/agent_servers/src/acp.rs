@@ -2192,7 +2192,7 @@ pub mod test_support {
         });
 
         let agent_server_store =
-            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+            project.read_with(cx, |project, cx| project.agent_server_store(cx).downgrade());
 
         let connection = cx.update(|cx| {
             AcpConnection::new_for_test(
@@ -2549,7 +2549,7 @@ mod tests {
         });
 
         let agent_server_store =
-            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+            project.read_with(cx, |project, cx| project.agent_server_store(cx).downgrade());
 
         let connection = cx.update(|cx| {
             AcpConnection::new_for_test(

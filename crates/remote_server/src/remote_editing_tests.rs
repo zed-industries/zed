@@ -2308,7 +2308,7 @@ async fn test_remote_external_agent_server(
         .unwrap();
     let names = project.update(cx, |project, cx| {
         project
-            .agent_server_store()
+            .agent_server_store(cx)
             .read(cx)
             .external_agents()
             .map(|name| name.to_string())
@@ -2339,7 +2339,7 @@ async fn test_remote_external_agent_server(
     cx.run_until_parked();
     let names = project.update(cx, |project, cx| {
         project
-            .agent_server_store()
+            .agent_server_store(cx)
             .read(cx)
             .external_agents()
             .map(|name| name.to_string())
@@ -2348,7 +2348,7 @@ async fn test_remote_external_agent_server(
     pretty_assertions::assert_eq!(names, ["foo"]);
     let command = project
         .update(cx, |project, cx| {
-            project.agent_server_store().update(cx, |store, cx| {
+            project.agent_server_store(cx).update(cx, |store, cx| {
                 store
                     .get_external_agent(&"foo".into())
                     .unwrap()

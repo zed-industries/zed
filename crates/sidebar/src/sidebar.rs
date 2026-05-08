@@ -989,7 +989,7 @@ impl Sidebar {
 
         let agent_server_store = workspaces
             .first()
-            .map(|ws| ws.read(cx).project().read(cx).agent_server_store().clone());
+            .map(|ws| ws.read(cx).project().read(cx).agent_server_store(cx).clone());
 
         let query = self.filter_editor.read(cx).text(cx);
 
@@ -4607,7 +4607,7 @@ impl Sidebar {
             .read(cx)
             .project()
             .read(cx)
-            .agent_server_store()
+            .agent_server_store(cx)
             .clone();
 
         let workspace_handle = active_workspace.downgrade();
@@ -4634,7 +4634,7 @@ impl Sidebar {
                 ws.read(cx)
                     .project()
                     .read(cx)
-                    .agent_server_store()
+                    .agent_server_store(cx)
                     .read(cx)
                     .has_external_agents()
             })
@@ -4746,7 +4746,7 @@ impl Sidebar {
             .read(cx)
             .project()
             .read(cx)
-            .agent_server_store()
+            .agent_server_store(cx)
             .downgrade();
 
         let agent_connection_store = agent_panel.read(cx).connection_store().downgrade();

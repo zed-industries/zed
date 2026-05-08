@@ -73,7 +73,7 @@ pub struct AgentConnectionStore {
 
 impl AgentConnectionStore {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
-        let agent_server_store = project.read(cx).agent_server_store().clone();
+        let agent_server_store = project.read(cx).agent_server_store(cx).clone();
         let subscription = cx.subscribe(&agent_server_store, Self::handle_agent_servers_updated);
         Self {
             project,
@@ -256,7 +256,7 @@ impl AgentConnectionStore {
     ) {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
 
-        let agent_server_store = self.project.read(cx).agent_server_store().clone();
+        let agent_server_store = self.project.read(cx).agent_server_store(cx).clone();
         let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
 
         let connect_task = server.connect(delegate, self.project.clone(), cx);

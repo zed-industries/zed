@@ -696,7 +696,7 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let agent_server_store = project.read(cx).agent_server_store().clone();
+        let agent_server_store = project.read(cx).agent_server_store(cx).clone();
         let subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentUiFontSize>(window, Self::agent_ui_font_size_changed),
@@ -1891,7 +1891,7 @@ impl ConversationView {
                 // Have "node" command use Zed's managed Node runtime by default
                 if cmd == "node" {
                     let resolved_node_runtime = project.update(cx, |project, cx| {
-                        let agent_server_store = project.agent_server_store().clone();
+                        let agent_server_store = project.agent_server_store(cx).clone();
                         agent_server_store.update(cx, |store, cx| {
                             store.node_runtime().map(|node_runtime| {
                                 cx.background_spawn(async move { node_runtime.binary_path().await })
@@ -3527,7 +3527,7 @@ pub(crate) mod tests {
         fail.store(false, Ordering::SeqCst);
         project.update(cx, |project, cx| {
             project
-                .agent_server_store()
+                .agent_server_store(cx)
                 .update(cx, |_store, cx| cx.emit(project::AgentServersUpdated));
         });
         cx.run_until_parked();

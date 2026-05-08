@@ -1549,7 +1549,7 @@ impl AgentPanel {
             return;
         }
 
-        let agent_server_store = self.project.read(cx).agent_server_store().clone();
+        let agent_server_store = self.project.read(cx).agent_server_store(cx).clone();
         let context_server_store = self.project.read(cx).context_server_store();
         let fs = self.fs.clone();
 
@@ -2195,7 +2195,7 @@ impl AgentPanel {
             };
 
             self.project.update(cx, |project, cx| {
-                project.agent_server_store().update(cx, |store, cx| {
+                project.agent_server_store(cx).update(cx, |store, cx| {
                     let manifest_refs: Vec<_> = manifests
                         .iter()
                         .map(|(id, manifest)| (id.as_ref(), manifest.as_ref()))
@@ -2898,7 +2898,7 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let agent_server_store = self.project.read(cx).agent_server_store().clone();
+        let agent_server_store = self.project.read(cx).agent_server_store(cx).clone();
 
         let focus_handle = self.focus_handle(cx);
 
@@ -6748,7 +6748,7 @@ mod tests {
         panel.update(&mut cx, |panel, cx| {
             panel.project.update(cx, |project, cx| {
                 project
-                    .agent_server_store()
+                    .agent_server_store(cx)
                     .update(cx, |_store, cx| cx.emit(project::AgentServersUpdated));
             });
         });
