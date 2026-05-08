@@ -172,8 +172,10 @@ impl AgentTool for SkillTool {
 
             // Render the envelope synchronously while we still have a
             // borrow of `self.skills`, so we can drop the borrow before
-            // suspending across the authorization await.
-            let rendered = {
+            // suspending across the authorization await. Capture the
+            // SKILL.md path here too so it can key the auth context after
+            // we've dropped the borrow.
+            let (rendered, skill_file_path) = {
                 let Some(skill) = self.find_skill(&input.name) else {
                     return Err(SkillToolOutput::Error {
                         error: format!(
@@ -188,17 +190,21 @@ impl AgentTool for SkillTool {
                         ),
                     });
                 };
-                render_skill_envelope(skill)
+                let path_string = skill.skill_file_path.to_string_lossy().into_owned();
+                (render_skill_envelope(skill), path_string)
             };
 
             // Activations go through the standard tool-permission flow so
             // they participate in the same Allow-Once / Always-Allow UX as
-            // every other built-in tool. The skill name is the input value
-            // so the user can say "always allow this specific skill"
-            // distinct from "always allow any skill".
+            // every other built-in tool. The auth context value is the
+            // skill's absolute SKILL.md path so that "always allow this
+            // specific skill" is keyed to a specific file: editing the
+            // SKILL.md will change the path's content but not the path,
+            // so for content-change re-trust we'd want a hash too — but
+            // at minimum, two skills with the same name from different
+            // locations get independent trust grants.
             let authorize = cx.update(|cx| {
-                let context =
-                    crate::ToolPermissionContext::new(Self::NAME, vec![input.name.clone()]);
+                let context = crate::ToolPermissionContext::new(Self::NAME, vec![skill_file_path]);
                 event_stream.authorize(self.initial_title(Ok(input), cx), context, cx)
             });
             authorize.await.map_err(|e| SkillToolOutput::Error {
@@ -568,6 +574,59 @@ mod tests {
             panic!("expected Found");
         };
         assert!(rendered.contains("<skill_content name=\"my-skill\">"));
+    }
+
+    #[gpui::test]
+    async fn test_skill_tool_auth_context_uses_skill_file_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Force a prompt so we can capture the auth event.
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                SkillTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Confirm),
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let skill = create_test_skill("my-skill", "A test skill", "# Body");
+        let expected_path = skill.skill_file_path.to_string_lossy().into_owned();
+        let skills = Arc::new(vec![skill]);
+        let tool = Arc::new(SkillTool::new(skills));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({ "name": "my-skill" }));
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let _task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        let context = auth
+            .context
+            .as_ref()
+            .expect("skill tool should attach a ToolPermissionContext");
+        assert_eq!(context.tool_name, SkillTool::NAME);
+        // The auth context's input values must key off the absolute SKILL.md
+        // path, not the skill name. This way, two skills sharing a name
+        // (e.g. a project-local override of a global skill) get independent
+        // trust grants.
+        assert_eq!(
+            context.input_values,
+            vec![expected_path.clone()],
+            "auth context should be keyed by the SKILL.md path, got: {:?}",
+            context.input_values,
+        );
+        assert!(
+            !context.input_values.iter().any(|v| v == "my-skill"),
+            "auth context must not be keyed by the skill name: {:?}",
+            context.input_values,
+        );
     }
 
     #[gpui::test]
