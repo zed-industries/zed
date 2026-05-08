@@ -65,24 +65,44 @@ impl NotifySourceKey {
             caller_line: event.caller_line,
         }
     }
-
-    pub(super) fn label(self) -> String {
-        format!(
-            "{} {}:{}",
-            short_type_name(self.entity_type),
-            file_name(self.caller_file),
-            self.caller_line
-        )
-    }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct NotifySourceStats {
     count: usize,
     entity_id: EntityId,
     caller_column: u32,
     registered_window_count: usize,
     live_window_count: usize,
+}
+
+impl NotifySourceStats {
+    pub(super) fn from_event(event: &NotifyEvent) -> Self {
+        Self {
+            count: 0,
+            entity_id: event.entity_id,
+            caller_column: event.caller_column,
+            registered_window_count: event.registered_window_count,
+            live_window_count: event.live_window_count,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            count: 0,
+            entity_id: EntityId::from(0),
+            caller_column: 0,
+            registered_window_count: 0,
+            live_window_count: 0,
+        }
+    }
+
+    fn update_from_event(&mut self, event: &NotifyEvent) {
+        self.entity_id = event.entity_id;
+        self.caller_column = event.caller_column;
+        self.registered_window_count = event.registered_window_count;
+        self.live_window_count = event.live_window_count;
+    }
 }
 
 pub(super) fn top_notify_sources(
@@ -92,7 +112,10 @@ pub(super) fn top_notify_sources(
 ) -> Vec<(NotifySourceKey, NotifySourceStats)> {
     let mut counts = FxHashMap::default();
     for event in devtools.notifications.iter() {
-        if now.duration_since(event.timestamp) > SOURCE_WINDOW {
+        let Some(age) = event_age(now, event.timestamp) else {
+            continue;
+        };
+        if age > SOURCE_WINDOW {
             continue;
         }
 
@@ -101,23 +124,44 @@ pub(super) fn top_notify_sources(
             continue;
         }
 
-        let stats = counts.entry(key).or_insert(NotifySourceStats {
-            count: 0,
-            entity_id: event.entity_id,
-            caller_column: event.caller_column,
-            registered_window_count: event.registered_window_count,
-            live_window_count: event.live_window_count,
-        });
+        let stats = counts
+            .entry(key)
+            .or_insert_with(|| NotifySourceStats::from_event(event));
         stats.count += 1;
-        stats.entity_id = event.entity_id;
-        stats.caller_column = event.caller_column;
-        stats.registered_window_count = event.registered_window_count;
-        stats.live_window_count = event.live_window_count;
+        stats.update_from_event(event);
+    }
+
+    for source in &devtools.pinned_notify_sources {
+        if devtools.hidden_notify_sources.contains(source) {
+            continue;
+        }
+
+        counts.entry(*source).or_insert_with(|| {
+            devtools
+                .notify_source_last_stats(*source)
+                .unwrap_or_else(NotifySourceStats::empty)
+        });
     }
 
     let mut counts = counts.into_iter().collect::<Vec<_>>();
-    counts.sort_by(|(_, left), (_, right)| right.count.cmp(&left.count));
-    counts.truncate(limit);
+    counts.sort_by(|(left_source, left), (right_source, right)| {
+        let left_pinned = devtools.pinned_notify_sources.contains(left_source);
+        let right_pinned = devtools.pinned_notify_sources.contains(right_source);
+        right_pinned
+            .cmp(&left_pinned)
+            .then_with(|| right.count.cmp(&left.count))
+            .then_with(|| {
+                short_type_name(left_source.entity_type)
+                    .cmp(short_type_name(right_source.entity_type))
+            })
+            .then_with(|| left_source.caller_file.cmp(right_source.caller_file))
+            .then_with(|| left_source.caller_line.cmp(&right_source.caller_line))
+    });
+    let visible_pinned_count = counts
+        .iter()
+        .filter(|(source, _)| devtools.pinned_notify_sources.contains(source))
+        .count();
+    counts.truncate(limit + visible_pinned_count);
     counts
 }
 
@@ -133,7 +177,10 @@ pub(super) fn hidden_notify_sources(
         .collect::<FxHashMap<_, _>>();
 
     for event in devtools.notifications.iter() {
-        if now.duration_since(event.timestamp) > SOURCE_WINDOW {
+        let Some(age) = event_age(now, event.timestamp) else {
+            continue;
+        };
+        if age > SOURCE_WINDOW {
             continue;
         }
 
@@ -161,34 +208,25 @@ pub(super) fn format_notify_source(
     index: usize,
     source: NotifySourceKey,
     stats: NotifySourceStats,
+    total_count: usize,
 ) -> String {
-    format!(
-        "notify {} {} {}:{}:{} x{} reg {} live {} id {}",
-        index,
-        short_type_name(source.entity_type),
+    let caller = format!(
+        "{}:{}:{}",
         file_name(source.caller_file),
         source.caller_line,
-        stats.caller_column,
+        stats.caller_column
+    );
+    format!(
+        "{:<4} {:<18} {:<21} {:>4} {:>5} {:>7} {:>7} id {}",
+        index,
+        short_type_name(source.entity_type),
+        caller,
         stats.count,
-        stats.registered_window_count,
+        total_count,
         stats.live_window_count,
+        stats.registered_window_count,
         stats.entity_id.as_u64(),
     )
-}
-
-pub(super) fn pinned_notify_recent_count(
-    devtools: &GpuiDevTools,
-    now: Instant,
-    pinned_source: NotifySourceKey,
-) -> usize {
-    devtools
-        .notifications
-        .iter()
-        .filter(|event| {
-            now.duration_since(event.timestamp) <= SOURCE_WINDOW
-                && NotifySourceKey::from(event) == pinned_source
-        })
-        .count()
 }
 
 pub(super) fn top_dirty_path(
@@ -198,7 +236,10 @@ pub(super) fn top_dirty_path(
 ) -> Option<(String, usize)> {
     let mut counts = FxHashMap::default();
     for event in devtools.dirty_paths.iter() {
-        if event.window_id != window_id || now.duration_since(event.timestamp) > SOURCE_WINDOW {
+        let Some(age) = event_age(now, event.timestamp) else {
+            continue;
+        };
+        if event.window_id != window_id || age > SOURCE_WINDOW {
             continue;
         }
 
@@ -223,7 +264,10 @@ pub(super) fn render_summary(
     let mut counts: FxHashMap<RenderSourceKey, RenderSourceStats> = FxHashMap::default();
 
     for event in devtools.renders.iter() {
-        if event.window_id != window_id || now.duration_since(event.timestamp) > FRAME_RATE_WINDOW {
+        let Some(age) = event_age(now, event.timestamp) else {
+            continue;
+        };
+        if event.window_id != window_id || age > FRAME_RATE_WINDOW {
             continue;
         }
 
@@ -237,28 +281,43 @@ pub(super) fn render_summary(
 
             summary.render_count += 1;
 
-            let stats = counts.entry(key).or_insert(RenderSourceStats {
-                count: 0,
-                duration: Duration::default(),
-                sample_entity_id: event.entity_id,
-                bounds: event.bounds,
-                cache_miss_reasons: event.cache_miss_reasons,
-                caching_disabled_by_inspector: event.caching_disabled_by_inspector,
-            });
-            stats.count += 1;
-            if let Some(duration) = event.duration {
-                stats.duration += duration;
-            }
-            stats.sample_entity_id = event.entity_id;
-            stats.bounds = event.bounds;
-            stats.cache_miss_reasons = event.cache_miss_reasons;
-            stats.caching_disabled_by_inspector = event.caching_disabled_by_inspector;
+            counts
+                .entry(key)
+                .or_insert_with(|| RenderSourceStats::from_event(event))
+                .record_event(event);
         }
     }
 
+    for source in &devtools.pinned_render_sources {
+        if devtools.hidden_render_sources.contains(source) {
+            continue;
+        }
+
+        counts.entry(*source).or_insert_with(|| {
+            devtools
+                .render_source_last_stats(*source)
+                .unwrap_or_else(RenderSourceStats::empty)
+        });
+    }
+
     let mut counts = counts.into_iter().collect::<Vec<_>>();
-    counts.sort_by(|(_, left), (_, right)| right.count.cmp(&left.count));
-    counts.truncate(TOP_SOURCE_COUNT);
+    counts.sort_by(|(left_source, left), (right_source, right)| {
+        let left_pinned = devtools.pinned_render_sources.contains(left_source);
+        let right_pinned = devtools.pinned_render_sources.contains(right_source);
+        right_pinned
+            .cmp(&left_pinned)
+            .then_with(|| right.count.cmp(&left.count))
+            .then_with(|| {
+                short_type_name(left_source.entity_type)
+                    .cmp(short_type_name(right_source.entity_type))
+            })
+            .then_with(|| left_source.phase.as_str().cmp(right_source.phase.as_str()))
+    });
+    let visible_pinned_count = counts
+        .iter()
+        .filter(|(source, _)| devtools.pinned_render_sources.contains(source))
+        .count();
+    counts.truncate(TOP_SOURCE_COUNT + visible_pinned_count);
     summary.top_sources = counts;
 
     summary
@@ -277,7 +336,10 @@ pub(super) fn hidden_render_sources(
         .collect::<FxHashMap<_, _>>();
 
     for event in devtools.renders.iter() {
-        if event.window_id != window_id || now.duration_since(event.timestamp) > FRAME_RATE_WINDOW {
+        let Some(age) = event_age(now, event.timestamp) else {
+            continue;
+        };
+        if event.window_id != window_id || age > FRAME_RATE_WINDOW {
             continue;
         }
 
@@ -315,7 +377,7 @@ impl RenderSourceKey {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct RenderSourceStats {
     count: usize,
     duration: Duration,
@@ -325,29 +387,71 @@ pub(super) struct RenderSourceStats {
     caching_disabled_by_inspector: bool,
 }
 
+impl RenderSourceStats {
+    pub(super) fn from_event(event: &ViewRenderEvent) -> Self {
+        Self {
+            count: 0,
+            duration: Duration::default(),
+            sample_entity_id: event.entity_id,
+            bounds: event.bounds,
+            cache_miss_reasons: event.cache_miss_reasons,
+            caching_disabled_by_inspector: event.caching_disabled_by_inspector,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            count: 0,
+            duration: Duration::default(),
+            sample_entity_id: EntityId::from(0),
+            bounds: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            caching_disabled_by_inspector: false,
+        }
+    }
+
+    fn record_event(&mut self, event: &ViewRenderEvent) {
+        self.count += 1;
+        if let Some(duration) = event.duration {
+            self.duration += duration;
+        }
+        self.sample_entity_id = event.entity_id;
+        self.bounds = event.bounds;
+        self.cache_miss_reasons = event.cache_miss_reasons;
+        self.caching_disabled_by_inspector = event.caching_disabled_by_inspector;
+    }
+}
+
 pub(super) fn format_render_source(
     index: usize,
     source: RenderSourceKey,
     stats: RenderSourceStats,
 ) -> String {
     let mut label = format!(
-        "render {} {}#{} {} x{}",
+        "{:<4} {:<17} {:<13} {:>3} ",
         index,
-        short_type_name(source.entity_type),
-        stats.sample_entity_id.as_u64(),
+        format!(
+            "{}#{}",
+            short_type_name(source.entity_type),
+            stats.sample_entity_id.as_u64()
+        ),
         source.phase.as_str(),
         stats.count,
     );
     if !stats.duration.is_zero() {
-        label.push_str(&format!(" {}ms", format_duration_ms(stats.duration)));
+        label.push_str(&format!("{:>6}ms", format_duration_ms(stats.duration)));
+    } else {
+        label.push_str("     --");
     }
+    let mut reasons = Vec::new();
     if !stats.cache_miss_reasons.is_empty() {
-        label.push(' ');
-        label.push_str(&stats.cache_miss_reasons.labels().join("+"));
+        reasons.push(stats.cache_miss_reasons.labels().join("+"));
     }
     if stats.caching_disabled_by_inspector {
-        label.push_str(" inspector");
+        reasons.push("inspector".to_string());
     }
+    label.push(' ');
+    label.push_str(&reasons.join("+"));
     if let Some(bounds) = stats.bounds {
         label.push_str(&format!(
             " {:.0}x{:.0}",
@@ -364,7 +468,10 @@ pub(super) fn active_animation_count(
 ) -> usize {
     let mut sources = FxHashSet::default();
     for event in devtools.animations.iter() {
-        if event.window_id != window_id || now.duration_since(event.timestamp) > ANIMATION_EXPIRY {
+        let Some(age) = event_age(now, event.timestamp) else {
+            continue;
+        };
+        if event.window_id != window_id || age > ANIMATION_EXPIRY {
             continue;
         }
 
@@ -480,6 +587,14 @@ fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.
 }
 
+fn event_age(now: Instant, timestamp: Instant) -> Option<Duration> {
+    if timestamp > now {
+        None
+    } else {
+        Some(now.duration_since(timestamp))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,6 +669,73 @@ mod tests {
     }
 
     #[test]
+    fn notify_sources_ignore_events_after_snapshot_time() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+
+        devtools.notifications.push(NotifyEvent {
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            caller_file: "crates/editor/src/editor.rs",
+            caller_line: 2111,
+            caller_column: 17,
+            registered_window_count: 1,
+            live_window_count: 1,
+            timestamp: now + Duration::from_secs(1),
+        });
+
+        assert!(top_notify_sources(&devtools, now, TOP_SOURCE_COUNT).is_empty());
+    }
+
+    #[test]
+    fn pinned_notify_sources_stay_at_top_even_when_not_recent() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let pinned_event = NotifyEvent {
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            caller_file: "crates/editor/src/editor.rs",
+            caller_line: 2111,
+            caller_column: 17,
+            registered_window_count: 1,
+            live_window_count: 1,
+            timestamp: now - SOURCE_WINDOW - Duration::from_secs(1),
+        };
+        let pinned_source = NotifySourceKey::from(&pinned_event);
+        devtools
+            .notify_source_last_stats
+            .insert(pinned_source, NotifySourceStats::from_event(&pinned_event));
+        devtools
+            .notify_source_total_counts
+            .insert(pinned_source, 12);
+        devtools.pinned_notify_sources.insert(pinned_source);
+        devtools.notifications.push(pinned_event);
+
+        for index in 0..TOP_SOURCE_COUNT + 1 {
+            devtools.notifications.push(NotifyEvent {
+                entity_id: EntityId::from((index + 2) as u64),
+                entity_type: "Workspace",
+                caller_file: "crates/workspace/src/workspace.rs",
+                caller_line: 40 + index as u32,
+                caller_column: 5,
+                registered_window_count: 1,
+                live_window_count: 1,
+                timestamp: now,
+            });
+        }
+
+        let top_sources = top_notify_sources(&devtools, now, TOP_SOURCE_COUNT);
+        assert_eq!(top_sources.len(), TOP_SOURCE_COUNT + 1);
+        assert_eq!(top_sources[0].0, pinned_source);
+        assert_eq!(top_sources[0].1.count, 0);
+        assert!(
+            top_sources[1..]
+                .iter()
+                .all(|(source, _)| *source != pinned_source)
+        );
+    }
+
+    #[test]
     fn hidden_render_sources_are_excluded_from_render_summary() {
         let mut devtools = GpuiDevTools::new();
         let now = Instant::now();
@@ -594,6 +776,85 @@ mod tests {
         assert_eq!(
             hidden_render_sources(&devtools, window_id, now),
             vec![(hidden_source, 1)]
+        );
+    }
+
+    #[test]
+    fn render_summary_ignores_events_after_snapshot_time() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+
+        devtools.renders.push(ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now + Duration::from_secs(1),
+        });
+
+        let summary = render_summary(&devtools, window_id, now);
+        assert_eq!(summary.render_count, 0);
+        assert!(summary.top_sources.is_empty());
+    }
+
+    #[test]
+    fn pinned_render_sources_stay_at_top_even_when_not_recent() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+        let pinned_event = ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now - FRAME_RATE_WINDOW - Duration::from_secs(1),
+        };
+        let pinned_source = RenderSourceKey::from(&pinned_event);
+        devtools
+            .render_source_last_stats
+            .insert(pinned_source, RenderSourceStats::from_event(&pinned_event));
+        devtools.pinned_render_sources.insert(pinned_source);
+        devtools.renders.push(pinned_event);
+
+        let entity_types = [
+            "WorkspaceA",
+            "WorkspaceB",
+            "WorkspaceC",
+            "WorkspaceD",
+            "WorkspaceE",
+            "WorkspaceF",
+        ];
+        for index in 0..TOP_SOURCE_COUNT + 1 {
+            devtools.renders.push(ViewRenderEvent {
+                window_id,
+                entity_id: EntityId::from((index + 2) as u64),
+                entity_type: entity_types[index],
+                phase: ViewRenderPhase::UncachedRender,
+                duration: None,
+                cache_miss_reasons: CacheMissReasons::empty(),
+                bounds: None,
+                caching_disabled_by_inspector: false,
+                timestamp: now,
+            });
+        }
+
+        let summary = render_summary(&devtools, window_id, now);
+        assert_eq!(summary.top_sources.len(), TOP_SOURCE_COUNT + 1);
+        assert_eq!(summary.top_sources[0].0, pinned_source);
+        assert_eq!(summary.top_sources[0].1.count, 0);
+        assert!(
+            summary.top_sources[1..]
+                .iter()
+                .all(|(source, _)| *source != pinned_source)
         );
     }
 }

@@ -29,8 +29,8 @@ impl<T> RingBuffer<T> {
         self.entries.iter()
     }
 
-    pub(super) fn last(&self) -> Option<&T> {
-        self.entries.back()
+    pub(super) fn clear(&mut self) {
+        self.entries.clear();
     }
 
     #[cfg(test)]
@@ -61,5 +61,19 @@ mod tests {
         buffer.push(1);
 
         assert_eq!(buffer.len(), 0);
+    }
+
+    #[test]
+    fn ring_buffer_clear_removes_entries() {
+        let mut buffer = RingBuffer::new(3);
+        buffer.push(1);
+        buffer.push(2);
+        buffer.clear();
+
+        assert_eq!(buffer.len(), 0);
+        assert_eq!(
+            buffer.iter().copied().collect::<Vec<_>>(),
+            Vec::<i32>::new()
+        );
     }
 }

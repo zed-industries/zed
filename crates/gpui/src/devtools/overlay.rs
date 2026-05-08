@@ -3,10 +3,10 @@ use super::{
     sources::{
         NotifySourceKey, RenderSourceKey, active_animation_count, file_name, format_age,
         format_duration_ms, format_notify_source, format_render_source, hidden_notify_sources,
-        hidden_render_sources, pinned_notify_recent_count, render_summary, short_type_name,
-        top_dirty_path, top_notify_sources, truncate_chars,
+        hidden_render_sources, render_summary, short_type_name, top_dirty_path, top_notify_sources,
+        truncate_chars,
     },
-    state::{GpuiDevTools, HudDragState},
+    state::{GpuiDevTools, HudDragState, HudSection, RenderHeatCause},
 };
 use crate::{
     App, BorderStyle, Bounds, DispatchPhase, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent,
@@ -39,6 +39,26 @@ pub(super) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
         return;
     };
 
+    for heat in &prepared_overlay.snapshot.heats {
+        let style = heat_style(heat.rate, heat.opacity);
+        window.paint_quad(quad(
+            heat.bounds,
+            px(2.),
+            hsla(style.hue, 0.96, 0.54, style.fill_alpha),
+            px(style.border_width),
+            hsla(style.hue, 0.96, 0.58, style.border_alpha),
+            heat.border_style,
+        ));
+    }
+
+    for reuse_outline in &prepared_overlay.snapshot.reuse_outlines {
+        window.paint_quad(outline(
+            reuse_outline.bounds,
+            hsla(0.42, 0.88, 0.62, 0.68 * reuse_outline.opacity),
+            BorderStyle::Solid,
+        ));
+    }
+
     for flash in &prepared_overlay.snapshot.flashes {
         window.paint_quad(quad(
             flash.bounds,
@@ -55,8 +75,32 @@ pub(super) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
 
 #[derive(Clone, Debug)]
 struct OverlaySnapshot {
+    heats: Vec<HeatOverlay>,
+    reuse_outlines: Vec<ReuseOutlineOverlay>,
     flashes: Vec<FlashOverlay>,
     rows: Vec<OverlayRow>,
+}
+
+#[derive(Clone, Debug)]
+struct HeatOverlay {
+    bounds: Bounds<Pixels>,
+    rate: usize,
+    opacity: f32,
+    border_style: BorderStyle,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HeatStyle {
+    hue: f32,
+    fill_alpha: f32,
+    border_alpha: f32,
+    border_width: f32,
+}
+
+#[derive(Clone, Debug)]
+struct ReuseOutlineOverlay {
+    bounds: Bounds<Pixels>,
+    opacity: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -68,24 +112,68 @@ struct FlashOverlay {
 #[derive(Clone, Debug)]
 struct OverlayRow {
     text: String,
-    actions: Vec<SourceFilterAction>,
+    kind: OverlayRowKind,
+    actions: Vec<OverlayAction>,
 }
 
 impl OverlayRow {
     fn plain(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            kind: OverlayRowKind::Data,
             actions: Vec::new(),
         }
     }
 
-    fn action(text: impl Into<String>, action: SourceFilterAction) -> Self {
-        Self::actions(text, vec![action])
-    }
-
-    fn actions(text: impl Into<String>, actions: Vec<SourceFilterAction>) -> Self {
+    fn header(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            kind: OverlayRowKind::Header,
+            actions: Vec::new(),
+        }
+    }
+
+    fn section_bar(devtools: &GpuiDevTools) -> Self {
+        Self {
+            text: String::new(),
+            kind: OverlayRowKind::SectionBar,
+            actions: HudSection::ALL
+                .into_iter()
+                .map(|section| {
+                    OverlayAction::section(section, !devtools.collapsed_sections.contains(&section))
+                })
+                .collect(),
+        }
+    }
+
+    fn toolbar(devtools: &GpuiDevTools) -> Self {
+        let pause_action = if devtools.paused_at.is_some() {
+            OverlayAction::toolbar("resume", true, SourceFilterAction::ResumeCollection)
+        } else {
+            OverlayAction::toolbar("pause", false, SourceFilterAction::PauseCollection)
+        };
+
+        Self {
+            text: String::new(),
+            kind: OverlayRowKind::Toolbar,
+            actions: vec![
+                pause_action,
+                OverlayAction::toolbar("clear", false, SourceFilterAction::ClearCounters),
+                OverlayAction::toolbar(
+                    "flashes",
+                    devtools.show_flashes,
+                    SourceFilterAction::ToggleFlashes,
+                ),
+                OverlayAction::toolbar("heat", devtools.show_heat, SourceFilterAction::ToggleHeat),
+                OverlayAction::toolbar("reset filters", false, SourceFilterAction::ResetFilters),
+            ],
+        }
+    }
+
+    fn actions(text: impl Into<String>, actions: Vec<OverlayAction>) -> Self {
+        Self {
+            text: text.into(),
+            kind: OverlayRowKind::Data,
             actions,
         }
     }
@@ -93,6 +181,123 @@ impl OverlayRow {
     fn truncate(mut self) -> Self {
         self.text = truncate_chars(&self.text, HUD_MAX_LINE_CHARS);
         self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OverlayRowKind {
+    Data,
+    Header,
+    SectionBar,
+    Toolbar,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OverlayAction {
+    label: &'static str,
+    active: bool,
+    action: SourceFilterAction,
+}
+
+impl OverlayAction {
+    fn from(action: SourceFilterAction) -> Self {
+        match action {
+            SourceFilterAction::HideNotify(_) => Self {
+                label: "hide",
+                active: false,
+                action,
+            },
+            SourceFilterAction::ShowNotify(_) => Self {
+                label: "show",
+                active: false,
+                action,
+            },
+            SourceFilterAction::PinNotify(_) => Self {
+                label: "pin",
+                active: false,
+                action,
+            },
+            SourceFilterAction::UnpinNotify(_) => Self {
+                label: "unpin",
+                active: false,
+                action,
+            },
+            SourceFilterAction::HideRender(_) => Self {
+                label: "hide",
+                active: false,
+                action,
+            },
+            SourceFilterAction::ShowRender(_) => Self {
+                label: "show",
+                active: false,
+                action,
+            },
+            SourceFilterAction::PinRender(_) => Self {
+                label: "pin",
+                active: false,
+                action,
+            },
+            SourceFilterAction::UnpinRender(_) => Self {
+                label: "unpin",
+                active: false,
+                action,
+            },
+            SourceFilterAction::ToggleSection(section) => Self {
+                label: section.label(),
+                active: false,
+                action,
+            },
+            SourceFilterAction::PauseCollection => Self {
+                label: "pause",
+                active: false,
+                action,
+            },
+            SourceFilterAction::ResumeCollection => Self {
+                label: "resume",
+                active: true,
+                action,
+            },
+            SourceFilterAction::ClearCounters => Self {
+                label: "clear",
+                active: false,
+                action,
+            },
+            SourceFilterAction::ToggleFlashes => Self {
+                label: "flashes",
+                active: false,
+                action,
+            },
+            SourceFilterAction::ToggleHeat => Self {
+                label: "heat",
+                active: false,
+                action,
+            },
+            SourceFilterAction::ResetFilters => Self {
+                label: "reset filters",
+                active: false,
+                action,
+            },
+        }
+    }
+
+    fn toolbar(label: &'static str, active: bool, action: SourceFilterAction) -> Self {
+        Self {
+            label,
+            active,
+            action,
+        }
+    }
+
+    fn section(section: HudSection, active: bool) -> Self {
+        Self {
+            label: section.label(),
+            active,
+            action: SourceFilterAction::ToggleSection(section),
+        }
+    }
+
+    fn width(self) -> Pixels {
+        px((self.label.len() as f32 * 6.5 + 18.).clamp(42., 104.))
     }
 }
 
@@ -107,58 +312,173 @@ pub(super) struct PreparedOverlay {
 #[derive(Clone, Debug)]
 struct OverlayRowHitbox {
     hitbox: Hitbox,
-    action: SourceFilterAction,
+    action: OverlayAction,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum SourceFilterAction {
+    ToggleSection(HudSection),
+    PauseCollection,
+    ResumeCollection,
+    ClearCounters,
+    ToggleFlashes,
+    ToggleHeat,
+    ResetFilters,
     HideNotify(NotifySourceKey),
     ShowNotify(NotifySourceKey),
     PinNotify(NotifySourceKey),
-    UnpinNotify,
+    UnpinNotify(NotifySourceKey),
     HideRender(RenderSourceKey),
     ShowRender(RenderSourceKey),
+    PinRender(RenderSourceKey),
+    UnpinRender(RenderSourceKey),
 }
 
 fn overlay_snapshot(window_id: WindowId) -> OverlaySnapshot {
-    let now = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
+    let now = devtools.paused_at.unwrap_or_else(Instant::now);
+    let show_flashes = devtools.show_flashes;
+    let show_heat = devtools.show_heat;
     let hidden_render_sources = devtools.hidden_render_sources.clone();
-    let flashes = devtools
+    let (heats, reuse_outlines, flashes) = devtools
         .windows
         .get_mut(&window_id)
         .map(|window_state| {
-            window_state
-                .active_flashes
-                .retain(|_, flash| now.duration_since(flash.timestamp) <= FLASH_DURATION);
-
-            window_state
-                .active_flashes
-                .iter()
-                .filter_map(|(entity_id, flash)| {
-                    if hidden_render_sources.contains(&flash.source) {
-                        return None;
+            let mut expired_heat_entities = Vec::new();
+            let mut heats = Vec::new();
+            if show_heat {
+                for (entity_id, heat) in &mut window_state.render_heat {
+                    if hidden_render_sources.contains(&heat.source) || heat.expired(now) {
+                        expired_heat_entities.push(*entity_id);
+                        continue;
                     }
 
-                    let bounds = window_state.view_bounds.get(entity_id).copied()?;
-                    let elapsed = now.duration_since(flash.timestamp);
-                    let opacity = 1. - elapsed.as_secs_f32() / FLASH_DURATION.as_secs_f32();
-                    Some(FlashOverlay {
+                    let current_rate = heat.prune(now);
+                    let rate = current_rate.max(heat.last_rate);
+                    let opacity = heat.opacity(now);
+                    if rate == 0 || opacity == 0. {
+                        continue;
+                    }
+
+                    let Some(bounds) = heat
+                        .bounds
+                        .or_else(|| window_state.view_bounds.get(entity_id).copied())
+                    else {
+                        continue;
+                    };
+
+                    heats.push(HeatOverlay {
                         bounds,
-                        opacity: opacity.clamp(0., 1.),
+                        rate,
+                        opacity,
+                        border_style: match heat.cause {
+                            RenderHeatCause::Render => BorderStyle::Solid,
+                            RenderHeatCause::Refresh => BorderStyle::Dashed,
+                        },
+                    });
+                }
+            }
+            for entity_id in expired_heat_entities {
+                window_state.render_heat.remove(&entity_id);
+            }
+
+            let mut expired_reuse_entities = Vec::new();
+            let mut reuse_outlines = Vec::new();
+            if show_heat {
+                for (entity_id, reuse_outline) in &window_state.reuse_outlines {
+                    if hidden_render_sources.contains(&reuse_outline.source)
+                        || reuse_outline.expired(now)
+                    {
+                        expired_reuse_entities.push(*entity_id);
+                        continue;
+                    }
+
+                    let opacity = reuse_outline.opacity(now);
+                    if opacity == 0. {
+                        continue;
+                    }
+
+                    let Some(bounds) = reuse_outline
+                        .bounds
+                        .or_else(|| window_state.view_bounds.get(entity_id).copied())
+                    else {
+                        continue;
+                    };
+
+                    reuse_outlines.push(ReuseOutlineOverlay { bounds, opacity });
+                }
+            }
+            for entity_id in expired_reuse_entities {
+                window_state.reuse_outlines.remove(&entity_id);
+            }
+
+            window_state.active_flashes.retain(|_, flash| {
+                event_age(now, flash.timestamp).is_none_or(|age| age <= FLASH_DURATION)
+            });
+
+            let flashes = if show_flashes {
+                window_state
+                    .active_flashes
+                    .iter()
+                    .filter_map(|(entity_id, flash)| {
+                        if hidden_render_sources.contains(&flash.source) {
+                            return None;
+                        }
+
+                        let bounds = window_state.view_bounds.get(entity_id).copied()?;
+                        let elapsed = event_age(now, flash.timestamp)?;
+                        let opacity = 1. - elapsed.as_secs_f32() / FLASH_DURATION.as_secs_f32();
+                        Some(FlashOverlay {
+                            bounds,
+                            opacity: opacity.clamp(0., 1.),
+                        })
                     })
-                })
-                .collect()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            (heats, reuse_outlines, flashes)
         })
         .unwrap_or_default();
 
     let rows = hud_rows(&devtools, window_id, now);
-    OverlaySnapshot { flashes, rows }
+    OverlaySnapshot {
+        heats,
+        reuse_outlines,
+        flashes,
+        rows,
+    }
+}
+
+fn heat_style(rate: usize, opacity: f32) -> HeatStyle {
+    let (hue, fill_alpha, border_alpha, border_width) = if rate >= 30 {
+        (0.0, 0.24, 0.98, 3.0)
+    } else if rate >= 15 {
+        (0.025, 0.19, 0.90, 2.25)
+    } else if rate >= 5 {
+        (0.075, 0.14, 0.74, 1.5)
+    } else {
+        (0.13, 0.10, 0.58, 1.0)
+    };
+
+    HeatStyle {
+        hue,
+        fill_alpha: fill_alpha * opacity,
+        border_alpha: border_alpha * opacity,
+        border_width,
+    }
 }
 
 fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<OverlayRow> {
     let mut rows = Vec::new();
-    rows.push(OverlayRow::plain("GPUI DevTools"));
+    rows.push(OverlayRow::header(if devtools.paused_at.is_some() {
+        "GPUI DevTools paused"
+    } else {
+        "GPUI DevTools"
+    }));
+    rows.push(OverlayRow::toolbar(devtools));
+    rows.push(OverlayRow::section_bar(devtools));
 
     let mut frame_count = 0;
     let mut draw_count = 0;
@@ -166,158 +486,194 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     let mut last_frame = None;
     if let Some(window_state) = devtools.windows.get(&window_id) {
         for frame in window_state.recent_frames.iter() {
-            if now.duration_since(frame.timestamp) <= FRAME_RATE_WINDOW {
+            let Some(age) = event_age(now, frame.timestamp) else {
+                continue;
+            };
+            if age <= FRAME_RATE_WINDOW {
                 frame_count += 1;
                 draw_count += usize::from(frame.rebuilt_scene);
                 dirty_frame_count += usize::from(frame.dirty_before_frame);
             }
         }
-        last_frame = window_state.recent_frames.last();
+        last_frame = window_state
+            .recent_frames
+            .iter()
+            .rev()
+            .find(|frame| frame.timestamp <= now);
     }
 
-    rows.push(OverlayRow::plain(format!(
-        "draw/s {:>3}  dirty/s {:>3}  frame/s {:>3}",
-        draw_count, dirty_frame_count, frame_count
-    )));
-
-    if let Some(frame) = last_frame {
-        let last_frame_age = now.duration_since(frame.timestamp);
-        let draw_duration = frame
-            .draw_duration
-            .map(format_duration_ms)
-            .unwrap_or_else(|| "--".to_string());
+    if section_expanded(devtools, HudSection::Frame) {
         rows.push(OverlayRow::plain(format!(
-            "last {} age {}{} draw {}ms present {}ms",
-            frame.reason,
-            format_age(last_frame_age),
-            if last_frame_age > FRAME_RATE_WINDOW {
-                " idle"
-            } else {
-                ""
-            },
-            draw_duration,
-            format_duration_ms(frame.present_duration),
+            "draw/s {:>3}  dirty/s {:>3}  frame/s {:>3}",
+            draw_count, dirty_frame_count, frame_count
         )));
-        rows.push(OverlayRow::plain(format!(
-            "views {} updates {} ops {} quads {}{}",
-            frame.dirty_view_count,
-            frame.invalidator_update_count,
-            frame.scene_stats.paint_operation_count,
-            frame.scene_stats.quad_count,
-            if frame.devtools_induced {
-                " devtools"
-            } else {
-                ""
-            },
-        )));
-    } else {
-        rows.push(OverlayRow::plain("last frame --"));
-    }
 
-    let notify_sources = top_notify_sources(devtools, now, TOP_SOURCE_COUNT);
-    if notify_sources.is_empty() {
-        rows.push(OverlayRow::plain("notify --"));
-    } else {
-        for (index, (source, stats)) in notify_sources.into_iter().enumerate() {
-            let is_pinned = devtools.pinned_notify_source == Some(source);
-            let pin_button = if is_pinned { "u" } else { "p" };
-            let pin_action = if is_pinned {
-                SourceFilterAction::UnpinNotify
-            } else {
-                SourceFilterAction::PinNotify(source)
-            };
-            rows.push(OverlayRow::actions(
-                format!(
-                    "[-] [{}] {}",
-                    pin_button,
-                    format_notify_source(index + 1, source, stats)
-                ),
-                vec![SourceFilterAction::HideNotify(source), pin_action],
-            ));
+        if let Some(frame) = last_frame {
+            let last_frame_age = event_age(now, frame.timestamp).unwrap_or_default();
+            let draw_duration = frame
+                .draw_duration
+                .map(format_duration_ms)
+                .unwrap_or_else(|| "--".to_string());
+            rows.push(OverlayRow::plain(format!(
+                "last {} age {}{} draw {}ms present {}ms",
+                frame.reason,
+                format_age(last_frame_age),
+                if last_frame_age > FRAME_RATE_WINDOW {
+                    " idle"
+                } else {
+                    ""
+                },
+                draw_duration,
+                format_duration_ms(frame.present_duration),
+            )));
+            rows.push(OverlayRow::plain(format!(
+                "views {} updates {} ops {} quads {}{}",
+                frame.dirty_view_count,
+                frame.invalidator_update_count,
+                frame.scene_stats.paint_operation_count,
+                frame.scene_stats.quad_count,
+                if frame.devtools_induced {
+                    " devtools"
+                } else {
+                    ""
+                },
+            )));
+        } else {
+            rows.push(OverlayRow::plain("last frame --"));
         }
     }
 
-    if let Some(pinned_source) = devtools.pinned_notify_source {
-        rows.push(OverlayRow::action(
-            format!(
-                "[u] pin {} 5s {} total {}",
-                pinned_source.label(),
-                pinned_notify_recent_count(devtools, now, pinned_source),
-                devtools
-                    .notify_source_total_counts
-                    .get(&pinned_source)
-                    .copied()
-                    .unwrap_or(0)
-            ),
-            SourceFilterAction::UnpinNotify,
-        ));
-    }
-
-    if let Some((label, count)) = top_dirty_path(devtools, window_id, now) {
-        rows.push(OverlayRow::plain(format!("dirty {} x{}", label, count)));
-    } else {
-        rows.push(OverlayRow::plain("dirty --"));
-    }
-
-    let render_summary = render_summary(devtools, window_id, now);
-    rows.push(OverlayRow::plain(format!(
-        "renders/s {} reuse/s {}",
-        render_summary.render_count, render_summary.reuse_count
-    )));
-    if render_summary.top_sources.is_empty() {
-        rows.push(OverlayRow::plain("render --"));
-    } else {
-        for (index, (source, stats)) in render_summary.top_sources.into_iter().enumerate() {
-            rows.push(OverlayRow::action(
-                format!("[-] {}", format_render_source(index + 1, source, stats)),
-                SourceFilterAction::HideRender(source),
+    if section_expanded(devtools, HudSection::Notify) {
+        let notify_sources = top_notify_sources(devtools, now, TOP_SOURCE_COUNT);
+        if notify_sources.is_empty() {
+            rows.push(OverlayRow::plain("no notify sources in the last 5s"));
+        } else {
+            rows.push(OverlayRow::plain(
+                "rank source             caller                5s total visible tracked",
             ));
+            for (index, (source, stats)) in notify_sources.into_iter().enumerate() {
+                let is_pinned = devtools.pinned_notify_sources.contains(&source);
+                let pin_action = if is_pinned {
+                    SourceFilterAction::UnpinNotify(source)
+                } else {
+                    SourceFilterAction::PinNotify(source)
+                };
+                rows.push(OverlayRow::actions(
+                    format_notify_source(
+                        index + 1,
+                        source,
+                        stats,
+                        devtools.notify_source_total_count(source),
+                    ),
+                    vec![
+                        OverlayAction::from(SourceFilterAction::HideNotify(source)),
+                        OverlayAction::from(pin_action),
+                    ],
+                ));
+            }
         }
     }
 
-    rows.push(OverlayRow::plain(format!(
-        "active animations {}",
-        active_animation_count(devtools, window_id, now)
-    )));
+    if section_expanded(devtools, HudSection::Dirty) {
+        if let Some((label, count)) = top_dirty_path(devtools, window_id, now) {
+            rows.push(OverlayRow::plain(format!(
+                "top path x{:>4} {}",
+                count, label
+            )));
+        } else {
+            rows.push(OverlayRow::plain("no dirty path in the last 5s"));
+        }
+    }
+
+    if section_expanded(devtools, HudSection::Render) {
+        let render_summary = render_summary(devtools, window_id, now);
+        rows.push(OverlayRow::plain(format!(
+            "renders/s {} reuse/s {}",
+            render_summary.render_count, render_summary.reuse_count
+        )));
+        if render_summary.top_sources.is_empty() {
+            rows.push(OverlayRow::plain("no real renders in the last 1s"));
+        } else {
+            rows.push(OverlayRow::plain(
+                "rank view              phase         1s cost     reason",
+            ));
+            for (index, (source, stats)) in render_summary.top_sources.into_iter().enumerate() {
+                let is_pinned = devtools.pinned_render_sources.contains(&source);
+                let pin_action = if is_pinned {
+                    SourceFilterAction::UnpinRender(source)
+                } else {
+                    SourceFilterAction::PinRender(source)
+                };
+                rows.push(OverlayRow::actions(
+                    format_render_source(index + 1, source, stats),
+                    vec![
+                        OverlayAction::from(SourceFilterAction::HideRender(source)),
+                        OverlayAction::from(pin_action),
+                    ],
+                ));
+            }
+        }
+    }
+
+    if section_expanded(devtools, HudSection::Animation) {
+        rows.push(OverlayRow::plain(format!(
+            "active animations {}",
+            active_animation_count(devtools, window_id, now)
+        )));
+    }
 
     let hidden_notify_sources = hidden_notify_sources(devtools, now);
     let hidden_render_sources = hidden_render_sources(devtools, window_id, now);
-    if !hidden_notify_sources.is_empty() || !hidden_render_sources.is_empty() {
-        rows.push(OverlayRow::plain("hidden filters"));
+    if section_expanded(devtools, HudSection::Hidden)
+        && (!hidden_notify_sources.is_empty() || !hidden_render_sources.is_empty())
+    {
         for (source, count) in hidden_notify_sources {
-            let is_pinned = devtools.pinned_notify_source == Some(source);
-            let pin_button = if is_pinned { "u" } else { "p" };
+            let is_pinned = devtools.pinned_notify_sources.contains(&source);
             let pin_action = if is_pinned {
-                SourceFilterAction::UnpinNotify
+                SourceFilterAction::UnpinNotify(source)
             } else {
                 SourceFilterAction::PinNotify(source)
             };
             rows.push(OverlayRow::actions(
                 format!(
-                    "[+] [{}] notify {} {}:{} 5s {}",
-                    pin_button,
+                    "notify {:<16} {:<20} 5s {:>4}",
                     short_type_name(source.entity_type),
-                    file_name(source.caller_file),
-                    source.caller_line,
+                    format!("{}:{}", file_name(source.caller_file), source.caller_line),
                     count
                 ),
-                vec![SourceFilterAction::ShowNotify(source), pin_action],
+                vec![
+                    OverlayAction::from(SourceFilterAction::ShowNotify(source)),
+                    OverlayAction::from(pin_action),
+                ],
             ));
         }
         for (source, count) in hidden_render_sources {
-            rows.push(OverlayRow::action(
+            let is_pinned = devtools.pinned_render_sources.contains(&source);
+            let pin_action = if is_pinned {
+                SourceFilterAction::UnpinRender(source)
+            } else {
+                SourceFilterAction::PinRender(source)
+            };
+            rows.push(OverlayRow::actions(
                 format!(
-                    "[+] render {} {} 1s {}",
+                    "render {:<16} {:<14} 1s {:>4}",
                     short_type_name(source.entity_type),
                     source.phase.as_str(),
                     count
                 ),
-                SourceFilterAction::ShowRender(source),
+                vec![
+                    OverlayAction::from(SourceFilterAction::ShowRender(source)),
+                    OverlayAction::from(pin_action),
+                ],
             ));
         }
     }
 
     rows.into_iter().map(OverlayRow::truncate).collect()
+}
+
+fn section_expanded(devtools: &GpuiDevTools, section: HudSection) -> bool {
+    !devtools.collapsed_sections.contains(&section)
 }
 
 fn prepaint_overlay(
@@ -331,7 +687,7 @@ fn prepaint_overlay(
     for (row_index, row) in snapshot.rows.iter().enumerate() {
         for (action_index, action) in row.actions.iter().copied().enumerate() {
             let hitbox = window.insert_hitbox(
-                hud_button_bounds(hud_bounds, row_index, action_index),
+                hud_button_bounds(hud_bounds, row_index, &row.actions, action_index),
                 HitboxBehavior::BlockMouse,
             );
             row_hitboxes.push(OverlayRowHitbox { hitbox, action });
@@ -353,7 +709,7 @@ fn hud_bounds(
 ) -> Bounds<Pixels> {
     let margin = px(12.);
     let padding = hud_padding();
-    let hud_width = px(460.);
+    let hud_width = px(560.);
     let line_height = hud_line_height();
     let hud_height = padding * 2. + line_height * (row_count as f32);
     let hud_size = size(hud_width, hud_height);
@@ -386,20 +742,51 @@ fn clamp_hud_origin(
 fn hud_button_bounds(
     hud_bounds: Bounds<Pixels>,
     row_index: usize,
+    actions: &[OverlayAction],
     action_index: usize,
 ) -> Bounds<Pixels> {
     let padding = hud_padding();
     let line_height = hud_line_height();
-    let button_width = px(23.);
-    let button_gap = px(4.);
+    let button_gap = hud_button_gap();
+    let action_offset = actions
+        .iter()
+        .take(action_index)
+        .fold(px(0.), |offset, action| {
+            offset + action.width() + button_gap
+        });
+    let button_width = actions
+        .get(action_index)
+        .map(|action| action.width())
+        .unwrap_or(px(0.));
     Bounds::new(
         point(
-            hud_bounds.origin.x + padding - px(2.)
-                + (button_width + button_gap) * (action_index as f32),
+            hud_bounds.origin.x + padding - px(2.) + action_offset,
             hud_bounds.origin.y + padding + line_height * (row_index as f32) - px(1.),
         ),
         size(button_width, line_height),
     )
+}
+
+fn hud_row_bounds(hud_bounds: Bounds<Pixels>, row_index: usize) -> Bounds<Pixels> {
+    let padding = hud_padding();
+    let line_height = hud_line_height();
+    Bounds::new(
+        point(
+            hud_bounds.origin.x + padding - px(2.),
+            hud_bounds.origin.y + padding + line_height * (row_index as f32) - px(1.),
+        ),
+        size(hud_bounds.size.width - padding * 2. + px(4.), line_height),
+    )
+}
+
+fn hud_action_text_offset(actions: &[OverlayAction]) -> Pixels {
+    if actions.is_empty() {
+        px(0.)
+    } else {
+        actions.iter().fold(px(0.), |offset, action| {
+            offset + action.width() + hud_button_gap()
+        }) + px(3.)
+    }
 }
 
 fn hud_padding() -> Pixels {
@@ -408,6 +795,10 @@ fn hud_padding() -> Pixels {
 
 fn hud_line_height() -> Pixels {
     px(14.)
+}
+
+fn hud_button_gap() -> Pixels {
+    px(4.)
 }
 
 fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverlay) {
@@ -426,9 +817,21 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
         BorderStyle::default(),
     ));
 
+    for (line_index, row) in prepared_overlay.snapshot.rows.iter().enumerate() {
+        let row_bounds = hud_row_bounds(bounds, line_index);
+        match row.kind {
+            OverlayRowKind::SectionBar | OverlayRowKind::Toolbar => {
+                window.paint_quad(fill(row_bounds, rgba(0x273244aa)));
+            }
+            OverlayRowKind::Header | OverlayRowKind::Data => {}
+        }
+    }
+
     for row_hitbox in &prepared_overlay.row_hitboxes {
         let fill_color = if row_hitbox.hitbox.is_hovered(window) {
             rgba(0x38bdf84a)
+        } else if row_hitbox.action.active {
+            rgba(0x0ea5e94a)
         } else {
             rgba(0x1f29374a)
         };
@@ -438,14 +841,31 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
             hsla(0.58, 0.68, 0.68, 0.52),
             BorderStyle::default(),
         ));
+        let button_text_origin = point(
+            row_hitbox.hitbox.origin.x + px(5.),
+            row_hitbox.hitbox.origin.y + px(1.),
+        );
+        paint_text_line_with_color(
+            window,
+            cx,
+            button_text_origin,
+            row_hitbox.action.label,
+            line_height,
+            hsla(0.58, 0.38, 0.98, 0.98),
+        );
     }
 
     for (line_index, row) in prepared_overlay.snapshot.rows.iter().enumerate() {
+        let text_color = match row.kind {
+            OverlayRowKind::Header => hsla(0.58, 0.44, 0.94, 1.),
+            OverlayRowKind::SectionBar | OverlayRowKind::Toolbar => hsla(0.12, 0.62, 0.76, 1.),
+            OverlayRowKind::Data => hsla(0.58, 0.38, 0.92, 0.96),
+        };
         let origin = point(
-            bounds.origin.x + padding,
+            bounds.origin.x + padding + hud_action_text_offset(&row.actions),
             bounds.origin.y + padding + line_height * (line_index as f32),
         );
-        paint_text_line(window, cx, origin, &row.text, line_height);
+        paint_text_line_with_color(window, cx, origin, &row.text, line_height, text_color);
     }
 
     register_drag_handlers(window, prepared_overlay);
@@ -458,7 +878,7 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
                 && event.button == MouseButton::Left
                 && hitbox.is_hovered(window)
             {
-                apply_filter_action(action);
+                apply_filter_action(action.action);
                 window.prevent_default();
                 window.refresh();
                 cx.stop_propagation();
@@ -560,18 +980,19 @@ mod tests {
     }
 }
 
-fn paint_text_line(
+fn paint_text_line_with_color(
     window: &mut Window,
     cx: &mut App,
     origin: Point<Pixels>,
     line: &str,
     line_height: Pixels,
+    color: crate::Hsla,
 ) {
     let font_size = px(11.);
     let text_run = TextRun {
         len: line.len(),
         font: font(".SystemUIFont"),
-        color: hsla(0.58, 0.38, 0.92, 0.96),
+        color,
         ..TextRun::default()
     };
     let shaped_line = window.text_system().shape_line(
@@ -588,6 +1009,30 @@ fn paint_text_line(
 fn apply_filter_action(action: SourceFilterAction) {
     let mut devtools = GPUI_DEVTOOLS.write();
     match action {
+        SourceFilterAction::ToggleSection(section) => {
+            if !devtools.collapsed_sections.remove(&section) {
+                devtools.collapsed_sections.insert(section);
+            }
+        }
+        SourceFilterAction::PauseCollection => {
+            devtools.pause(Instant::now());
+        }
+        SourceFilterAction::ResumeCollection => {
+            devtools.resume();
+        }
+        SourceFilterAction::ClearCounters => {
+            devtools.clear_counters();
+        }
+        SourceFilterAction::ToggleFlashes => {
+            devtools.show_flashes = !devtools.show_flashes;
+        }
+        SourceFilterAction::ToggleHeat => {
+            devtools.show_heat = !devtools.show_heat;
+        }
+        SourceFilterAction::ResetFilters => {
+            devtools.hidden_notify_sources.clear();
+            devtools.hidden_render_sources.clear();
+        }
         SourceFilterAction::HideNotify(source) => {
             devtools.hidden_notify_sources.insert(source);
         }
@@ -595,11 +1040,11 @@ fn apply_filter_action(action: SourceFilterAction) {
             devtools.hidden_notify_sources.remove(&source);
         }
         SourceFilterAction::PinNotify(source) => {
-            devtools.pinned_notify_source = Some(source);
+            devtools.pinned_notify_sources.insert(source);
             devtools.initial_pinned_notify_source_resolved = true;
         }
-        SourceFilterAction::UnpinNotify => {
-            devtools.pinned_notify_source = None;
+        SourceFilterAction::UnpinNotify(source) => {
+            devtools.pinned_notify_sources.remove(&source);
             devtools.initial_pinned_notify_source_resolved = true;
         }
         SourceFilterAction::HideRender(source) => {
@@ -608,10 +1053,30 @@ fn apply_filter_action(action: SourceFilterAction) {
                 window_state
                     .active_flashes
                     .retain(|_, flash| flash.source != source);
+                window_state
+                    .render_heat
+                    .retain(|_, heat| heat.source != source);
+                window_state
+                    .reuse_outlines
+                    .retain(|_, outline| outline.source != source);
             }
         }
         SourceFilterAction::ShowRender(source) => {
             devtools.hidden_render_sources.remove(&source);
         }
+        SourceFilterAction::PinRender(source) => {
+            devtools.pinned_render_sources.insert(source);
+        }
+        SourceFilterAction::UnpinRender(source) => {
+            devtools.pinned_render_sources.remove(&source);
+        }
+    }
+}
+
+fn event_age(now: Instant, timestamp: Instant) -> Option<std::time::Duration> {
+    if timestamp > now {
+        None
+    } else {
+        Some(now.duration_since(timestamp))
     }
 }
