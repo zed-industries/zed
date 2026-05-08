@@ -150,25 +150,6 @@ We will support Cross-Region inference for each of the models on a best-effort b
 
 For the most up-to-date supported regions and models, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
-#### Extended Context Window {#bedrock-extended-context}
-
-Anthropic models on Bedrock support a 1M token extended context window through the `anthropic_beta` API parameter. To enable this feature, set `"allow_extended_context": true` in your Bedrock configuration:
-
-```json [settings]
-{
-  "language_models": {
-    "bedrock": {
-      "authentication_method": "named_profile",
-      "region": "your-aws-region",
-      "profile": "your-profile-name",
-      "allow_extended_context": true
-    }
-  }
-}
-```
-
-Zed enables extended context for supported models (Claude Sonnet 4.5, Claude Opus 4.6, and Claude Opus 4.7). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
-
 #### Image Support {#bedrock-image-support}
 
 Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results.
