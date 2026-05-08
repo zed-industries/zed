@@ -281,7 +281,7 @@ actions!(
     [
         /// Copies the SHA of the selected commit to the clipboard.
         CopyCommitSha,
-        /// Copies the tag(s) of the selected commit to the clipboard.
+        /// Copies the tags of the selected commit to the clipboard.
         CopyCommitTags,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
