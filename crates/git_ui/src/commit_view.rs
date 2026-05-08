@@ -41,6 +41,7 @@ use workspace::{
 
 use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
+use crate::resolve_positions::{ResolvePositionsContext, ResolvePositionsController};
 
 actions!(
     git,
@@ -75,6 +76,7 @@ pub struct CommitView {
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
+    resolve_positions: Option<ResolvePositionsController>,
 }
 
 struct GitBlob {
@@ -468,6 +470,7 @@ impl CommitView {
             repository,
             workspace,
             remote,
+            resolve_positions: None,
         }
     }
 
@@ -533,6 +536,26 @@ impl CommitView {
             return;
         };
         self.open_file_at_head(&file, window, cx);
+    }
+
+    fn resolve_positions_slot(&mut self) -> &mut Option<ResolvePositionsController> {
+        &mut self.resolve_positions
+    }
+
+    fn toggle_resolve_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.resolve_positions.is_some() {
+            self.resolve_positions = None;
+            cx.notify();
+            return;
+        }
+
+        let context = ResolvePositionsContext {
+            commit_editor: self.editor.clone(),
+            commit_sha: self.commit.sha.to_string(),
+            repository: self.repository.clone(),
+            workspace: self.workspace.clone(),
+        };
+        ResolvePositionsController::start(context, window, cx, Self::resolve_positions_slot);
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1072,6 +1095,7 @@ impl Item for CommitView {
                 repository: self.repository.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
+                resolve_positions: None,
             }
         })))
     }
@@ -1133,6 +1157,7 @@ impl Render for CommitViewToolbar {
         });
 
         let sha_for_graph = commit_sha.to_string();
+        let is_resolving_current = commit_view_ref.resolve_positions.is_some();
 
         h_flex()
             .gap_1()
@@ -1190,6 +1215,23 @@ impl Render for CommitViewToolbar {
                         .tooltip(Tooltip::text(format!("View on {}", provider_name)))
                         .on_click(move |_, _, cx| cx.open_url(&url))
                 }))
+                .child(
+                    IconButton::new("resolve_in_current", IconName::Crosshair)
+                        .icon_size(IconSize::Small)
+                        .toggle_state(is_resolving_current)
+                        .selected_icon_color(Color::Accent)
+                        .tooltip(Tooltip::text("Resolve in Current"))
+                        .on_click({
+                            let commit_view = commit_view.downgrade();
+                            move |_, window, cx| {
+                                commit_view
+                                    .update(cx, |commit_view, cx| {
+                                        commit_view.toggle_resolve_current(window, cx)
+                                    })
+                                    .log_err();
+                            }
+                        }),
+                )
             })
     }
 }
