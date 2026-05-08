@@ -106,12 +106,6 @@ pub struct GitStore {
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
-    /// Residual scaffolding used by the rpc handlers that still need to
-    /// reach the downstream peer directly: askpass round-trips in
-    /// `handle_fetch`/`handle_push`/`handle_pull`/`handle_commit` and the
-    /// buffer creation in `handle_open_commit_message_buffer`. The next
-    /// commit moves those handlers to `Project` and removes this field.
-    downstream_client: Option<(AnyProtoClient, u64)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -627,7 +621,6 @@ impl GitStore {
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
-            downstream_client: None,
         }
     }
 
@@ -642,16 +635,17 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_remove_remote);
         client.add_entity_request_handler(Self::handle_delete_branch);
         client.add_entity_request_handler(Self::handle_git_init);
-        client.add_entity_request_handler(Self::handle_push);
-        client.add_entity_request_handler(Self::handle_pull);
-        client.add_entity_request_handler(Self::handle_fetch);
+        // Note: handle_fetch / handle_push / handle_pull / handle_commit
+        // live on `Project` and `HeadlessProject` now; both register their
+        // own rpc handler that delegates to the matching
+        // `GitStore::process_*` worker. They moved off the host store
+        // because the askpass round-trip needs the downstream client.
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_stash);
         client.add_entity_request_handler(Self::handle_stash_pop);
         client.add_entity_request_handler(Self::handle_stash_apply);
         client.add_entity_request_handler(Self::handle_stash_drop);
-        client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
@@ -734,17 +728,9 @@ impl GitStore {
         self.set_active_repo_id(repo_id, cx);
     }
 
-    /// Records the downstream peer used by the residual rpc handlers
-    /// (askpass + open-commit-message-buffer). The initial-share repository
-    /// announce loop, the diff/send pipeline, and broadcast forwarding all
-    /// live on `Project` / `HeadlessProject` listeners now. The next commit
-    /// removes this method and the `downstream_client` field.
-    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, _cx: &mut Context<Self>) {
-        self.downstream_client = Some((client, project_id));
-    }
-
-    pub fn unshared(&mut self, _cx: &mut Context<Self>) {
-        self.downstream_client.take();
+    /// Drops every per-peer shared-diff entry. Called from
+    /// `Project::unshare_internal` when collab sharing ends.
+    pub fn forget_all_shared_diffs(&mut self) {
         self.shared_diffs.clear();
     }
 
@@ -1342,12 +1328,6 @@ impl GitStore {
             })
         });
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
-    }
-
-    fn downstream_client(&self) -> Option<(AnyProtoClient, ProjectId)> {
-        self.downstream_client
-            .as_ref()
-            .map(|(client, project_id)| (client.clone(), ProjectId(*project_id)))
     }
 
     fn upstream_client(&self) -> Option<AnyProtoClient> {
@@ -2067,8 +2047,12 @@ impl GitStore {
         })
     }
 
-    async fn handle_fetch(
+    /// Worker for the `proto::Fetch` rpc. The rpc registration lives on
+    /// `Project` (and `HeadlessProject`); they look up the downstream peer
+    /// info and call this with `downstream_client`.
+    pub async fn process_fetch(
         this: Entity<Self>,
+        downstream_client: AnyProtoClient,
         envelope: TypedEnvelope<proto::Fetch>,
         mut cx: AsyncApp,
     ) -> Result<proto::RemoteMessageResponse> {
@@ -2078,7 +2062,7 @@ impl GitStore {
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
-            this,
+            downstream_client,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
@@ -2097,8 +2081,10 @@ impl GitStore {
         })
     }
 
-    async fn handle_push(
+    /// Worker for the `proto::Push` rpc. See [`Self::process_fetch`].
+    pub async fn process_push(
         this: Entity<Self>,
+        downstream_client: AnyProtoClient,
         envelope: TypedEnvelope<proto::Push>,
         mut cx: AsyncApp,
     ) -> Result<proto::RemoteMessageResponse> {
@@ -2107,7 +2093,7 @@ impl GitStore {
 
         let askpass_id = envelope.payload.askpass_id;
         let askpass = make_remote_delegate(
-            this,
+            downstream_client,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
@@ -2145,8 +2131,10 @@ impl GitStore {
         })
     }
 
-    async fn handle_pull(
+    /// Worker for the `proto::Pull` rpc. See [`Self::process_fetch`].
+    pub async fn process_pull(
         this: Entity<Self>,
+        downstream_client: AnyProtoClient,
         envelope: TypedEnvelope<proto::Pull>,
         mut cx: AsyncApp,
     ) -> Result<proto::RemoteMessageResponse> {
@@ -2154,7 +2142,7 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
         let askpass = make_remote_delegate(
-            this,
+            downstream_client,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
@@ -2340,8 +2328,10 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
-    async fn handle_commit(
+    /// Worker for the `proto::Commit` rpc. See [`Self::process_fetch`].
+    pub async fn process_commit(
         this: Entity<Self>,
+        downstream_client: AnyProtoClient,
         envelope: TypedEnvelope<proto::Commit>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
@@ -2350,7 +2340,7 @@ impl GitStore {
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
-            this,
+            downstream_client,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
@@ -3791,32 +3781,31 @@ impl BufferGitState {
 }
 
 fn make_remote_delegate(
-    this: Entity<GitStore>,
+    downstream_client: AnyProtoClient,
     project_id: u64,
     repository_id: RepositoryId,
     askpass_id: u64,
     cx: &mut AsyncApp,
 ) -> AskPassDelegate {
     AskPassDelegate::new(cx, move |prompt, tx, cx| {
-        this.update(cx, |this, cx| {
-            let Some((client, _)) = this.downstream_client() else {
-                return;
-            };
-            let response = client.request(proto::AskPassRequest {
-                project_id,
-                repository_id: repository_id.to_proto(),
-                askpass_id,
-                prompt,
-            });
-            cx.spawn(async move |_, _| {
+        let response = downstream_client.request(proto::AskPassRequest {
+            project_id,
+            repository_id: repository_id.to_proto(),
+            askpass_id,
+            prompt,
+        });
+        cx.spawn(async move |_| {
+            let result: anyhow::Result<()> = async {
                 let mut response = response.await?.response;
                 tx.send(EncryptedPassword::try_from(response.as_ref())?)
                     .ok();
                 response.zeroize();
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        });
+                Ok(())
+            }
+            .await;
+            result.log_err();
+        })
+        .detach();
     })
 }
 

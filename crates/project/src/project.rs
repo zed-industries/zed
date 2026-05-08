@@ -1144,6 +1144,10 @@ impl Project {
         client.add_entity_message_handler(Self::handle_update_worktree);
         client.add_entity_request_handler(Self::handle_synchronize_buffers);
         client.add_entity_request_handler(Self::handle_lsp_query);
+        client.add_entity_request_handler(Self::handle_fetch);
+        client.add_entity_request_handler(Self::handle_push);
+        client.add_entity_request_handler(Self::handle_pull);
+        client.add_entity_request_handler(Self::handle_commit);
 
         client.add_entity_request_handler(Self::handle_search_candidate_buffers);
         client.add_entity_request_handler(Self::handle_open_buffer_by_id);
@@ -1650,6 +1654,10 @@ impl Project {
 
             remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
             remote_proto.add_entity_request_handler(Self::handle_lsp_query);
+            remote_proto.add_entity_request_handler(Self::handle_fetch);
+            remote_proto.add_entity_request_handler(Self::handle_push);
+            remote_proto.add_entity_request_handler(Self::handle_pull);
+            remote_proto.add_entity_request_handler(Self::handle_commit);
             BufferStore::init(&remote_proto);
             WorktreeStore::init_remote(&remote_proto);
             LspStore::init(&remote_proto);
@@ -2876,9 +2884,6 @@ impl Project {
         for proto in initial_settings_protos {
             self.collab_client.send(proto).log_err();
         }
-        self.git_store.update(cx, |git_store, cx| {
-            git_store.shared(project_id, self.collab_client.clone().into(), cx)
-        });
         // Announce all current repositories to the downstream peer. The
         // diff/send pipeline used to live inside `GitStore::shared`; in
         // Phase 0 it moves here, with `git_repository_snapshots_for_peer`
@@ -2921,9 +2926,6 @@ impl Project {
             self.send_worktree_project_updates(remote_id, cx);
         }
         if let Some(remote_id) = self.remote_id() {
-            self.git_store.update(cx, |git_store, cx| {
-                git_store.shared(remote_id, self.collab_client.clone().into(), cx)
-            });
             // Re-announce all repositories to the new peer. Previous
             // snapshots are stale (the new peer has no state yet), so clear
             // and re-send full initial updates.
@@ -3005,8 +3007,8 @@ impl Project {
                 buffer_store.forget_shared_buffers();
                 buffer_store.unshared(cx)
             });
-            self.git_store.update(cx, |git_store, cx| {
-                git_store.unshared(cx);
+            self.git_store.update(cx, |git_store, _| {
+                git_store.forget_all_shared_diffs();
             });
             self.git_repository_snapshots_for_peer.clear();
 
@@ -5565,6 +5567,65 @@ impl Project {
             cx,
         )
         .await
+    }
+
+    /// Forwards `proto::Fetch` rpc to the git store with the downstream
+    /// client used by the askpass round-trip. Lives on `Project` because
+    /// `GitStore` no longer holds a downstream client.
+    async fn handle_fetch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Fetch>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, downstream_client) =
+            this.read_with(&cx, |project, _| Self::git_downstream_for_handler(project));
+        GitStore::process_fetch(git_store, downstream_client, envelope, cx).await
+    }
+
+    /// Forwards `proto::Push` rpc. See [`Self::handle_fetch`].
+    async fn handle_push(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Push>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, downstream_client) =
+            this.read_with(&cx, |project, _| Self::git_downstream_for_handler(project));
+        GitStore::process_push(git_store, downstream_client, envelope, cx).await
+    }
+
+    /// Forwards `proto::Pull` rpc. See [`Self::handle_fetch`].
+    async fn handle_pull(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Pull>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, downstream_client) =
+            this.read_with(&cx, |project, _| Self::git_downstream_for_handler(project));
+        GitStore::process_pull(git_store, downstream_client, envelope, cx).await
+    }
+
+    /// Forwards `proto::Commit` rpc. See [`Self::handle_fetch`].
+    async fn handle_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Commit>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let (git_store, downstream_client) =
+            this.read_with(&cx, |project, _| Self::git_downstream_for_handler(project));
+        GitStore::process_commit(git_store, downstream_client, envelope, cx).await
+    }
+
+    /// Helper for the four `handle_fetch`/`handle_push`/`handle_pull`/
+    /// `handle_commit` handlers. The downstream client is whichever client
+    /// received the rpc envelope (collab in the host case, remote_proto in
+    /// the SSH-host case); we read it from `Project::collab_client`. The
+    /// project id passed to `make_remote_delegate` comes from the envelope,
+    /// not from us.
+    fn git_downstream_for_handler(project: &Self) -> (Entity<GitStore>, AnyProtoClient) {
+        (
+            project.git_store.clone(),
+            AnyProtoClient::from(project.collab_client.clone()),
+        )
     }
 
     async fn handle_unshare_project(

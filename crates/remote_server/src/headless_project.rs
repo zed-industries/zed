@@ -175,19 +175,13 @@ impl HeadlessProject {
         cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
         let git_store = cx.new(|cx| {
-            let mut store = GitStore::local(
+            GitStore::local(
                 &worktree_store,
                 buffer_store.clone(),
                 environment.clone(),
                 fs.clone(),
                 cx,
-            );
-            // Records the residual downstream client used by askpass and the
-            // open-commit-message-buffer rpc handlers. The repository
-            // announce/diff/send pipeline lives below in
-            // `Self::on_git_store_event`.
-            store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            store
+            )
         });
         cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
@@ -305,6 +299,10 @@ impl HeadlessProject {
 
         session.add_entity_request_handler(Self::handle_add_worktree);
         session.add_entity_request_handler(Self::handle_lsp_query);
+        session.add_entity_request_handler(Self::handle_fetch);
+        session.add_entity_request_handler(Self::handle_push);
+        session.add_entity_request_handler(Self::handle_pull);
+        session.add_entity_request_handler(Self::handle_commit);
         session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
 
         session.add_entity_request_handler(Self::handle_open_buffer_by_path);
@@ -787,6 +785,55 @@ impl HeadlessProject {
             cx,
         )
         .await
+    }
+
+    /// Forwards `proto::Fetch` rpc to the git store with the headless
+    /// session as the downstream peer for askpass.
+    async fn handle_fetch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Fetch>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_fetch(git_store, session, envelope, cx).await
+    }
+
+    /// Forwards `proto::Push` rpc. See [`Self::handle_fetch`].
+    async fn handle_push(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Push>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_push(git_store, session, envelope, cx).await
+    }
+
+    /// Forwards `proto::Pull` rpc. See [`Self::handle_fetch`].
+    async fn handle_pull(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Pull>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_pull(git_store, session, envelope, cx).await
+    }
+
+    /// Forwards `proto::Commit` rpc. See [`Self::handle_fetch`].
+    async fn handle_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Commit>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_commit(git_store, session, envelope, cx).await
     }
 
     pub async fn handle_add_worktree(
