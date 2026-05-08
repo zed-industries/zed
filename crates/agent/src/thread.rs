@@ -9,7 +9,9 @@ use crate::{
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag, UpdatePlanToolFeatureFlag};
+use feature_flags::{
+    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
@@ -2935,16 +2937,13 @@ impl Thread {
                     None
                 }
             })
-            .filter(|(tool_name, _)| {
-                cx.has_flag::<LspToolFeatureFlag>()
-                    || !matches!(
-                        tool_name.as_ref(),
-                        FindReferencesTool::NAME
-                            | GetCodeActionsTool::NAME
-                            | ApplyCodeActionTool::NAME
-                            | GoToDefinitionTool::NAME
-                            | RenameTool::NAME
-                    )
+            .filter(|(tool_name, _)| match tool_name.as_ref() {
+                RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
+                FindReferencesTool::NAME
+                | GetCodeActionsTool::NAME
+                | ApplyCodeActionTool::NAME
+                | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+                _ => true,
             })
             .collect::<BTreeMap<_, _>>();
 

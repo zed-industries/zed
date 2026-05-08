@@ -5664,12 +5664,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         GetCodeActionsTool::NAME,
         ApplyCodeActionTool::NAME,
         GoToDefinitionTool::NAME,
-        RenameTool::NAME,
     ];
 
-    // All LSP tools should be registered on the thread regardless of the flag,
-    // since the feature flag now only controls exposure to the model rather
-    // than registration.
+    // All LSP tools and the rename tool should be registered on the thread
+    // regardless of the flag, since the feature flags only control exposure
+    // to the model rather than registration.
     thread.read_with(cx, |thread, _| {
         for name in &lsp_tool_names {
             assert!(
@@ -5677,10 +5676,14 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
                 "expected LSP tool {name} to be registered"
             );
         }
+        assert!(
+            thread.has_registered_tool(RenameTool::NAME),
+            "expected rename tool to be registered"
+        );
     });
 
-    // Without the `lsp-tool` flag, sending a message should produce a
-    // completion request whose tool list excludes the LSP tools.
+    // Without any flags, sending a message should produce a completion
+    // request whose tool list excludes both the LSP tools and rename tool.
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["hello"], cx)
@@ -5697,6 +5700,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        !tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to be hidden without the rename-tool flag, \
+         but completion tools were: {tool_names:?}"
+    );
     // Sanity check: a non-LSP default tool should still be exposed.
     assert!(
         tool_names.iter().any(|t| t == ReadFileTool::NAME),
@@ -5705,15 +5713,44 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
     model.end_last_completion_stream();
     cx.run_until_parked();
 
-    // Enable the `lsp-tool` flag and send another message; the LSP tools
-    // should now appear in the completion request.
+    // Enable only the `rename-tool` flag; rename should appear but other
+    // LSP tools should remain hidden.
+    cx.update(|cx| {
+        cx.update_flags(false, vec!["rename-tool".to_string()]);
+    });
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = model.pending_completions().pop().unwrap();
+    let tool_names = tool_names_for_completion(&completion);
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to be exposed when rename-tool flag is on, \
+         but completion tools were: {tool_names:?}"
+    );
+    for name in &lsp_tool_names {
+        assert!(
+            !tool_names.iter().any(|t| t == name),
+            "expected LSP tool {name} to still be hidden without lsp-tool flag, \
+             but completion tools were: {tool_names:?}"
+        );
+    }
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Enable the `lsp-tool` flag as well; now all LSP tools should appear.
     cx.update(|cx| {
         cx.update_flags(false, vec!["lsp-tool".to_string()]);
     });
 
     thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["hello again"], cx)
+            thread.send(UserMessageId::new(), ["hello once more"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -5727,6 +5764,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to still be exposed, \
+         but completion tools were: {tool_names:?}"
+    );
 }
 
 #[gpui::test]
