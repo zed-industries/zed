@@ -10,6 +10,7 @@ use agent_ui::thread_metadata_store::{
 use agent_ui::thread_worktree_archive;
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
+    fuzzy_match_positions,
 };
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo,
@@ -374,28 +375,6 @@ struct SidebarContents {
 impl SidebarContents {
     fn is_thread_notified(&self, thread_id: &agent_ui::ThreadId) -> bool {
         self.notified_threads.contains(thread_id)
-    }
-}
-
-fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>> {
-    let mut positions = Vec::new();
-    let mut query_chars = query.chars().peekable();
-
-    for (byte_idx, candidate_char) in candidate.char_indices() {
-        if let Some(&query_char) = query_chars.peek() {
-            if candidate_char.eq_ignore_ascii_case(&query_char) {
-                positions.push(byte_idx);
-                query_chars.next();
-            }
-        } else {
-            break;
-        }
-    }
-
-    if query_chars.peek().is_none() {
-        Some(positions)
-    } else {
-        None
     }
 }
 
