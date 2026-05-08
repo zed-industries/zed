@@ -506,7 +506,7 @@ impl NativeAgent {
                 }) as _,
                 cx,
             );
-            // The `SkillsLookup::Dynamic` closure resolves `state.skills` at
+            // The `SkillsLookup` closure resolves `state.skills` at
             // invocation time, so skills added or removed by the SKILL.md
             // watcher after the thread is constructed are still visible to
             // the model — without this, the catalog and tool would drift
@@ -2681,7 +2681,7 @@ pub(crate) fn skills_lookup_for_project(
     weak_agent: WeakEntity<NativeAgent>,
     project_id: EntityId,
 ) -> SkillsLookup {
-    SkillsLookup::Dynamic(Arc::new(move |cx: &App| {
+    SkillsLookup::new(move |cx: &App| {
         weak_agent
             .upgrade()
             .and_then(|agent| {
@@ -2692,7 +2692,7 @@ pub(crate) fn skills_lookup_for_project(
                     .map(|state| state.skills.clone())
             })
             .unwrap_or_else(|| Arc::new(Vec::new()))
-    }))
+    })
 }
 
 /// Merge global and project-local skills.
