@@ -114,8 +114,10 @@ fn is_agents_skills_path(path: &Path) -> bool {
 
 /// If `path` is an absolute path under the global skills directory
 /// (`~/.agents/skills`), return the canonicalized absolute path. Returns
-/// `None` for any path that resolves outside the global skills tree, or for
-/// relative paths.
+/// `None` for any path that resolves outside the global skills tree, for
+/// relative paths, or if the skills directory itself can't be canonicalized
+/// (fail closed — better to refuse access than to compare against a
+/// non-canonical path).
 ///
 /// This is the gate that lets `read_file` / `list_directory` reach into the
 /// global skills directory — which lives outside any worktree — without
@@ -130,10 +132,7 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     // representations match).
     let canonical_path = fs.canonicalize(path).await.ok()?;
     let global_skills_dir = agent_skills::global_skills_dir();
-    let canonical_skills_dir = fs
-        .canonicalize(global_skills_dir.as_path())
-        .await
-        .unwrap_or(global_skills_dir);
+    let canonical_skills_dir = canonicalize_with_ancestors(&global_skills_dir, fs).await?;
 
     if canonical_path.starts_with(&canonical_skills_dir) {
         Some(canonical_path)
@@ -159,20 +158,20 @@ pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<Sensiti
 
     if let Some(canonical_path) = canonicalize_with_ancestors(path, fs).await {
         let global_agents_skills_dir = agent_skills::global_skills_dir();
-        let global_agents_skills_dir = fs
-            .canonicalize(global_agents_skills_dir.as_path())
-            .await
-            .unwrap_or(global_agents_skills_dir);
-        if canonical_path.starts_with(&global_agents_skills_dir) {
-            return Some(SensitiveSettingsKind::AgentSkills);
+        if let Some(canonical_skills_dir) =
+            canonicalize_with_ancestors(global_agents_skills_dir.as_path(), fs).await
+        {
+            if canonical_path.starts_with(&canonical_skills_dir) {
+                return Some(SensitiveSettingsKind::AgentSkills);
+            }
         }
 
-        let config_dir = fs
-            .canonicalize(paths::config_dir())
-            .await
-            .unwrap_or_else(|_| paths::config_dir().to_path_buf());
-        if canonical_path.starts_with(&config_dir) {
-            return Some(SensitiveSettingsKind::Global);
+        if let Some(canonical_config_dir) =
+            canonicalize_with_ancestors(paths::config_dir(), fs).await
+        {
+            if canonical_path.starts_with(&canonical_config_dir) {
+                return Some(SensitiveSettingsKind::Global);
+            }
         }
     }
 
