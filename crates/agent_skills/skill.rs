@@ -258,6 +258,24 @@ async fn load_single_skill(
     path: PathBuf,
     source: SkillSource,
 ) -> Result<Skill, SkillLoadError> {
+    // Short-circuit on oversized files before loading their contents into
+    // memory, so a stray multi-GB file named `SKILL.md` can't OOM the app.
+    // We only act on a positive signal that the file is too large; if
+    // metadata fails or is unavailable, we fall through to `fs.load`,
+    // which will surface its own error (and `parse_skill` enforces the
+    // same limit as a defense-in-depth backstop).
+    if let Ok(Some(metadata)) = fs.metadata(&path).await
+        && metadata.len > MAX_SKILL_FILE_SIZE as u64
+    {
+        return Err(SkillLoadError {
+            path: path.clone(),
+            message: format!(
+                "SKILL.md file exceeds maximum size of {}KB",
+                MAX_SKILL_FILE_SIZE / 1024
+            ),
+        });
+    }
+
     let content = fs.load(&path).await.map_err(|e| SkillLoadError {
         path: path.clone(),
         message: format!("Failed to read file: {}", e),
@@ -846,5 +864,43 @@ description: A skill with no body content
             .map(|s| s.name.as_str())
             .collect();
         assert_eq!(names, vec!["outer"]);
+    }
+
+    #[gpui::test]
+    async fn test_load_oversized_skill_file_short_circuits(cx: &mut TestAppContext) {
+        // A `SKILL.md` whose size exceeds `MAX_SKILL_FILE_SIZE` must be
+        // rejected via metadata before we read its contents into memory.
+        // Otherwise a stray multi-GB file dropped into a skill directory
+        // would OOM the application before `parse_skill`'s size check fires.
+        let fs = FakeFs::new(cx.executor());
+        let oversized_body = "x".repeat(MAX_SKILL_FILE_SIZE + 1);
+        let oversized_content = format!(
+            "---\nname: huge\ndescription: Too big\n---\n\n{}",
+            oversized_body
+        );
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "huge": {
+                    "SKILL.md": oversized_content,
+                }
+            }),
+        )
+        .await;
+
+        let results = load_skills_from_directory(
+            &(fs as Arc<dyn Fs>),
+            Path::new("/skills"),
+            SkillSource::Global,
+        )
+        .await;
+
+        assert_eq!(results.len(), 1);
+        let err = results[0].as_ref().expect_err("Oversized file must error");
+        assert!(
+            err.message.contains("exceeds maximum size"),
+            "unexpected error message: {}",
+            err.message
+        );
     }
 }
