@@ -710,7 +710,7 @@ fn hud_bounds(
 ) -> Bounds<Pixels> {
     let margin = px(12.);
     let padding = hud_padding();
-    let hud_width = px(560.);
+    let hud_width = px(760.);
     let line_height = hud_line_height();
     let hud_height = padding * 2. + line_height * (row_count as f32);
     let hud_size = size(hud_width, hud_height);
