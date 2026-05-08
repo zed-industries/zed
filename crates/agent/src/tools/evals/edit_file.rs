@@ -71,7 +71,7 @@ impl EvalInput {
 struct EvalSample {
     text_before: String,
     text_after: String,
-    tool_input: EditFileToolInput,
+    tool_inputs: Vec<EditFileToolInput>,
     diff: String,
 }
 
@@ -214,7 +214,7 @@ impl Display for EditEvalOutput {
             writeln!(f, "Message: {}", message)?;
         }
         writeln!(f, "Diff:\n{}", self.sample.diff)?;
-        writeln!(f, "Tool Input:\n{:#?}", self.sample.tool_input)?;
+        writeln!(f, "Tool Inputs:\n{:#?}", self.sample.tool_inputs)?;
         Ok(())
     }
 }
@@ -403,7 +403,7 @@ impl EditToolTest {
 
         // The model will call the tool as "edit_file" (the production-visible
         // name), but the schema is from EditFileTool.
-        let tool_input =
+        let tool_inputs =
             retry_on_rate_limit(async || self.extract_tool_use(request.clone(), cx).await).await?;
 
         let language_registry = self
@@ -431,15 +431,21 @@ impl EditToolTest {
             language_registry,
         ));
 
-        let result = cx
-            .update(|cx| {
-                tool.clone().run(
-                    ToolInput::resolved(tool_input.clone()),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
-            .await;
+        let mut last_output = None;
+        for tool_input in &tool_inputs {
+            let result = cx
+                .update(|cx| {
+                    tool.clone().run(
+                        ToolInput::resolved(tool_input.clone()),
+                        ToolCallEventStream::test().0,
+                        cx,
+                    )
+                })
+                .await;
+            last_output = Some(result);
+        }
+
+        let result = last_output.context("No tool uses were produced")?;
 
         let output = match result {
             Ok(output) => output,
@@ -453,7 +459,7 @@ impl EditToolTest {
         };
 
         let sample = EvalSample {
-            tool_input,
+            tool_inputs,
             diff: language::unified_diff(
                 eval.input_content.as_deref().unwrap_or_default(),
                 new_text,
@@ -476,7 +482,7 @@ impl EditToolTest {
         &self,
         request: LanguageModelRequest,
         cx: &mut TestAppContext,
-    ) -> Result<EditFileToolInput> {
+    ) -> Result<Vec<EditFileToolInput>> {
         let model = self.model.clone();
         let events = cx
             .update(|cx| {
@@ -490,6 +496,7 @@ impl EditToolTest {
         let mut streamed_text = String::new();
         let mut stop_reason = None;
         let mut parse_errors = Vec::new();
+        let mut inputs = Vec::new();
 
         let mut events = events.fuse();
         while let Some(event) = events.next().await {
@@ -500,7 +507,7 @@ impl EditToolTest {
                 {
                     let input: EditFileToolInput = serde_json::from_value(tool_use.input)
                         .context("Failed to parse tool input as EditFileToolInput")?;
-                    return Ok(input);
+                    inputs.push(input);
                 }
                 Ok(LanguageModelCompletionEvent::Text(text)) => {
                     if streamed_text.len() < 2_000 {
@@ -523,6 +530,10 @@ impl EditToolTest {
                 }
                 _ => {}
             }
+        }
+
+        if !inputs.is_empty() {
+            return Ok(inputs);
         }
 
         let streamed_text = streamed_text.trim();
@@ -1022,13 +1033,13 @@ fn eval_from_pixels_constructor() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("fixtures/from_pixels_constructor/before.rs");
 
-    eval_utils::eval(100, 0.95, eval_utils::NoProcessor, move || {
+    eval_utils::eval(5, 0.95, eval_utils::NoProcessor, move || {
         run_eval(EvalInput::new(
             vec![
                 message(
                     User,
                     [text(indoc::indoc! {"
-                        Introduce a new `from_pixels` constructor in Canvas.
+                        Introduce a new `from_pixels` constructor in Canvas and also add tests for it in the same file.
                     "})],
                 ),
                 message(
@@ -1055,8 +1066,9 @@ fn eval_from_pixels_constructor() {
             input_file_path,
             Some(input_file_content.into()),
             EvalAssertion::judge_diff(indoc::indoc! {"
-                        - The diff contains a new `from_pixels` constructor
-                    "}),
+                - The diff contains a new `from_pixels` constructor
+                - The diff contains new tests for the `from_pixels` constructor
+            "}),
         ))
     });
 }

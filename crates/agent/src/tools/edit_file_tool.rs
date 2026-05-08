@@ -22,11 +22,11 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying a single edit to an existing file.
 ///
-/// Before using this tool:
-///
-/// 1. Use the `read_file` tool to understand the file's contents and context
+/// Before using this tool, use the `read_file` tool to understand the file's contents and context
 ///
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
+///
+/// If you intend to make multiple edits and they don't overlap, make the edits in parallel.
 ///
 /// Properly escape all text fields as valid JSON strings.
 /// Remember to escape special characters like newlines (`\n`) and quotes (`"`) in JSON strings.

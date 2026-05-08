@@ -21,10 +21,8 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 ///
 /// To make granular edits to an existing file, prefer the `edit_file` tool instead.
 ///
-/// Before using this tool:
-///
-/// 1. Verify the directory path is correct (only applicable when creating new files):
-///    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
+/// Before using this tool, verify the directory path is correct (only applicable when creating new files):
+/// - Use the `list_directory` tool to verify the parent directory exists and is the correct location
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WriteFileToolInput {
     /// The full path of the file to create or overwrite in the project.
