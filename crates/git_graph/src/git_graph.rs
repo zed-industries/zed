@@ -5734,6 +5734,9 @@ mod tests {
             graph.copy_selected_commit_tag(&CopyCommitTag, window, cx);
         });
 
+        // Ensure that nothing has been copied at this point
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()), None);
+
         let picker = workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<CommitTagPicker>(cx)
