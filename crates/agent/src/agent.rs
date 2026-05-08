@@ -55,7 +55,7 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 use util::ResultExt;
@@ -362,28 +362,57 @@ impl NativeAgent {
     ) {
         let skills_dir = global_skills_dir();
 
-        // If the skills directory doesn't exist yet, don't watch.
-        // (Re-checking when it appears is out of scope; the user can restart.)
-        if !fs.is_dir(&skills_dir).await {
-            return;
-        }
-
-        let (mut events, _watcher) = fs
-            .watch(&skills_dir, std::time::Duration::from_millis(500))
-            .await;
-
-        while let Some(changed_paths) = events.next().await {
-            if changed_paths.is_empty() {
-                continue;
-            }
-
-            let Ok(()) = this.update(cx, |this, _cx| {
-                for state in this.projects.values_mut() {
-                    state.project_context_needs_refresh.send(()).ok();
-                }
-            }) else {
-                break;
+        loop {
+            // Watch the deepest existing ancestor of the skills dir. This lets
+            // us react to the creation of `~/.agents/` or `~/.agents/skills/`
+            // without requiring a Zed restart.
+            //
+            // Note: when we transition from watching an ancestor to watching
+            // the skills dir directly, we may miss events that happen during
+            // the transition. File watchers are inherently best-effort, so we
+            // accept this limitation.
+            let Some(watch_target) = deepest_existing_ancestor(&skills_dir, fs.as_ref()).await
+            else {
+                // We couldn't even find the filesystem root. Bail.
+                return;
             };
+
+            let watching_skills_dir = watch_target == skills_dir;
+
+            let (mut events, _watcher) = fs
+                .watch(&watch_target, std::time::Duration::from_millis(500))
+                .await;
+
+            while let Some(changed_paths) = events.next().await {
+                if changed_paths.is_empty() {
+                    continue;
+                }
+
+                if watching_skills_dir {
+                    let Ok(()) = this.update(cx, |this, _cx| {
+                        for state in this.projects.values_mut() {
+                            state.project_context_needs_refresh.send(()).ok();
+                        }
+                    }) else {
+                        return;
+                    };
+                    continue;
+                }
+
+                // We're watching an ancestor. If the skills dir has appeared,
+                // trigger a refresh and break out so the outer loop switches
+                // to watching it directly.
+                if fs.is_dir(&skills_dir).await {
+                    let Ok(()) = this.update(cx, |this, _cx| {
+                        for state in this.projects.values_mut() {
+                            state.project_context_needs_refresh.send(()).ok();
+                        }
+                    }) else {
+                        return;
+                    };
+                    break;
+                }
+            }
         }
     }
 
@@ -1515,6 +1544,19 @@ impl NativeAgent {
             .await
         })
     }
+}
+
+/// Walk up `path` looking for the deepest existing directory. Returns `path`
+/// itself if it's already a directory, or the closest ancestor that is.
+async fn deepest_existing_ancestor(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let mut current: Option<&Path> = Some(path);
+    while let Some(candidate) = current {
+        if fs.is_dir(candidate).await {
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 /// Wrapper struct that implements the AgentConnection trait
