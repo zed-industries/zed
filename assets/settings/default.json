@@ -1132,8 +1132,6 @@
           "now": true,
           "rename_symbol": true,
           "read_file": true,
-          "restore_file_from_disk": true,
-          "save_file": true,
           "open": true,
           "grep": true,
           "spawn_agent": true,
