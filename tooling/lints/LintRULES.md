@@ -8,3 +8,9 @@
 6. Reporting is fine if it's simple, it does not need to be elaborate or lengthy code.
 7. Do NOT suggest how to fix the lint, only flag it.
 8. Do NOT make lints machine applicable.
+9. You can exclude running specific lints by putting them into the `RUSTFLAGS` env var, like so:
+
+```
+RUSTFLAGS="-A entity_update_in_render" cargo dylint --path tooling/lints -- --manifest-path /Users/$USER_NAME/OTHER_PROJECT/Cargo.toml --workspace
+```
+10. Also use the above command to run `lints` on different repos

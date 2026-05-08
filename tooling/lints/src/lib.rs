@@ -28,10 +28,12 @@ use rustc_span::Span;
 
 mod entity_update_in_render;
 mod notify_in_render;
+mod owned_string_into_shared;
 mod render_helpers;
 
 use entity_update_in_render::ENTITY_UPDATE_IN_RENDER;
 use notify_in_render::NOTIFY_IN_RENDER;
+use owned_string_into_shared::OWNED_STRING_INTO_SHARED;
 
 // ---------------------------------------------------------------------------
 // Boilerplate: export the dylint ABI version symbol.
@@ -50,11 +52,13 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         ASYNC_BLOCK_WITHOUT_AWAIT,
         ENTITY_UPDATE_IN_RENDER,
         NOTIFY_IN_RENDER,
+        OWNED_STRING_INTO_SHARED,
     ]);
     lint_store.register_late_pass(|_| Box::new(SharedStringFromStrLiteral));
     lint_store.register_late_pass(|_| Box::new(AsyncBlockWithoutAwait));
     lint_store.register_late_pass(|_| Box::new(entity_update_in_render::EntityUpdateInRender));
     lint_store.register_late_pass(|_| Box::new(notify_in_render::NotifyInRender));
+    lint_store.register_late_pass(|_| Box::new(owned_string_into_shared::OwnedStringIntoShared));
 }
 
 // ===========================================================================

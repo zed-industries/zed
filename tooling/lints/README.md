@@ -5,6 +5,9 @@ A [dylint](https://github.com/trailofbits/dylint) library that flags various bad
 ## Current lints
 - `shared_string_from_str_literal` — `SharedString::new/from` etc where `SharedString::from_static` should be used instead.
 - `async_block_without_await` — `async { … }` blocks whose body contains no `.await` expression.
+- `entity_update_in_render` — `Entity::update`/`WeakEntity::update` mutating an entity inside `Render::render`.
+- `notify_in_render` — `Context::notify()` called inside `Render::render`.
+- `owned_string_into_shared` — `String::from(<lit>).into()` / `<lit>.to_string().into()` / `<lit>.to_owned().into()` whose target is `SharedString`, `Arc<str>`, `Rc<str>`, or `Cow<'_, str>`.
 
 ## How to run
 Ideally you run this as part of the `clippy` script in the  `zed/scripts` directory since this will also run our other linters.

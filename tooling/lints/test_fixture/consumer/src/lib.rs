@@ -39,3 +39,25 @@ pub fn into_variable(s: &str) -> SharedString {
 pub fn into_long() -> SharedString {
     "this literal is definitely longer than twenty three bytes".into()
 }
+
+// ---- owned_string_into_shared cases targeting `SharedString` ----
+
+// Should fire (owned_string_into_shared): `String::from(<lit>).into()`.
+pub fn shared_string_from_string_from() -> SharedString {
+    String::from("label").into()
+}
+
+// Should fire (owned_string_into_shared): `<lit>.to_string().into()`.
+pub fn shared_string_from_to_string() -> SharedString {
+    "label".to_string().into()
+}
+
+// Should fire (owned_string_into_shared): `<lit>.to_owned().into()`.
+pub fn shared_string_from_to_owned() -> SharedString {
+    "label".to_owned().into()
+}
+
+// Should NOT fire owned_string_into_shared: the source is a non-literal `String`.
+pub fn shared_string_from_dynamic_string(s: String) -> SharedString {
+    s.into()
+}
