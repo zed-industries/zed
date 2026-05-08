@@ -1539,10 +1539,6 @@ impl NativeAgent {
                 }
             }
 
-            let mut combined = Vec::with_capacity(user_blocks.len() + 1);
-            combined.push(envelope_block.clone());
-            combined.extend(user_blocks);
-
             // UI: show the rendered envelope as a sibling user message so
             // the user can see what context was loaded for the skill. The
             // user's own typed message is already rendered by the normal
@@ -1551,7 +1547,7 @@ impl NativeAgent {
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.push_user_content_block_with_indent(
                     Some(injected_id),
-                    envelope_block,
+                    envelope_block.clone(),
                     true,
                     cx,
                 );
@@ -1559,6 +1555,10 @@ impl NativeAgent {
 
             // Model context: a single user message containing the skill
             // envelope followed by the user's appended content.
+            let mut combined = Vec::with_capacity(user_blocks.len() + 1);
+            combined.push(envelope_block);
+            combined.extend(user_blocks);
+
             thread.update(cx, |thread, cx| {
                 thread.push_acp_user_block(message_id, combined, path_style, cx);
             });
