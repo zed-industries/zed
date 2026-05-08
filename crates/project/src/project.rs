@@ -284,6 +284,17 @@ pub struct Project {
     /// will use this set to filter `Project::repositories(cx)` and the
     /// downstream-broadcast paths in `on_git_store_event`.
     repositories: HashSet<RepositoryId>,
+    /// Per-project view of which language servers (by id) this Project
+    /// considers "its own" out of the (potentially shared) host
+    /// `LspStore`. A server is claimed when the host store fires
+    /// `LanguageServerAdded` and either (a) it has no associated worktree
+    /// (a "global" server we always claim) or (b) its worktree is in
+    /// `self.worktrees`. Pruned by `LanguageServerRemoved`. Phase 2 will
+    /// use this set to gate the proto-broadcast paths in
+    /// `on_lsp_store_event` so a shared LspStore doesn't produce duplicate
+    /// `StartLanguageServer`/`RefreshInlayHints`/etc. broadcasts from
+    /// each tenant Project.
+    language_servers: HashSet<LanguageServerId>,
     /// Drives the context server maintain loop on this Project's behalf.
     /// Set when a refresh is in flight; cleared when the spawned task
     /// completes. Lives on `Project` (not `ContextServerStore`) so that
@@ -1324,6 +1335,7 @@ impl Project {
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
+                language_servers: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             }
@@ -1441,6 +1453,7 @@ impl Project {
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
+                language_servers: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -1693,6 +1706,7 @@ impl Project {
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
+                language_servers: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -3785,6 +3799,20 @@ impl Project {
         }
     }
 
+    /// Returns true if a language server with the given (optional)
+    /// worktree association belongs to this Project. Servers without
+    /// a worktree are claimed unconditionally (they're "global" within
+    /// the host LspStore); worktree-scoped servers are claimed only if
+    /// their worktree is in `self.worktrees`. Mirrors the filter
+    /// already used in `Project::shared` when announcing servers to a
+    /// joining peer.
+    fn language_server_belongs_to_us(&self, worktree_id: Option<WorktreeId>, cx: &App) -> bool {
+        match worktree_id {
+            None => true,
+            Some(id) => self.worktrees(cx).any(|w| w.read(cx).id() == id),
+        }
+    }
+
     /// Returns true if any of the given repository's worktrees are owned
     /// by this Project. Used by `on_git_store_event` to decide whether
     /// to claim a repository when the host store fires `RepositoryAdded`.
@@ -3842,6 +3870,19 @@ impl Project {
         event: &LspStoreEvent,
         cx: &mut Context<Self>,
     ) {
+        // Ownership tracking. Run regardless of share state.
+        match event {
+            LspStoreEvent::LanguageServerAdded(server_id, _, worktree_id) => {
+                if self.language_server_belongs_to_us(*worktree_id, cx) {
+                    self.language_servers.insert(*server_id);
+                }
+            }
+            LspStoreEvent::LanguageServerRemoved(server_id) => {
+                self.language_servers.remove(server_id);
+            }
+            _ => {}
+        }
+
         match event {
             LspStoreEvent::DiagnosticsUpdated { server_id, paths } => {
                 cx.emit(Event::DiagnosticsUpdated {
@@ -3855,6 +3896,9 @@ impl Project {
                     name.clone(),
                     *worktree_id,
                 ));
+                if !self.language_servers.contains(server_id) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     let lsp_store = self.lsp_store(cx).read(cx);
                     if let Some(capabilities) = lsp_store.lsp_server_capabilities.get(server_id) {
@@ -3896,6 +3940,9 @@ impl Project {
                     server_id: *server_id,
                     request_id: *request_id,
                 });
+                if !self.language_servers.contains(server_id) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshInlayHints {
@@ -3914,6 +3961,9 @@ impl Project {
                     server_id: *server_id,
                     request_id: *request_id,
                 });
+                if !self.language_servers.contains(server_id) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshSemanticTokens {
@@ -3935,6 +3985,9 @@ impl Project {
                 }
             }
             LspStoreEvent::PullWorkspaceDiagnosticsRequested { server_id } => {
+                if !self.language_servers.contains(server_id) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::PullWorkspaceDiagnostics {
@@ -3949,6 +4002,14 @@ impl Project {
                 summary,
                 more_summaries,
             } => {
+                // Gate on this Project owning the worktree the
+                // diagnostics belong to. In Phase 2 sharing, sibling
+                // Projects on the same host LspStore would otherwise
+                // each fire the same downstream broadcast.
+                let owns_worktree = self.worktrees(cx).any(|w| w.read(cx).id() == *worktree_id);
+                if !owns_worktree {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::UpdateDiagnosticSummary {
@@ -3978,7 +4039,7 @@ impl Project {
                 name,
                 message,
             } => {
-                if self.is_local(cx) {
+                if self.is_local(cx) && self.language_servers.contains(language_server_id) {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,
