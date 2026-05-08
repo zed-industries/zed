@@ -1,6 +1,242 @@
 use super::*;
 
 impl Editor {
+    pub fn set_input_enabled(&mut self, input_enabled: bool) {
+        self.input_enabled = input_enabled;
+    }
+
+    pub fn set_expects_character_input(&mut self, expects_character_input: bool) {
+        self.expects_character_input = expects_character_input;
+    }
+
+    pub fn set_autoindent(&mut self, autoindent: bool) {
+        if autoindent {
+            self.autoindent_mode = Some(AutoindentMode::EachLine);
+        } else {
+            self.autoindent_mode = None;
+        }
+    }
+
+    pub fn set_use_autoclose(&mut self, autoclose: bool) {
+        self.use_autoclose = autoclose;
+    }
+
+    pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
+        self.use_auto_surround = auto_surround;
+    }
+
+    pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
+        self.auto_replace_emoji_shortcode = auto_replace;
+    }
+
+    pub(super) fn linked_editing_ranges_for(
+        &self,
+        query_range: Range<text::Anchor>,
+        cx: &App,
+    ) -> Option<HashMap<Entity<Buffer>, Vec<Range<text::Anchor>>>> {
+        use text::ToOffset as TO;
+
+        if self.linked_edit_ranges.is_empty() {
+            return None;
+        }
+        if query_range.start.buffer_id != query_range.end.buffer_id {
+            return None;
+        };
+        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer = self.buffer.read(cx).buffer(query_range.end.buffer_id)?;
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let (base_range, linked_ranges) = self.linked_edit_ranges.get(
+            buffer_snapshot.remote_id(),
+            query_range.clone(),
+            &buffer_snapshot,
+        )?;
+        // find offset from the start of current range to current cursor position
+        let start_byte_offset = TO::to_offset(&base_range.start, &buffer_snapshot);
+
+        let start_offset = TO::to_offset(&query_range.start, &buffer_snapshot);
+        let start_difference = start_offset - start_byte_offset;
+        let end_offset = TO::to_offset(&query_range.end, &buffer_snapshot);
+        let end_difference = end_offset - start_byte_offset;
+
+        // Current range has associated linked ranges.
+        let mut linked_edits = HashMap::<_, Vec<_>>::default();
+        for range in linked_ranges.iter() {
+            let start_offset = TO::to_offset(&range.start, &buffer_snapshot);
+            let end_offset = start_offset + end_difference;
+            let start_offset = start_offset + start_difference;
+            if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
+                continue;
+            }
+            if self.selections.disjoint_anchor_ranges().any(|s| {
+                let Some((selection_start, _)) =
+                    multibuffer_snapshot.anchor_to_buffer_anchor(s.start)
+                else {
+                    return false;
+                };
+                let Some((selection_end, _)) = multibuffer_snapshot.anchor_to_buffer_anchor(s.end)
+                else {
+                    return false;
+                };
+                if selection_start.buffer_id != query_range.start.buffer_id
+                    || selection_end.buffer_id != query_range.end.buffer_id
+                {
+                    return false;
+                }
+                TO::to_offset(&selection_start, &buffer_snapshot) <= end_offset
+                    && TO::to_offset(&selection_end, &buffer_snapshot) >= start_offset
+            }) {
+                continue;
+            }
+            let start = buffer_snapshot.anchor_after(start_offset);
+            let end = buffer_snapshot.anchor_after(end_offset);
+            linked_edits
+                .entry(buffer.clone())
+                .or_default()
+                .push(start..end);
+        }
+        Some(linked_edits)
+    }
+
+    pub(super) fn marked_text_ranges(
+        &self,
+        cx: &App,
+    ) -> Option<Vec<Range<MultiBufferOffsetUtf16>>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let (_, ranges) = self.text_highlights(HighlightKey::InputComposition, cx)?;
+        Some(
+            ranges
+                .iter()
+                .map(move |range| {
+                    range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
+                })
+                .collect(),
+        )
+    }
+
+    pub fn replay_insert_event(
+        &mut self,
+        text: &str,
+        relative_utf16_range: Option<Range<isize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
+            return;
+        }
+        if let Some(relative_utf16_range) = relative_utf16_range {
+            let selections = self
+                .selections
+                .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                let new_ranges = selections.into_iter().map(|range| {
+                    let start = MultiBufferOffsetUtf16(OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .0
+                            .saturating_add_signed(relative_utf16_range.start),
+                    ));
+                    let end = MultiBufferOffsetUtf16(OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .0
+                            .saturating_add_signed(relative_utf16_range.end),
+                    ));
+                    start..end
+                });
+                s.select_ranges(new_ranges);
+            });
+        }
+
+        self.handle_input(text, window, cx);
+    }
+
+    pub fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut pending: String = window
+            .pending_input_keystrokes()
+            .into_iter()
+            .flatten()
+            .filter_map(|keystroke| keystroke.key_char.clone())
+            .collect();
+
+        if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
+            pending = "".to_string();
+        }
+
+        let existing_pending = self
+            .text_highlights(HighlightKey::PendingInput, cx)
+            .map(|(_, ranges)| ranges.to_vec());
+        if existing_pending.is_none() && pending.is_empty() {
+            return;
+        }
+        let transaction =
+            self.transact(window, cx, |this, window, cx| {
+                let selections = this
+                    .selections
+                    .all::<MultiBufferOffset>(&this.display_snapshot(cx));
+                let edits = selections
+                    .iter()
+                    .map(|selection| (selection.end..selection.end, pending.clone()));
+                this.edit(edits, cx);
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(selections.into_iter().enumerate().map(|(ix, sel)| {
+                        sel.start + ix * pending.len()..sel.end + ix * pending.len()
+                    }));
+                });
+                if let Some(existing_ranges) = existing_pending {
+                    let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
+                    this.edit(edits, cx);
+                }
+            });
+
+        let snapshot = self.snapshot(window, cx);
+        let ranges = self
+            .selections
+            .all::<MultiBufferOffset>(&snapshot.display_snapshot)
+            .into_iter()
+            .map(|selection| {
+                snapshot.buffer_snapshot().anchor_after(selection.end)
+                    ..snapshot
+                        .buffer_snapshot()
+                        .anchor_before(selection.end + pending.len())
+            })
+            .collect();
+
+        if pending.is_empty() {
+            self.clear_highlights(HighlightKey::PendingInput, cx);
+        } else {
+            self.highlight_text(
+                HighlightKey::PendingInput,
+                ranges,
+                HighlightStyle {
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }
+
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self
+            .text_highlights(HighlightKey::PendingInput, cx)
+            .is_none()
+        {
+            self.ime_transaction.take();
+        }
+    }
+
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let text: Arc<str> = text.into();
 
@@ -1150,5 +1386,830 @@ impl Editor {
             }
             false
         });
+    }
+}
+
+impl EntityInputHandler for Editor {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let start = snapshot.clip_offset_utf16(
+            MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start)),
+            Bias::Left,
+        );
+        let end = snapshot.clip_offset_utf16(
+            MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end)),
+            Bias::Right,
+        );
+        if (start.0.0..end.0.0) != range_utf16 {
+            adjusted_range.replace(start.0.0..end.0.0);
+        }
+        Some(snapshot.text_for_range(start..end).collect())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        // Prevent the IME menu from appearing when holding down an alphabetic key
+        // while input is disabled.
+        if !ignore_disabled_input && !self.input_enabled {
+            return None;
+        }
+
+        let selection = self
+            .selections
+            .newest::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
+        let range = selection.range();
+
+        Some(UTF16Selection {
+            range: range.start.0.0..range.end.0.0,
+            reversed: selection.reversed,
+        })
+    }
+
+    fn marked_text_range(&self, _: &mut Window, cx: &mut Context<Self>) -> Option<Range<usize>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        let range = self
+            .text_highlights(HighlightKey::InputComposition, cx)?
+            .1
+            .first()?;
+        Some(range.start.to_offset_utf16(&snapshot).0.0..range.end.to_offset_utf16(&snapshot).0.0)
+    }
+
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.clear_highlights(HighlightKey::InputComposition, cx);
+        self.ime_transaction.take();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
+            return;
+        }
+
+        self.transact(window, cx, |this, window, cx| {
+            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                if let Some(marked_ranges) = this.marked_text_ranges(cx) {
+                    // During IME composition, macOS reports the replacement range
+                    // relative to the first marked region (the only one visible via
+                    // marked_text_range). The correct targets for replacement are the
+                    // marked ranges themselves — one per cursor — so use them directly.
+                    Some(marked_ranges)
+                } else if range_utf16.start == range_utf16.end {
+                    // An empty replacement range means "insert at cursor" with no text
+                    // to replace. macOS reports the cursor position from its own
+                    // (single-cursor) view of the buffer, which diverges from our actual
+                    // cursor positions after multi-cursor edits have shifted offsets.
+                    // Treating this as range_utf16=None lets each cursor insert in place.
+                    None
+                } else {
+                    // Outside of IME composition (e.g. Accessibility Keyboard word
+                    // completion), the range is an absolute document offset for the
+                    // newest cursor. Fan it out to all cursors via
+                    // selection_replacement_ranges, which applies the delta relative
+                    // to the newest selection to every cursor.
+                    let range_utf16 = MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start))
+                        ..MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end));
+                    Some(this.selection_replacement_ranges(range_utf16, cx))
+                }
+            } else {
+                this.marked_text_ranges(cx)
+            };
+
+            let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<MultiBufferOffsetUtf16>(&this.display_snapshot(cx))
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0.0 as isize - selection.head().0.0 as isize)
+                                    ..(range.end.0.0 as isize - selection.head().0.0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(EditorEvent::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
+
+            if let Some(new_selected_ranges) = new_selected_ranges {
+                // Only backspace if at least one range covers actual text. When all
+                // ranges are empty (e.g. a trailing-space insertion from Accessibility
+                // Keyboard sends replacementRange=cursor..cursor), backspace would
+                // incorrectly delete the character just before the cursor.
+                let should_backspace = new_selected_ranges.iter().any(|r| r.start != r.end);
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+                if should_backspace {
+                    this.backspace(&Default::default(), window, cx);
+                }
+            }
+
+            this.handle_input(text, window, cx);
+        });
+
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        self.unmark_text(window, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.input_enabled {
+            return;
+        }
+
+        let transaction = self.transact(window, cx, |this, window, cx| {
+            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+                let snapshot = this.buffer.read(cx).read(cx);
+                if let Some(relative_range_utf16) = range_utf16.as_ref() {
+                    for marked_range in &mut marked_ranges {
+                        marked_range.end = marked_range.start + relative_range_utf16.end;
+                        marked_range.start += relative_range_utf16.start;
+                        marked_range.start =
+                            snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
+                        marked_range.end =
+                            snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
+                    }
+                }
+                Some(marked_ranges)
+            } else if let Some(range_utf16) = range_utf16 {
+                let range_utf16 = MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start))
+                    ..MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end));
+                Some(this.selection_replacement_ranges(range_utf16, cx))
+            } else {
+                None
+            };
+
+            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<MultiBufferOffsetUtf16>(&this.display_snapshot(cx))
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0.0 as isize - selection.head().0.0 as isize)
+                                    ..(range.end.0.0 as isize - selection.head().0.0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(EditorEvent::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
+
+            if let Some(ranges) = ranges_to_replace {
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(ranges)
+                });
+            }
+
+            let marked_ranges = {
+                let snapshot = this.buffer.read(cx).read(cx);
+                this.selections
+                    .disjoint_anchors_arc()
+                    .iter()
+                    .map(|selection| {
+                        selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            if text.is_empty() {
+                this.unmark_text(window, cx);
+            } else {
+                this.highlight_text(
+                    HighlightKey::InputComposition,
+                    marked_ranges.clone(),
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
+
+            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
+            let use_autoclose = this.use_autoclose;
+            let use_auto_surround = this.use_auto_surround;
+            this.set_use_autoclose(false);
+            this.set_use_auto_surround(false);
+            this.handle_input(text, window, cx);
+            this.set_use_autoclose(use_autoclose);
+            this.set_use_auto_surround(use_auto_surround);
+
+            if let Some(new_selected_range) = new_selected_range_utf16 {
+                let snapshot = this.buffer.read(cx).read(cx);
+                let new_selected_ranges = marked_ranges
+                    .into_iter()
+                    .map(|marked_range| {
+                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
+                        let new_start = MultiBufferOffsetUtf16(OffsetUtf16(
+                            insertion_start.0 + new_selected_range.start,
+                        ));
+                        let new_end = MultiBufferOffsetUtf16(OffsetUtf16(
+                            insertion_start.0 + new_selected_range.end,
+                        ));
+                        snapshot.clip_offset_utf16(new_start, Bias::Left)
+                            ..snapshot.clip_offset_utf16(new_end, Bias::Right)
+                    })
+                    .collect::<Vec<_>>();
+
+                drop(snapshot);
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+            }
+        });
+
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self
+            .text_highlights(HighlightKey::InputComposition, cx)
+            .is_none()
+        {
+            self.ime_transaction.take();
+        }
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        element_bounds: gpui::Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Bounds<Pixels>> {
+        let text_layout_details = self.text_layout_details(window, cx);
+        let CharacterDimensions {
+            em_width,
+            em_advance,
+            line_height,
+        } = self.character_dimensions(window, cx);
+
+        let snapshot = self.snapshot(window, cx);
+        let scroll_position = snapshot.scroll_position();
+        let scroll_left = scroll_position.x * ScrollOffset::from(em_advance);
+
+        let start =
+            MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start)).to_display_point(&snapshot);
+        let x = Pixels::from(
+            ScrollOffset::from(
+                snapshot.x_for_display_point(start, &text_layout_details)
+                    + self.gutter_dimensions.full_width(),
+            ) - scroll_left,
+        );
+        let y = line_height * (start.row().as_f64() - scroll_position.y) as f32;
+
+        Some(Bounds {
+            origin: element_bounds.origin + point(x, y),
+            size: size(em_width, line_height),
+        })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let position_map = self.last_position_map.as_ref()?;
+        if !position_map.text_hitbox.contains(&point) {
+            return None;
+        }
+        let display_point = position_map.point_for_position(point).previous_valid;
+        let anchor = position_map
+            .snapshot
+            .display_point_to_anchor(display_point, Bias::Left);
+        let utf16_offset = anchor.to_offset_utf16(&position_map.snapshot.buffer_snapshot());
+        Some(utf16_offset.0.0)
+    }
+
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        self.expects_character_input
+    }
+}
+
+fn comment_delimiter_for_newline(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    language: &LanguageScope,
+) -> Option<Arc<str>> {
+    let delimiters = language.line_comment_prefixes();
+    let max_len_of_delimiter = delimiters.iter().map(|delimiter| delimiter.len()).max()?;
+    let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+    let num_of_whitespaces = snapshot
+        .chars_for_range(range.clone())
+        .take_while(|c| c.is_whitespace())
+        .count();
+    let comment_candidate = snapshot
+        .chars_for_range(range.clone())
+        .skip(num_of_whitespaces)
+        .take(max_len_of_delimiter + 2)
+        .collect::<String>();
+    let (delimiter, trimmed_len, is_repl) = delimiters
+        .iter()
+        .filter_map(|delimiter| {
+            let prefix = delimiter.trim_end();
+            if comment_candidate.starts_with(prefix) {
+                let is_repl = if let Some(stripped_comment) = comment_candidate.strip_prefix(prefix)
+                {
+                    stripped_comment.starts_with(" %%")
+                } else {
+                    false
+                };
+                Some((delimiter, prefix.len(), is_repl))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(_, len, _)| *len)?;
+
+    if let Some(BlockCommentConfig {
+        start: block_start, ..
+    }) = language.block_comment()
+    {
+        let block_start_trimmed = block_start.trim_end();
+        if block_start_trimmed.starts_with(delimiter.trim_end()) {
+            let line_content = snapshot
+                .chars_for_range(range.clone())
+                .skip(num_of_whitespaces)
+                .take(block_start_trimmed.len())
+                .collect::<String>();
+
+            if line_content.starts_with(block_start_trimmed) {
+                return None;
+            }
+        }
+    }
+
+    let cursor_is_placed_after_comment_marker =
+        num_of_whitespaces + trimmed_len <= start_point.column as usize;
+    if cursor_is_placed_after_comment_marker {
+        if !is_repl {
+            return Some(delimiter.clone());
+        }
+
+        let line_content_after_cursor: String = snapshot
+            .chars_for_range(range)
+            .skip(start_point.column as usize)
+            .collect();
+
+        if line_content_after_cursor.trim().is_empty() {
+            return None;
+        } else {
+            return Some(delimiter.clone());
+        }
+    } else {
+        None
+    }
+}
+
+fn documentation_delimiter_for_newline(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    language: &LanguageScope,
+    newline_config: &mut NewlineConfig,
+) -> Option<Arc<str>> {
+    let BlockCommentConfig {
+        start: start_tag,
+        end: end_tag,
+        prefix: delimiter,
+        tab_size: len,
+    } = language.documentation_comment()?;
+    let is_within_block_comment = buffer
+        .language_scope_at(*start_point)
+        .is_some_and(|scope| scope.override_name() == Some("comment"));
+    if !is_within_block_comment {
+        return None;
+    }
+
+    let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+    let num_of_whitespaces = snapshot
+        .chars_for_range(range.clone())
+        .take_while(|c| c.is_whitespace())
+        .count();
+
+    // It is safe to use a column from MultiBufferPoint in context of a single buffer ranges, because we're only ever looking at a single line at a time.
+    let column = start_point.column;
+    let cursor_is_after_start_tag = {
+        let start_tag_len = start_tag.len();
+        let start_tag_line = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(start_tag_len)
+            .collect::<String>();
+        if start_tag_line.starts_with(start_tag.as_ref()) {
+            num_of_whitespaces + start_tag_len <= column as usize
+        } else {
+            false
+        }
+    };
+
+    let cursor_is_after_delimiter = {
+        let delimiter_trim = delimiter.trim_end();
+        let delimiter_line = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(delimiter_trim.len())
+            .collect::<String>();
+        if delimiter_line.starts_with(delimiter_trim) {
+            num_of_whitespaces + delimiter_trim.len() <= column as usize
+        } else {
+            false
+        }
+    };
+
+    let mut needs_extra_line = false;
+    let mut extra_line_additional_indent = IndentSize::spaces(0);
+
+    let cursor_is_before_end_tag_if_exists = {
+        let mut char_position = 0u32;
+        let mut end_tag_offset = None;
+
+        'outer: for chunk in snapshot.text_for_range(range) {
+            if let Some(byte_pos) = chunk.find(&**end_tag) {
+                let chars_before_match = chunk[..byte_pos].chars().count() as u32;
+                end_tag_offset = Some(char_position + chars_before_match);
+                break 'outer;
+            }
+            char_position += chunk.chars().count() as u32;
+        }
+
+        if let Some(end_tag_offset) = end_tag_offset {
+            let cursor_is_before_end_tag = column <= end_tag_offset;
+            if cursor_is_after_start_tag {
+                if cursor_is_before_end_tag {
+                    needs_extra_line = true;
+                }
+                let cursor_is_at_start_of_end_tag = column == end_tag_offset;
+                if cursor_is_at_start_of_end_tag {
+                    extra_line_additional_indent.len = *len;
+                }
+            }
+            cursor_is_before_end_tag
+        } else {
+            true
+        }
+    };
+
+    if (cursor_is_after_start_tag || cursor_is_after_delimiter)
+        && cursor_is_before_end_tag_if_exists
+    {
+        let additional_indent = if cursor_is_after_start_tag {
+            IndentSize::spaces(*len)
+        } else {
+            IndentSize::spaces(0)
+        };
+
+        *newline_config = NewlineConfig::Newline {
+            additional_indent,
+            extra_line_additional_indent: if needs_extra_line {
+                Some(extra_line_additional_indent)
+            } else {
+                None
+            },
+            prevent_auto_indent: true,
+        };
+        Some(delimiter.clone())
+    } else {
+        None
+    }
+}
+
+const ORDERED_LIST_MAX_MARKER_LEN: usize = 16;
+
+fn list_delimiter_for_newline(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    language: &LanguageScope,
+    newline_config: &mut NewlineConfig,
+) -> Option<Arc<str>> {
+    let (snapshot, range) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+    let num_of_whitespaces = snapshot
+        .chars_for_range(range.clone())
+        .take_while(|c| c.is_whitespace())
+        .count();
+
+    let task_list_entries: Vec<_> = language
+        .task_list()
+        .into_iter()
+        .flat_map(|config| {
+            config
+                .prefixes
+                .iter()
+                .map(|prefix| (prefix.as_ref(), config.continuation.as_ref()))
+        })
+        .collect();
+    let unordered_list_entries: Vec<_> = language
+        .unordered_list()
+        .iter()
+        .map(|marker| (marker.as_ref(), marker.as_ref()))
+        .collect();
+
+    let all_entries: Vec<_> = task_list_entries
+        .into_iter()
+        .chain(unordered_list_entries)
+        .collect();
+
+    if let Some(max_prefix_len) = all_entries.iter().map(|(p, _)| p.len()).max() {
+        let candidate: String = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(max_prefix_len)
+            .collect();
+
+        if let Some((prefix, continuation)) = all_entries
+            .iter()
+            .filter(|(prefix, _)| candidate.starts_with(*prefix))
+            .max_by_key(|(prefix, _)| prefix.len())
+        {
+            let end_of_prefix = num_of_whitespaces + prefix.len();
+            let cursor_is_after_prefix = end_of_prefix <= start_point.column as usize;
+            let has_content_after_marker = snapshot
+                .chars_for_range(range)
+                .skip(end_of_prefix)
+                .any(|c| !c.is_whitespace());
+
+            if has_content_after_marker && cursor_is_after_prefix {
+                return Some((*continuation).into());
+            }
+
+            if start_point.column as usize == end_of_prefix {
+                if num_of_whitespaces == 0 {
+                    *newline_config = NewlineConfig::ClearCurrentLine;
+                } else {
+                    *newline_config = NewlineConfig::UnindentCurrentLine {
+                        continuation: (*continuation).into(),
+                    };
+                }
+            }
+
+            return None;
+        }
+    }
+
+    let candidate: String = snapshot
+        .chars_for_range(range.clone())
+        .skip(num_of_whitespaces)
+        .take(ORDERED_LIST_MAX_MARKER_LEN)
+        .collect();
+
+    for ordered_config in language.ordered_list() {
+        let regex = match Regex::new(&ordered_config.pattern) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        if let Some(captures) = regex.captures(&candidate) {
+            let full_match = captures.get(0)?;
+            let marker_len = full_match.len();
+            let end_of_prefix = num_of_whitespaces + marker_len;
+            let cursor_is_after_prefix = end_of_prefix <= start_point.column as usize;
+
+            let has_content_after_marker = snapshot
+                .chars_for_range(range)
+                .skip(end_of_prefix)
+                .any(|c| !c.is_whitespace());
+
+            if has_content_after_marker && cursor_is_after_prefix {
+                let number: u32 = captures.get(1)?.as_str().parse().ok()?;
+                let continuation = ordered_config
+                    .format
+                    .replace("{1}", &(number + 1).to_string());
+                return Some(continuation.into());
+            }
+
+            if start_point.column as usize == end_of_prefix {
+                let continuation = ordered_config.format.replace("{1}", "1");
+                if num_of_whitespaces == 0 {
+                    *newline_config = NewlineConfig::ClearCurrentLine;
+                } else {
+                    *newline_config = NewlineConfig::UnindentCurrentLine {
+                        continuation: continuation.into(),
+                    };
+                }
+            }
+
+            return None;
+        }
+    }
+
+    None
+}
+
+pub(super) fn is_list_prefix_row(
+    row: MultiBufferRow,
+    buffer: &MultiBufferSnapshot,
+    language: &LanguageScope,
+) -> bool {
+    let Some((snapshot, range)) = buffer.buffer_line_for_row(row) else {
+        return false;
+    };
+
+    let num_of_whitespaces = snapshot
+        .chars_for_range(range.clone())
+        .take_while(|c| c.is_whitespace())
+        .count();
+
+    let task_list_prefixes: Vec<_> = language
+        .task_list()
+        .into_iter()
+        .flat_map(|config| {
+            config
+                .prefixes
+                .iter()
+                .map(|p| p.as_ref())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let unordered_list_markers: Vec<_> = language
+        .unordered_list()
+        .iter()
+        .map(|marker| marker.as_ref())
+        .collect();
+    let all_prefixes: Vec<_> = task_list_prefixes
+        .into_iter()
+        .chain(unordered_list_markers)
+        .collect();
+    if let Some(max_prefix_len) = all_prefixes.iter().map(|p| p.len()).max() {
+        let candidate: String = snapshot
+            .chars_for_range(range.clone())
+            .skip(num_of_whitespaces)
+            .take(max_prefix_len)
+            .collect();
+        if all_prefixes
+            .iter()
+            .any(|prefix| candidate.starts_with(*prefix))
+        {
+            return true;
+        }
+    }
+
+    let ordered_list_candidate: String = snapshot
+        .chars_for_range(range)
+        .skip(num_of_whitespaces)
+        .take(ORDERED_LIST_MAX_MARKER_LEN)
+        .collect();
+    for ordered_config in language.ordered_list() {
+        let regex = match Regex::new(&ordered_config.pattern) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if let Some(captures) = regex.captures(&ordered_list_candidate) {
+            return captures.get(0).is_some();
+        }
+    }
+
+    false
+}
+
+#[derive(Debug)]
+enum NewlineConfig {
+    /// Insert newline with optional additional indent and optional extra blank line
+    Newline {
+        additional_indent: IndentSize,
+        extra_line_additional_indent: Option<IndentSize>,
+        prevent_auto_indent: bool,
+    },
+    /// Clear the current line
+    ClearCurrentLine,
+    /// Unindent the current line and add continuation
+    UnindentCurrentLine { continuation: Arc<str> },
+}
+
+impl NewlineConfig {
+    fn has_extra_line(&self) -> bool {
+        matches!(
+            self,
+            Self::Newline {
+                extra_line_additional_indent: Some(_),
+                ..
+            }
+        )
+    }
+
+    fn insert_extra_newline_brackets(
+        buffer: &MultiBufferSnapshot,
+        range: Range<MultiBufferOffset>,
+        language: &language::LanguageScope,
+    ) -> bool {
+        let leading_whitespace_len = buffer
+            .reversed_chars_at(range.start)
+            .take_while(|c| c.is_whitespace() && *c != '\n')
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
+        let trailing_whitespace_len = buffer
+            .chars_at(range.end)
+            .take_while(|c| c.is_whitespace() && *c != '\n')
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
+        let range = range.start - leading_whitespace_len..range.end + trailing_whitespace_len;
+
+        language.brackets().any(|(pair, enabled)| {
+            let pair_start = pair.start.trim_end();
+            let pair_end = pair.end.trim_start();
+
+            enabled
+                && pair.newline
+                && buffer.contains_str_at(range.end, pair_end)
+                && buffer.contains_str_at(
+                    range.start.saturating_sub_usize(pair_start.len()),
+                    pair_start,
+                )
+        })
+    }
+
+    fn insert_extra_newline_tree_sitter(
+        buffer: &MultiBufferSnapshot,
+        range: Range<MultiBufferOffset>,
+    ) -> bool {
+        let (buffer, range) = match buffer
+            .range_to_buffer_ranges(range.start..range.end)
+            .as_slice()
+        {
+            [(buffer_snapshot, range, _)] => (buffer_snapshot.clone(), range.clone()),
+            _ => return false,
+        };
+        let pair = {
+            let mut result: Option<BracketMatch<usize>> = None;
+
+            for pair in buffer
+                .all_bracket_ranges(range.start.0..range.end.0)
+                .filter(move |pair| {
+                    pair.open_range.start <= range.start.0 && pair.close_range.end >= range.end.0
+                })
+            {
+                let len = pair.close_range.end - pair.open_range.start;
+
+                if let Some(existing) = &result {
+                    let existing_len = existing.close_range.end - existing.open_range.start;
+                    if len > existing_len {
+                        continue;
+                    }
+                }
+
+                result = Some(pair);
+            }
+
+            result
+        };
+        let Some(pair) = pair else {
+            return false;
+        };
+        pair.newline_only
+            && buffer
+                .chars_for_range(pair.open_range.end..range.start.0)
+                .chain(buffer.chars_for_range(range.end.0..pair.close_range.start))
+                .all(|c| c.is_whitespace() && c != '\n')
     }
 }
