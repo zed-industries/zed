@@ -5,8 +5,9 @@ use std::time::Duration;
 use super::super::{
     FRAME_RATE_WINDOW, HUD_MAX_LINE_CHARS, TOP_SOURCE_COUNT, event_age,
     format::{
-        file_name, format_age, format_duration_ms, format_notify_source, format_render_source,
-        notify_column_header, render_column_header, short_type_name, truncate_chars,
+        file_name, format_age, format_duration_ms, format_notify_cause, format_notify_source,
+        format_render_source, notify_column_header, render_column_header, short_type_name,
+        truncate_chars,
     },
     sources::{
         NotifySourceKey, RenderSourceKey, active_animation_count, hidden_notify_sources,
@@ -398,10 +399,14 @@ pub(super) fn hud_rows(
     if section_expanded(devtools, HudSection::Dirty) {
         start_section(&mut rows, &mut any_section_rendered);
 
-        if let Some((label, count)) = top_dirty_path(devtools, window_id, now) {
+        if let Some(summary) = top_dirty_path(devtools, window_id, now) {
+            let cause = summary
+                .cause
+                .map(|cause| format!(" {}", format_notify_cause(cause, now)))
+                .unwrap_or_default();
             rows.push(OverlayRow::plain(format!(
-                "top path x{:>4} {}",
-                count, label
+                "top path x{:>4} {}{}",
+                summary.count, summary.label, cause,
             )));
         } else {
             rows.push(OverlayRow::plain("no dirty path in the last 5s"));

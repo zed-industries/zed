@@ -8,7 +8,9 @@ use super::{
     },
     overlay::PreparedOverlay,
     ring_buffer::RingBuffer,
-    sources::{NotifySourceKey, NotifySourceStats, RenderSourceKey, RenderSourceStats},
+    sources::{
+        NotifyCause, NotifySourceKey, NotifySourceStats, RenderSourceKey, RenderSourceStats,
+    },
 };
 use crate::{Bounds, EntityId, Pixels, Point, WindowId};
 use collections::{FxHashMap, FxHashSet};
@@ -28,6 +30,8 @@ pub(super) struct GpuiDevTools {
     pub(super) collapsed_sections: FxHashSet<HudSection>,
     pub(super) notify_source_total_counts: FxHashMap<NotifySourceKey, usize>,
     pub(super) notify_source_last_stats: FxHashMap<NotifySourceKey, NotifySourceStats>,
+    pub(super) latest_cause_by_entity: FxHashMap<EntityId, NotifyCause>,
+    pub(super) latest_cause_by_render_source: FxHashMap<RenderSourceKey, NotifyCause>,
     pub(super) pinned_notify_sources: FxHashSet<NotifySourceKey>,
     pub(super) render_source_last_stats: FxHashMap<RenderSourceKey, RenderSourceStats>,
     pub(super) pinned_render_sources: FxHashSet<RenderSourceKey>,
@@ -55,6 +59,8 @@ impl GpuiDevTools {
             collapsed_sections: FxHashSet::default(),
             notify_source_total_counts: FxHashMap::default(),
             notify_source_last_stats: FxHashMap::default(),
+            latest_cause_by_entity: FxHashMap::default(),
+            latest_cause_by_render_source: FxHashMap::default(),
             pinned_notify_sources: FxHashSet::default(),
             render_source_last_stats: FxHashMap::default(),
             pinned_render_sources: FxHashSet::default(),
@@ -168,6 +174,8 @@ impl GpuiDevTools {
         self.animations.clear();
         self.performance.clear();
         self.notify_source_total_counts.clear();
+        self.latest_cause_by_entity.clear();
+        self.latest_cause_by_render_source.clear();
 
         let notify_source_last_stats = self
             .pinned_notify_sources
@@ -335,6 +343,7 @@ pub(super) struct WindowDevToolsState {
     pub(super) prepared_overlay: Option<PreparedOverlay>,
     pub(super) hud_origin: Option<Point<Pixels>>,
     pub(super) hud_drag: Option<HudDragState>,
+    pub(super) latest_dirty_cause_by_entity: FxHashMap<EntityId, NotifyCause>,
 }
 
 impl WindowDevToolsState {
@@ -348,6 +357,7 @@ impl WindowDevToolsState {
             prepared_overlay: None,
             hud_origin: None,
             hud_drag: None,
+            latest_dirty_cause_by_entity: FxHashMap::default(),
         }
     }
 
@@ -388,6 +398,7 @@ impl WindowDevToolsState {
         self.active_flashes.clear();
         self.render_heat.clear();
         self.reuse_outlines.clear();
+        self.latest_dirty_cause_by_entity.clear();
     }
 }
 

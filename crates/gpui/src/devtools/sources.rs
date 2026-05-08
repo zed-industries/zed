@@ -69,6 +69,29 @@ impl NotifySourceKey {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(super) struct NotifyCause {
+    pub(super) source: NotifySourceKey,
+    pub(super) entity_id: EntityId,
+    pub(super) caller_column: u32,
+    pub(super) timestamp: Instant,
+}
+
+impl NotifyCause {
+    pub(super) fn from_event(event: &NotifyEvent) -> Self {
+        Self {
+            source: NotifySourceKey::from(event),
+            entity_id: event.entity_id,
+            caller_column: event.caller_column,
+            timestamp: event.timestamp,
+        }
+    }
+
+    pub(super) fn is_recent_at(self, timestamp: Instant, max_age: Duration) -> bool {
+        event_age(timestamp, self.timestamp).is_some_and(|age| age <= max_age)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(super) struct NotifySourceStats {
     pub(super) count: usize,
     pub(super) entity_id: EntityId,
@@ -209,11 +232,25 @@ pub(super) fn hidden_notify_sources(
     counts
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct DirtyPathSummary {
+    pub(super) label: String,
+    pub(super) count: usize,
+    pub(super) cause: Option<NotifyCause>,
+}
+
+#[derive(Default)]
+struct DirtyPathStats {
+    count: usize,
+    latest_timestamp: Option<Instant>,
+    cause: Option<NotifyCause>,
+}
+
 pub(super) fn top_dirty_path(
     devtools: &GpuiDevTools,
     window_id: WindowId,
     now: Instant,
-) -> Option<(String, usize)> {
+) -> Option<DirtyPathSummary> {
     let mut counts = FxHashMap::default();
     for event in devtools.dirty_paths.iter() {
         let Some(age) = event_age(now, event.timestamp) else {
@@ -223,9 +260,34 @@ pub(super) fn top_dirty_path(
             continue;
         }
 
-        *counts.entry(dirty_path_label(event)).or_insert(0) += 1;
+        let label = dirty_path_label(event);
+        let stats = counts.entry(label).or_insert_with(DirtyPathStats::default);
+        stats.count += 1;
+        if stats
+            .latest_timestamp
+            .is_none_or(|latest_timestamp| event.timestamp >= latest_timestamp)
+        {
+            stats.latest_timestamp = Some(event.timestamp);
+            stats.cause = devtools
+                .windows
+                .get(&window_id)
+                .and_then(|window_state| {
+                    window_state
+                        .latest_dirty_cause_by_entity
+                        .get(&event.invalidated_entity_id)
+                })
+                .copied()
+                .filter(|cause| cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
+        }
     }
-    counts.into_iter().max_by_key(|(_, count)| *count)
+    counts
+        .into_iter()
+        .max_by_key(|(_, stats)| stats.count)
+        .map(|(label, stats)| DirtyPathSummary {
+            label,
+            count: stats.count,
+            cause: stats.cause,
+        })
 }
 
 #[derive(Default)]
@@ -287,6 +349,16 @@ pub(super) fn render_summary(
             .get(&source.entity_type)
             .copied()
             .unwrap_or(0);
+        stats.cause = devtools
+            .latest_cause_by_render_source
+            .get(source)
+            .copied()
+            .filter(|cause| cause.is_recent_at(now, SOURCE_WINDOW))
+            .filter(|cause| {
+                stats
+                    .last_timestamp
+                    .is_none_or(|last_timestamp| cause.timestamp <= last_timestamp)
+            });
     }
 
     let mut counts = counts.into_iter().collect::<Vec<_>>();
@@ -376,6 +448,7 @@ pub(super) struct RenderSourceStats {
     pub(super) cache_miss_reasons: CacheMissReasons,
     pub(super) caching_disabled_by_inspector: bool,
     pub(super) last_timestamp: Option<Instant>,
+    pub(super) cause: Option<NotifyCause>,
 }
 
 impl RenderSourceStats {
@@ -389,6 +462,7 @@ impl RenderSourceStats {
             cache_miss_reasons: event.cache_miss_reasons,
             caching_disabled_by_inspector: event.caching_disabled_by_inspector,
             last_timestamp: Some(event.timestamp),
+            cause: None,
         }
     }
 
@@ -402,6 +476,7 @@ impl RenderSourceStats {
             cache_miss_reasons: CacheMissReasons::empty(),
             caching_disabled_by_inspector: false,
             last_timestamp: None,
+            cause: None,
         }
     }
 
@@ -520,6 +595,7 @@ fn dirty_path_label(event: &DirtyPathEvent) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::events::DirtyPathSegment;
     use super::*;
 
     #[test]
@@ -727,6 +803,135 @@ mod tests {
         let summary = render_summary(&devtools, window_id, now);
         assert_eq!(summary.top_sources[0].1.count, 1);
         assert_eq!(summary.top_sources[0].1.reuse_count, 2);
+    }
+
+    #[test]
+    fn dirty_path_summary_includes_notify_cause() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+        let notify = NotifyEvent {
+            entity_id: EntityId::from(7),
+            entity_type: "TerminalView",
+            caller_file: "crates/terminal/src/terminal_view.rs",
+            caller_line: 1011,
+            caller_column: 68,
+            registered_window_count: 1,
+            live_window_count: 1,
+            timestamp: now - Duration::from_millis(10),
+        };
+        let cause = NotifyCause::from_event(&notify);
+        devtools
+            .window_state(window_id)
+            .latest_dirty_cause_by_entity
+            .insert(notify.entity_id, cause);
+        devtools.dirty_paths.push(DirtyPathEvent {
+            window_id,
+            invalidated_entity_id: notify.entity_id,
+            invalidated_entity_type: notify.entity_type,
+            path: vec![DirtyPathSegment {
+                entity_id: EntityId::from(9),
+                entity_type: "Dock",
+            }],
+            timestamp: now,
+        });
+
+        let Some(summary) = top_dirty_path(&devtools, window_id, now) else {
+            panic!("expected dirty path summary");
+        };
+        assert_eq!(summary.count, 1);
+        assert!(
+            summary
+                .label
+                .contains(&format!("TerminalView#{}", notify.entity_id.as_u64()))
+        );
+        let Some(summary_cause) = summary.cause else {
+            panic!("expected dirty path cause");
+        };
+        assert_eq!(summary_cause.source, NotifySourceKey::from(&notify));
+        assert_eq!(summary_cause.entity_id, notify.entity_id);
+    }
+
+    #[test]
+    fn render_summary_includes_recent_notify_cause() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+        let notify = NotifyEvent {
+            entity_id: EntityId::from(7),
+            entity_type: "TerminalView",
+            caller_file: "crates/terminal/src/terminal_view.rs",
+            caller_line: 1011,
+            caller_column: 68,
+            registered_window_count: 1,
+            live_window_count: 1,
+            timestamp: now - Duration::from_millis(10),
+        };
+        let render = ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(9),
+            entity_type: "Dock",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        };
+        let render_source = RenderSourceKey::from(&render);
+        devtools.renders.push(render);
+        devtools
+            .latest_cause_by_render_source
+            .insert(render_source, NotifyCause::from_event(&notify));
+
+        let summary = render_summary(&devtools, window_id, now);
+        let Some((_, stats)) = summary.top_sources.first() else {
+            panic!("expected render source summary");
+        };
+        let Some(cause) = stats.cause else {
+            panic!("expected render source cause");
+        };
+        assert_eq!(cause.source, NotifySourceKey::from(&notify));
+        assert_eq!(cause.entity_id, notify.entity_id);
+    }
+
+    #[test]
+    fn render_summary_ignores_stale_notify_cause() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+        let notify = NotifyEvent {
+            entity_id: EntityId::from(7),
+            entity_type: "TerminalView",
+            caller_file: "crates/terminal/src/terminal_view.rs",
+            caller_line: 1011,
+            caller_column: 68,
+            registered_window_count: 1,
+            live_window_count: 1,
+            timestamp: now - SOURCE_WINDOW - Duration::from_millis(1),
+        };
+        let render = ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(9),
+            entity_type: "Dock",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        };
+        let render_source = RenderSourceKey::from(&render);
+        devtools.renders.push(render);
+        devtools
+            .latest_cause_by_render_source
+            .insert(render_source, NotifyCause::from_event(&notify));
+
+        let summary = render_summary(&devtools, window_id, now);
+        let Some((_, stats)) = summary.top_sources.first() else {
+            panic!("expected render source summary");
+        };
+        assert!(stats.cause.is_none());
     }
 
     #[test]

@@ -1,6 +1,8 @@
 use super::{
     event_age,
-    sources::{NotifySourceKey, NotifySourceStats, RenderSourceKey, RenderSourceStats},
+    sources::{
+        NotifyCause, NotifySourceKey, NotifySourceStats, RenderSourceKey, RenderSourceStats,
+    },
 };
 use scheduler::Instant;
 use std::time::Duration;
@@ -105,6 +107,10 @@ pub(super) fn format_render_source(
             bounds.size.width.0, bounds.size.height.0
         ));
     }
+    if let Some(cause) = stats.cause {
+        label.push(' ');
+        label.push_str(&format_notify_cause(cause, now));
+    }
     label
 }
 
@@ -131,6 +137,21 @@ pub(super) fn format_age(duration: Duration) -> String {
     } else {
         format!("{:.1}s", duration.as_secs_f64())
     }
+}
+
+pub(super) fn format_notify_cause(cause: NotifyCause, now: Instant) -> String {
+    let age = event_age(now, cause.timestamp)
+        .map(format_age)
+        .unwrap_or_else(|| "--".to_string());
+    format!(
+        "cause {}#{} {}:{}:{} {}",
+        short_type_name(cause.source.entity_type),
+        cause.entity_id.as_u64(),
+        file_name(cause.source.caller_file),
+        cause.source.caller_line,
+        cause.caller_column,
+        age,
+    )
 }
 
 pub(super) fn short_type_name(type_name: &'static str) -> &'static str {
@@ -168,7 +189,9 @@ mod tests {
 
     use super::super::{
         events::{CacheMissReasons, NotifyEvent, ViewRenderEvent, ViewRenderPhase},
-        sources::{NotifySourceKey, NotifySourceStats, RenderSourceKey, RenderSourceStats},
+        sources::{
+            NotifyCause, NotifySourceKey, NotifySourceStats, RenderSourceKey, RenderSourceStats,
+        },
     };
 
     #[test]
@@ -253,5 +276,40 @@ mod tests {
         assert!(label.contains("1.2ms"));
         assert!(label.contains("20%"));
         assert!(label.contains("[bounds][dirty][inspector]"));
+    }
+
+    #[test]
+    fn render_source_format_shows_notify_cause() {
+        let now = Instant::now();
+        let event = ViewRenderEvent {
+            window_id: WindowId::from(1),
+            entity_id: EntityId::from(42),
+            entity_type: "Dock",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        };
+        let notify = NotifyEvent {
+            entity_id: EntityId::from(7),
+            entity_type: "TerminalView",
+            caller_file: "crates/terminal/src/terminal_view.rs",
+            caller_line: 1011,
+            caller_column: 68,
+            registered_window_count: 1,
+            live_window_count: 1,
+            timestamp: now - Duration::from_millis(25),
+        };
+        let mut stats = RenderSourceStats::from_event(&event);
+        stats.count = 1;
+        stats.cause = Some(NotifyCause::from_event(&notify));
+
+        let label = format_render_source(1, RenderSourceKey::from(&event), stats, now);
+        assert!(label.contains(&format!(
+            "cause TerminalView#{} terminal_view.rs:1011:68 25ms",
+            notify.entity_id.as_u64()
+        )));
     }
 }

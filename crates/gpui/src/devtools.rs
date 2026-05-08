@@ -9,8 +9,8 @@ use crate::{App, Bounds, EntityId, Pixels, Window, WindowId};
 use parking_lot::RwLock;
 use scheduler::Instant;
 use sources::{
-    NotifySourceKey, NotifySourceStats, PinnedNotifySource, RenderSourceKey, RenderSourceStats,
-    parse_pinned_notify_source,
+    NotifyCause, NotifySourceKey, NotifySourceStats, PinnedNotifySource, RenderSourceKey,
+    RenderSourceStats, parse_pinned_notify_source,
 };
 use state::{FlashState, GpuiDevTools};
 use std::{sync::LazyLock, time::Duration};
@@ -70,10 +70,14 @@ pub(crate) fn record_notify(event: NotifyEvent) {
     let started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     let source = NotifySourceKey::from(&event);
+    let cause = NotifyCause::from_event(&event);
     *devtools
         .notify_source_total_counts
         .entry(source)
         .or_insert(0) += 1;
+    devtools
+        .latest_cause_by_entity
+        .insert(event.entity_id, cause);
     devtools
         .notify_source_last_stats
         .insert(source, NotifySourceStats::from_event(&event));
@@ -119,6 +123,29 @@ pub(crate) fn record_dirty_path(event: DirtyPathEvent) {
 
     let started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
+    let cause = devtools
+        .latest_cause_by_entity
+        .get(&event.invalidated_entity_id)
+        .copied();
+    let stale_cause =
+        cause.is_some_and(|cause| !cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
+    let cause = cause.filter(|cause| cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
+    if stale_cause {
+        devtools
+            .latest_cause_by_entity
+            .remove(&event.invalidated_entity_id);
+    }
+    if let Some(cause) = cause {
+        let window_state = devtools.window_state(event.window_id);
+        window_state
+            .latest_dirty_cause_by_entity
+            .insert(event.invalidated_entity_id, cause);
+        for segment in &event.path {
+            window_state
+                .latest_dirty_cause_by_entity
+                .insert(segment.entity_id, cause);
+        }
+    }
     devtools.dirty_paths.push(event);
     devtools.record_recording_duration(started_at, started_at.elapsed());
 }
@@ -147,9 +174,29 @@ pub(crate) fn record_view_render(event: ViewRenderEvent) {
     let started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     let source = RenderSourceKey::from(&event);
-    devtools
-        .render_source_last_stats
-        .insert(source, RenderSourceStats::from_event(&event));
+    let cause = devtools
+        .windows
+        .get(&event.window_id)
+        .and_then(|window_state| {
+            window_state
+                .latest_dirty_cause_by_entity
+                .get(&event.entity_id)
+        })
+        .copied();
+    let stale_cause =
+        cause.is_some_and(|cause| !cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
+    let cause = cause.filter(|cause| cause.is_recent_at(event.timestamp, SOURCE_WINDOW));
+    if stale_cause && let Some(window_state) = devtools.windows.get_mut(&event.window_id) {
+        window_state
+            .latest_dirty_cause_by_entity
+            .remove(&event.entity_id);
+    }
+    if let Some(cause) = cause {
+        devtools.latest_cause_by_render_source.insert(source, cause);
+    }
+    let mut stats = RenderSourceStats::from_event(&event);
+    stats.cause = cause;
+    devtools.render_source_last_stats.insert(source, stats);
     let source_is_hidden = devtools.hidden_render_sources.contains(&source);
     if devtools.paused_at.is_some() {
         devtools.renders.push(event);
