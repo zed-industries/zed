@@ -54,7 +54,7 @@ impl AgentTool for CreateDirectoryTool {
     const NAME: &'static str = "create_directory";
 
     fn kind() -> acp::ToolKind {
-        acp::ToolKind::Read
+        acp::ToolKind::Edit
     }
 
     fn initial_title(

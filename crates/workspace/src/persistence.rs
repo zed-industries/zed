@@ -2759,6 +2759,7 @@ mod tests {
             read_multi_workspace_state,
         },
     };
+    use gpui::TaskExt;
 
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;

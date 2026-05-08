@@ -26,7 +26,7 @@ Check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page to l
 Many MCP servers are available as extensions. Find them via:
 
 1. [the Zed website](https://zed.dev/extensions?filter=context-servers)
-2. in the app, open the Command Palette and run the `zed: extensions` action
+2. in the app, open the Command Palette and run the {#action zed::Extensions} action
 3. in the app, go to the Agent Panel's top-right menu and look for the "View Server Extensions" menu item
 
 Popular servers available as an extension include:
@@ -64,7 +64,7 @@ You can connect them by adding their commands directly to your settings file ([h
 }
 ```
 
-Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open settings` action).
+Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the {#action agent::OpenSettings} action).
 From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
 
 > Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.

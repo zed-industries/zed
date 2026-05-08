@@ -29,7 +29,7 @@ use cloud_api_types::Plan;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
+    StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
     pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
@@ -690,7 +690,7 @@ impl TitleBar {
             .user_store
             .read(cx)
             .participant_indices()
-            .get(&host_user.id)?;
+            .get(&host_user.legacy_id)?;
 
         Some(
             Button::new("project_owner_trigger", host_user.github_login.clone())

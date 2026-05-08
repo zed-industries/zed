@@ -13,6 +13,13 @@ pub use settings::{FontWeightContent, WindowBackgroundContent};
 
 use theme::{StatusColorsRefinement, ThemeColorsRefinement};
 
+const LIGHT_DIFF_HUNK_FILLED_OPACITY: f32 = 0.16;
+const LIGHT_DIFF_HUNK_HOLLOW_BACKGROUND_OPACITY: f32 = 0.08;
+const LIGHT_DIFF_HUNK_HOLLOW_BORDER_OPACITY: f32 = 0.48;
+const DARK_DIFF_HUNK_FILLED_OPACITY: f32 = 0.12;
+const DARK_DIFF_HUNK_HOLLOW_BACKGROUND_OPACITY: f32 = 0.06;
+const DARK_DIFF_HUNK_HOLLOW_BORDER_OPACITY: f32 = 0.36;
+
 /// The content of a serialized theme family.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFamilyContent {
@@ -230,6 +237,7 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
 pub fn theme_colors_refinement(
     this: &settings::ThemeColorsContent,
     status_colors: &StatusColorsRefinement,
+    is_light: bool,
 ) -> ThemeColorsRefinement {
     let border = this
         .border
@@ -278,6 +286,29 @@ pub fn theme_colors_refinement(
         .as_ref()
         .and_then(|color| try_parse_color(color).ok())
         .or(search_match_background);
+    let version_control_added = this
+        .version_control_added
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok())
+        .or(status_colors.created);
+    let version_control_deleted = this
+        .version_control_deleted
+        .as_ref()
+        .and_then(|color| try_parse_color(color).ok())
+        .or(status_colors.deleted);
+    let (hunk_fill, hunk_hollow_bg, hunk_hollow_border) = if is_light {
+        (
+            LIGHT_DIFF_HUNK_FILLED_OPACITY,
+            LIGHT_DIFF_HUNK_HOLLOW_BACKGROUND_OPACITY,
+            LIGHT_DIFF_HUNK_HOLLOW_BORDER_OPACITY,
+        )
+    } else {
+        (
+            DARK_DIFF_HUNK_FILLED_OPACITY,
+            DARK_DIFF_HUNK_HOLLOW_BACKGROUND_OPACITY,
+            DARK_DIFF_HUNK_HOLLOW_BORDER_OPACITY,
+        )
+    };
     ThemeColorsRefinement {
         border,
         border_variant: this
@@ -576,6 +607,36 @@ pub fn theme_colors_refinement(
             .as_ref()
             .and_then(|color| try_parse_color(color).ok())
             .or(editor_document_highlight_read_background),
+        editor_diff_hunk_added_background: this
+            .editor_diff_hunk_added_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| version_control_added.map(|c| c.opacity(hunk_fill))),
+        editor_diff_hunk_added_hollow_background: this
+            .editor_diff_hunk_added_hollow_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| version_control_added.map(|c| c.opacity(hunk_hollow_bg))),
+        editor_diff_hunk_added_hollow_border: this
+            .editor_diff_hunk_added_hollow_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| version_control_added.map(|c| c.opacity(hunk_hollow_border))),
+        editor_diff_hunk_deleted_background: this
+            .editor_diff_hunk_deleted_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| version_control_deleted.map(|c| c.opacity(hunk_fill))),
+        editor_diff_hunk_deleted_hollow_background: this
+            .editor_diff_hunk_deleted_hollow_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| version_control_deleted.map(|c| c.opacity(hunk_hollow_bg))),
+        editor_diff_hunk_deleted_hollow_border: this
+            .editor_diff_hunk_deleted_hollow_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| version_control_deleted.map(|c| c.opacity(hunk_hollow_border))),
         terminal_background: this
             .terminal_background
             .as_ref()
@@ -696,16 +757,8 @@ pub fn theme_colors_refinement(
             .link_text_hover
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        version_control_added: this
-            .version_control_added
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok())
-            .or(status_colors.created),
-        version_control_deleted: this
-            .version_control_deleted
-            .as_ref()
-            .and_then(|color| try_parse_color(color).ok())
-            .or(status_colors.deleted),
+        version_control_added,
+        version_control_deleted,
         version_control_modified: this
             .version_control_modified
             .as_ref()
@@ -856,7 +909,165 @@ fn try_parse_color(color: &str) -> anyhow::Result<Hsla> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use theme::StatusColorsRefinement;
+
+    use super::{
+        StatusColorsContent, ThemeColorsContent, status_colors_refinement, theme_colors_refinement,
+        try_parse_color,
+    };
+
+    #[test]
+    fn explicit_diff_hunk_colors_take_precedence_over_fallbacks() {
+        let mut colors = ThemeColorsContent::default();
+        colors.editor_diff_hunk_added_background = Some("#112233".to_string());
+        colors.editor_diff_hunk_added_hollow_background = Some("#223344".to_string());
+        colors.editor_diff_hunk_added_hollow_border = Some("#334455".to_string());
+        colors.editor_diff_hunk_deleted_background = Some("#445566".to_string());
+        colors.editor_diff_hunk_deleted_hollow_background = Some("#556677".to_string());
+        colors.editor_diff_hunk_deleted_hollow_border = Some("#667788".to_string());
+        colors.version_control_added = Some("#00ff00".to_string());
+        colors.version_control_deleted = Some("#ff0000".to_string());
+
+        let refinement = theme_colors_refinement(
+            &colors,
+            &status_colors_refinement(&StatusColorsContent::default()),
+            true,
+        );
+
+        assert_eq!(
+            refinement.editor_diff_hunk_added_background,
+            Some(parse_color("#112233"))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_added_hollow_background,
+            Some(parse_color("#223344"))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_added_hollow_border,
+            Some(parse_color("#334455"))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_deleted_background,
+            Some(parse_color("#445566"))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_deleted_hollow_background,
+            Some(parse_color("#556677"))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_deleted_hollow_border,
+            Some(parse_color("#667788"))
+        );
+    }
+
+    #[test]
+    fn diff_hunk_colors_fallback_to_version_control_colors() {
+        let mut colors = ThemeColorsContent::default();
+        colors.version_control_added = Some("#00ff00".to_string());
+        colors.version_control_deleted = Some("#ff0000".to_string());
+
+        let refinement = theme_colors_refinement(
+            &colors,
+            &status_colors_refinement(&StatusColorsContent::default()),
+            true,
+        );
+
+        let added = parse_color("#00ff00");
+        let deleted = parse_color("#ff0000");
+
+        assert_eq!(
+            refinement.editor_diff_hunk_added_background,
+            Some(added.opacity(0.16))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_added_hollow_background,
+            Some(added.opacity(0.08))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_added_hollow_border,
+            Some(added.opacity(0.48))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_deleted_background,
+            Some(deleted.opacity(0.16))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_deleted_hollow_background,
+            Some(deleted.opacity(0.08))
+        );
+        assert_eq!(
+            refinement.editor_diff_hunk_deleted_hollow_border,
+            Some(deleted.opacity(0.48))
+        );
+    }
+
+    #[test]
+    fn diff_hunk_opacity_fallbacks_use_correct_values_for_light_and_dark_themes() {
+        let mut colors = ThemeColorsContent::default();
+        colors.version_control_added = Some("#00ff00".to_string());
+
+        let light_refinement = theme_colors_refinement(
+            &colors,
+            &status_colors_refinement(&StatusColorsContent::default()),
+            true,
+        );
+        let dark_refinement = theme_colors_refinement(
+            &colors,
+            &status_colors_refinement(&StatusColorsContent::default()),
+            false,
+        );
+
+        let added = parse_color("#00ff00");
+
+        assert_eq!(
+            light_refinement.editor_diff_hunk_added_background,
+            Some(added.opacity(0.16))
+        );
+        assert_eq!(
+            light_refinement.editor_diff_hunk_added_hollow_background,
+            Some(added.opacity(0.08))
+        );
+        assert_eq!(
+            light_refinement.editor_diff_hunk_added_hollow_border,
+            Some(added.opacity(0.48))
+        );
+
+        assert_eq!(
+            dark_refinement.editor_diff_hunk_added_background,
+            Some(added.opacity(0.12))
+        );
+        assert_eq!(
+            dark_refinement.editor_diff_hunk_added_hollow_background,
+            Some(added.opacity(0.06))
+        );
+        assert_eq!(
+            dark_refinement.editor_diff_hunk_added_hollow_border,
+            Some(added.opacity(0.36))
+        );
+    }
+
+    #[test]
+    fn diff_hunk_fallbacks_are_absent_when_status_and_version_control_colors_are_missing() {
+        let refinement = theme_colors_refinement(
+            &ThemeColorsContent::default(),
+            &status_colors_refinement(&StatusColorsContent::default()),
+            true,
+        );
+
+        assert_eq!(refinement.editor_diff_hunk_added_background, None);
+        assert_eq!(refinement.editor_diff_hunk_added_hollow_background, None);
+        assert_eq!(refinement.editor_diff_hunk_added_hollow_border, None);
+        assert_eq!(refinement.editor_diff_hunk_deleted_background, None);
+        assert_eq!(refinement.editor_diff_hunk_deleted_hollow_background, None);
+        assert_eq!(refinement.editor_diff_hunk_deleted_hollow_border, None);
+    }
+
+    fn parse_color(color: &str) -> gpui::Hsla {
+        match try_parse_color(color) {
+            Ok(color) => color,
+            Err(error) => panic!("failed to parse color {color}: {error}"),
+        }
+    }
 
     #[test]
     fn helix_jump_label_color_uses_theme_color_or_status_error() {
@@ -867,8 +1078,11 @@ mod tests {
             ..Default::default()
         };
 
-        let fallback_refinement =
-            theme_colors_refinement(&ThemeColorsContent::default(), &status_colors);
+        let fallback_refinement = theme_colors_refinement(
+            &ThemeColorsContent::default(),
+            &status_colors,
+            Default::default(),
+        );
 
         assert_eq!(
             fallback_refinement.vim_helix_jump_label_foreground,
@@ -881,6 +1095,7 @@ mod tests {
                 ..Default::default()
             },
             &status_colors,
+            Default::default(),
         );
 
         assert_eq!(
