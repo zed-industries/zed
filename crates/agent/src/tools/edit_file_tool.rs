@@ -49,8 +49,7 @@ pub struct EditFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// List of edit operations to apply sequentially.
-    /// Each edit finds `old_text` in the file and replaces it with `new_text`.
+    /// List of edit operations to apply sequentially. Each edit finds `old_text` in the file and replaces it with `new_text`.
     #[serde(deserialize_with = "deserialize_maybe_stringified")]
     pub edits: Vec<Edit>,
 }
@@ -1871,9 +1870,7 @@ mod tests {
         assert_eq!(input_path, Some(PathBuf::from("root/test.txt")));
     }
 
-    /// When the buffer has unsaved changes and the user picks "Save", the
-    /// pending edits are flushed to disk and the agent's edit then proceeds
-    /// against the just-saved content.
+    /// When the buffer has unsaved changes and the user picks "Save", the pending edits are flushed to disk and the agent's edit then proceeds against the just-saved content.
     #[gpui::test]
     async fn test_streaming_dirty_buffer_save(cx: &mut TestAppContext) {
         let (edit_tool, project, action_log, fs, _thread) =
@@ -1962,9 +1959,7 @@ mod tests {
         assert_eq!(on_disk, "replaced content");
     }
 
-    /// When the buffer has unsaved changes and the user picks "Discard", the
-    /// pending edits are reverted to match disk and the agent's edit then
-    /// proceeds against the on-disk content.
+    /// When the buffer has unsaved changes and the user picks "Discard", the pending edits are reverted to match disk and the agent's edit then proceeds against the on-disk content.
     #[gpui::test]
     async fn test_streaming_dirty_buffer_discard(cx: &mut TestAppContext) {
         let (edit_tool, project, action_log, fs, _thread) =
@@ -2039,10 +2034,7 @@ mod tests {
         assert_eq!(on_disk, "replaced content");
     }
 
-    /// When the buffer is dirty and the user resolves it manually — e.g.
-    /// pressing `cmd-s` while the prompt is visible — the prompt is
-    /// dismissed automatically and the edit proceeds against the saved
-    /// content. The user shouldn't have to also click a button.
+    /// When the buffer is dirty and the user resolves it manually — e.g. pressing `cmd-s` while the prompt is visible — the prompt is dismissed automatically and the edit proceeds against the saved content. The user shouldn't have to also click a button.
     #[gpui::test]
     async fn test_streaming_dirty_buffer_resolved_externally(cx: &mut TestAppContext) {
         let (edit_tool, project, action_log, fs, _thread) =

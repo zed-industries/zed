@@ -32,8 +32,7 @@ pub struct FindPathToolInput {
     /// You can get back the first two paths by providing a glob of "*thing*.txt"
     /// </example>
     pub glob: String,
-    /// Optional starting position for paginated results (0-based).
-    /// When not provided, starts from the beginning.
+    /// Optional starting position for paginated results (0-based). When not provided, starts from the beginning.
     #[serde(default)]
     pub offset: usize,
 }

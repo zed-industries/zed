@@ -29,22 +29,17 @@ use ui::SharedString;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt};
 
-/// Operating mode used internally by `EditSession`/`Pipeline` to choose between
-/// applying granular edits (the `edit_file` tool) or replacing/creating the
-/// entire file content (the `write_file` tool).
+/// Operating mode used internally by `EditSession`/`Pipeline` to choose between applying granular edits (the `edit_file` tool) or replacing/creating the entire file content (the `write_file` tool).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EditSessionMode {
     Write,
     Edit,
 }
 
-/// A single edit operation that replaces old text with new text
-/// Properly escape all text fields as valid JSON strings.
-/// Remember to escape special characters like newlines (`\n`) and quotes (`"`) in JSON strings.
+/// A single edit operation that replaces old text with new text Properly escape all text fields as valid JSON strings. Remember to escape special characters like newlines (`\n`) and quotes (`"`) in JSON strings.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Edit {
-    /// The exact text to find in the file. This will be matched using fuzzy matching
-    /// to handle minor differences in whitespace or formatting.
+    /// The exact text to find in the file. This will be matched using fuzzy matching to handle minor differences in whitespace or formatting.
     ///
     /// Be minimal with replacements:
     /// - For unique lines, include only those lines
@@ -910,10 +905,7 @@ fn extract_match(
     }
 }
 
-/// Edits a buffer and reports the edit to the action log in the same effect
-/// cycle. This ensures the action log's subscription handler sees the version
-/// already updated by `buffer_edited`, so it does not misattribute the agent's
-/// edit as a user edit.
+/// Edits a buffer and reports the edit to the action log in the same effect cycle. This ensures the action log's subscription handler sees the version already updated by `buffer_edited`, so it does not misattribute the agent's edit as a user edit.
 fn agent_edit_buffer<I, S, T>(
     buffer: &Entity<Buffer>,
     edits: I,
@@ -962,14 +954,9 @@ async fn ensure_buffer_saved(
     Ok(false)
 }
 
-/// Prompts the user about how to handle a dirty buffer that the agent
-/// wants to edit (`EditSessionMode::Edit`) or overwrite
-/// (`EditSessionMode::Write`), and performs the chosen action so the
-/// edit session can proceed (or returns `Err` to cancel).
+/// Prompts the user about how to handle a dirty buffer that the agent wants to edit (`EditSessionMode::Edit`) or overwrite (`EditSessionMode::Write`), and performs the chosen action so the edit session can proceed (or returns `Err` to cancel).
 ///
-/// If the user resolves the dirty state externally (e.g. cmd-s or
-/// reload) while the prompt is visible, the prompt is dismissed
-/// automatically.
+/// If the user resolves the dirty state externally (e.g. cmd-s or reload) while the prompt is visible, the prompt is dismissed automatically.
 async fn resolve_dirty_buffer(
     buffer: &Entity<Buffer>,
     mode: EditSessionMode,

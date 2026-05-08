@@ -24,8 +24,7 @@ pub enum SensitiveSettingsKind {
 pub enum ResolvedProjectPath {
     /// The path resolves to a location safely within the project boundaries.
     Safe(ProjectPath),
-    /// The path resolves through a symlink to a location outside the project.
-    /// Agent tools should prompt the user before proceeding with access.
+    /// The path resolves through a symlink to a location outside the project. Agent tools should prompt the user before proceeding with access.
     SymlinkEscape {
         /// The project-relative path (before symlink resolution).
         project_path: ProjectPath,
@@ -34,10 +33,7 @@ pub enum ResolvedProjectPath {
     },
 }
 
-/// Asynchronously canonicalizes the absolute paths of all worktrees in a
-/// project using the provided `Fs`. The returned paths can be passed to
-/// [`resolve_project_path`] and related helpers so that they don't need to
-/// perform blocking filesystem I/O themselves.
+/// Asynchronously canonicalizes the absolute paths of all worktrees in a project using the provided `Fs`. The returned paths can be passed to [`resolve_project_path`] and related helpers so that they don't need to perform blocking filesystem I/O themselves.
 pub async fn canonicalize_worktree_roots<C: gpui::AppContext>(
     project: &Entity<Project>,
     fs: &Arc<dyn Fs>,
@@ -60,15 +56,11 @@ pub async fn canonicalize_worktree_roots<C: gpui::AppContext>(
     canonical_roots
 }
 
-/// Walks up ancestors of `path` to find the deepest one that exists on disk and
-/// can be canonicalized, then reattaches the remaining suffix components.
+/// Walks up ancestors of `path` to find the deepest one that exists on disk and can be canonicalized, then reattaches the remaining suffix components.
 ///
-/// This is needed for paths where the leaf (or intermediate directories) don't
-/// exist yet but an ancestor may be a symlink. For example, when creating
-/// `.zed/settings.json` where `.zed` is a symlink to an external directory.
+/// This is needed for paths where the leaf (or intermediate directories) don't exist yet but an ancestor may be a symlink. For example, when creating `.zed/settings.json` where `.zed` is a symlink to an external directory.
 ///
-/// Note: intermediate directories *can* be symlinks (not just leaf entries),
-/// so we must walk the full ancestor chain. For example:
+/// Note: intermediate directories *can* be symlinks (not just leaf entries), so we must walk the full ancestor chain. For example:
 ///   `ln -s /external/config /project/.zed`
 /// makes `.zed` an intermediate symlink directory.
 async fn canonicalize_with_ancestors(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
@@ -102,8 +94,7 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
         .any(|root| canonical_path.starts_with(root))
 }
 
-/// Returns the kind of sensitive settings location this path targets, if any:
-/// either inside a `.zed/` local-settings directory or inside the global config dir.
+/// Returns the kind of sensitive settings location this path targets, if any: either inside a `.zed/` local-settings directory or inside the global config dir.
 pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
     if path.components().any(|component| {
@@ -131,13 +122,9 @@ pub async fn is_sensitive_settings_path(path: &Path, fs: &dyn Fs) -> bool {
 
 /// Resolves a path within the project, checking for symlink escapes.
 ///
-/// This is the primary entry point for agent tools that need to resolve a
-/// user-provided path string into a validated `ProjectPath`. It combines
-/// path lookup (`find_project_path`) with symlink safety verification.
+/// This is the primary entry point for agent tools that need to resolve a user-provided path string into a validated `ProjectPath`. It combines path lookup (`find_project_path`) with symlink safety verification.
 ///
-/// `canonical_worktree_roots` should be obtained from
-/// [`canonicalize_worktree_roots`] before calling this function so that no
-/// blocking I/O is needed here.
+/// `canonical_worktree_roots` should be obtained from [`canonicalize_worktree_roots`] before calling this function so that no blocking I/O is needed here.
 ///
 /// # Returns
 ///
@@ -230,10 +217,7 @@ pub fn resolve_project_path(
     Ok(ResolvedProjectPath::Safe(project_path))
 }
 
-/// Prompts the user for permission when a path resolves through a symlink to a
-/// location outside the project. This check is an additional gate after
-/// settings-based deny decisions: even if a tool is configured as "always allow,"
-/// a symlink escape still requires explicit user approval.
+/// Prompts the user for permission when a path resolves through a symlink to a location outside the project. This check is an additional gate after settings-based deny decisions: even if a tool is configured as "always allow," a symlink escape still requires explicit user approval.
 pub fn authorize_symlink_access(
     tool_name: &str,
     display_path: &str,
@@ -273,12 +257,9 @@ pub fn authorize_with_sensitive_settings(
     }
 }
 
-/// Creates a single authorization prompt for multiple symlink escapes.
-/// Each escape is a `(display_path, canonical_target)` pair.
+/// Creates a single authorization prompt for multiple symlink escapes. Each escape is a `(display_path, canonical_target)` pair.
 ///
-/// Accepts `&[(&str, PathBuf)]` to match the natural return type of
-/// [`detect_symlink_escape`], avoiding intermediate owned-to-borrowed
-/// conversions at call sites.
+/// Accepts `&[(&str, PathBuf)]` to match the natural return type of [`detect_symlink_escape`], avoiding intermediate owned-to-borrowed conversions at call sites.
 pub fn authorize_symlink_escapes(
     tool_name: &str,
     escapes: &[(&str, PathBuf)],
@@ -309,8 +290,7 @@ pub fn authorize_symlink_escapes(
     event_stream.authorize_always_prompt(title, context, cx)
 }
 
-/// Checks whether a path escapes the project via symlink, without creating
-/// an authorization task. Useful for pre-filtering paths before settings checks.
+/// Checks whether a path escapes the project via symlink, without creating an authorization task. Useful for pre-filtering paths before settings checks.
 pub fn path_has_symlink_escape(
     project: &Project,
     path: impl AsRef<Path>,
@@ -323,8 +303,7 @@ pub fn path_has_symlink_escape(
     )
 }
 
-/// Collects symlink escape info for a path without creating an authorization task.
-/// Returns `Some((display_path, canonical_target))` if the path escapes via symlink.
+/// Collects symlink escape info for a path without creating an authorization task. Returns `Some((display_path, canonical_target))` if the path escapes via symlink.
 pub fn detect_symlink_escape<'a>(
     project: &Project,
     display_path: &'a str,
@@ -339,13 +318,9 @@ pub fn detect_symlink_escape<'a>(
     }
 }
 
-/// Collects symlink escape info for two paths (source and destination) and
-/// returns any escapes found. This deduplicates the common pattern used by
-/// tools that operate on two paths (copy, move).
+/// Collects symlink escape info for two paths (source and destination) and returns any escapes found. This deduplicates the common pattern used by tools that operate on two paths (copy, move).
 ///
-/// Returns a `Vec` of `(display_path, canonical_target)` pairs for paths
-/// that escape the project via symlink. The returned vec borrows the display
-/// paths from the input strings.
+/// Returns a `Vec` of `(display_path, canonical_target)` pairs for paths that escape the project via symlink. The returned vec borrows the display paths from the input strings.
 pub fn collect_symlink_escapes<'a>(
     project: &Project,
     source_path: &'a str,
@@ -366,19 +341,13 @@ pub fn collect_symlink_escapes<'a>(
     escapes
 }
 
-/// Checks authorization for file edits, handling symlink escapes and
-/// sensitive settings paths.
+/// Checks authorization for file edits, handling symlink escapes and sensitive settings paths.
 ///
 /// # Authorization precedence
 ///
 /// When a symlink escape is detected, the symlink authorization prompt
 /// *replaces* (rather than supplements) the normal tool-permission prompt.
-/// This is intentional: the symlink prompt already requires explicit user
-/// approval and displays the canonical target, which provides strictly more
-/// security-relevant information than the generic tool confirmation. Requiring
-/// two sequential prompts for the same operation would degrade UX without
-/// meaningfully improving security, since the user must already approve the
-/// more specific symlink-escape prompt.
+/// This is intentional: the symlink prompt already requires explicit user approval and displays the canonical target, which provides strictly more security-relevant information than the generic tool confirmation. Requiring two sequential prompts for the same operation would degrade UX without meaningfully improving security, since the user must already approve the more specific symlink-escape prompt.
 pub fn authorize_file_edit(
     tool_name: &str,
     path: &Path,
@@ -522,37 +491,27 @@ pub fn authorize_file_edit(
     })
 }
 
-/// The user's choice when prompted about how to handle unsaved changes
-/// in a buffer that the agent wants to edit or overwrite.
+/// The user's choice when prompted about how to handle unsaved changes in a buffer that the agent wants to edit or overwrite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirtyBufferDecision {
-    /// Save the buffer's pending edits to disk, then proceed.
-    /// (Edit-mode prompt only.)
+    /// Save the buffer's pending edits to disk, then proceed. (Edit-mode prompt only.)
     Save,
     /// Discard the buffer's pending edits (reload from disk), then proceed.
     Discard,
-    /// Keep the buffer's pending edits and cancel the agent's operation.
-    /// (Overwrite-mode prompt only.)
+    /// Keep the buffer's pending edits and cancel the agent's operation. (Overwrite-mode prompt only.)
     Keep,
 }
 
 /// Which prompt to show when the agent encounters a dirty buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirtyBufferPromptKind {
-    /// The agent wants to apply targeted edits on top of the current
-    /// content. Offers Save (persist edits, then edit on top) vs Discard
-    /// (revert to disk, then edit).
+    /// The agent wants to apply targeted edits on top of the current content. Offers Save (persist edits, then edit on top) vs Discard (revert to disk, then edit).
     Edit,
-    /// The agent wants to overwrite the file's entire contents. Offers
-    /// Keep (cancel the overwrite to preserve the user's work) vs
-    /// Discard (reload from disk and let the agent overwrite).
+    /// The agent wants to overwrite the file's entire contents. Offers Keep (cancel the overwrite to preserve the user's work) vs Discard (reload from disk and let the agent overwrite).
     Overwrite,
 }
 
-/// Prompts the user about how to handle a dirty buffer that the agent
-/// wants to edit or overwrite. Returns the chosen action; the caller is
-/// responsible for actually performing the corresponding side effect
-/// (save / reload / cancel) before continuing.
+/// Prompts the user about how to handle a dirty buffer that the agent wants to edit or overwrite. Returns the chosen action; the caller is responsible for actually performing the corresponding side effect (save / reload / cancel) before continuing.
 pub fn authorize_dirty_buffer(
     kind: DirtyBufferPromptKind,
     event_stream: &ToolCallEventStream,

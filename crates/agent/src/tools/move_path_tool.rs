@@ -37,12 +37,10 @@ pub struct MovePathToolInput {
     /// </example>
     pub source_path: String,
 
-    /// The destination path where the file or directory should be moved/renamed to.
-    /// If the paths are the same except for the filename, then this will be a rename.
+    /// The destination path where the file or directory should be moved/renamed to. If the paths are the same except for the filename, then this will be a rename.
     ///
     /// <example>
-    /// To move "directory1/a/something.txt" to "directory2/b/renamed.txt",
-    /// provide a destination_path of "directory2/b/renamed.txt"
+    /// To move "directory1/a/something.txt" to "directory2/b/renamed.txt", provide a destination_path of "directory2/b/renamed.txt"
     /// </example>
     pub destination_path: String,
 }

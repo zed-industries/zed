@@ -39,19 +39,9 @@ struct EditStreamState {
 
 /// Converts incrementally-growing tool call JSON into a stream of chunk events.
 ///
-/// The tool call streaming infrastructure delivers partial JSON objects where
-/// string fields grow over time. This parser compares consecutive partials,
-/// computes the deltas, and emits `EditEvent`s or `WriteEvent`s that downstream
-/// pipeline stages (`StreamingFuzzyMatcher` for old_text, `StreamingDiff` for
-/// new_text) can consume incrementally.
+/// The tool call streaming infrastructure delivers partial JSON objects where string fields grow over time. This parser compares consecutive partials, computes the deltas, and emits `EditEvent`s or `WriteEvent`s that downstream pipeline stages (`StreamingFuzzyMatcher` for old_text, `StreamingDiff` for new_text) can consume incrementally.
 ///
-/// Because partial JSON comes through a fixer (`partial-json-fixer`) that
-/// closes incomplete escape sequences, a string can temporarily contain wrong
-/// trailing characters (e.g. a literal `\` instead of `\n`).  We handle this
-/// by holding back trailing backslash characters in non-finalized chunks: if
-/// a partial string ends with `\` (0x5C), that byte is not emitted until the
-/// next partial confirms or corrects it.  This avoids feeding corrupted bytes
-/// to downstream consumers.
+/// Because partial JSON comes through a fixer (`partial-json-fixer`) that closes incomplete escape sequences, a string can temporarily contain wrong trailing characters (e.g. a literal `\` instead of `\n`).  We handle this by holding back trailing backslash characters in non-finalized chunks: if a partial string ends with `\` (0x5C), that byte is not emitted until the next partial confirms or corrects it.  This avoids feeding corrupted bytes to downstream consumers.
 #[derive(Default, Debug)]
 pub struct StreamingParser {
     edit_states: Vec<EditStreamState>,
@@ -61,9 +51,7 @@ pub struct StreamingParser {
 impl StreamingParser {
     /// Push a new set of partial edits (from edit mode) and return any events.
     ///
-    /// Each call should pass the *entire current* edits array as seen in the
-    /// latest partial input. The parser will diff it against its internal state
-    /// to produce only the new events.
+    /// Each call should pass the *entire current* edits array as seen in the latest partial input. The parser will diff it against its internal state to produce only the new events.
     pub fn push_edits(&mut self, edits: &[PartialEdit]) -> SmallVec<[EditEvent; 4]> {
         let mut events = SmallVec::new();
 
@@ -161,8 +149,7 @@ impl StreamingParser {
 
     /// Push new content and return any events.
     ///
-    /// Each call should pass the *entire current* content string. The parser
-    /// will diff it against its internal state to emit only the new chunk.
+    /// Each call should pass the *entire current* content string. The parser will diff it against its internal state to emit only the new chunk.
     pub fn push_content(&mut self, content: &str) -> SmallVec<[WriteEvent; 1]> {
         let mut events = SmallVec::new();
 
@@ -176,13 +163,9 @@ impl StreamingParser {
         events
     }
 
-    /// Finalize all edits with the complete input. This emits `done: true`
-    /// events for any in-progress old_text or new_text that hasn't been
-    /// finalized yet.
+    /// Finalize all edits with the complete input. This emits `done: true` events for any in-progress old_text or new_text that hasn't been finalized yet.
     ///
-    /// `final_edits` should be the fully deserialized final edits array. The
-    /// parser compares against its tracked state and emits any remaining deltas
-    /// with `done: true`.
+    /// `final_edits` should be the fully deserialized final edits array. The parser compares against its tracked state and emits any remaining deltas with `done: true`.
     pub fn finalize_edits(&mut self, edits: &[Edit]) -> SmallVec<[EditEvent; 4]> {
         let mut events = SmallVec::new();
 
@@ -267,8 +250,7 @@ impl StreamingParser {
         events
     }
 
-    /// When a new edit appears at `index`, finalize the edit at `index - 1`
-    /// by emitting a `NewTextChunk { done: true }` if it hasn't been finalized.
+    /// When a new edit appears at `index`, finalize the edit at `index - 1` by emitting a `NewTextChunk { done: true }` if it hasn't been finalized.
     fn finalize_previous_edit(
         &mut self,
         new_index: usize,
@@ -338,11 +320,7 @@ impl StreamingParser {
     }
 }
 
-/// Returns the byte position up to which it is safe to emit from a partial
-/// string.  If the string ends with a backslash (`\`, 0x5C), that byte is
-/// held back because it may be an artifact of the partial JSON fixer closing
-/// an incomplete escape sequence (e.g. turning a half-received `\n` into `\\`).
-/// The next partial will reveal the correct character.
+/// Returns the byte position up to which it is safe to emit from a partial string.  If the string ends with a backslash (`\`, 0x5C), that byte is held back because it may be an artifact of the partial JSON fixer closing an incomplete escape sequence (e.g. turning a half-received `\n` into `\\`). The next partial will reveal the correct character.
 fn safe_emit_end(text: &str) -> usize {
     if text.as_bytes().last() == Some(&b'\\') {
         text.len() - 1

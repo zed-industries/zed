@@ -43,8 +43,7 @@ pub struct ReadFileToolInput {
     /// - /a/b/directory1
     /// - /c/d/directory2
     ///
-    /// If you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.
-    /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
+    /// If you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`. If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)

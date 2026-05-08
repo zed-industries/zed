@@ -31,8 +31,7 @@ pub fn compute_indent_delta(buffer_indent: LineIndent, query_indent: LineIndent)
     }
 }
 
-/// Synchronous re-indentation adapter. Buffers incomplete lines and applies
-/// an `IndentDelta` to each line's leading whitespace before emitting it.
+/// Synchronous re-indentation adapter. Buffers incomplete lines and applies an `IndentDelta` to each line's leading whitespace before emitting it.
 pub struct Reindenter {
     delta: IndentDelta,
     buffer: String,
@@ -48,8 +47,7 @@ impl Reindenter {
         }
     }
 
-    /// Feed a chunk of text and return the re-indented portion that is
-    /// ready to emit. Incomplete trailing lines are buffered internally.
+    /// Feed a chunk of text and return the re-indented portion that is ready to emit. Incomplete trailing lines are buffered internally.
     pub fn push(&mut self, chunk: &str) -> String {
         self.buffer.push_str(chunk);
         self.drain(false)

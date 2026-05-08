@@ -5,8 +5,7 @@ const REPLACEMENT_COST: u32 = 1;
 const INSERTION_COST: u32 = 3;
 const DELETION_COST: u32 = 10;
 
-/// A streaming fuzzy matcher that can process text chunks incrementally
-/// and return the best match found so far at each step.
+/// A streaming fuzzy matcher that can process text chunks incrementally and return the best match found so far at each step.
 pub struct StreamingFuzzyMatcher {
     snapshot: TextBufferSnapshot,
     query_lines: Vec<String>,
@@ -36,13 +35,11 @@ impl StreamingFuzzyMatcher {
 
     /// Push a new chunk of text and get the best match found so far.
     ///
-    /// This method accumulates text chunks and processes complete lines.
-    /// Partial lines are buffered internally until a newline is received.
+    /// This method accumulates text chunks and processes complete lines. Partial lines are buffered internally until a newline is received.
     ///
     /// # Returns
     ///
-    /// Returns `Some(range)` if a match has been found with the accumulated
-    /// query so far, or `None` if no suitable match exists yet.
+    /// Returns `Some(range)` if a match has been found with the accumulated query so far, or `None` if no suitable match exists yet.
     pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
         // Add the chunk to our incomplete line buffer
         self.incomplete_line.push_str(chunk);
@@ -67,8 +64,7 @@ impl StreamingFuzzyMatcher {
 
     /// Finish processing and return the final best match(es).
     ///
-    /// This processes any remaining incomplete line before returning the final
-    /// match result.
+    /// This processes any remaining incomplete line before returning the final match result.
     pub fn finish(&mut self) -> Vec<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {

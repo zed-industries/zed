@@ -15,17 +15,14 @@ use util::markdown::MarkdownInlineCode;
 ///
 /// This tool can be invoked after a series of edits to determine if further edits are necessary, or if the user asks to fix errors or warnings in their codebase.
 ///
-/// When a path is provided, shows all diagnostics for that specific file.
-/// When no path is provided, shows a summary of error and warning counts for all files in the project.
+/// When a path is provided, shows all diagnostics for that specific file. When no path is provided, shows a summary of error and warning counts for all files in the project.
 ///
 /// <example>
-/// To get diagnostics for a specific file:
-/// {
+/// To get diagnostics for a specific file: {
 ///     "path": "src/main.rs"
 /// }
 ///
-/// To get a project-wide diagnostic summary:
-/// {}
+/// To get a project-wide diagnostic summary: {}
 /// </example>
 ///
 /// <guidelines>
@@ -36,8 +33,7 @@ use util::markdown::MarkdownInlineCode;
 pub struct DiagnosticsToolInput {
     /// The path to get diagnostics for. If not provided, returns a project-wide summary.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:

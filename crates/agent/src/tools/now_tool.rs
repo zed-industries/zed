@@ -19,8 +19,7 @@ pub enum Timezone {
     Local,
 }
 
-/// Returns the current datetime in RFC 3339 format.
-/// Only use this tool when the user specifically asks for it or the current task would benefit from knowing the current datetime.
+/// Returns the current datetime in RFC 3339 format. Only use this tool when the user specifically asks for it or the current task would benefit from knowing the current datetime.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct NowToolInput {
     /// The timezone to use for the datetime. Use `utc` for UTC, or `local` for the system's local time.

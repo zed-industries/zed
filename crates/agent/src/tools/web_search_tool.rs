@@ -15,9 +15,7 @@ use ui::prelude::*;
 use util::markdown::MarkdownInlineCode;
 use web_search::WebSearchRegistry;
 
-/// Search the web for information using your query.
-/// Use this when you need real-time information, facts, or data that might not be in your training.
-/// Results will include snippets and links from relevant web pages.
+/// Search the web for information using your query. Use this when you need real-time information, facts, or data that might not be in your training. Results will include snippets and links from relevant web pages.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {
     /// The search term or question to query on the web.

@@ -470,8 +470,7 @@ impl EditToolTest {
         Ok(EditEvalOutput { assertion, sample })
     }
 
-    /// Stream the model completion and extract the first complete tool use
-    /// whose name matches `EditFileTool::NAME`, parsed as `EditFileToolInput`.
+    /// Stream the model completion and extract the first complete tool use whose name matches `EditFileTool::NAME`, parsed as `EditFileToolInput`.
     async fn extract_tool_use(
         &self,
         request: LanguageModelRequest,

@@ -46,8 +46,7 @@ pub struct WriteFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// The complete content for the file.
-    /// This field should contain the entire file content.
+    /// The complete content for the file. This field should contain the entire file content.
     pub content: String,
 }
 
@@ -1091,9 +1090,7 @@ mod tests {
         );
     }
 
-    /// When the buffer has unsaved user edits and the user picks
-    /// "Discard my edits", the pending edits are reverted to match disk
-    /// and the agent's overwrite proceeds.
+    /// When the buffer has unsaved user edits and the user picks "Discard my edits", the pending edits are reverted to match disk and the agent's overwrite proceeds.
     #[gpui::test]
     async fn test_streaming_write_dirty_buffer_discard(cx: &mut TestAppContext) {
         let (write_tool, project, _action_log, fs, _thread) =
@@ -1170,9 +1167,7 @@ mod tests {
         assert_eq!(on_disk, "agent overwrote it");
     }
 
-    /// When the buffer has unsaved user edits and the user picks
-    /// "Keep my edits", the overwrite is cancelled with an error and the
-    /// user's pending edits are preserved.
+    /// When the buffer has unsaved user edits and the user picks "Keep my edits", the overwrite is cancelled with an error and the user's pending edits are preserved.
     #[gpui::test]
     async fn test_streaming_write_dirty_buffer_keep(cx: &mut TestAppContext) {
         let (write_tool, project, _action_log, fs, _thread) =
@@ -1232,10 +1227,7 @@ mod tests {
         assert_eq!(on_disk, "on disk content");
     }
 
-    /// When the user manually saves the buffer (e.g. cmd-s) while the
-    /// overwrite prompt is visible, that's treated as "Keep my edits":
-    /// the user just deliberately persisted their work, so we cancel the
-    /// agent's overwrite to avoid clobbering it.
+    /// When the user manually saves the buffer (e.g. cmd-s) while the overwrite prompt is visible, that's treated as "Keep my edits": the user just deliberately persisted their work, so we cancel the agent's overwrite to avoid clobbering it.
     #[gpui::test]
     async fn test_streaming_write_dirty_buffer_resolved_externally(cx: &mut TestAppContext) {
         let (write_tool, project, _action_log, fs, _thread) =

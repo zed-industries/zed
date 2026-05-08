@@ -11,16 +11,13 @@ use text::{Anchor, Point};
 
 /// Identifies a specific symbol (declaration or usage) in the source code.
 ///
-/// Use the file path, line number, and symbol name from file outlines, grep results,
-/// or other tool outputs to populate these fields.
+/// Use the file path, line number, and symbol name from file outlines, grep results, or other tool outputs to populate these fields.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SymbolLocator {
-    /// The relative path of the file containing the symbol
-    /// (e.g. "crates/editor/src/editor.rs").
+    /// The relative path of the file containing the symbol (e.g. "crates/editor/src/editor.rs").
     pub file_path: String,
 
-    /// The 1-based line number where the symbol appears.
-    /// Use the line numbers from file outlines or grep results.
+    /// The 1-based line number where the symbol appears. Use the line numbers from file outlines or grep results.
     pub line: u32,
 
     /// The name of the symbol (function name, type name, variable name, etc.)
@@ -104,8 +101,7 @@ impl fmt::Display for LocationDisplay {
     }
 }
 
-/// Searches for `needle` in a char iterator, returning the byte offset of the
-/// first occurrence without collecting the full iterator into a string.
+/// Searches for `needle` in a char iterator, returning the byte offset of the first occurrence without collecting the full iterator into a string.
 ///
 /// Equivalent to [`str::find`]
 fn find_in_char_iter(chars: impl Iterator<Item = char>, needle: &str) -> Option<usize> {
@@ -141,11 +137,7 @@ fn find_in_char_iter(chars: impl Iterator<Item = char>, needle: &str) -> Option<
 impl SymbolLocator {
     /// Resolves this locator into a concrete buffer and position.
     ///
-    /// Opens the file at `file_path`, then searches for `symbol_name` on the
-    /// specified `line`. Returns an error if the file can't be found, the line
-    /// is out of range, or the symbol name doesn't appear on that line.
-    /// If the symbol name appears multiple times on the line, uses the first
-    /// occurrence.
+    /// Opens the file at `file_path`, then searches for `symbol_name` on the specified `line`. Returns an error if the file can't be found, the line is out of range, or the symbol name doesn't appear on that line. If the symbol name appears multiple times on the line, uses the first occurrence.
     pub async fn resolve(
         &self,
         project: &Entity<Project>,

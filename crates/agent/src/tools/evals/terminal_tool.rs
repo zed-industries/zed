@@ -62,15 +62,9 @@ impl CommandAssertion {
         }
     }
 
-    /// Passes when the command is a git command and every git subcommand that
-    /// could block on a pty (pager or editor) is guarded with the appropriate
-    /// environment variable or flag.
+    /// Passes when the command is a git command and every git subcommand that could block on a pty (pager or editor) is guarded with the appropriate environment variable or flag.
     ///
-    /// This is intentionally permissive about *which* git subcommand the model
-    /// chooses — for an indirect prompt like "combine my last 3 commits", the
-    /// model is free to first investigate with `git log` or jump straight to
-    /// `git rebase -i`. Either is fine, as long as whatever it picks won't
-    /// hang on a pager or editor.
+    /// This is intentionally permissive about *which* git subcommand the model chooses — for an indirect prompt like "combine my last 3 commits", the model is free to first investigate with `git log` or jump straight to `git rebase -i`. Either is fine, as long as whatever it picks won't hang on a pager or editor.
     fn git_pty_safe(description: &'static str) -> Self {
         Self::new(description, |input| {
             let cmd = input.command.as_str();
@@ -295,8 +289,7 @@ async fn load_model(
     }))
 }
 
-/// Stream the model completion and extract the first complete tool use whose
-/// name matches `TerminalTool::NAME`, parsed as `TerminalToolInput`.
+/// Stream the model completion and extract the first complete tool use whose name matches `TerminalTool::NAME`, parsed as `TerminalToolInput`.
 async fn extract_tool_use(
     model: &Arc<dyn LanguageModel>,
     request: LanguageModelRequest,

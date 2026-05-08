@@ -35,9 +35,7 @@ use serde::{
     de::{DeserializeOwned, Error as _},
 };
 
-/// Deserialize a value that may have been provided as a JSON-encoded string
-/// instead of the structured value. Some models occasionally stringify nested
-/// arguments, so we accept either form.
+/// Deserialize a value that may have been provided as a JSON-encoded string instead of the structured value. Some models occasionally stringify nested arguments, so we accept either form.
 pub(crate) fn deserialize_maybe_stringified<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: DeserializeOwned,
