@@ -1,5 +1,6 @@
 use crate::TestServer;
 use call::ActiveCall;
+use client::ChannelId;
 use gpui::{App, BackgroundExecutor, Entity, TestAppContext, TestScreenCaptureSource};
 use project::Project;
 use rpc::proto::PeerId;
@@ -11,7 +12,9 @@ struct AutoWatchTestSetup {
     client_a: TestClient,
     client_b: TestClient,
     client_c: TestClient,
+    channel_id: ChannelId,
     user_a_project: Entity<Project>,
+    user_b_project: Entity<Project>,
 }
 
 async fn setup_auto_watch_test(
@@ -19,6 +22,25 @@ async fn setup_auto_watch_test(
     user_a: &mut TestAppContext,
     user_b: &mut TestAppContext,
     user_c: &mut TestAppContext,
+) -> AutoWatchTestSetup {
+    setup_auto_watch_test_with_initial_participants(server, user_a, user_b, user_c, true).await
+}
+
+async fn setup_auto_watch_late_joiner_test(
+    server: &mut TestServer,
+    user_a: &mut TestAppContext,
+    user_b: &mut TestAppContext,
+    user_c: &mut TestAppContext,
+) -> AutoWatchTestSetup {
+    setup_auto_watch_test_with_initial_participants(server, user_a, user_b, user_c, false).await
+}
+
+async fn setup_auto_watch_test_with_initial_participants(
+    server: &mut TestServer,
+    user_a: &mut TestAppContext,
+    user_b: &mut TestAppContext,
+    user_c: &mut TestAppContext,
+    join_user_c: bool,
 ) -> AutoWatchTestSetup {
     let client_a = server.create_client(user_a, "user_a").await;
     let client_b = server.create_client(user_b, "user_b").await;
@@ -33,6 +55,7 @@ async fn setup_auto_watch_test(
         .await;
 
     let user_a_project = client_a.build_empty_local_project(false, user_a);
+    let user_b_project = client_b.build_empty_local_project(false, user_b);
 
     let active_call_a = user_a.read(ActiveCall::global);
     active_call_a
@@ -44,17 +67,22 @@ async fn setup_auto_watch_test(
         .update(user_b, |call, cx| call.join_channel(channel_id, cx))
         .await
         .unwrap();
-    let active_call_c = user_c.read(ActiveCall::global);
-    active_call_c
-        .update(user_c, |call, cx| call.join_channel(channel_id, cx))
-        .await
-        .unwrap();
+
+    if join_user_c {
+        let active_call_c = user_c.read(ActiveCall::global);
+        active_call_c
+            .update(user_c, |call, cx| call.join_channel(channel_id, cx))
+            .await
+            .unwrap();
+    }
 
     AutoWatchTestSetup {
         client_a,
         client_b,
         client_c,
+        channel_id,
         user_a_project,
+        user_b_project,
     }
 }
 
@@ -269,6 +297,102 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
 }
 
 #[gpui::test]
+async fn test_auto_watch_reopens_screen_share_from_returning_channel_participant(
+    executor: BackgroundExecutor,
+    user_a: &mut TestAppContext,
+    user_b: &mut TestAppContext,
+    user_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let setup = setup_auto_watch_late_joiner_test(&mut server, user_a, user_b, user_c).await;
+    let (workspace_a, user_a) = setup
+        .client_a
+        .build_workspace(&setup.user_a_project, user_a);
+    let (workspace_b, user_b) = setup
+        .client_b
+        .build_workspace(&setup.user_b_project, user_b);
+
+    workspace_a.update_in(user_a, |workspace, window, cx| {
+        workspace.toggle_auto_watch(window, cx);
+    });
+    workspace_b.update_in(user_b, |workspace, window, cx| {
+        workspace.toggle_auto_watch(window, cx);
+    });
+    executor.run_until_parked();
+
+    let active_call_c = user_c.read(ActiveCall::global);
+    active_call_c
+        .update(user_c, |call, cx| call.join_channel(setup.channel_id, cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    start_screen_share(user_c).await;
+    executor.run_until_parked();
+
+    workspace_a.update(user_a, |workspace, cx| {
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
+    });
+    workspace_b.update(user_b, |workspace, cx| {
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
+    });
+
+    active_call_c
+        .update(user_c, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    workspace_a.update(user_a, |workspace, cx| {
+        assert_no_screen_share_tabs_exist(
+            workspace,
+            "user A should stop seeing user C's screen after user C hangs up",
+            cx,
+        );
+    });
+    workspace_b.update(user_b, |workspace, cx| {
+        assert_no_screen_share_tabs_exist(
+            workspace,
+            "user B should stop seeing user C's screen after user C hangs up",
+            cx,
+        );
+    });
+
+    let active_call_c = user_c.read(ActiveCall::global);
+    active_call_c
+        .update(user_c, |call, cx| call.join_channel(setup.channel_id, cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    start_screen_share(user_c).await;
+    executor.run_until_parked();
+
+    workspace_a.update(user_a, |workspace, cx| {
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
+    });
+    workspace_b.update(user_b, |workspace, cx| {
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_auto_watch_is_disabled_when_following_collaborator(
     executor: BackgroundExecutor,
     user_a: &mut TestAppContext,
@@ -347,6 +471,7 @@ async fn start_screen_share(cx: &mut TestAppContext) {
         .unwrap();
 }
 
+#[track_caller]
 fn stop_screen_share(cx: &mut TestAppContext) {
     let active_call = cx.read(ActiveCall::global);
     active_call

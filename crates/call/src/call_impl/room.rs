@@ -935,6 +935,11 @@ impl Room {
                             for sid in participant.video_tracks.keys() {
                                 cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: sid.clone() });
                             }
+                            if !participant.video_tracks.is_empty() {
+                                cx.emit(Event::RemoteVideoTracksChanged {
+                                    participant_id: participant.peer_id,
+                                });
+                            }
                             false
                         }
                     });
