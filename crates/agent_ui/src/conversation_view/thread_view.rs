@@ -333,6 +333,12 @@ pub struct ThreadView {
     /// Errors emitted by the agent while loading SKILL.md files. Each one
     /// renders as a clickable banner that opens the offending file.
     pub skill_loading_errors: Vec<SkillLoadingError>,
+    /// Errors the user has explicitly dismissed. Each entry is matched against
+    /// emitted errors by full equality; when an error no longer appears in the
+    /// emitted list (i.e. the underlying file was fixed or removed), it's
+    /// dropped from this set so a future regression of the same kind would
+    /// re-show.
+    dismissed_skill_loading_errors: HashSet<SkillLoadingError>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -486,7 +492,19 @@ impl ThreadView {
                     if event.project_id != project_id {
                         return;
                     }
-                    this.skill_loading_errors = event.errors.clone();
+                    // Drop dismissals for errors that no longer appear in the emitted
+                    // list — the underlying file must have been fixed or removed, so a
+                    // future regression should re-show.
+                    this.dismissed_skill_loading_errors
+                        .retain(|dismissed| event.errors.contains(dismissed));
+
+                    // Show only errors that haven't been dismissed.
+                    this.skill_loading_errors = event
+                        .errors
+                        .iter()
+                        .filter(|e| !this.dismissed_skill_loading_errors.contains(e))
+                        .cloned()
+                        .collect();
                     cx.notify();
                 },
             ));
@@ -582,6 +600,7 @@ impl ThreadView {
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
             skill_loading_errors: Vec::new(),
+            dismissed_skill_loading_errors: HashSet::default(),
         };
 
         this.sync_generating_indicator(cx);
@@ -8726,6 +8745,7 @@ impl ThreadView {
                                 let target = target.clone();
                                 move |this, _, _, cx| {
                                     this.skill_loading_errors.retain(|e| *e != target);
+                                    this.dismissed_skill_loading_errors.insert(target.clone());
                                     cx.notify();
                                 }
                             })),
