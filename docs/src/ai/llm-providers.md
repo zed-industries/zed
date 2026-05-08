@@ -362,7 +362,7 @@ Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#mistral-custom-models}
 
-The Zed agent comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba).
+The Zed agent comes pre-configured to use the latest version for common Mistral models (Large, Medium, Small, Codestral, Devstral, and others).
 All the default models support tool use.
 If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 

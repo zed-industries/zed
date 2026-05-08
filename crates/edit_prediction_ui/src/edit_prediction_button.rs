@@ -37,7 +37,7 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
+    HideStatusItem, StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
@@ -1363,6 +1363,13 @@ impl StatusItemView for EditPredictionButton {
             self.editor_enabled = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // This button is already gated on having a non-disabled edit
+        // prediction provider, which the user manages through provider/AI
+        // settings.
+        None
     }
 }
 
