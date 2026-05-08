@@ -39,6 +39,7 @@ pub struct SystemPromptTemplate<'a> {
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
     pub model_name: Option<String>,
+    pub date: String,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -81,11 +82,13 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(!rendered.contains("## Planning"));
         assert!(rendered.contains("test-model"));
+        assert!(rendered.contains("2026-01-01"));
     }
 }
