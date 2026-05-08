@@ -259,9 +259,7 @@ pub struct ContextServerStore {
     server_ids: Vec<ContextServerId>,
     worktree_store: Entity<WorktreeStore>,
     registry: Entity<ContextServerDescriptorRegistry>,
-    update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
-    needs_server_update: bool,
     ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -271,7 +269,14 @@ pub struct ServerStatusChangedEvent {
     pub status: ContextServerStatus,
 }
 
+/// Emitted when the set of configured/desired context servers may have
+/// changed (settings update, AI re-enabled, etc). Subscribers (typically
+/// `Project`) should re-run the maintain loop with their own preferred
+/// `root_path`.
+pub struct ContextServersChanged;
+
 impl EventEmitter<ServerStatusChangedEvent> for ContextServerStore {}
+impl EventEmitter<ContextServersChanged> for ContextServerStore {}
 
 impl ContextServerStore {
     pub fn local(
@@ -280,7 +285,6 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
-            !headless,
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
@@ -299,7 +303,6 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
-            true,
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
@@ -344,7 +347,6 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
-            false,
             None,
             registry,
             worktree_store,
@@ -364,7 +366,6 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
-            true,
             context_server_factory,
             registry,
             worktree_store,
@@ -401,14 +402,13 @@ impl ContextServerStore {
     }
 
     fn new_internal(
-        maintain_server_loop: bool,
         context_server_factory: Option<ContextServerFactory>,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
         state: ContextServerStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
+        let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
             let ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
             let ai_was_disabled = this.ai_disabled;
             this.ai_disabled = ai_disabled;
@@ -430,22 +430,15 @@ impl ContextServerStore {
                 return;
             }
 
-            // Trigger updates if AI was re-enabled or settings changed
-            if maintain_server_loop && (ai_was_disabled || settings_changed) {
-                this.available_context_servers_changed(cx);
+            // Notify subscribers (typically `Project`) so they can re-run
+            // the maintain loop with their own preferred `root_path`.
+            if ai_was_disabled || settings_changed {
+                cx.emit(ContextServersChanged);
             }
         })];
 
-        if maintain_server_loop {
-            subscriptions.push(cx.observe(&registry, |this, _registry, cx| {
-                if !DisableAiSettings::get_global(cx).disable_ai {
-                    this.available_context_servers_changed(cx);
-                }
-            }));
-        }
-
         let ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-        let mut this = Self {
+        Self {
             state,
             _subscriptions: subscriptions,
             context_server_settings: Self::resolve_project_settings(&worktree_store, cx)
@@ -453,17 +446,11 @@ impl ContextServerStore {
                 .clone(),
             worktree_store,
             registry,
-            needs_server_update: false,
             ai_disabled,
             servers: HashMap::default(),
             server_ids: Default::default(),
-            update_servers_task: None,
             context_server_factory,
-        };
-        if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
-            this.available_context_servers_changed(cx);
         }
-        this
     }
 
     pub fn get_server(&self, id: &ContextServerId) -> Option<Arc<ContextServer>> {
@@ -496,7 +483,7 @@ impl ContextServerStore {
         self.server_ids.as_slice()
     }
 
-    fn populate_server_ids(&mut self, cx: &App) {
+    pub fn populate_server_ids(&mut self, cx: &App) {
         self.server_ids = self
             .servers
             .keys()
@@ -690,10 +677,18 @@ impl ContextServerStore {
         Ok(())
     }
 
+    /// `root_path_override`, when `Some`, is used as the working
+    /// directory for stdio servers and as the `root_dir` field of the
+    /// remote `GetContextServerCommand` request. When `None`, falls back
+    /// to the first visible worktree's `root_dir`. Callers that have a
+    /// more specific notion of "active project directory" (e.g.
+    /// `Project::active_project_directory`) should resolve it and pass
+    /// it as the override.
     pub async fn create_context_server(
         this: WeakEntity<Self>,
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,
+        root_path_override: Option<Arc<Path>>,
         cx: &mut AsyncApp,
     ) -> Result<(Arc<ContextServer>, Arc<ContextServerConfiguration>)> {
         let remote = configuration.remote();
@@ -714,17 +709,21 @@ impl ContextServerStore {
             (remote_state, this.is_remote_project())
         })?;
 
-        let root_path: Option<Arc<Path>> = this.update(cx, |this, cx| {
-            this.worktree_store.read_with(cx, |store, cx| {
-                store.visible_worktrees(cx).fold(None, |acc, item| {
-                    if acc.is_none() {
-                        item.read(cx).root_dir()
-                    } else {
-                        acc
-                    }
+        let root_path: Option<Arc<Path>> = if let Some(path) = root_path_override {
+            Some(path)
+        } else {
+            this.update(cx, |this, cx| {
+                this.worktree_store.read_with(cx, |store, cx| {
+                    store.visible_worktrees(cx).fold(None, |acc, item| {
+                        if acc.is_none() {
+                            item.read(cx).root_dir()
+                        } else {
+                            acc
+                        }
+                    })
                 })
-            })
-        })?;
+            })?
+        };
 
         let configuration = if let Some((project_id, upstream_client)) = remote_state {
             let root_dir = root_path.as_ref().map(|p| p.display().to_string());
@@ -1217,8 +1216,8 @@ impl ContextServerStore {
             }
             // Trigger server recreation so the next start uses a fresh
             // transport without the old (now-invalidated) token provider.
-            this.update(cx, |this, cx| {
-                this.available_context_servers_changed(cx);
+            this.update(cx, |_this, cx| {
+                cx.emit(ContextServersChanged);
             })
             .log_err();
         })
@@ -1241,31 +1240,11 @@ impl ContextServerStore {
         });
     }
 
-    fn available_context_servers_changed(&mut self, cx: &mut Context<Self>) {
-        if self.update_servers_task.is_some() {
-            self.needs_server_update = true;
-        } else {
-            self.needs_server_update = false;
-            self.update_servers_task = Some(cx.spawn(async move |this, cx| {
-                if let Err(err) = Self::maintain_servers(this.clone(), cx).await {
-                    log::error!("Error maintaining context servers: {}", err);
-                }
-
-                this.update(cx, |this, cx| {
-                    this.populate_server_ids(cx);
-                    cx.notify();
-                    this.update_servers_task.take();
-                    if this.needs_server_update {
-                        this.available_context_servers_changed(cx);
-                    }
-                })?;
-
-                Ok(())
-            }));
-        }
-    }
-
-    async fn maintain_servers(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+    pub async fn maintain_servers(
+        this: WeakEntity<Self>,
+        root_path_override: Option<Arc<Path>>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
         // Don't start context servers if AI is disabled
         let ai_disabled = this.update(cx, |_, cx| DisableAiSettings::get_global(cx).disable_ai)?;
         if ai_disabled {
@@ -1358,7 +1337,15 @@ impl ContextServerStore {
         })??;
 
         for (id, config) in servers_to_start {
-            match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
+            match Self::create_context_server(
+                this.clone(),
+                id.clone(),
+                config,
+                root_path_override.clone(),
+                cx,
+            )
+            .await
+            {
                 Ok((server, config)) => {
                     this.update(cx, |this, cx| {
                         this.run_server(server, config, cx);

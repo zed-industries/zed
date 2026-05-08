@@ -99,7 +99,10 @@ impl AgentConfiguration {
             ),
             cx.subscribe(&agent_server_store, |_, _, _, cx| cx.notify()),
             cx.observe(&agent_connection_store, |_, _, cx| cx.notify()),
-            cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify()),
+            cx.subscribe(
+                &context_server_store,
+                |_, _, _: &project::context_server_store::ServerStatusChangedEvent, cx| cx.notify(),
+            ),
         ];
 
         let mut this = Self {

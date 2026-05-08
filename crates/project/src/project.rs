@@ -27,7 +27,9 @@ pub mod worktree_store;
 
 mod environment;
 use buffer_diff::BufferDiff;
-use context_server_store::ContextServerStore;
+use context_server_store::{
+    ContextServerStore, ContextServersChanged, registry::ContextServerDescriptorRegistry,
+};
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{GitStoreEvent, Repository, RepositoryId, RepositorySnapshot};
@@ -265,6 +267,16 @@ pub struct Project {
     /// `register_shared_lsp_handle`. Moved here from `BufferStore` so that
     /// the host store has no per-project state.
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
+    /// Drives the context server maintain loop on this Project's behalf.
+    /// Set when a refresh is in flight; cleared when the spawned task
+    /// completes. Lives on `Project` (not `ContextServerStore`) so that
+    /// the per-project `active_project_directory` can be threaded into
+    /// `ContextServerStore::maintain_servers` as `root_path_override`.
+    context_server_update_task: Option<Task<()>>,
+    /// Set when an `available_context_servers_changed` call lands while
+    /// `context_server_update_task` is already in flight; the in-flight
+    /// task re-triggers itself on completion if this is `true`.
+    context_server_needs_update: bool,
 }
 
 struct DownloadingFile {
@@ -1206,7 +1218,7 @@ impl Project {
             flags.watch_global_configs,
             cx,
         );
-        cx.new(|cx: &mut Context<Self>| {
+        let project = cx.new(|cx: &mut Context<Self>| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
@@ -1222,6 +1234,7 @@ impl Project {
                 git_store,
                 settings_observer,
                 lsp_store,
+                context_server_store,
             ) = {
                 let host = host.read(cx);
                 (
@@ -1233,6 +1246,7 @@ impl Project {
                     host.git_store.clone(),
                     host.settings_observer.clone(),
                     host.lsp_store.clone(),
+                    host.context_server_store.clone(),
                 )
             };
 
@@ -1259,6 +1273,7 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+            Self::wire_context_server_triggers(&context_server_store, cx);
 
             Self {
                 host,
@@ -1290,8 +1305,12 @@ impl Project {
                 retain_worktrees: false,
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
+                context_server_update_task: None,
+                context_server_needs_update: false,
             }
-        })
+        });
+        Self::trigger_initial_context_server_refresh(&project, cx);
+        project
     }
 
     pub fn remote(
@@ -1316,7 +1335,7 @@ impl Project {
             fs,
             cx,
         );
-        cx.new(|cx: &mut Context<Self>| {
+        let project = cx.new(|cx: &mut Context<Self>| {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
@@ -1331,6 +1350,7 @@ impl Project {
                 git_store,
                 settings_observer,
                 lsp_store,
+                context_server_store,
             ) = {
                 let host = host.read(cx);
                 (
@@ -1340,6 +1360,7 @@ impl Project {
                     host.git_store.clone(),
                     host.settings_observer.clone(),
                     host.lsp_store.clone(),
+                    host.context_server_store.clone(),
                 )
             };
 
@@ -1364,6 +1385,7 @@ impl Project {
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
+            Self::wire_context_server_triggers(&context_server_store, cx);
 
             let this = Self {
                 host,
@@ -1398,6 +1420,8 @@ impl Project {
                 retain_worktrees: false,
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
+                context_server_update_task: None,
+                context_server_needs_update: false,
             };
 
             // remote server -> local machine handlers
@@ -1468,7 +1492,9 @@ impl Project {
             AgentServerStore::init_remote(&remote_proto);
 
             this
-        })
+        });
+        Self::trigger_initial_context_server_refresh(&project, cx);
+        project
     }
 
     pub async fn in_room(
@@ -1565,6 +1591,7 @@ impl Project {
             git_store,
             settings_observer,
             lsp_store,
+            context_server_store,
         ) = host.read_with(&cx, |host, _| {
             (
                 host.worktree_store.clone(),
@@ -1574,6 +1601,7 @@ impl Project {
                 host.git_store.clone(),
                 host.settings_observer.clone(),
                 host.lsp_store.clone(),
+                host.context_server_store.clone(),
             )
         });
 
@@ -1606,6 +1634,7 @@ impl Project {
             cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
                 .detach();
             cx.subscribe(&git_store, Self::on_git_store_event).detach();
+            Self::wire_context_server_triggers(&context_server_store, cx);
 
             let mut project = Self {
                 host,
@@ -1641,6 +1670,8 @@ impl Project {
                 retain_worktrees: true,
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
+                context_server_update_task: None,
+                context_server_needs_update: false,
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -1702,6 +1733,7 @@ impl Project {
             this.client_subscriptions.extend(subscriptions);
             anyhow::Ok(())
         })?;
+        cx.update(|cx| Self::trigger_initial_context_server_refresh(&project, cx));
 
         Ok(project)
     }
@@ -1929,6 +1961,88 @@ impl Project {
     #[inline]
     pub fn context_server_store(&self, cx: &App) -> Entity<ContextServerStore> {
         self.host.read(cx).context_server_store.clone()
+    }
+
+    /// Subscribe this Project to the triggers that should re-run the
+    /// context server maintain loop: `ContextServersChanged` events from
+    /// the (possibly shared) `ContextServerStore` (settings updates, AI
+    /// re-enabled, OAuth logout) and changes to the global
+    /// `ContextServerDescriptorRegistry` (extension installs).
+    fn wire_context_server_triggers(
+        context_server_store: &Entity<ContextServerStore>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe(
+            context_server_store,
+            |this, _, _: &ContextServersChanged, cx| {
+                if !DisableAiSettings::get_global(cx).disable_ai {
+                    this.available_context_servers_changed(cx);
+                }
+            },
+        )
+        .detach();
+        let registry = ContextServerDescriptorRegistry::default_global(cx);
+        cx.observe(&registry, |this, _registry, cx| {
+            if !DisableAiSettings::get_global(cx).disable_ai {
+                this.available_context_servers_changed(cx);
+            }
+        })
+        .detach();
+    }
+
+    /// Kick off the first maintain pass. The store no longer auto-starts
+    /// the loop on construction (it can't, since it doesn't know which
+    /// Project's `active_project_directory` to use), so each Project
+    /// initiates its own initial refresh after construction.
+    fn trigger_initial_context_server_refresh(project: &Entity<Self>, cx: &mut App) {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+        project.update(cx, |this, cx| {
+            this.available_context_servers_changed(cx);
+        });
+    }
+
+    /// Spawn (or queue) a context server maintain pass for this Project,
+    /// computing the preferred `root_path` from this Project's view
+    /// (`active_project_directory`) and threading it through to
+    /// `ContextServerStore::maintain_servers` as the root-path override.
+    ///
+    /// Equivalent to the previous in-store `available_context_servers_changed`
+    /// debouncer, but driven from `Project` so that each Project can
+    /// supply its own per-project `root_path` to the (potentially shared)
+    /// `ContextServerStore`.
+    pub fn available_context_servers_changed(&mut self, cx: &mut Context<Self>) {
+        if self.context_server_update_task.is_some() {
+            self.context_server_needs_update = true;
+            return;
+        }
+        self.context_server_needs_update = false;
+        let store = self.context_server_store(cx);
+        let root_path = self.active_project_directory(cx);
+        let store_weak = store.downgrade();
+        self.context_server_update_task = Some(cx.spawn(async move |this, cx| {
+            if let Err(err) =
+                ContextServerStore::maintain_servers(store_weak.clone(), root_path, cx).await
+            {
+                log::error!("Error maintaining context servers: {}", err);
+            }
+
+            store_weak
+                .update(cx, |store, cx| {
+                    store.populate_server_ids(cx);
+                    cx.notify();
+                })
+                .log_err();
+
+            this.update(cx, |this, cx| {
+                this.context_server_update_task.take();
+                if this.context_server_needs_update {
+                    this.available_context_servers_changed(cx);
+                }
+            })
+            .log_err();
+        }));
     }
 
     #[inline]

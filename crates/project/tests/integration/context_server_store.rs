@@ -869,6 +869,7 @@ async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
             headers: Default::default(),
             timeout: None,
         }),
+        None,
         &mut async_cx,
     )
     .await;
@@ -922,6 +923,7 @@ async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext
             headers: Default::default(),
             timeout: Some(120),
         }),
+        None,
         &mut async_cx,
     )
     .await;
@@ -954,6 +956,7 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
             },
             remote: false,
         }),
+        None,
         &mut async_cx,
     )
     .await;
