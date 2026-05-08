@@ -18,11 +18,12 @@ use std::{collections::BTreeSet, sync::Arc};
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{App, AppContext as _, Context, Entity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use snippet_provider::SnippetProvider;
+use util::paths::PathStyle;
 
 use crate::{
     agent_server_store::AgentServerStore,
@@ -38,7 +39,7 @@ use crate::{
     prettier_store::PrettierStore,
     project_settings::SettingsObserver,
     task_store::TaskStore,
-    toolchain_store::ToolchainStore,
+    toolchain_store::{EmptyToolchainStore, ToolchainStore},
     worktree_store::{WorktreeIdCounter, WorktreeStore},
 };
 
@@ -412,6 +413,152 @@ impl Host {
                 agent_server_store,
                 context_server_store,
                 toolchain_store: Some(toolchain_store),
+            }
+        })
+    }
+
+    /// Build a `Host` for a collab-joined project. The `Host` here
+    /// represents the *remote machine* we joined as a participant, even
+    /// though this code runs in the local app; almost everything is
+    /// remote-state and the local toolchain / node runtime aren't
+    /// available.
+    ///
+    /// `Project::from_join_project_response` calls this with the project
+    /// id / role / replica id parsed from the join response, then sets
+    /// up Project-level subscriptions and back-references.
+    pub fn collab(
+        remote_id: u64,
+        path_style: PathStyle,
+        client: Arc<Client>,
+        run_tasks: bool,
+        user_store: Entity<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AsyncApp,
+    ) -> Entity<Self> {
+        cx.new(|cx: &mut Context<Self>| {
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
+            let proto_client: rpc::AnyProtoClient = client.clone().into();
+            let worktree_store = cx.new(|cx| {
+                WorktreeStore::remote(
+                    proto_client.clone(),
+                    remote_id,
+                    path_style,
+                    WorktreeIdCounter::get(cx),
+                )
+            });
+            let buffer_store = cx.new(|cx| {
+                BufferStore::remote(worktree_store.clone(), proto_client.clone(), remote_id, cx)
+            });
+            let image_store = cx.new(|cx| {
+                ImageStore::remote(worktree_store.clone(), proto_client.clone(), remote_id, cx)
+            });
+
+            let environment = cx.new(|cx| {
+                ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx)
+            });
+
+            let bookmark_store =
+                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+
+            let breakpoint_store = cx.new(|_| {
+                BreakpointStore::remote(
+                    remote_id,
+                    proto_client.clone(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                )
+            });
+            let dap_store = cx.new(|cx| {
+                DapStore::new_collab(
+                    remote_id,
+                    proto_client.clone(),
+                    breakpoint_store.clone(),
+                    worktree_store.clone(),
+                    fs.clone(),
+                    cx,
+                )
+            });
+
+            let lsp_store = cx.new(|cx| {
+                LspStore::new_remote(
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    languages.clone(),
+                    proto_client.clone(),
+                    remote_id,
+                    cx,
+                )
+            });
+
+            let git_store = cx.new(|cx| {
+                GitStore::remote(
+                    &worktree_store,
+                    buffer_store.clone(),
+                    proto_client.clone(),
+                    remote_id,
+                    cx,
+                )
+            });
+
+            let task_store = cx.new(|cx| {
+                if run_tasks {
+                    TaskStore::remote(
+                        buffer_store.downgrade(),
+                        worktree_store.clone(),
+                        Arc::new(EmptyToolchainStore),
+                        proto_client.clone(),
+                        remote_id,
+                        git_store.clone(),
+                        cx,
+                    )
+                } else {
+                    TaskStore::Noop
+                }
+            });
+
+            let settings_observer = cx.new(|cx| {
+                SettingsObserver::new_remote(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    None,
+                    true,
+                    cx,
+                )
+            });
+
+            let agent_server_store = cx.new(|_cx| AgentServerStore::collab());
+
+            // `weak_project` is filled in by
+            // `Project::from_join_project_response` after the `Project`
+            // entity exists. Note: collab uses `ContextServerStore::local`
+            // (not `::remote`), matching the pre-Host wiring.
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::local(worktree_store.clone(), None, false, cx));
+
+            Self {
+                fs,
+                languages,
+                node: None,
+                user_store,
+                collab_client: client,
+                remote_client: None,
+                environment,
+                snippets,
+                worktree_store,
+                buffer_store,
+                image_store,
+                lsp_store,
+                dap_store,
+                breakpoint_store,
+                bookmark_store,
+                git_store,
+                task_store,
+                settings_observer,
+                agent_server_store,
+                context_server_store,
+                toolchain_store: None,
             }
         })
     }

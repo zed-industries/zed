@@ -43,7 +43,7 @@ use crate::{
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
-    worktree_store::{WorktreeHandle, WorktreeIdCounter},
+    worktree_store::WorktreeHandle,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
@@ -65,7 +65,7 @@ use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
 
-use collections::{BTreeSet, HashMap, HashSet, IndexSet};
+use collections::{HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
@@ -138,7 +138,7 @@ use std::{
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId, Point, Rope};
-use toolchain_store::EmptyToolchainStore;
+
 use util::{
     ResultExt as _, TryFutureExt, debug_panic, maybe,
     path_list::PathList,
@@ -1568,6 +1568,7 @@ impl Project {
     ) -> Result<Entity<Self>> {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
+        let replica_id = ReplicaId::new(response.payload.replica_id as u16);
 
         let path_style = if response.payload.windows_paths {
             PathStyle::Windows
@@ -1575,112 +1576,57 @@ impl Project {
             PathStyle::Posix
         };
 
-        let worktree_store = cx.new(|cx| {
-            WorktreeStore::remote(
-                client.clone().into(),
-                response.payload.project_id,
-                path_style,
-                WorktreeIdCounter::get(cx),
-            )
-        });
-        let buffer_store = cx.new(|cx| {
-            BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
-        });
-        let image_store = cx.new(|cx| {
-            ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
-        });
+        let user_store_for_host = user_store.clone();
+        let host = host::Host::collab(
+            remote_id,
+            path_style,
+            client.clone(),
+            run_tasks,
+            user_store_for_host,
+            languages.clone(),
+            fs,
+            &mut cx,
+        );
 
-        let environment =
-            cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
-
-        let bookmark_store =
-            cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
-
-        let breakpoint_store = cx.new(|_| {
-            BreakpointStore::remote(
-                remote_id,
-                client.clone().into(),
-                buffer_store.clone(),
-                worktree_store.clone(),
-            )
-        });
-        let dap_store = cx.new(|cx| {
-            DapStore::new_collab(
-                remote_id,
-                client.clone().into(),
-                breakpoint_store.clone(),
-                worktree_store.clone(),
-                fs.clone(),
-                cx,
+        // Pull entity refs out of `Host` once so we can use them both
+        // inside Project's `cx.new` closure and after for the EntitySubscription
+        // bindings / `lsp_store.update(...)` call below.
+        let (
+            worktree_store,
+            buffer_store,
+            breakpoint_store,
+            dap_store,
+            git_store,
+            settings_observer,
+            lsp_store,
+            context_server_store,
+        ) = host.read_with(&cx, |host, _| {
+            (
+                host.worktree_store.clone(),
+                host.buffer_store.clone(),
+                host.breakpoint_store.clone(),
+                host.dap_store.clone(),
+                host.git_store.clone(),
+                host.settings_observer.clone(),
+                host.lsp_store.clone(),
+                host.context_server_store.clone(),
             )
         });
 
-        let lsp_store = cx.new(|cx| {
-            LspStore::new_remote(
-                buffer_store.clone(),
-                worktree_store.clone(),
-                languages.clone(),
-                client.clone().into(),
-                remote_id,
-                cx,
-            )
-        });
-
-        let git_store = cx.new(|cx| {
-            GitStore::remote(
-                // In this remote case we pass None for the environment
-                &worktree_store,
-                buffer_store.clone(),
-                client.clone().into(),
-                remote_id,
-                cx,
-            )
-        });
-
-        let task_store = cx.new(|cx| {
-            if run_tasks {
-                TaskStore::remote(
-                    buffer_store.downgrade(),
-                    worktree_store.clone(),
-                    Arc::new(EmptyToolchainStore),
-                    client.clone().into(),
-                    remote_id,
-                    git_store.clone(),
-                    cx,
-                )
-            } else {
-                TaskStore::Noop
-            }
-        });
-
-        let settings_observer = cx.new(|cx| {
-            SettingsObserver::new_remote(
-                fs.clone(),
-                worktree_store.clone(),
-                task_store.clone(),
-                None,
-                true,
-                cx,
-            )
-        });
-
-        let agent_server_store = cx.new(|_cx| AgentServerStore::collab());
-        let replica_id = ReplicaId::new(response.payload.replica_id as u16);
-
-        let project = cx.new(|cx| {
-            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
-
+        let project = cx.new(|cx: &mut Context<Self>| {
+            // Now that the `Project` entity exists, fill in the back-ref
+            // on `ContextServerStore` (Host construction left it `None`).
             let weak_self = cx.weak_entity();
-            let context_server_store = cx.new(|cx| {
-                ContextServerStore::local(worktree_store.clone(), Some(weak_self), false, cx)
+            context_server_store.update(cx, |store, _| {
+                store.set_project(weak_self);
             });
 
             let mut worktrees = Vec::new();
-            for worktree in response.payload.worktrees {
+            for worktree in &response.payload.worktrees {
                 let worktree = Worktree::remote(
                     remote_id,
                     replica_id,
-                    worktree,
+                    worktree.clone(),
                     client.clone().into(),
                     path_style,
                     cx,
@@ -1694,41 +1640,15 @@ impl Project {
 
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
-
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
-
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
             cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
                 .detach();
             cx.subscribe(&git_store, Self::on_git_store_event).detach();
-
-            let host = cx.new(|_| host::Host {
-                fs: fs.clone(),
-                languages: languages.clone(),
-                node: None,
-                user_store: user_store.clone(),
-                collab_client: client.clone(),
-                remote_client: None,
-                environment: environment.clone(),
-                snippets: snippets.clone(),
-                worktree_store: worktree_store.clone(),
-                buffer_store: buffer_store.clone(),
-                image_store: image_store.clone(),
-                lsp_store: lsp_store.clone(),
-                dap_store: dap_store.clone(),
-                breakpoint_store: breakpoint_store.clone(),
-                bookmark_store: bookmark_store.clone(),
-                git_store: git_store.clone(),
-                task_store: task_store.clone(),
-                settings_observer: settings_observer.clone(),
-                agent_server_store: agent_server_store.clone(),
-                context_server_store: context_server_store.clone(),
-                toolchain_store: None,
-            });
 
             let mut project = Self {
                 host,
