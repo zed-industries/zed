@@ -185,7 +185,10 @@ impl Global for WorktreeIdCounter {}
 pub struct WorktreeStore {
     next_entry_id: Arc<AtomicUsize>,
     next_worktree_id: WorktreeIdCounter,
-    downstream_client: Option<(AnyProtoClient, u64)>,
+    /// When set, this client is treated as authoritative for assigning new
+    /// worktree IDs (used by the remote zed-server, where the connected zed
+    /// client owns ID allocation across its projects).
+    id_allocator: Option<AnyProtoClient>,
     retain_worktrees: bool,
     worktrees: Vec<WorktreeHandle>,
     scanning_enabled: bool,
@@ -207,6 +210,10 @@ pub enum WorktreeStoreEvent {
     WorktreeUpdatedGitRepositories(WorktreeId, UpdatedGitRepositoriesSet),
     WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
+    /// Project-level metadata about the set of worktrees has changed (added,
+    /// removed). Listeners (`Project`, `HeadlessProject`) re-broadcast as
+    /// `proto::UpdateProject` and (re)set up per-worktree observers.
+    WorktreeMetadataChanged,
 }
 
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
@@ -233,7 +240,7 @@ impl WorktreeStore {
             next_entry_id: Default::default(),
             next_worktree_id,
             loading_worktrees: Default::default(),
-            downstream_client: None,
+            id_allocator: None,
             worktrees: Vec::new(),
             scanning_enabled: true,
             retain_worktrees,
@@ -253,7 +260,7 @@ impl WorktreeStore {
             next_entry_id: Default::default(),
             next_worktree_id,
             loading_worktrees: Default::default(),
-            downstream_client: None,
+            id_allocator: None,
             worktrees: Vec::new(),
             scanning_enabled: true,
             retain_worktrees,
@@ -266,12 +273,17 @@ impl WorktreeStore {
         }
     }
 
+    /// Designate a client as authoritative for new worktree ID allocation.
+    /// Used by `HeadlessProject` so that the connected zed client owns ID
+    /// allocation across all of its projects.
+    pub fn set_id_allocator(&mut self, client: AnyProtoClient) {
+        self.id_allocator = Some(client);
+    }
+
     pub fn next_worktree_id(&self) -> impl Future<Output = Result<WorktreeId>> + use<> {
-        let strategy = match (&self.state, &self.downstream_client) {
+        let strategy = match (&self.state, &self.id_allocator) {
             // we are a remote server, the client is in charge of assigning worktree ids
-            (WorktreeStoreState::Local { .. }, Some((client, REMOTE_SERVER_PROJECT_ID))) => {
-                Either::Left(client.clone())
-            }
+            (WorktreeStoreState::Local { .. }, Some(client)) => Either::Left(client.clone()),
             // we are just a local zed project, we can assign ids
             (WorktreeStoreState::Local { .. }, _) => Either::Right(self.next_worktree_id.next()),
             // we are connected to a remote server, we are in charge of assigning worktree ids
@@ -891,7 +903,7 @@ impl WorktreeStore {
         self.worktrees.push(handle);
 
         cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
-        self.send_project_updates(cx);
+        cx.emit(WorktreeStoreEvent::WorktreeMetadataChanged);
 
         let handle_id = worktree.entity_id();
         cx.subscribe(worktree, |_, worktree, event, cx| {
@@ -924,7 +936,7 @@ impl WorktreeStore {
             }
         })
         .detach();
-        cx.observe_release(worktree, move |this, worktree, cx| {
+        cx.observe_release(worktree, move |_this, worktree, cx| {
             cx.emit(WorktreeStoreEvent::WorktreeReleased(
                 handle_id,
                 worktree.id(),
@@ -933,7 +945,7 @@ impl WorktreeStore {
                 handle_id,
                 worktree.id(),
             ));
-            this.send_project_updates(cx);
+            cx.emit(WorktreeStoreEvent::WorktreeMetadataChanged);
         })
         .detach();
     }
@@ -955,7 +967,7 @@ impl WorktreeStore {
             }
         });
         self.update_initial_scan_state(cx);
-        self.send_project_updates(cx);
+        cx.emit(WorktreeStoreEvent::WorktreeMetadataChanged);
     }
 
     pub fn worktree_for_main_worktree_path(
@@ -1027,7 +1039,7 @@ impl WorktreeStore {
                 );
             }
         }
-        self.send_project_updates(cx);
+        cx.emit(WorktreeStoreEvent::WorktreeMetadataChanged);
 
         Ok(())
     }
@@ -1089,58 +1101,48 @@ impl WorktreeStore {
         }
     }
 
-    pub fn send_project_updates(&mut self, cx: &mut Context<Self>) {
-        let Some((downstream_client, project_id)) = self.downstream_client.clone() else {
-            return;
-        };
-
-        let update = proto::UpdateProject {
-            project_id,
-            worktrees: self.worktree_metadata_protos(cx),
-        };
-
-        // collab has bad concurrency guarantees, so we send requests in serial.
-        let update_project = if downstream_client.is_via_collab() {
-            Some(downstream_client.request(update))
-        } else {
-            downstream_client.send(update).log_err();
-            None
-        };
-        cx.spawn(async move |this, cx| {
-            if let Some(update_project) = update_project {
-                update_project.await?;
-            }
-
-            this.update(cx, |this, cx| {
-                let worktrees = this.worktrees().collect::<Vec<_>>();
-
-                for worktree in worktrees {
-                    worktree.update(cx, |worktree, cx| {
-                        let client = downstream_client.clone();
-                        worktree.observe_updates(project_id, cx, {
-                            move |update| {
-                                let client = client.clone();
-                                async move {
-                                    if client.is_via_collab() {
-                                        client
-                                            .request(update)
-                                            .map(|result| result.log_err().is_some())
-                                            .await
-                                    } else {
-                                        client.send(update).log_err().is_some()
-                                    }
-                                }
+    /// Sets up `observe_updates` on each worktree so that local changes stream
+    /// out to the given downstream peer. Used by the listener side
+    /// (`Project::send_worktree_project_updates` and `HeadlessProject`) when
+    /// they want to start mirroring this store's worktrees outbound.
+    ///
+    /// Idempotent (calling on a worktree replaces its observer).
+    pub fn observe_worktrees_for_downstream(
+        &mut self,
+        downstream_client: AnyProtoClient,
+        project_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let worktrees = self.worktrees().collect::<Vec<_>>();
+        for worktree in worktrees {
+            worktree.update(cx, |worktree, cx| {
+                let client = downstream_client.clone();
+                worktree.observe_updates(project_id, cx, {
+                    move |update| {
+                        let client = client.clone();
+                        async move {
+                            if client.is_via_collab() {
+                                client
+                                    .request(update)
+                                    .map(|result| result.log_err().is_some())
+                                    .await
+                            } else {
+                                client.send(update).log_err().is_some()
                             }
-                        });
-                    });
+                        }
+                    }
+                });
+            });
 
-                    cx.emit(WorktreeStoreEvent::WorktreeUpdateSent(worktree.clone()))
-                }
+            cx.emit(WorktreeStoreEvent::WorktreeUpdateSent(worktree.clone()))
+        }
+    }
 
-                anyhow::Ok(())
-            })
-        })
-        .detach_and_log_err(cx);
+    /// Stops downstream observation on every worktree.
+    pub fn stop_observing_worktrees(&mut self, cx: &mut Context<Self>) {
+        for worktree in self.worktrees() {
+            worktree.update(cx, |worktree, _| worktree.stop_observing_updates());
+        }
     }
 
     pub fn worktree_metadata_protos(&self, cx: &App) -> Vec<proto::WorktreeMetadata> {
@@ -1160,40 +1162,25 @@ impl WorktreeStore {
             .collect()
     }
 
-    pub fn shared(
-        &mut self,
-        remote_id: u64,
-        downstream_client: AnyProtoClient,
-        cx: &mut Context<Self>,
-    ) {
+    /// Pin every loaded worktree as a strong handle. Called by the listener
+    /// side (`Project`, `HeadlessProject`) when entering a state where every
+    /// worktree must outlive its sole external user (e.g. while shared via
+    /// collab).
+    pub fn retain_all_worktrees(&mut self) {
         self.retain_worktrees = true;
-        self.downstream_client = Some((downstream_client, remote_id));
-
-        // When shared, retain all worktrees
         for worktree_handle in self.worktrees.iter_mut() {
-            match worktree_handle {
-                WorktreeHandle::Strong(_) => {}
-                WorktreeHandle::Weak(worktree) => {
-                    if let Some(worktree) = worktree.upgrade() {
-                        *worktree_handle = WorktreeHandle::Strong(worktree);
-                    }
-                }
+            if let WorktreeHandle::Weak(worktree) = worktree_handle
+                && let Some(worktree) = worktree.upgrade()
+            {
+                *worktree_handle = WorktreeHandle::Strong(worktree);
             }
-        }
-        // Only send project updates if we share in a collaborative mode.
-        // Otherwise we are the remote server which is currently constructing
-        // worktree store before the client actually has set up its message
-        // handlers.
-        if remote_id != REMOTE_SERVER_PROJECT_ID {
-            self.send_project_updates(cx);
         }
     }
 
-    pub fn unshared(&mut self, cx: &mut Context<Self>) {
+    /// Reverts `retain_all_worktrees`: invisible worktrees become weak again,
+    /// and any per-worktree downstream observer is torn down.
+    pub fn release_invisible_worktrees(&mut self, cx: &mut Context<Self>) {
         self.retain_worktrees = false;
-        self.downstream_client.take();
-
-        // When not shared, only retain the visible worktrees
         for worktree_handle in self.worktrees.iter_mut() {
             if let WorktreeHandle::Strong(worktree) = worktree_handle {
                 let is_visible = worktree.update(cx, |worktree, _| {
@@ -1231,10 +1218,8 @@ impl WorktreeStore {
             new_worktree_id,
             RelPath::from_proto(&envelope.payload.new_path)?,
         );
+        let project_id = envelope.payload.project_id;
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
-            let Some((_, project_id)) = this.downstream_client else {
-                bail!("no downstream client")
-            };
             let Some(entry) = this.entry_for_id(entry_id, cx) else {
                 bail!("no such entry");
             };
@@ -1264,10 +1249,8 @@ impl WorktreeStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let project_id = envelope.payload.project_id;
         let worktree = this.update(&mut cx, |this, cx| {
-            let Some((_, project_id)) = this.downstream_client else {
-                bail!("no downstream client")
-            };
             let Some(entry) = this.entry_for_id(entry_id, cx) else {
                 bail!("no entry")
             };
@@ -1290,14 +1273,12 @@ impl WorktreeStore {
         let rel_path = RelPath::from_proto(&request.new_path)
             .with_context(|| format!("received invalid relative path {:?}", &request.new_path))?;
 
+        let project_id = request.project_id;
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             let worktree = this
                 .worktree_for_entry(entry_id, cx)
                 .context("no such worktree")?;
 
-            let Some((_, project_id)) = this.downstream_client else {
-                bail!("no downstream client")
-            };
             let entry = worktree
                 .read(cx)
                 .entry_for_id(entry_id)

@@ -2705,6 +2705,39 @@ impl Project {
         }))
     }
 
+    /// Send the initial worktree metadata downstream and (re)set up
+    /// per-worktree observers for streaming updates. Used when entering or
+    /// re-entering a collab-shared state.
+    fn send_worktree_project_updates(&mut self, project_id: u64, cx: &mut Context<Self>) {
+        let downstream_client: AnyProtoClient = self.collab_client.clone().into();
+        let metadata = self.worktree_store.read(cx).worktree_metadata_protos(cx);
+        let update = proto::UpdateProject {
+            project_id,
+            worktrees: metadata,
+        };
+
+        // collab has bad concurrency guarantees, so we send requests in serial.
+        let update_project = if downstream_client.is_via_collab() {
+            Some(downstream_client.request(update))
+        } else {
+            downstream_client.send(update).log_err();
+            None
+        };
+
+        cx.spawn(async move |this, cx| {
+            if let Some(update_project) = update_project {
+                update_project.await?;
+            }
+            this.update(cx, |this, cx| {
+                this.worktree_store.update(cx, |store, cx| {
+                    store.observe_worktrees_for_downstream(downstream_client, project_id, cx);
+                });
+                anyhow::Ok(())
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn shared(&mut self, project_id: u64, cx: &mut Context<Self>) -> Result<()> {
         anyhow::ensure!(
             matches!(self.client_state, ProjectClientState::Local),
@@ -2741,9 +2774,10 @@ impl Project {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
-        self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.shared(project_id, self.collab_client.clone().into(), cx);
+        self.worktree_store.update(cx, |worktree_store, _| {
+            worktree_store.retain_all_worktrees();
         });
+        self.send_worktree_project_updates(project_id, cx);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
@@ -2775,9 +2809,9 @@ impl Project {
             .update(cx, |buffer_store, _| buffer_store.forget_shared_buffers());
         self.set_collaborators_from_proto(message.collaborators, cx)?;
 
-        self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.send_project_updates(cx);
-        });
+        if let Some(remote_id) = self.remote_id() {
+            self.send_worktree_project_updates(remote_id, cx);
+        }
         if let Some(remote_id) = self.remote_id() {
             self.git_store.update(cx, |git_store, cx| {
                 git_store.shared(remote_id, self.collab_client.clone().into(), cx)
@@ -2838,7 +2872,8 @@ impl Project {
             self.collaborators.clear();
             self.client_subscriptions.clear();
             self.worktree_store.update(cx, |store, cx| {
-                store.unshared(cx);
+                store.stop_observing_worktrees(cx);
+                store.release_invisible_worktrees(cx);
             });
             self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers();
@@ -3858,6 +3893,16 @@ impl Project {
                 self.on_worktree_added(worktree, cx);
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
                 self.emit_group_key_changed_if_needed(cx);
+            }
+            WorktreeStoreEvent::WorktreeMetadataChanged => {
+                // When shared, broadcast the new project metadata downstream
+                // and re-set up observers (which also covers any newly added
+                // worktree). Mirrors the previous behavior: if the metadata
+                // send fails (e.g. transient disconnect), observers are not
+                // set up, matching the old `send_project_updates` flow.
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.send_worktree_project_updates(*remote_id, cx);
+                }
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
                 cx.emit(Event::WorktreeRemoved(*id));

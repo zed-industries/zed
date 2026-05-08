@@ -29,7 +29,7 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
-    worktree_store::{WorktreeIdCounter, WorktreeStore},
+    worktree_store::{WorktreeIdCounter, WorktreeStore, WorktreeStoreEvent},
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -109,9 +109,12 @@ impl HeadlessProject {
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone(), WorktreeIdCounter::get(cx));
-            store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
+            store.set_id_allocator(session.clone());
+            store.retain_all_worktrees();
             store
         });
+        cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+            .detach();
 
         if init_worktree_trust {
             project::trusted_worktrees::track_worktree_trust(
@@ -371,6 +374,37 @@ impl HeadlessProject {
                 operations: vec![serialize_operation(operation)],
             }))
             .detach()
+        }
+    }
+
+    fn on_worktree_store_event(
+        &mut self,
+        worktree_store: Entity<WorktreeStore>,
+        event: &WorktreeStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                // Set up an observer that streams worktree updates to the
+                // connected zed client.
+                let session = self.session.clone();
+                worktree.update(cx, move |worktree, cx| {
+                    worktree.observe_updates(REMOTE_SERVER_PROJECT_ID, cx, move |update| {
+                        let session = session.clone();
+                        async move { session.send(update).log_err().is_some() }
+                    });
+                });
+            }
+            WorktreeStoreEvent::WorktreeMetadataChanged => {
+                let metadata = worktree_store.read(cx).worktree_metadata_protos(cx);
+                self.session
+                    .send(rpc::proto::UpdateProject {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        worktrees: metadata,
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 

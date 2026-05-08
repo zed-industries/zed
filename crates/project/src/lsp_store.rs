@@ -4458,7 +4458,8 @@ impl LspStore {
             | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
             | WorktreeStoreEvent::WorktreeDeletedEntry(..)
-            | WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(..) => {}
+            | WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(..)
+            | WorktreeStoreEvent::WorktreeMetadataChanged => {}
         }
     }
 
