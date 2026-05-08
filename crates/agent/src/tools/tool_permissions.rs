@@ -2,6 +2,7 @@ use crate::{
     Thread, ToolCallEventStream, ToolPermissionContext, ToolPermissionDecision,
     decide_permission_for_path,
 };
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
@@ -517,6 +518,62 @@ pub fn authorize_file_edit(
                 });
                 authorize.await
             }
+        }
+    })
+}
+
+/// The user's choice when prompted about how to handle unsaved changes
+/// in a buffer that the agent wants to edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirtyBufferDecision {
+    /// Save the buffer's pending edits to disk, then proceed.
+    Save,
+    /// Discard the buffer's pending edits (reload from disk), then proceed.
+    Discard,
+}
+
+/// Prompts the user to choose between saving or discarding the unsaved
+/// changes in a buffer that the agent wants to edit. Returns the chosen
+/// action; the caller is responsible for actually saving or reloading the
+/// buffer before continuing.
+pub fn authorize_dirty_buffer(
+    path: &Path,
+    event_stream: &ToolCallEventStream,
+    cx: &mut App,
+) -> Task<Result<DirtyBufferDecision>> {
+    let path_display = path.to_string_lossy();
+    let title = format!(
+        "Unsaved changes in {}",
+        util::markdown::MarkdownInlineCode(&path_display),
+    );
+    let message =
+        "File has unsaved changes. Do you want to save or discard them before the agent continues?"
+            .to_string();
+
+    // Both options use AllowOnce so that the tool call transitions to
+    // InProgress after the user picks. We distinguish them by option_id.
+    let options = vec![
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new("save"),
+            "Save",
+            acp::PermissionOptionKind::AllowOnce,
+        ),
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new("discard"),
+            "Discard",
+            acp::PermissionOptionKind::RejectOnce,
+        ),
+    ];
+
+    let prompt = event_stream.prompt_for_decision(title, Some(message), options, cx);
+    cx.spawn(async move |_cx| {
+        let option_id = prompt.await?;
+        match option_id.0.as_ref() {
+            "save" => Ok(DirtyBufferDecision::Save),
+            "discard" => Ok(DirtyBufferDecision::Discard),
+            other => Err(anyhow!(
+                "Unexpected dirty-buffer decision option_id: {other}"
+            )),
         }
     })
 }

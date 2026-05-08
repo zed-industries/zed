@@ -1846,9 +1846,12 @@ mod tests {
         assert_eq!(input_path, Some(PathBuf::from("root/test.txt")));
     }
 
+    /// When the buffer has unsaved changes and the user picks "Save", the
+    /// pending edits are flushed to disk and the agent's edit then proceeds
+    /// against the just-saved content.
     #[gpui::test]
-    async fn test_streaming_dirty_buffer_detected(cx: &mut TestAppContext) {
-        let (edit_tool, project, action_log, _fs, _thread) =
+    async fn test_streaming_dirty_buffer_save(cx: &mut TestAppContext) {
+        let (edit_tool, project, action_log, fs, _thread) =
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
@@ -1856,7 +1859,6 @@ mod tests {
             true,
         ));
 
-        // Read the file first
         cx.update(|cx| {
             read_tool.clone().run(
                 ToolInput::resolved(crate::ReadFileToolInput {
@@ -1871,7 +1873,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Open the buffer and make it dirty
         let project_path = project
             .read_with(cx, |project, cx| {
                 project.find_project_path("root/test.txt", cx)
@@ -1884,54 +1885,144 @@ mod tests {
 
         buffer.update(cx, |buffer, cx| {
             let end_point = buffer.max_point();
-            buffer.edit([(end_point..end_point, " added text")], None, cx);
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/test.txt".into(),
+                    edits: vec![Edit {
+                        old_text: "original content plus user edit".into(),
+                        new_text: "replaced content".into(),
+                    }],
+                }),
+                stream_tx,
+                cx,
+            )
         });
 
-        let is_dirty = buffer.read_with(cx, |buffer, _| buffer.is_dirty());
-        assert!(is_dirty, "Buffer should be dirty after in-memory edit");
-
-        // Try to edit - should fail because buffer has unsaved changes
-        let result = cx
-            .update(|cx| {
-                edit_tool.clone().run(
-                    ToolInput::resolved(EditFileToolInput {
-                        path: "root/test.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "original content".into(),
-                            new_text: "new content".into(),
-                        }],
-                    }),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
-            .await;
-
-        let EditFileToolOutput::Error {
-            error,
-            diff,
-            input_path,
-        } = result.unwrap_err()
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(
+                    |title| title.contains("Unsaved changes") && title.contains("test.txt")
+                ),
+            "expected dirty-buffer prompt title to mention path, got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
+        let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
         else {
-            panic!("expected error");
+            panic!("expected text body, got: {:?}", content.first());
+        };
+        let acp::ContentBlock::Text(text) = &text.content else {
+            panic!("expected text body, got: {:?}", text.content);
         };
         assert!(
-            error.contains("This file has unsaved changes."),
-            "Error should mention unsaved changes, got: {}",
-            error
+            text.text.contains("unsaved changes")
+                && text.text.contains("Save")
+                && text.text.contains("discard"),
+            "unexpected message body: {:?}",
+            text.text,
         );
-        assert!(
-            error.contains("keep or discard"),
-            "Error should ask whether to keep or discard changes, got: {}",
-            error
-        );
-        assert!(
-            error.contains("save or revert the file manually"),
-            "Error should ask user to manually save or revert when tools aren't available, got: {}",
-            error
-        );
-        assert!(diff.is_empty());
-        assert!(input_path.is_none());
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("save"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "replaced content");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/test.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "replaced content");
+    }
+
+    /// When the buffer has unsaved changes and the user picks "Discard", the
+    /// pending edits are reverted to match disk and the agent's edit then
+    /// proceeds against the on-disk content.
+    #[gpui::test]
+    async fn test_streaming_dirty_buffer_discard(cx: &mut TestAppContext) {
+        let (edit_tool, project, action_log, fs, _thread) =
+            setup_test(cx, json!({"test.txt": "original content"})).await;
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
+
+        cx.update(|cx| {
+            read_tool.clone().run(
+                ToolInput::resolved(crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                }),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/test.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/test.txt".into(),
+                    // Match the on-disk content, not the dirty in-memory content.
+                    edits: vec![Edit {
+                        old_text: "original content".into(),
+                        new_text: "replaced content".into(),
+                    }],
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("discard"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "replaced content");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/test.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "replaced content");
     }
 
     #[gpui::test]

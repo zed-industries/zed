@@ -663,7 +663,8 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        let file_changed_since_last_read = ensure_buffer_saved(&buffer, &abs_path, &context, cx)?;
+        let file_changed_since_last_read =
+            ensure_buffer_saved(&buffer, &abs_path, mode, &context, event_stream, cx).await?;
 
         let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
         event_stream.update_diff(diff.clone());
@@ -930,10 +931,12 @@ fn agent_edit_buffer<I, S, T>(
     });
 }
 
-fn ensure_buffer_saved(
+async fn ensure_buffer_saved(
     buffer: &Entity<Buffer>,
     abs_path: &PathBuf,
+    mode: EditSessionMode,
     context: &EditSessionContext,
+    event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<bool, String> {
     let last_read_mtime = context
@@ -945,9 +948,8 @@ fn ensure_buffer_saved(
         (current, dirty)
     });
 
-    if is_dirty {
-        return Err("This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
-                 then ask them to save or revert the file manually and inform you when it's ok to proceed.".to_string());
+    if is_dirty && matches!(mode, EditSessionMode::Edit) {
+        resolve_dirty_buffer_for_edit(buffer, abs_path, context, event_stream, cx).await?;
     }
 
     if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime)
@@ -957,6 +959,41 @@ fn ensure_buffer_saved(
     }
 
     Ok(false)
+}
+
+/// Prompts the user to save or discard a dirty buffer's pending changes,
+/// then performs the chosen action so the edit can proceed.
+async fn resolve_dirty_buffer_for_edit(
+    buffer: &Entity<Buffer>,
+    abs_path: &PathBuf,
+    context: &EditSessionContext,
+    event_stream: &ToolCallEventStream,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let decision = cx
+        .update(|cx| super::tool_permissions::authorize_dirty_buffer(abs_path, event_stream, cx))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match decision {
+        super::tool_permissions::DirtyBufferDecision::Save => {
+            context
+                .project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+                .await
+                .map_err(|e| format!("Failed to save buffer: {e}"))?;
+        }
+        super::tool_permissions::DirtyBufferDecision::Discard => {
+            context
+                .project
+                .update(cx, |project, cx| {
+                    project.reload_buffers(HashSet::from_iter([buffer.clone()]), false, cx)
+                })
+                .await
+                .map_err(|e| format!("Failed to discard unsaved changes: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn resolve_path(
