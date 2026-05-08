@@ -22,7 +22,7 @@ pub const MAX_SKILL_DESCRIPTIONS_SIZE: usize = 50 * 1024;
 pub const SKILL_FILE_NAME: &str = "SKILL.md";
 
 /// Represents a loaded skill with all its metadata and content.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Skill {
     pub name: String,
     pub description: String,
@@ -40,7 +40,7 @@ pub struct Skill {
 }
 
 /// Indicates where a skill was loaded from.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSource {
     /// From ~/.agents/skills/
     Global,
@@ -60,7 +60,10 @@ pub struct SkillMetadata {
     pub disable_model_invocation: bool,
 }
 
-/// Minimal skill info for system prompt (not full content)
+/// Minimal skill info for system prompt (not full content).
+///
+/// `Serialize` is required for handlebars rendering of the system prompt
+/// template (see `ProjectContext` in `prompt_store`).
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillSummary {
     pub name: String,
