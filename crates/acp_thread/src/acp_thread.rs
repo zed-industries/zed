@@ -574,10 +574,15 @@ impl From<RequestPermissionOutcome> for acp::RequestPermissionOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorizationKind {
     /// The user is granting or denying permission for the tool call to
-    /// This is the default for [`Self::authorize`] / [`Self::authorize_always_prompt`].
+    /// proceed. The selected `PermissionOptionKind` determines whether the
+    /// tool call transitions to `InProgress` (allow) or `Rejected` (reject).
+    /// This is the default for tool authorization prompts.
     PermissionGrant,
     /// The user is choosing between actions for the tool to take next
     /// (for example, "Save" vs "Discard" before editing a dirty buffer).
+    /// The tool call always transitions to `InProgress` regardless of the
+    /// selected `PermissionOptionKind`; the caller interprets the chosen
+    /// `option_id` to decide what to do.
     ActionChoice,
 }
 
