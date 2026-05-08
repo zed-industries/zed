@@ -104,9 +104,12 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
 
 fn is_agents_skills_path(path: &Path) -> bool {
     let components: Vec<_> = path.components().map(|c| c.as_os_str()).collect();
-    components
-        .windows(2)
-        .any(|w| w[0] == OsStr::new(".agents") && w[1] == OsStr::new("skills"))
+    let agents = OsStr::new(".agents");
+    let skills = OsStr::new("skills");
+    matches!(components.as_slice(),
+        [a, s, ..] if *a == agents && *s == skills)
+        || matches!(components.as_slice(),
+            [_, a, s, ..] if *a == agents && *s == skills)
 }
 
 /// If `path` is an absolute path under the global skills directory
@@ -931,10 +934,12 @@ mod tests {
 
     #[test]
     fn is_agents_skills_path_double_agents_regression() {
-        // Regression: when the first `.agents` was followed by something other
-        // than `skills`, the buggy implementation would consume that component
-        // and miss a later `.agents/skills` pair.
-        assert!(is_agents_skills_path(Path::new(
+        // The `.agents/skills` segments must appear directly under a worktree
+        // root: either at component depths 0-1 (bare project-relative path) or
+        // at depths 1-2 (worktree-prefixed path). Here the inner
+        // `.agents/skills` is at depths 2-3, which is too deep, so this should
+        // return false.
+        assert!(!is_agents_skills_path(Path::new(
             "foo/.agents/.agents/skills"
         )));
     }
@@ -952,5 +957,19 @@ mod tests {
     #[test]
     fn is_agents_skills_path_trailing_agents() {
         assert!(!is_agents_skills_path(Path::new("foo/.agents")));
+    }
+
+    #[test]
+    fn is_agents_skills_path_too_deep() {
+        assert!(!is_agents_skills_path(Path::new(
+            "a/b/.agents/skills/x.txt"
+        )));
+    }
+
+    #[test]
+    fn is_agents_skills_path_deep_negative() {
+        assert!(!is_agents_skills_path(Path::new(
+            "some/random/place/.agents/skills/foo"
+        )));
     }
 }
