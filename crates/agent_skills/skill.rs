@@ -137,27 +137,27 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
         anyhow::bail!("SKILL.md must start with YAML frontmatter (---)");
     }
 
-    let after_opening = &content[3..];
-    let after_opening = after_opening.trim_start_matches([' ', '\t', '\r']);
-    let after_opening = after_opening
+    let after_opening_dashes = &content[3..];
+    let after_opening_whitespace = after_opening_dashes.trim_start_matches([' ', '\t', '\r']);
+    let frontmatter_region = after_opening_whitespace
         .strip_prefix("\r\n")
-        .or_else(|| after_opening.strip_prefix('\n'))
-        .unwrap_or(after_opening);
+        .or_else(|| after_opening_whitespace.strip_prefix('\n'))
+        .unwrap_or(after_opening_whitespace);
 
     // The closing `---` must be alone on its own line: the three dashes must be
     // followed by end-of-input or a line terminator (`\n` or `\r\n`). Iterate
     // through candidates so that occurrences like `---trailing` or `----` are
     // skipped in favor of a later valid closer.
     let mut found = None;
-    for (idx, _) in after_opening.match_indices("\n---") {
+    for (idx, _) in frontmatter_region.match_indices("\n---") {
         let after_dashes = idx + 4;
-        let rest = &after_opening[after_dashes..];
+        let rest = &frontmatter_region[after_dashes..];
         let valid_terminator =
             rest.is_empty() || rest.starts_with('\n') || rest.starts_with("\r\n");
         if !valid_terminator {
             continue;
         }
-        let is_crlf = idx > 0 && after_opening.as_bytes()[idx - 1] == b'\r';
+        let is_crlf = idx > 0 && frontmatter_region.as_bytes()[idx - 1] == b'\r';
         if is_crlf {
             // Delimiter is `\r\n---` (5 bytes), starting one byte before `idx`.
             found = Some((idx - 1, 5));
@@ -171,8 +171,8 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
         anyhow::bail!("SKILL.md missing closing frontmatter delimiter (---)");
     };
 
-    let frontmatter_yaml = &after_opening[..end_idx];
-    let body = &after_opening[end_idx + delimiter_len..];
+    let frontmatter_yaml = &frontmatter_region[..end_idx];
+    let body = &frontmatter_region[end_idx + delimiter_len..];
 
     let metadata: SkillMetadata =
         serde_yaml::from_str(frontmatter_yaml).context("Invalid YAML frontmatter")?;
