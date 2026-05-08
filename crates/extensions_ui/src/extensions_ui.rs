@@ -11,7 +11,7 @@ use client::zed_urls;
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionSettings, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
@@ -25,9 +25,9 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
-    ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
-    prelude::*,
+    Banner, Chip, ContextMenu, Divider, IconPosition, PopoverMenu, ScrollableHandle, Switch,
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -951,6 +951,10 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
+        let extension_settings = ExtensionSettings::get_global(cx);
+        let auto_install = extension_settings.should_auto_install(&extension_id);
+        let auto_update = extension_settings.should_auto_update(&extension_id);
+
         ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .entry(
@@ -960,6 +964,30 @@ impl ExtensionsPage {
                         let extension_id = extension_id.clone();
                         move |this, window, cx| {
                             this.show_extension_version_list(extension_id.clone(), window, cx)
+                        }
+                    }),
+                )
+                .toggleable_entry(
+                    "Automatically Install",
+                    auto_install,
+                    IconPosition::Start,
+                    None,
+                    window.handler_for(this, {
+                        let extension_id = extension_id.clone();
+                        move |this, _window, cx| {
+                            this.toggle_auto_install(&extension_id, cx)
+                        }
+                    }),
+                )
+                .toggleable_entry(
+                    "Automatically Update",
+                    auto_update,
+                    IconPosition::Start,
+                    None,
+                    window.handler_for(this, {
+                        let extension_id = extension_id.clone();
+                        move |this, _window, cx| {
+                            this.toggle_auto_update(&extension_id, cx)
                         }
                     }),
                 )
@@ -1409,6 +1437,34 @@ impl ExtensionsPage {
                 };
 
                 callback(settings, value)
+            });
+        }
+    }
+
+    fn toggle_auto_install(&mut self, extension_id: &str, cx: &mut Context<Self>) {
+        let extension_settings = ExtensionSettings::get_global(cx);
+        let current_value = extension_settings.should_auto_install(extension_id);
+        let new_value = !current_value;
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            let extension_id: Arc<str> = Arc::from(extension_id);
+            settings::update_settings_file(fs, cx, move |settings, _| {
+                settings.extension.auto_install_extensions.insert(extension_id.clone(), new_value);
+            });
+        }
+    }
+
+    fn toggle_auto_update(&mut self, extension_id: &str, cx: &mut Context<Self>) {
+        let extension_settings = ExtensionSettings::get_global(cx);
+        let current_value = extension_settings.should_auto_update(extension_id);
+        let new_value = !current_value;
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            let extension_id: Arc<str> = Arc::from(extension_id);
+            settings::update_settings_file(fs, cx, move |settings, _| {
+                settings.extension.auto_update_extensions.insert(extension_id.clone(), new_value);
             });
         }
     }
