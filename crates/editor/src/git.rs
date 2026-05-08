@@ -1,4 +1,4 @@
-pub mod blame;
+pub(super) mod blame;
 
 use super::*;
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -18,7 +18,7 @@ pub type RenderDiffHunkControlsFn = Arc<
 >;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DisplayDiffHunk {
+pub(super) enum DisplayDiffHunk {
     Folded {
         display_row: DisplayRow,
     },
@@ -33,37 +33,83 @@ pub(crate) enum DisplayDiffHunk {
 }
 
 #[derive(Clone)]
-pub(crate) struct InlineBlamePopoverState {
-    pub(crate) scroll_handle: ScrollHandle,
-    pub(crate) commit_message: Option<ParsedCommitMessage>,
-    pub(crate) markdown: Entity<Markdown>,
+pub(super) struct InlineBlamePopoverState {
+    pub(super) scroll_handle: ScrollHandle,
+    pub(super) commit_message: Option<ParsedCommitMessage>,
+    pub(super) markdown: Entity<Markdown>,
 }
 
-pub(crate) struct InlineBlamePopover {
-    pub(crate) position: gpui::Point<Pixels>,
-    pub(crate) hide_task: Option<Task<()>>,
-    pub(crate) popover_bounds: Option<Bounds<Pixels>>,
-    pub(crate) popover_state: InlineBlamePopoverState,
-    pub(crate) keyboard_grace: bool,
+pub(super) struct InlineBlamePopover {
+    pub(super) position: gpui::Point<Pixels>,
+    pub(super) hide_task: Option<Task<()>>,
+    pub(super) popover_bounds: Option<Bounds<Pixels>>,
+    pub(super) popover_state: InlineBlamePopoverState,
+    pub(super) keyboard_grace: bool,
 }
 
 /// Represents a diff review button indicator that shows up when hovering over lines in the gutter
 /// in diff view mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PhantomDiffReviewIndicator {
+pub(super) struct PhantomDiffReviewIndicator {
     /// The starting anchor of the selection (or the only row if not dragging).
-    pub start: Anchor,
+    pub(super) start: Anchor,
     /// The ending anchor of the selection. Equal to start_anchor for single-line selection.
-    pub end: Anchor,
+    pub(super) end: Anchor,
     /// There's a small debounce between hovering over the line and showing the indicator.
     /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
-    pub is_active: bool,
+    pub(super) is_active: bool,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DiffReviewDragState {
+pub(super) struct DiffReviewDragState {
     start_anchor: Anchor,
     current_anchor: Anchor,
+}
+
+/// Identifies a specific hunk in the diff buffer.
+/// Used as a key to group comments by their location.
+#[derive(Clone, Debug)]
+pub(super) struct DiffHunkKey {
+    /// The file path (relative to worktree) this hunk belongs to.
+    pub(super) file_path: Arc<util::rel_path::RelPath>,
+    /// An anchor at the start of the hunk. This tracks position as the buffer changes.
+    pub(super) hunk_start_anchor: Anchor,
+}
+
+/// A review comment stored locally before being sent to the Agent panel.
+#[derive(Clone)]
+pub(super) struct StoredReviewComment {
+    /// Unique identifier for this comment (for edit/delete operations).
+    pub(super) id: usize,
+    /// The comment text entered by the user.
+    pub(super) comment: String,
+    /// Anchors for the code range being reviewed.
+    pub(super) range: Range<Anchor>,
+    /// Whether this comment is currently being edited inline.
+    pub(super) is_editing: bool,
+}
+
+/// Represents an active diff review overlay that appears when clicking the "Add Review" button.
+pub(super) struct DiffReviewOverlay {
+    pub(super) anchor_range: Range<Anchor>,
+    /// The block ID for the overlay.
+    pub(super) block_id: CustomBlockId,
+    /// The editor entity for the review input.
+    pub(super) prompt_editor: Entity<Editor>,
+    /// The hunk key this overlay belongs to.
+    pub(super) hunk_key: DiffHunkKey,
+    /// Whether the comments section is expanded.
+    pub(super) comments_expanded: bool,
+    /// Editors for comments currently being edited inline.
+    /// Key: comment ID, Value: Editor entity for inline editing.
+    pub(super) inline_edit_editors: HashMap<usize, Entity<Editor>>,
+    /// Subscriptions for inline edit editors' action handlers.
+    /// Key: comment ID, Value: Subscription keeping the Newline action handler alive.
+    pub(super) inline_edit_subscriptions: HashMap<usize, Subscription>,
+    /// The current user's avatar URI for display in comment rows.
+    pub(super) user_avatar_uri: Option<SharedUri>,
+    /// Subscription to keep the action handler alive.
+    _subscription: Subscription,
 }
 
 impl DiffReviewDragState {
@@ -78,29 +124,6 @@ impl DiffReviewDragState {
     }
 }
 
-/// Identifies a specific hunk in the diff buffer.
-/// Used as a key to group comments by their location.
-#[derive(Clone, Debug)]
-pub(crate) struct DiffHunkKey {
-    /// The file path (relative to worktree) this hunk belongs to.
-    pub(crate) file_path: Arc<util::rel_path::RelPath>,
-    /// An anchor at the start of the hunk. This tracks position as the buffer changes.
-    pub(crate) hunk_start_anchor: Anchor,
-}
-
-/// A review comment stored locally before being sent to the Agent panel.
-#[derive(Clone)]
-pub struct StoredReviewComment {
-    /// Unique identifier for this comment (for edit/delete operations).
-    pub id: usize,
-    /// The comment text entered by the user.
-    pub comment: String,
-    /// Anchors for the code range being reviewed.
-    pub range: Range<Anchor>,
-    /// Whether this comment is currently being edited inline.
-    pub is_editing: bool,
-}
-
 impl StoredReviewComment {
     fn new(id: usize, comment: String, anchor_range: Range<Anchor>) -> Self {
         Self {
@@ -110,33 +133,6 @@ impl StoredReviewComment {
             is_editing: false,
         }
     }
-}
-
-/// Represents an active diff review overlay that appears when clicking the "Add Review" button.
-pub(crate) struct DiffReviewOverlay {
-    pub anchor_range: Range<Anchor>,
-    /// The block ID for the overlay.
-    pub block_id: CustomBlockId,
-    /// The editor entity for the review input.
-    pub prompt_editor: Entity<Editor>,
-    /// The hunk key this overlay belongs to.
-    pub hunk_key: DiffHunkKey,
-    /// Whether the comments section is expanded.
-    pub comments_expanded: bool,
-    /// Editors for comments currently being edited inline.
-    /// Key: comment ID, Value: Editor entity for inline editing.
-    pub inline_edit_editors: HashMap<usize, Entity<Editor>>,
-    /// Subscriptions for inline edit editors' action handlers.
-    /// Key: comment ID, Value: Subscription keeping the Newline action handler alive.
-    pub inline_edit_subscriptions: HashMap<usize, Subscription>,
-    /// The current user's avatar URI for display in comment rows.
-    pub user_avatar_uri: Option<SharedUri>,
-    /// Subscription to keep the action handler alive.
-    _subscription: Subscription,
-}
-
-pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
-    cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
 impl Editor {
@@ -1381,36 +1377,6 @@ impl Editor {
         self.do_stage_or_unstage_and_next(false, window, cx);
     }
 
-    pub(super) fn stage_or_unstage_diff_hunks(
-        &mut self,
-        stage: bool,
-        ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.delegate_stage_and_restore {
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            let hunks: Vec<_> = self.diff_hunks_in_ranges(&ranges, &snapshot).collect();
-            if !hunks.is_empty() {
-                cx.emit(EditorEvent::StageOrUnstageRequested { stage, hunks });
-            }
-            return;
-        }
-        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
-        cx.spawn(async move |this, cx| {
-            task.await?;
-            this.update(cx, |this, cx| {
-                let snapshot = this.buffer.read(cx).snapshot(cx);
-                let chunk_by = this
-                    .diff_hunks_in_ranges(&ranges, &snapshot)
-                    .chunk_by(|hunk| hunk.buffer_id);
-                for (buffer_id, hunks) in &chunk_by {
-                    this.do_stage_or_unstage(stage, buffer_id, hunks, cx);
-                }
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
     pub(super) fn do_stage_or_unstage(
         &self,
         stage: bool,
@@ -1471,17 +1437,6 @@ impl Editor {
         self.buffer
             .read(cx)
             .has_expanded_diff_hunks_in_ranges(&ranges, cx)
-    }
-
-    pub(super) fn toggle_diff_hunks_in_ranges(
-        &mut self,
-        ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Editor>,
-    ) {
-        self.buffer.update(cx, |buffer, cx| {
-            let expand = !buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx);
-            buffer.expand_or_collapse_diff_hunks(ranges, expand, cx);
-        })
     }
 
     pub(super) fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
@@ -1578,30 +1533,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.open_git_blame_commit_internal(window, cx);
-    }
-
-    pub(super) fn start_git_blame(
-        &mut self,
-        user_triggered: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(project) = self.project() {
-            if let Some(buffer) = self.buffer().read(cx).as_singleton()
-                && buffer.read(cx).file().is_none()
-            {
-                return;
-            }
-
-            let focused = self.focus_handle(cx).contains_focused(window, cx);
-
-            let project = project.clone();
-            let blame = cx
-                .new(|cx| GitBlame::new(self.buffer.clone(), project, user_triggered, focused, cx));
-            self.blame_subscription =
-                Some(cx.observe_in(&blame, window, |_, _, _, cx| cx.notify()));
-            self.blame = Some(blame);
-        }
     }
 
     pub(super) fn toggle_git_blame_inline_internal(
@@ -1764,6 +1695,71 @@ impl Editor {
         } else {
             // Just header when collapsed
             base_height + 1
+        }
+    }
+
+    fn stage_or_unstage_diff_hunks(
+        &mut self,
+        stage: bool,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.delegate_stage_and_restore {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let hunks: Vec<_> = self.diff_hunks_in_ranges(&ranges, &snapshot).collect();
+            if !hunks.is_empty() {
+                cx.emit(EditorEvent::StageOrUnstageRequested { stage, hunks });
+            }
+            return;
+        }
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        cx.spawn(async move |this, cx| {
+            task.await?;
+            this.update(cx, |this, cx| {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                let chunk_by = this
+                    .diff_hunks_in_ranges(&ranges, &snapshot)
+                    .chunk_by(|hunk| hunk.buffer_id);
+                for (buffer_id, hunks) in &chunk_by {
+                    this.do_stage_or_unstage(stage, buffer_id, hunks, cx);
+                }
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn toggle_diff_hunks_in_ranges(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Editor>,
+    ) {
+        self.buffer.update(cx, |buffer, cx| {
+            let expand = !buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx);
+            buffer.expand_or_collapse_diff_hunks(ranges, expand, cx);
+        })
+    }
+
+    fn start_git_blame(
+        &mut self,
+        user_triggered: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(project) = self.project() {
+            if let Some(buffer) = self.buffer().read(cx).as_singleton()
+                && buffer.read(cx).file().is_none()
+            {
+                return;
+            }
+
+            let focused = self.focus_handle(cx).contains_focused(window, cx);
+
+            let project = project.clone();
+            let blame = cx
+                .new(|cx| GitBlame::new(self.buffer.clone(), project, user_triggered, focused, cx));
+            self.blame_subscription =
+                Some(cx.observe_in(&blame, window, |_, _, _, cx| cx.notify()));
+            self.blame = Some(blame);
         }
     }
 
@@ -2598,6 +2594,10 @@ impl EditorSnapshot {
 
         hunks
     }
+}
+
+pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
+    cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
 pub(super) fn render_diff_hunk_controls(
