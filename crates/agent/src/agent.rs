@@ -29,7 +29,7 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillSource, SkillSummary,
+    MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillScopeId, SkillSource, SkillSummary,
     global_skills_dir, load_skills_from_directory, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -763,7 +763,7 @@ impl NativeAgent {
                                 &fs,
                                 &skills_dir,
                                 SkillSource::ProjectLocal {
-                                    worktree_id,
+                                    worktree_id: SkillScopeId(worktree_id.to_usize()),
                                     worktree_root_name,
                                 },
                             )
@@ -2765,7 +2765,7 @@ mod internal_tests {
         LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
     };
     use serde_json::json;
-    use settings::{SettingsStore, WorktreeId};
+    use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
 
     #[test]
@@ -2783,7 +2783,7 @@ mod internal_tests {
             name: "review".to_string(),
             description: "Project review".to_string(),
             source: SkillSource::ProjectLocal {
-                worktree_id: WorktreeId::from_usize(1),
+                worktree_id: SkillScopeId(1),
                 worktree_root_name: "project".into(),
             },
             directory_path: PathBuf::from("/project/.agents/skills/review"),

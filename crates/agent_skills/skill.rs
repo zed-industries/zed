@@ -4,7 +4,15 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use worktree::WorktreeId;
+
+/// Opaque identifier for the project scope a skill was loaded from.
+///
+/// `agent_skills` is a leaf crate and intentionally does not depend on
+/// `worktree`. Callers (e.g. the `agent` crate) construct these from
+/// `worktree::WorktreeId::to_usize()` and recover the original ID via
+/// `worktree::WorktreeId::from_usize()` when needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SkillScopeId(pub usize);
 
 /// Cap on concurrent filesystem operations during skill discovery and loading.
 /// Without this bound, a `.agents/skills` directory containing thousands of
@@ -46,7 +54,7 @@ pub enum SkillSource {
     Global,
     /// From {project}/.agents/skills/
     ProjectLocal {
-        worktree_id: WorktreeId,
+        worktree_id: SkillScopeId,
         worktree_root_name: Arc<str>,
     },
 }

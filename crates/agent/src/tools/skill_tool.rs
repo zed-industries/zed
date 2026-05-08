@@ -237,7 +237,7 @@ impl AgentTool for SkillTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_skills::{SkillSource, parse_skill};
+    use agent_skills::{SkillScopeId, SkillSource, parse_skill};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use project::Project;
@@ -444,7 +444,7 @@ mod tests {
             Path::new("/test/.agents/skills/project-skill/SKILL.md"),
             project_skill_content,
             SkillSource::ProjectLocal {
-                worktree_id,
+                worktree_id: SkillScopeId(worktree_id.to_usize()),
                 worktree_root_name,
             },
         )
