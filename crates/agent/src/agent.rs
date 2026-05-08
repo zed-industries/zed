@@ -29,8 +29,8 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillSource, global_skills_dir,
-    load_skills_from_directory, project_skills_relative_path,
+    MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillSource, SkillSummary,
+    global_skills_dir, load_skills_from_directory, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -2566,8 +2566,12 @@ impl TerminalHandle for AcpTerminalHandle {
 /// (visible) skills against the budget. Once the budget is exceeded, every
 /// subsequent visible skill is dropped with a `SkillLoadError` so the UI can
 /// surface the failure.
-fn apply_skill_budget(skills: &[Skill]) -> (Vec<Skill>, Vec<SkillLoadError>) {
-    let mut kept = Vec::with_capacity(skills.len());
+///
+/// Returns `SkillSummary` values rather than full `Skill`s so that the
+/// (potentially ~100KB) skill bodies aren't cloned just to be discarded by
+/// `ProjectContext::new`, which only needs the summary fields.
+fn apply_skill_budget(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadError>) {
+    let mut kept = Vec::new();
     let mut errors = Vec::new();
     let mut total_size = 0usize;
     let mut budget_exceeded = false;
@@ -2581,7 +2585,7 @@ fn apply_skill_budget(skills: &[Skill]) -> (Vec<Skill>, Vec<SkillLoadError>) {
         if !budget_exceeded && total_size.saturating_add(entry_size) <= MAX_SKILL_DESCRIPTIONS_SIZE
         {
             total_size += entry_size;
-            kept.push(skill.clone());
+            kept.push(SkillSummary::from(skill));
         } else {
             // Once any model-invocable skill overflows the budget, stop
             // packing entirely so the cutoff is deterministic by sort order

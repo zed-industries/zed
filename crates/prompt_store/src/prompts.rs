@@ -1,4 +1,4 @@
-use agent_skills::{Skill, SkillSummary};
+use agent_skills::SkillSummary;
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
@@ -53,7 +53,7 @@ impl ProjectContext {
     pub fn new(
         worktrees: Vec<WorktreeContext>,
         default_user_rules: Vec<UserRulesContext>,
-        skills: Vec<Skill>,
+        skills: Vec<SkillSummary>,
     ) -> Self {
         let has_rules = worktrees
             .iter()
@@ -61,11 +61,9 @@ impl ProjectContext {
 
         // Hidden skills (`disable_model_invocation: true`) and any skills
         // dropped to fit the catalog description budget are excluded
-        // upstream by `apply_skill_budget` in `agent.rs`, which produces
-        // only catalog skills. We just convert to summaries here.
-        let skill_summaries: Vec<SkillSummary> = skills.iter().map(SkillSummary::from).collect();
-
-        let has_skills = !skill_summaries.is_empty();
+        // upstream by `apply_skill_budget` in `agent.rs`, which already
+        // returns only catalog `SkillSummary` values.
+        let has_skills = !skills.is_empty();
 
         Self {
             worktrees,
@@ -76,7 +74,7 @@ impl ProjectContext {
             arch: std::env::consts::ARCH.to_string(),
             shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
                 .to_string(),
-            skills: skill_summaries,
+            skills,
             has_skills,
         }
     }
@@ -138,14 +136,14 @@ pub struct ContentPromptContextV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_skills::SkillSource;
+    use agent_skills::{Skill, SkillSource};
     use std::path::PathBuf;
 
     #[test]
     fn test_project_context_does_not_filter_by_budget() {
         // The budget is enforced upstream in `agent.rs::apply_skill_budget`
         // so that dropped skills can surface as load errors. ProjectContext
-        // should accept whatever it's given and just convert to summaries.
+        // should accept whatever summaries it's given.
         let huge_description = "x".repeat(60 * 1024);
         let skill = Skill {
             name: "oversized".to_string(),
@@ -156,15 +154,16 @@ mod tests {
             content: "Content".to_string(),
             disable_model_invocation: false,
         };
+        let summary = SkillSummary::from(&skill);
 
-        let context = ProjectContext::new(vec![], vec![], vec![skill]);
+        let context = ProjectContext::new(vec![], vec![], vec![summary]);
         assert_eq!(context.skills.len(), 1);
         assert_eq!(context.skills[0].description, huge_description);
     }
 
     #[test]
     fn test_empty_skills_sets_has_skills_false() {
-        let context = ProjectContext::new(vec![], vec![], vec![]);
+        let context = ProjectContext::new(vec![], vec![], Vec::<SkillSummary>::new());
         assert!(!context.has_skills);
         assert!(context.skills.is_empty());
     }
