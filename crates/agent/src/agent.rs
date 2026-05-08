@@ -309,6 +309,12 @@ static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
         .map(|path| path.into_arc())
 });
 
+/// How long `maintain_project_context` waits after a refresh notification
+/// before rebuilding, so bursts of refresh events (rules-file edits,
+/// worktree updates, prompt-store changes, trust-state changes) coalesce
+/// into a single rebuild instead of triggering one per event.
+const PROJECT_CONTEXT_REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(100);
+
 impl NativeAgent {
     pub fn new(
         thread_store: Entity<ThreadStore>,
@@ -652,7 +658,7 @@ impl NativeAgent {
             // here lets the next loop iteration's `changed()` pick up any
             // additional notifications that arrived during the rebuild.
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(100))
+                .timer(PROJECT_CONTEXT_REFRESH_DEBOUNCE)
                 .await;
             let task = this.update(cx, |this, cx| {
                 let state = this
@@ -3035,7 +3041,7 @@ mod internal_tests {
         // `maintain_project_context` debounces refresh notifications by 100ms;
         // advance the simulated clock past the debounce so the rebuild runs.
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         let thread = agent.read_with(cx, |agent, _cx| {
@@ -3054,7 +3060,7 @@ mod internal_tests {
             .await
             .unwrap();
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
         agent.read_with(cx, |agent, cx| {
             let project_id = project.entity_id();
@@ -3074,7 +3080,7 @@ mod internal_tests {
         // Creating `/a/.rules` updates the project context.
         fs.insert_file("/a/.rules", Vec::new()).await;
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
         agent.read_with(cx, |agent, cx| {
             let project_id = project.entity_id();
@@ -3134,7 +3140,7 @@ mod internal_tests {
             .await
             .unwrap();
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         // The pre-existing skill should be loaded into the project state.
@@ -3153,7 +3159,7 @@ mod internal_tests {
         .await
         .unwrap();
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, _cx| {
@@ -3193,7 +3199,7 @@ mod internal_tests {
             .await
             .unwrap();
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         // No skills directory exists yet, so no skills should be loaded.
@@ -3216,7 +3222,7 @@ mod internal_tests {
         )
         .await;
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, _cx| {
@@ -3264,7 +3270,7 @@ mod internal_tests {
             .await
             .unwrap();
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         let project_id = project.entity_id();
@@ -3304,7 +3310,7 @@ mod internal_tests {
         )
         .await;
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         // `state.skills` reflects the new skill (the watcher ran).
@@ -3394,7 +3400,7 @@ mod internal_tests {
         // does not advance simulated time, so the watcher's debounce
         // wouldn't fire without this.
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         let project_id = project.entity_id();
@@ -3501,7 +3507,7 @@ mod internal_tests {
             .await
             .unwrap();
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         let project_id = project.entity_id();
@@ -3589,7 +3595,7 @@ mod internal_tests {
             .await
             .unwrap();
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         let project_id = project.entity_id();
@@ -3632,7 +3638,7 @@ mod internal_tests {
             });
         });
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(100));
+            .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, cx| {
