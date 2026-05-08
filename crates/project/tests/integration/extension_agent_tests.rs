@@ -130,7 +130,7 @@ async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAp
     let fs = fs::FakeFs::new(cx.background_executor.clone());
     let http_client = http_client::FakeHttpClient::with_404_response();
     let worktree_store =
-        cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+        cx.new(|cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx)));
     let project_environment = cx.new(|cx| {
         crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
     });
@@ -214,7 +214,7 @@ async fn test_node_command_uses_managed_runtime(cx: &mut TestAppContext) {
     let http_client = http_client::FakeHttpClient::with_404_response();
     let node_runtime = NodeRuntime::unavailable();
     let worktree_store =
-        cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+        cx.new(|cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx)));
     let project_environment = cx.new(|cx| {
         crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
     });
@@ -260,7 +260,7 @@ async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
     let http_client = http_client::FakeHttpClient::with_404_response();
     let node_runtime = NodeRuntime::unavailable();
     let worktree_store =
-        cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+        cx.new(|cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx)));
     let project_environment = cx.new(|cx| {
         crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
     });

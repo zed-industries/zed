@@ -189,8 +189,10 @@ pub struct WorktreeStore {
     /// worktree IDs (used by the remote zed-server, where the connected zed
     /// client owns ID allocation across its projects).
     id_allocator: Option<AnyProtoClient>,
-    retain_worktrees: bool,
-    worktrees: Vec<WorktreeHandle>,
+    /// The host-side registry. We hold only weak references; whoever wants a
+    /// worktree to outlive its sole external user (e.g. a `Project` that has
+    /// it visible or is collab-sharing) must hold their own strong handle.
+    worktrees: Vec<WeakEntity<Worktree>>,
     scanning_enabled: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
@@ -231,11 +233,7 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_allocate_worktree_id);
     }
 
-    pub fn local(
-        retain_worktrees: bool,
-        fs: Arc<dyn Fs>,
-        next_worktree_id: WorktreeIdCounter,
-    ) -> Self {
+    pub fn local(fs: Arc<dyn Fs>, next_worktree_id: WorktreeIdCounter) -> Self {
         Self {
             next_entry_id: Default::default(),
             next_worktree_id,
@@ -243,14 +241,12 @@ impl WorktreeStore {
             id_allocator: None,
             worktrees: Vec::new(),
             scanning_enabled: true,
-            retain_worktrees,
             initial_scan_complete: watch::channel_with(true),
             state: WorktreeStoreState::Local { fs },
         }
     }
 
     pub fn remote(
-        retain_worktrees: bool,
         upstream_client: AnyProtoClient,
         upstream_project_id: u64,
         path_style: PathStyle,
@@ -263,7 +259,6 @@ impl WorktreeStore {
             id_allocator: None,
             worktrees: Vec::new(),
             scanning_enabled: true,
-            retain_worktrees,
             initial_scan_complete: watch::channel_with(true),
             state: WorktreeStoreState::Remote {
                 upstream_client,
@@ -360,9 +355,7 @@ impl WorktreeStore {
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
     pub fn worktrees(&self) -> impl '_ + DoubleEndedIterator<Item = Entity<Worktree>> {
-        self.worktrees
-            .iter()
-            .filter_map(move |worktree| worktree.upgrade())
+        self.worktrees.iter().filter_map(WeakEntity::upgrade)
     }
 
     /// Iterates through all user-visible worktrees, the ones that appear in the project panel.
@@ -894,13 +887,10 @@ impl WorktreeStore {
         let worktree_id = worktree.read(cx).id();
         debug_assert!(self.worktrees().all(|w| w.read(cx).id() != worktree_id));
 
-        let push_strong_handle = self.retain_worktrees || worktree.read(cx).is_visible();
-        let handle = if push_strong_handle {
-            WorktreeHandle::Strong(worktree.clone())
-        } else {
-            WorktreeHandle::Weak(worktree.downgrade())
-        };
-        self.worktrees.push(handle);
+        // We only hold a weak reference; the listener (Project / HeadlessProject)
+        // pins the worktree as a strong handle on its own side based on
+        // visibility and collab-share state.
+        self.worktrees.push(worktree.downgrade());
 
         cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
         cx.emit(WorktreeStoreEvent::WorktreeMetadataChanged);
@@ -936,7 +926,9 @@ impl WorktreeStore {
             }
         })
         .detach();
-        cx.observe_release(worktree, move |_this, worktree, cx| {
+        cx.observe_release(worktree, move |this, worktree, cx| {
+            // Drop the now-stale weak reference from the registry.
+            this.worktrees.retain(|w| w.upgrade().is_some());
             cx.emit(WorktreeStoreEvent::WorktreeReleased(
                 handle_id,
                 worktree.id(),
@@ -968,6 +960,13 @@ impl WorktreeStore {
         });
         self.update_initial_scan_state(cx);
         cx.emit(WorktreeStoreEvent::WorktreeMetadataChanged);
+    }
+
+    /// Drop any registry entries whose worktrees have been released. Called
+    /// from `Project` after demoting strong handles to weak (the demotion
+    /// itself may release the worktree if no other holders remain).
+    pub(crate) fn cleanup_released_worktrees(&mut self) {
+        self.worktrees.retain(|w| w.upgrade().is_some());
     }
 
     pub fn worktree_for_main_worktree_path(
@@ -1017,14 +1016,10 @@ impl WorktreeStore {
             if let Some(old_worktree) =
                 old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
             {
-                let push_strong_handle =
-                    self.retain_worktrees || old_worktree.read(cx).is_visible();
-                let handle = if push_strong_handle {
-                    WorktreeHandle::Strong(old_worktree.clone())
-                } else {
-                    WorktreeHandle::Weak(old_worktree.downgrade())
-                };
-                self.worktrees.push(handle);
+                // Re-register the existing worktree as weak in the registry.
+                // Strong-handle retention is the listener's responsibility
+                // (it already holds the existing entity in its own vec).
+                self.worktrees.push(old_worktree.downgrade());
             } else {
                 self.add(
                     &Worktree::remote(
@@ -1160,38 +1155,6 @@ impl WorktreeStore {
                 }
             })
             .collect()
-    }
-
-    /// Pin every loaded worktree as a strong handle. Called by the listener
-    /// side (`Project`, `HeadlessProject`) when entering a state where every
-    /// worktree must outlive its sole external user (e.g. while shared via
-    /// collab).
-    pub fn retain_all_worktrees(&mut self) {
-        self.retain_worktrees = true;
-        for worktree_handle in self.worktrees.iter_mut() {
-            if let WorktreeHandle::Weak(worktree) = worktree_handle
-                && let Some(worktree) = worktree.upgrade()
-            {
-                *worktree_handle = WorktreeHandle::Strong(worktree);
-            }
-        }
-    }
-
-    /// Reverts `retain_all_worktrees`: invisible worktrees become weak again,
-    /// and any per-worktree downstream observer is torn down.
-    pub fn release_invisible_worktrees(&mut self, cx: &mut Context<Self>) {
-        self.retain_worktrees = false;
-        for worktree_handle in self.worktrees.iter_mut() {
-            if let WorktreeHandle::Strong(worktree) = worktree_handle {
-                let is_visible = worktree.update(cx, |worktree, _| {
-                    worktree.stop_observing_updates();
-                    worktree.is_visible()
-                });
-                if !is_visible {
-                    *worktree_handle = WorktreeHandle::Weak(worktree.downgrade());
-                }
-            }
-        }
     }
 
     pub async fn handle_create_project_entry(
@@ -1364,13 +1327,16 @@ impl WorktreeStore {
 }
 
 #[derive(Clone, Debug)]
-enum WorktreeHandle {
+/// A handle that may be either strong or weak. Used by `Project` and
+/// `HeadlessProject` to decide which worktrees they pin (strong) vs let the
+/// host registry track without retention (weak).
+pub enum WorktreeHandle {
     Strong(Entity<Worktree>),
     Weak(WeakEntity<Worktree>),
 }
 
 impl WorktreeHandle {
-    fn upgrade(&self) -> Option<Entity<Worktree>> {
+    pub fn upgrade(&self) -> Option<Entity<Worktree>> {
         match self {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(),

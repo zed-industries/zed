@@ -73,6 +73,11 @@ pub struct HeadlessProject {
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
     pub kernels: HashMap<String, Child>,
+    /// Strong handles for every worktree the headless server tracks. The
+    /// host-side `WorktreeStore` only holds weak references; this list is
+    /// what keeps them alive while the connected client cares about them.
+    /// Headless always retains all worktrees (no visibility distinction).
+    worktrees: Vec<Entity<Worktree>>,
 }
 
 pub struct HeadlessAppState {
@@ -108,9 +113,8 @@ impl HeadlessProject {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
-            let mut store = WorktreeStore::local(true, fs.clone(), WorktreeIdCounter::get(cx));
+            let mut store = WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx));
             store.set_id_allocator(session.clone());
-            store.retain_all_worktrees();
             store
         });
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -354,6 +358,7 @@ impl HeadlessProject {
             profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
             kernels: Default::default(),
+            worktrees: Vec::new(),
         }
     }
 
@@ -385,6 +390,9 @@ impl HeadlessProject {
     ) {
         match event {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                // Pin the worktree on our side; the host registry only holds
+                // a weak reference. Headless always retains.
+                self.worktrees.push(worktree.clone());
                 // Set up an observer that streams worktree updates to the
                 // connected zed client.
                 let session = self.session.clone();
@@ -394,6 +402,9 @@ impl HeadlessProject {
                         async move { session.send(update).log_err().is_some() }
                     });
                 });
+            }
+            WorktreeStoreEvent::WorktreeRemoved(entity_id, _) => {
+                self.worktrees.retain(|w| w.entity_id() != *entity_id);
             }
             WorktreeStoreEvent::WorktreeMetadataChanged => {
                 let metadata = worktree_store.read(cx).worktree_metadata_protos(cx);

@@ -2943,7 +2943,7 @@ mod test {
         let local_config = init_devcontainer_config(&fs, devcontainer_contents).await;
         let project_path = SanitizedPath::new_arc(&PathBuf::from(TEST_PROJECT_PATH));
         let worktree_store =
-            cx.new(|_cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::default()));
+            cx.new(|_cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::default()));
         let project_environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx));
 

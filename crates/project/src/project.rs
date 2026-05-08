@@ -42,7 +42,7 @@ use crate::{
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
-    worktree_store::WorktreeIdCounter,
+    worktree_store::{WorktreeHandle, WorktreeIdCounter},
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
@@ -253,6 +253,14 @@ pub struct Project {
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
     last_worktree_paths: WorktreePaths,
+    /// Per-project worktree retention. The host's `WorktreeStore` only holds
+    /// weak references; this list keeps the worktrees alive for as long as
+    /// the project needs them. Visible worktrees are always strong; invisible
+    /// worktrees are strong only while the project is collab-shared.
+    worktrees: Vec<WorktreeHandle>,
+    /// While true, all worktrees (visible or not) are retained as strong
+    /// handles. Toggled on `Project::shared` and off `Project::unshare`.
+    retain_worktrees: bool,
 }
 
 struct DownloadingFile {
@@ -1169,7 +1177,7 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store =
-                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+                cx.new(|cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx)));
             if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
@@ -1356,6 +1364,8 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                worktrees: Vec::new(),
+                retain_worktrees: false,
             }
         })
     }
@@ -1386,7 +1396,6 @@ impl Project {
                 });
             let worktree_store = cx.new(|cx| {
                 WorktreeStore::remote(
-                    false,
                     remote_proto.clone(),
                     REMOTE_SERVER_PROJECT_ID,
                     path_style,
@@ -1600,6 +1609,8 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                worktrees: Vec::new(),
+                retain_worktrees: false,
             };
 
             // remote server -> local machine handlers
@@ -1714,7 +1725,6 @@ impl Project {
 
         let worktree_store = cx.new(|cx| {
             WorktreeStore::remote(
-                true,
                 client.clone().into(),
                 response.payload.project_id,
                 path_style,
@@ -1889,6 +1899,10 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                worktrees: Vec::new(),
+                // Joined collab projects retain all worktrees because the
+                // host's view (which we mirror) keeps them all alive.
+                retain_worktrees: true,
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2705,6 +2719,39 @@ impl Project {
         }))
     }
 
+    /// Pin every loaded worktree as a strong handle on this project. Called
+    /// when entering a state where every worktree must outlive its sole
+    /// external user (e.g. while shared via collab). Mirrors the previous
+    /// `WorktreeStore::retain_all_worktrees` behavior, now per-project.
+    fn retain_all_worktrees(&mut self) {
+        self.retain_worktrees = true;
+        for handle in self.worktrees.iter_mut() {
+            if let WorktreeHandle::Weak(weak) = handle
+                && let Some(worktree) = weak.upgrade()
+            {
+                *handle = WorktreeHandle::Strong(worktree);
+            }
+        }
+    }
+
+    /// Reverts `retain_all_worktrees`: invisible worktrees become weak again.
+    /// If they have no other holder they will be released, and the host's
+    /// `WorktreeStore` will clean up its registry entry.
+    fn release_invisible_worktrees(&mut self, cx: &mut App) {
+        self.retain_worktrees = false;
+        for handle in self.worktrees.iter_mut() {
+            if let WorktreeHandle::Strong(worktree) = handle {
+                let is_visible = worktree.read(cx).is_visible();
+                if !is_visible {
+                    *handle = WorktreeHandle::Weak(worktree.downgrade());
+                }
+            }
+        }
+        self.worktree_store.update(cx, |store, _| {
+            store.cleanup_released_worktrees();
+        });
+    }
+
     /// Send the initial worktree metadata downstream and (re)set up
     /// per-worktree observers for streaming updates. Used when entering or
     /// re-entering a collab-shared state.
@@ -2774,9 +2821,7 @@ impl Project {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
-        self.worktree_store.update(cx, |worktree_store, _| {
-            worktree_store.retain_all_worktrees();
-        });
+        self.retain_all_worktrees();
         self.send_worktree_project_updates(project_id, cx);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.collab_client.clone().into(), cx)
@@ -2873,8 +2918,8 @@ impl Project {
             self.client_subscriptions.clear();
             self.worktree_store.update(cx, |store, cx| {
                 store.stop_observing_worktrees(cx);
-                store.release_invisible_worktrees(cx);
             });
+            self.release_invisible_worktrees(cx);
             self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers();
                 buffer_store.unshared(cx)
@@ -3890,6 +3935,18 @@ impl Project {
     ) {
         match event {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                // Pin the new worktree on the project side. Visible worktrees
+                // are always strong; invisible worktrees are strong only
+                // while we're collab-sharing (so they outlive their sole
+                // external user).
+                let push_strong = self.retain_worktrees || worktree.read(cx).is_visible();
+                let handle = if push_strong {
+                    WorktreeHandle::Strong(worktree.clone())
+                } else {
+                    WorktreeHandle::Weak(worktree.downgrade())
+                };
+                self.worktrees.push(handle);
+
                 self.on_worktree_added(worktree, cx);
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
                 self.emit_group_key_changed_if_needed(cx);
@@ -3904,7 +3961,13 @@ impl Project {
                     self.send_worktree_project_updates(*remote_id, cx);
                 }
             }
-            WorktreeStoreEvent::WorktreeRemoved(_, id) => {
+            WorktreeStoreEvent::WorktreeRemoved(entity_id, id) => {
+                self.worktrees.retain(|handle| match handle {
+                    WorktreeHandle::Strong(w) => w.entity_id() != *entity_id,
+                    WorktreeHandle::Weak(w) => {
+                        w.upgrade().is_some_and(|w| w.entity_id() != *entity_id)
+                    }
+                });
                 cx.emit(Event::WorktreeRemoved(*id));
                 self.emit_group_key_changed_if_needed(cx);
             }
