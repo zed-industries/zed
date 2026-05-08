@@ -29,7 +29,18 @@
 >   The host's `WorktreeStore` now holds only weak references. Project
 >   and HeadlessProject hold the strong handles per the per-project
 >   retention policy.
-> - `BufferStore` Phase 1, `GitStore`, `LspStore` — not started.
+> - `LspStore` — Phase 0 done. `downstream_client` field, `shared`,
+>   `disconnected_from_host`, and `pub fn downstream_client()` accessor
+>   are gone. `LspStore::handle_lsp_query` moved to `Project` /
+>   `HeadlessProject` as `handle_lsp_query` rpc handlers that delegate
+>   to a new `LspStore::process_lsp_query(downstream_client,
+>   downstream_project_id, ...)` worker. `LogStore`'s `LocalSsh` kind
+>   now carries `(session, project_id)` directly instead of a
+>   `WeakEntity<LspStore>`. The `active_entry` mirror remains on
+>   `LspStore` (deferred — orthogonal to broadcast removal; needs a
+>   back-ref or a structural change for the `on_lsp_workspace_edit`
+>   server-initiated path, see Risks below).
+> - `BufferStore` Phase 1, `GitStore` — not started.
 > - `ImageStore` — already dumb; per-project state will live on
 >   `Project` when we have a host registry to point at.
 >
@@ -52,6 +63,24 @@
 > is the reverse: handler-owners first, then state-owners. Lesson
 > recorded for future store splits: identify cross-store rpc handler
 > calls early.
+>
+> **Note on `active_entry`**: the per-project `active_entry` mirror on
+> `LspStore` is read in exactly one place — `deserialize_workspace_edit`,
+> for the snippet-vs-edit gating. It is *not* relayed to LSP servers;
+> it's a purely local UI decision. Five callers (`apply_code_action`,
+> `will_rename_entry`, `execute_code_actions_on_server`, `PerformRename`'s
+> `response_from_lsp`, and `on_lsp_workspace_edit`) use it. The first
+> four have access to a `Project` and could pass `active_entry` as a
+> parameter. The fifth — `on_lsp_workspace_edit` — is a closure
+> registered at language-server-startup time in `setup_lsp_messages`,
+> with only `WeakEntity<LspStore>` captured; it has no `Project`
+> context. Removing the mirror requires either (a) a `WeakEntity<Project>`
+> back-ref on `LocalLspStore` (small, narrowly scoped, but technically
+> Phase 1 scaffolding the doc cautions against), or (b) a structural
+> change that defers the snippet-vs-edit decision to a caller — which
+> ends up needing the same back-ref *somewhere*, or changes
+> transaction-granularity behavior. Deferred to a focused follow-up
+> after `BufferStore` Phase 1.
 
 ## Why
 
@@ -268,12 +297,20 @@ order:
 4. `SettingsObserver` *(done)*
 5. `DapStore` *(done)*
 6. `WorktreeStore` *(done, including Phase 1)*
-7. `LspStore` *(next)* — has rpc handlers that call
-   `BufferStore::create_buffer_for_peer` and
-   `BufferStore::serialize_project_transaction_for_peer`. Those
-   handlers (or their relevant call sites) need to move to `Project`
-   so that `BufferStore`'s `create_buffer_for_peer` can land on
-   `Project` cleanly.
+7. `LspStore` *(done)* — broadcast removal split into two commits:
+   first the mechanical Phase 0 (announce-on-share, lifecycle events,
+   diagnostic summaries, refresh events), and then the move of
+   `handle_lsp_query` and the log_store routing up to `Project` /
+   `HeadlessProject` to delete the `downstream_client` field. The
+   `BufferStore` cascade (handlers that call `create_buffer_for_peer`
+   or `serialize_project_transaction_for_peer` to build response
+   payloads) is *not* yet addressed; those four handlers
+   (`handle_apply_code_action`, `handle_apply_code_action_kind`,
+   `handle_format_buffers`, `handle_open_buffer_for_symbol`) still
+   live on `LspStore` and use `BufferStore::create_buffer_for_peer`
+   directly. They become a `BufferStore` Phase 1 problem when
+   `create_buffer_for_peer` moves to `Project` and `LspStore` no
+   longer holds `Entity<BufferStore>`.
 8. `GitStore` — same reason: `handle_open_commit_message_buffer`
    calls `BufferStore::create_buffer_for_peer`.
 9. `BufferStore` Phase 1 — the move that everything above unblocks.
