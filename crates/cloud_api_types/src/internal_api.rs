@@ -20,3 +20,13 @@ pub struct LookUpUsersByLegacyIdBody {
 pub struct LookUpUsersByLegacyIdResponse {
     pub users: Vec<User>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LookUpUserByGithubLoginBody {
+    pub github_login: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LookUpUserByGithubLoginResponse {
+    pub user: Option<User>,
+}

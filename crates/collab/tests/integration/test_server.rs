@@ -658,11 +658,9 @@ impl TestClient {
     }
 
     pub fn current_user_id(&self, cx: &TestAppContext) -> UserId {
-        UserId::from_proto(
-            self.app_state
-                .user_store
-                .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
-        )
+        UserId::from_proto(self.app_state.user_store.read_with(cx, |user_store, _| {
+            user_store.current_user().unwrap().legacy_id
+        }))
     }
 
     pub async fn wait_for_current_user(&self, cx: &TestAppContext) {

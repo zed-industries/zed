@@ -3,9 +3,12 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use cloud_api_types::internal_api::{
-    self, LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
+    self, LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody,
+    LookUpUsersByLegacyIdResponse,
 };
+use reqwest::RequestBuilder;
 use rpc::proto;
+use serde::de::DeserializeOwned;
 
 use crate::Result;
 use crate::db::{Channel, Database, UserId};
@@ -65,7 +68,7 @@ impl UserService for TransitionalUserService {
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        self.database_user_service
+        self.cloud_user_service
             .get_user_by_github_login(github_login)
             .await
     }
@@ -107,46 +110,75 @@ impl CloudUserService {
             internal_api_key,
         }
     }
-}
 
-#[async_trait]
-impl UserService for CloudUserService {
-    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-        let response = self
-            .http_client
-            .post(format!(
-                "{}/internal/users/look_up_by_legacy_id",
-                &self.zed_cloud_url
-            ))
+    async fn send_request<T: DeserializeOwned + 'static>(
+        &self,
+        request: RequestBuilder,
+    ) -> Result<T> {
+        let request = request
             .header("Content-Type", "application/json")
             .header(
                 "Authorization",
                 format!("Bearer {}", &self.internal_api_key),
             )
-            .json(&LookUpUsersByLegacyIdBody {
-                legacy_user_ids: ids.into_iter().map(|id| id.0).collect(),
-            })
-            .send()
-            .await
-            .context("failed to get users by legacy IDs")?;
+            .build()
+            .context("failed to build request")?;
 
+        let response = self
+            .http_client
+            .execute(request)
+            .await
+            .context("failed to send request to Cloud")?;
+
+        let status = response.status();
         match response.error_for_status() {
             Ok(response) => {
-                let response_body: LookUpUsersByLegacyIdResponse = response
+                let response_body: T = response
                     .json()
                     .await
                     .context("failed to parse response body")?;
 
-                Ok(response_body.users.into_iter().map(User::from).collect())
+                Ok(response_body)
             }
-            Err(_err) => Err(anyhow!("failed to get users by legacy IDs"))?,
+            Err(_err) => Err(anyhow!("request to Cloud failed with status {status}",))?,
         }
+    }
+}
+
+#[async_trait]
+impl UserService for CloudUserService {
+    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
+        let response_body: LookUpUsersByLegacyIdResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/look_up_by_legacy_id",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&LookUpUsersByLegacyIdBody {
+                        legacy_user_ids: ids.into_iter().map(|id| id.0).collect(),
+                    }),
+            )
+            .await?;
+
+        Ok(response_body.users.into_iter().map(User::from).collect())
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        let _ = github_login;
+        let response_body: LookUpUserByGithubLoginResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/look_up_by_github_login",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&LookUpUserByGithubLoginBody {
+                        github_login: github_login.to_string(),
+                    }),
+            )
+            .await?;
 
-        unimplemented!("not yet implemented in Cloud")
+        Ok(response_body.user.map(User::from))
     }
 
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
