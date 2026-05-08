@@ -18,7 +18,7 @@ futures.workspace = true
 gpui.workspace = true
 paths.workspace = true
 serde.workspace = true
-serde_yaml.workspace = true
+serde_yaml_ng.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]

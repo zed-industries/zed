@@ -175,7 +175,7 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
     let body = &frontmatter_region[end_idx + delimiter_len..];
 
     let metadata: SkillMetadata =
-        serde_yaml::from_str(frontmatter_yaml).context("Invalid YAML frontmatter")?;
+        serde_yaml_ng::from_str(frontmatter_yaml).context("Invalid YAML frontmatter")?;
 
     Ok((metadata, body))
 }
