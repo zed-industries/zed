@@ -262,14 +262,8 @@ pub async fn load_skills_from_directory(
         .collect()
         .await;
 
-    // Sort by path so that name conflict resolution in `merge_skills`
-    // (in `crates/agent/src/agent.rs`) is deterministic across runs.
-    // `fs.read_dir` returns entries in OS/filesystem-dependent order,
-    // so without this sort, the "winner" of a name conflict can flip
-    // between launches. All entries here share the same `source` (it's
-    // passed in), so sorting by path alone is sufficient; the relative
-    // ordering of global vs project-local skills is handled by
-    // `merge_skills` itself via its iteration order.
+    // Sort by path so name-conflict resolution in `merge_skills` is
+    // deterministic — `fs.read_dir` order is filesystem-dependent.
     results.sort_by(|a, b| {
         let path_a: &Path = match a {
             Ok(skill) => &skill.skill_file_path,
