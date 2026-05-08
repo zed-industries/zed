@@ -3,10 +3,10 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase,
     Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
-    size,
+    IntoElement, LayoutId, Length, LetterSpacing, ModifiersChangedEvent, MouseButton,
+    MouseMoveEvent, Pixels, Point, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
+    TextStyle, UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point,
+    px, relative, size,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -615,6 +615,7 @@ impl TerminalElement {
             },
             underline,
             strikethrough,
+            letter_spacing: LetterSpacing::default(),
         };
 
         if let Some((style, range)) = hyperlink
@@ -1207,6 +1208,25 @@ impl Element for TerminalElement {
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
                 } else {
+                    let cursor_text = {
+                        let str_trxt = cursor_char.to_string();
+                        let len = str_trxt.len();
+                        window.text_system().shape_line(
+                            str_trxt.into(),
+                            text_style.font_size.to_pixels(window.rem_size()),
+                            &[TextRun {
+                                len,
+                                font: text_style.font(),
+                                letter_spacing: text_style.letter_spacing,
+                                color: theme.colors().terminal_ansi_background,
+                                background_color: None,
+                                underline: Default::default(),
+                                strikethrough: None,
+                            }],
+                            None,
+                        )
+                    };
+
                     let focused = self.focused;
                     ime_cursor_bounds.map(move |bounds| {
                         let (shape, text) = match cursor.shape {

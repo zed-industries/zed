@@ -5,10 +5,10 @@ use std::ops::Range;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
-    WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
-    rgb, rgba, size, white, yellow,
+    LetterSpacing, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels,
+    Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
+    WindowBounds, WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*,
+    px, relative, rgb, rgba, size, white, yellow,
 };
 use gpui_platform::application;
 use unicode_segmentation::*;
@@ -465,6 +465,7 @@ impl Element for TextElement {
         let run = TextRun {
             len: display_text.len(),
             font: style.font(),
+            letter_spacing: LetterSpacing::default(),
             color: text_color,
             background_color: None,
             underline: None,

@@ -1,9 +1,6 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
-    App, Bounds, Context, FontStyle, FontWeight, StyledText, Window, WindowBounds, WindowOptions,
-    div, prelude::*, px, size,
-};
+use gpui::{App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, size};
 use gpui_platform::application;
 
 struct HelloWorld {}
@@ -74,12 +71,21 @@ impl Render for HelloWorld {
                             .child("100%"),
                     ),
             )
-            .child(div().flex().gap_2().justify_between().child(
-                StyledText::new("ABCD").with_highlights([
-                    (0..1, FontWeight::EXTRA_BOLD.into()),
-                    (2..3, FontStyle::Italic.into()),
-                ]),
-            ))
+            .child(
+                div()
+                    .letter_spacing(0.00)
+                    .child("I have default letter_spacing"),
+            )
+            .child(
+                div()
+                    .letter_spacing(0.05)
+                    .child("I have positive letter_spacing"),
+            )
+            .child(
+                div()
+                    .letter_spacing(-0.05)
+                    .child("I have negative letter_spacing"),
+            )
     }
 }
 

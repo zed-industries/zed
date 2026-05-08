@@ -7,9 +7,9 @@ use std::{
 use crate::{
     AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
-    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
-    point, quad, rems, size,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, LetterSpacing,
+    Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun,
+    Window, black, phi, point, quad, rems, size,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -437,6 +437,9 @@ pub struct TextStyle {
 
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
+
+    /// The letter spacing of the text
+    pub letter_spacing: LetterSpacing,
 }
 
 impl Default for TextStyle {
@@ -458,6 +461,7 @@ impl Default for TextStyle {
             text_overflow: None,
             text_align: TextAlign::default(),
             line_clamp: None,
+            letter_spacing: LetterSpacing::default(),
         }
     }
 }
@@ -527,6 +531,7 @@ impl TextStyle {
             background_color: self.background_color,
             underline: self.underline,
             strikethrough: self.strikethrough,
+            letter_spacing: self.letter_spacing,
         }
     }
 }

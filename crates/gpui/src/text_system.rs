@@ -215,6 +215,7 @@ impl TextSystem {
                 &[FontRun {
                     len: buffer.len(),
                     font_id,
+                    letter_spacing: LetterSpacing::default(),
                 }],
             )
             .width
@@ -310,15 +311,29 @@ impl TextSystem {
     }
 
     /// Returns a handle to a line wrapper, for the given font and font size.
-    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+    pub fn line_wrapper(
+        self: &Arc<Self>,
+        font: Font,
+        font_size: Pixels,
+        letter_spacing: LetterSpacing,
+    ) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
         let wrappers = lock
-            .entry(FontIdWithSize { font_id, font_size })
+            .entry(FontIdWithSize {
+                font_id,
+                font_size,
+                letter_spacing,
+            })
             .or_default();
-        let wrapper = wrappers
-            .pop()
-            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, self.clone()));
+        let wrapper = wrappers.pop().unwrap_or_else(|| {
+            LineWrapper::new(
+                font_id,
+                font_size,
+                letter_spacing,
+                self.platform_text_system.clone(),
+            )
+        });
 
         LineWrapperHandle {
             wrapper: Some(wrapper),
@@ -530,7 +545,8 @@ impl WindowTextSystem {
         let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
 
-            let mut decoration_runs = <Vec<DecorationRun>>::with_capacity(32);
+            let mut last_font: Option<(Font, LetterSpacing)> = None;
+            let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
                 let Some(run) = runs.peek_mut() else {
@@ -540,14 +556,24 @@ impl WindowTextSystem {
 
                 let run_len_within_line = cmp::min(line_end - run_start, run.len);
 
-                let decoration_changed = if let Some(last_run) = decoration_runs.last_mut()
-                    && last_run.color == run.color
-                    && last_run.underline == run.underline
-                    && last_run.strikethrough == run.strikethrough
-                    && last_run.background_color == run.background_color
-                {
-                    last_run.len += run_len_within_line as u32;
-                    false
+                if last_font == Some((run.font.clone(), run.letter_spacing)) {
+                    font_runs.last_mut().unwrap().len += run_len_within_line;
+                } else {
+                    last_font = Some((run.font.clone(), run.letter_spacing));
+                    font_runs.push(FontRun {
+                        len: run_len_within_line,
+                        font_id: self.resolve_font(&run.font),
+                        letter_spacing: run.letter_spacing,
+                    });
+                }
+
+                if decoration_runs.last().map_or(false, |last_run| {
+                    last_run.color == run.color
+                        && last_run.underline == run.underline
+                        && last_run.strikethrough == run.strikethrough
+                        && last_run.background_color == run.background_color
+                }) {
+                    decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
                 } else {
                     decoration_runs.push(DecorationRun {
                         len: run_len_within_line as u32,
@@ -555,20 +581,6 @@ impl WindowTextSystem {
                         background_color: run.background_color,
                         underline: run.underline,
                         strikethrough: run.strikethrough,
-                    });
-                    true
-                };
-
-                let font_id = self.resolve_font(&run.font);
-                if let Some(font_run) = font_runs.last_mut()
-                    && font_id == font_run.font_id
-                    && !decoration_changed
-                {
-                    font_run.len += run_len_within_line;
-                } else {
-                    font_runs.push(FontRun {
-                        len: run_len_within_line,
-                        font_id,
                     });
                 }
 
@@ -591,7 +603,7 @@ impl WindowTextSystem {
 
             lines.push(WrappedLine {
                 layout,
-                decoration_runs,
+                decoration_runs: decoration_runs.into_vec(),
                 text: line_text,
             });
 
@@ -655,36 +667,22 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
-        let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
 
         for run in runs.iter() {
-            let decoration_changed = if let Some(last_run) = last_run
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-            // we do not consider differing background color relevant, as it does not affect glyphs
-            // && last_run.background_color == run.background_color
-            {
-                false
-            } else {
-                last_run = Some(run);
-                true
-            };
-
             let font_id = self.resolve_font(&run.font);
-            if let Some(font_run) = font_runs.last_mut()
-                && font_id == font_run.font_id
-                && !decoration_changed
-            {
-                font_run.len += run.len;
-            } else {
-                font_runs.push(FontRun {
-                    len: run.len,
-                    font_id,
-                });
+            if let Some(last_run) = font_runs.last_mut() {
+                if last_run.font_id == font_id && last_run.letter_spacing == run.letter_spacing {
+                    last_run.len += run.len;
+                    continue;
+                }
             }
+            font_runs.push(FontRun {
+                len: run.len,
+                font_id,
+                letter_spacing: run.letter_spacing,
+            });
         }
 
         let layout = self.line_layout_cache.layout_line(
@@ -715,36 +713,22 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Option<Arc<LineLayout>> {
-        let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
 
         for run in runs.iter() {
-            let decoration_changed = if let Some(last_run) = last_run
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-            // we do not consider differing background color relevant, as it does not affect glyphs
-            // && last_run.background_color == run.background_color
-            {
-                false
-            } else {
-                last_run = Some(run);
-                true
-            };
-
             let font_id = self.resolve_font(&run.font);
-            if let Some(font_run) = font_runs.last_mut()
-                && font_id == font_run.font_id
-                && !decoration_changed
-            {
-                font_run.len += run.len;
-            } else {
-                font_runs.push(FontRun {
-                    len: run.len,
-                    font_id,
-                });
+            if let Some(last_run) = font_runs.last_mut() {
+                if last_run.font_id == font_id && last_run.letter_spacing == run.letter_spacing {
+                    last_run.len += run.len;
+                    continue;
+                }
             }
+            font_runs.push(FontRun {
+                len: run.len,
+                font_id,
+                letter_spacing: run.letter_spacing,
+            });
         }
 
         let layout = self.line_layout_cache.try_layout_line_by_hash(
@@ -777,36 +761,22 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
         materialize_text: impl FnOnce() -> SharedString,
     ) -> Arc<LineLayout> {
-        let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
 
         for run in runs.iter() {
-            let decoration_changed = if let Some(last_run) = last_run
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-            // we do not consider differing background color relevant, as it does not affect glyphs
-            // && last_run.background_color == run.background_color
-            {
-                false
-            } else {
-                last_run = Some(run);
-                true
-            };
-
             let font_id = self.resolve_font(&run.font);
-            if let Some(font_run) = font_runs.last_mut()
-                && font_id == font_run.font_id
-                && !decoration_changed
-            {
-                font_run.len += run.len;
-            } else {
-                font_runs.push(FontRun {
-                    len: run.len,
-                    font_id,
-                });
+            if let Some(last_run) = font_runs.last_mut() {
+                if last_run.font_id == font_id && last_run.letter_spacing == run.letter_spacing {
+                    last_run.len += run.len;
+                    continue;
+                }
             }
+            font_runs.push(FontRun {
+                len: run.len,
+                font_id,
+                letter_spacing: run.letter_spacing,
+            });
         }
 
         let layout = self.line_layout_cache.layout_line_by_hash(
@@ -828,6 +798,7 @@ impl WindowTextSystem {
 struct FontIdWithSize {
     font_id: FontId,
     font_size: Pixels,
+    letter_spacing: LetterSpacing,
 }
 
 /// A handle into the text system, which can be used to compute the wrapped layout of text
@@ -844,6 +815,7 @@ impl Drop for LineWrapperHandle {
             .get_mut(&FontIdWithSize {
                 font_id: wrapper.font_id,
                 font_size: wrapper.font_size,
+                letter_spacing: wrapper.letter_spacing,
             })
             .unwrap()
             .push(wrapper);
@@ -966,13 +938,42 @@ impl Display for FontStyle {
     }
 }
 
-/// A styled run of text, for use in [`crate::TextLayout`].
+/// Letter spacing (in ems).
+#[derive(
+    Clone, Copy, Default, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema,
+)]
+pub struct LetterSpacing(pub f32);
+
+impl Hash for LetterSpacing {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u32(u32::from_be_bytes(self.0.to_be_bytes()));
+    }
+}
+
+impl Eq for LetterSpacing {}
+
+impl Display for LetterSpacing {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+impl LetterSpacing {
+    /// Converts the letter spacing (in ems) to pixels.
+    pub fn to_px(&self, font_size: Pixels) -> Pixels {
+        self.0 * font_size
+    }
+}
+
+/// A styled run of text, for use in [`TextLayout`].
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct TextRun {
     /// A number of utf8 bytes
     pub len: usize,
     /// The font to use for this run.
     pub font: Font,
+    /// The letter spacing to use for this run.
+    pub letter_spacing: LetterSpacing,
     /// The color
     pub color: Hsla,
     /// The background color (if any)

@@ -428,6 +428,7 @@ impl CosmicTextSystemState {
                     .stretch(face.stretch)
                     .style(face.style)
                     .weight(face.weight)
+                    .letter_spacing(run.letter_spacing.0)
                     .font_features(loaded_font.features.clone()),
             );
             offs += run.len;

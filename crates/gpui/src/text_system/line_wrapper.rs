@@ -1,4 +1,6 @@
-use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
+use crate::{
+    FontId, FontRun, LetterSpacing, Pixels, PlatformTextSystem, SharedString, TextRun, px,
+};
 use collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 
@@ -13,9 +15,10 @@ pub enum TruncateFrom {
 
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
-    text_system: Arc<TextSystem>,
+    platform_text_system: Arc<dyn PlatformTextSystem>,
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
+    pub(crate) letter_spacing: LetterSpacing,
     cached_ascii_char_widths: [Option<Pixels>; 128],
     cached_other_char_widths: HashMap<char, Pixels>,
 }
@@ -24,11 +27,17 @@ impl LineWrapper {
     /// The maximum indent that can be applied to a line.
     pub const MAX_INDENT: u32 = 256;
 
-    pub(crate) fn new(font_id: FontId, font_size: Pixels, text_system: Arc<TextSystem>) -> Self {
+    pub(crate) fn new(
+        font_id: FontId,
+        font_size: Pixels,
+        letter_spacing: LetterSpacing,
+        platform_text_system: Arc<dyn PlatformTextSystem>,
+    ) -> Self {
         Self {
-            text_system,
+            platform_text_system,
             font_id,
             font_size,
+            letter_spacing,
             cached_ascii_char_widths: [None; 128],
             cached_other_char_widths: HashMap::default(),
         }
@@ -254,21 +263,33 @@ impl LineWrapper {
             if let Some(cached_width) = self.cached_ascii_char_widths[c as usize] {
                 cached_width
             } else {
-                let width = self
-                    .text_system
-                    .layout_width(self.font_id, self.font_size, c);
+                let width = self.compute_width_for_char(c);
                 self.cached_ascii_char_widths[c as usize] = Some(width);
                 width
             }
         } else if let Some(cached_width) = self.cached_other_char_widths.get(&c) {
             *cached_width
         } else {
-            let width = self
-                .text_system
-                .layout_width(self.font_id, self.font_size, c);
+            let width = self.compute_width_for_char(c);
             self.cached_other_char_widths.insert(c, width);
             width
         }
+    }
+
+    fn compute_width_for_char(&self, c: char) -> Pixels {
+        let mut buffer = [0; 4];
+        let buffer = c.encode_utf8(&mut buffer);
+        self.platform_text_system
+            .layout_line(
+                buffer,
+                self.font_size,
+                &[FontRun {
+                    len: buffer.len(),
+                    font_id: self.font_id,
+                    letter_spacing: self.letter_spacing,
+                }],
+            )
+            .width
     }
 }
 
@@ -389,8 +410,14 @@ mod tests {
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(0);
         let cx = TestAppContext::build(dispatcher, None);
-        let id = cx.text_system().resolve_font(&font(".ZedMono"));
-        LineWrapper::new(id, px(16.), cx.text_system().clone())
+        let text_system = cx.text_system();
+        let id = text_system.font_id(&font("Zed Plex Mono")).unwrap();
+        LineWrapper::new(
+            id,
+            px(16.),
+            LetterSpacing::default(),
+            text_system.platform_text_system.clone(),
+        )
     }
 
     fn generate_test_runs(input_run_len: &[usize]) -> Vec<TextRun> {
@@ -405,7 +432,11 @@ mod tests {
                     weight: FontWeight::default(),
                     style: FontStyle::Normal,
                 },
-                ..Default::default()
+                letter_spacing: LetterSpacing::default(),
+                color: crate::Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
             })
             .collect()
     }
@@ -890,6 +921,7 @@ mod tests {
             let normal = TextRun {
                 len: 0,
                 font: font("Helvetica"),
+                letter_spacing: LetterSpacing::default(),
                 color: Default::default(),
                 underline: Default::default(),
                 ..Default::default()
@@ -897,7 +929,11 @@ mod tests {
             let bold = TextRun {
                 len: 0,
                 font: font("Helvetica").bold(),
-                ..Default::default()
+                letter_spacing: LetterSpacing::default(),
+                color: Default::default(),
+                underline: Default::default(),
+                strikethrough: None,
+                background_color: None,
             };
 
             let text = "aa bbb cccc ddddd eeee".into();
