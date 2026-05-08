@@ -5,6 +5,7 @@ mod extension_version_selector;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
+use fs::Fs;
 
 use anyhow::Context as _;
 use client::zed_urls;
@@ -975,7 +976,7 @@ impl ExtensionsPage {
                     window.handler_for(this, {
                         let extension_id = extension_id.clone();
                         move |this, _window, cx| {
-                            this.toggle_auto_install(&extension_id, cx)
+                            this.toggle_auto_install(extension_id.clone(), cx)
                         }
                     }),
                 )
@@ -987,7 +988,7 @@ impl ExtensionsPage {
                     window.handler_for(this, {
                         let extension_id = extension_id.clone();
                         move |this, _window, cx| {
-                            this.toggle_auto_update(&extension_id, cx)
+                            this.toggle_auto_update(extension_id.clone(), cx)
                         }
                     }),
                 )
@@ -1427,7 +1428,7 @@ impl ExtensionsPage {
         callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
-            let fs = workspace.read(cx).app_state().fs.clone();
+            let fs = <dyn Fs>::global(cx);
             let selection = *selection;
             settings::update_settings_file(fs, cx, move |settings, _| {
                 let value = match selection {
@@ -1441,28 +1442,26 @@ impl ExtensionsPage {
         }
     }
 
-    fn toggle_auto_install(&mut self, extension_id: &str, cx: &mut Context<Self>) {
+    fn toggle_auto_install(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
         let extension_settings = ExtensionSettings::get_global(cx);
         let current_value = extension_settings.should_auto_install(extension_id);
         let new_value = !current_value;
 
         if let Some(workspace) = self.workspace.upgrade() {
-            let fs = workspace.read(cx).app_state().fs.clone();
-            let extension_id: Arc<str> = Arc::from(extension_id);
+            let fs = <dyn Fs>::global(cx);
             settings::update_settings_file(fs, cx, move |settings, _| {
                 settings.extension.auto_install_extensions.insert(extension_id.clone(), new_value);
             });
         }
     }
 
-    fn toggle_auto_update(&mut self, extension_id: &str, cx: &mut Context<Self>) {
+    fn toggle_auto_update(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
         let extension_settings = ExtensionSettings::get_global(cx);
         let current_value = extension_settings.should_auto_update(extension_id);
         let new_value = !current_value;
 
         if let Some(workspace) = self.workspace.upgrade() {
-            let fs = workspace.read(cx).app_state().fs.clone();
-            let extension_id: Arc<str> = Arc::from(extension_id);
+            let fs = <dyn Fs>::global(cx);
             settings::update_settings_file(fs, cx, move |settings, _| {
                 settings.extension.auto_update_extensions.insert(extension_id.clone(), new_value);
             });
