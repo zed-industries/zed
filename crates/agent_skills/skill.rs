@@ -306,15 +306,14 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
         .map(|entry_path| {
             let fs = fs.clone();
             async move {
-                if !fs.is_dir(&entry_path).await {
+                let Ok(Some(metadata)) = fs.metadata(&entry_path).await else {
+                    return None;
+                };
+                if !metadata.is_dir {
                     return None;
                 }
                 let skill_file = entry_path.join(SKILL_FILE_NAME);
-                if fs.is_file(&skill_file).await {
-                    Some(skill_file)
-                } else {
-                    None
-                }
+                fs.is_file(&skill_file).await.then_some(skill_file)
             }
         })
         .buffer_unordered(SKILL_IO_CONCURRENCY)
