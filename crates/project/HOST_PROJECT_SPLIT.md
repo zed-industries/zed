@@ -32,6 +32,26 @@
 > - `BufferStore` Phase 1, `GitStore`, `LspStore` — not started.
 > - `ImageStore` — already dumb; per-project state will live on
 >   `Project` when we have a host registry to point at.
+>
+> **Order-of-attack revision** (after analyzing `BufferStore`'s
+> dependencies): the natural next step is *not* `BufferStore` but
+> `LspStore` (and `GitStore` immediately after). The reason: under the
+> Flavor 1 model, `BufferStore`'s `shared_buffers` and
+> `create_buffer_for_peer` move to `Project`. But `LspStore`'s rpc
+> handlers (and `GitStore`'s) call into `create_buffer_for_peer` to
+> ensure peers have buffer state before sending references. After
+> moving `create_buffer_for_peer` to `Project`, those callers need a
+> way to reach `Project`. The clean answer is for those rpc handlers to
+> live on `Project` too — which is exactly what `LspStore`'s and
+> `GitStore`'s own Phase 0/1 do. Doing `LspStore`/`GitStore` first
+> means `BufferStore`'s migration has no leftover scaffolding
+> (no `WeakEntity<Project>` back-refs).
+>
+> The original migration order (`BufferStore` before `LspStore`) was
+> based on "work up from least entangled." The dependency-graph order
+> is the reverse: handler-owners first, then state-owners. Lesson
+> recorded for future store splits: identify cross-store rpc handler
+> calls early.
 
 ## Why
 
@@ -235,18 +255,30 @@ but it's mechanical.
 
 ### Phase 0 — Dumb stores (no `Host` yet)
 
-Per host-shaped store, in this order:
+Per host-shaped store. The original order was "least to most
+  entangled," but actual experience revealed that store-A calling
+store-B's collab methods (e.g. LSP handlers calling
+`buffer_store.create_buffer_for_peer`) means **handler-owners must
+migrate before state-owners** to avoid back-ref scaffolding. Revised
+order:
 
-1. `BreakpointStore` — small, isolated; proof of pattern
-2. `BookmarkStore`
-3. `TaskStore`
-4. `SettingsObserver`
-5. `DapStore`
-6. `GitStore`
-7. `BufferStore`
-8. `ImageStore`
-9. `WorktreeStore`
-10. `LspStore` — last; most entangled
+1. `BreakpointStore` — small, isolated; proof of pattern *(done)*
+2. `BookmarkStore` *(no-op; already dumb)*
+3. `TaskStore` *(done)*
+4. `SettingsObserver` *(done)*
+5. `DapStore` *(done)*
+6. `WorktreeStore` *(done, including Phase 1)*
+7. `LspStore` *(next)* — has rpc handlers that call
+   `BufferStore::create_buffer_for_peer` and
+   `BufferStore::serialize_project_transaction_for_peer`. Those
+   handlers (or their relevant call sites) need to move to `Project`
+   so that `BufferStore`'s `create_buffer_for_peer` can land on
+   `Project` cleanly.
+8. `GitStore` — same reason: `handle_open_commit_message_buffer`
+   calls `BufferStore::create_buffer_for_peer`.
+9. `BufferStore` Phase 1 — the move that everything above unblocks.
+10. `ImageStore` — already dumb; just needs per-project state on
+    Project once that pattern is established.
 
 Each store's PR does:
 
