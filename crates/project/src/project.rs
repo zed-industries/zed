@@ -215,11 +215,13 @@ pub enum OpenedBufferEvent {
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
     /// Machine-bound services and host-shaped stores. See [`Host`] for
-    /// the rationale and Phase 1/2 split. The fields below this one
-    /// (`languages`, `lsp_store`, `worktree_store`, etc.) are *cached
-    /// clones* of what's in `host` so that `Project`'s public accessor
-    /// signatures don't take `cx`. They will be removed as accessors
-    /// migrate to forward through `host` directly.
+    /// the rationale and Phase 1/2 split. Public host-shaped accessors
+    /// (`project.lsp_store(cx)`, `project.fs(cx)`, etc.) all take
+    /// `cx: &App` and forward to `self.host.read(cx).X.clone()`.
+    /// `languages` and `collab_client` below are `Arc` duplicates kept
+    /// directly on `Project` because they're cheap clones and are
+    /// referenced often by internal code without `cx` already in scope;
+    /// they will be migrated alongside Phase 2's host registry work.
     host: Entity<host::Host>,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
