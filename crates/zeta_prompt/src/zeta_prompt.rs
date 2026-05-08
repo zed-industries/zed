@@ -99,6 +99,7 @@ pub enum ZetaFormat {
     #[default]
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
+    #[serde(alias = "Zeta2")]
     V0211SeedCoder,
     V0331SeedCoderModelPy,
     v0226Hashline,
@@ -111,6 +112,7 @@ pub enum ZetaFormat {
     /// V0316, but marker numbers are relative to the cursor block (e.g. -1, -0, +1).
     V0317SeedMultiRegions,
     /// V0316 with larger block sizes.
+    #[serde(alias = "Zeta2.1")]
     V0318SeedMultiRegions,
     /// V0318-style markers over the full available current file excerpt with no related files.
     V0327SingleFile,
