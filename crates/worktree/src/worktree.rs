@@ -1158,7 +1158,9 @@ impl LocalWorktree {
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
-                let (events, watcher) = if scanning_enabled {
+                let defer_watch = scanning_enabled && fs::requires_poll_watcher(&abs_path);
+
+                let (events, watcher) = if scanning_enabled && !defer_watch {
                     fs.watch(&abs_path, FS_WATCH_LATENCY).await
                 } else {
                     (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
@@ -1194,9 +1196,7 @@ impl LocalWorktree {
                     is_single_file,
                 };
 
-                scanner
-                    .run(Box::pin(events.map(|events| events.into_iter().collect())))
-                    .await;
+                scanner.run(events, defer_watch).await;
             }
         });
         let scan_state_updater = cx.spawn(async move |this, cx| {
@@ -3956,7 +3956,11 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
-    async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
+    async fn run(
+        &mut self,
+        mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
+        defer_watch: bool,
+    ) {
         let root_abs_path;
         let scanning_enabled;
         {
@@ -4086,6 +4090,37 @@ impl BackgroundScanner {
         }
 
         self.send_status_update(false, SmallVec::new(), &[]).await;
+
+        if defer_watch {
+            let (events, watcher) = self
+                .fs
+                .watch(root_abs_path.as_path(), FS_WATCH_LATENCY)
+                .await;
+            self.watcher = watcher;
+            fs_events_rx = Box::pin(events.map(|events| events.into_iter().collect()));
+
+            let state = self.state.lock().await;
+            for target in state.symlink_paths_by_target.keys() {
+                if !target.starts_with(root_abs_path.as_path()) {
+                    self.watcher.add(target).log_err();
+                }
+            }
+            for repo in state.snapshot.git_repositories.values() {
+                if !repo
+                    .common_dir_abs_path
+                    .starts_with(root_abs_path.as_path())
+                {
+                    self.watcher.add(&repo.common_dir_abs_path).log_err();
+                }
+                if !repo
+                    .repository_dir_abs_path
+                    .starts_with(root_abs_path.as_path())
+                {
+                    self.watcher.add(&repo.repository_dir_abs_path).log_err();
+                }
+            }
+            drop(state);
+        }
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
