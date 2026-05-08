@@ -1327,10 +1327,12 @@ impl Window {
 
         platform_window.on_close(Box::new({
             let window_id = handle.window_id();
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move || {
-                let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
-                let _ = cx.update(|cx| {
+                cx.update_or_defer(move |cx| {
+                    handle
+                        .update(cx, |_, window, _| window.remove_window())
+                        .log_err();
                     SystemWindowTabController::remove_tab(cx, window_id);
                 });
             }
@@ -1427,67 +1429,79 @@ impl Window {
             }
         }));
         platform_window.on_resize(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move |_, _| {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
+                cx.update_or_defer(move |cx| {
+                    handle
+                        .update(cx, |_, window, cx| window.bounds_changed(cx))
+                        .log_err();
+                });
             }
         }));
         platform_window.on_moved(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
+                cx.update_or_defer(move |cx| {
+                    handle
+                        .update(cx, |_, window, cx| window.bounds_changed(cx))
+                        .log_err();
+                });
             }
         }));
         platform_window.on_appearance_changed(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
-                    .log_err();
+                cx.update_or_defer(move |cx| {
+                    handle
+                        .update(cx, |_, window, cx| window.appearance_changed(cx))
+                        .log_err();
+                });
             }
         }));
         platform_window.on_button_layout_changed(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.button_layout_changed(cx))
-                    .log_err();
+                cx.update_or_defer(move |cx| {
+                    handle
+                        .update(cx, |_, window, cx| window.button_layout_changed(cx))
+                        .log_err();
+                });
             }
         }));
         platform_window.on_active_status_change(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move |active| {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        window.active.set(active);
-                        window.modifiers = window.platform_window.modifiers();
-                        window.capslock = window.platform_window.capslock();
-                        window
-                            .activation_observers
-                            .clone()
-                            .retain(&(), |callback| callback(window, cx));
+                cx.update_or_defer(move |cx| {
+                    handle
+                        .update(cx, |_, window, cx| {
+                            window.active.set(active);
+                            window.modifiers = window.platform_window.modifiers();
+                            window.capslock = window.platform_window.capslock();
+                            window
+                                .activation_observers
+                                .clone()
+                                .retain(&(), |callback| callback(window, cx));
 
-                        window.bounds_changed(cx);
-                        window.refresh();
+                            window.bounds_changed(cx);
+                            window.refresh();
 
-                        SystemWindowTabController::update_last_active(cx, window.handle.id);
-                    })
-                    .log_err();
+                            SystemWindowTabController::update_last_active(cx, window.handle.id);
+                        })
+                        .log_err();
+                });
             }
         }));
         platform_window.on_hover_status_change(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
             move |active| {
-                handle
-                    .update(&mut cx, |_, window, _| {
-                        window.hovered.set(active);
-                        window.refresh();
-                    })
-                    .log_err();
+                cx.update_or_defer(move |cx| {
+                    handle
+                        .update(cx, |_, window, _| {
+                            window.hovered.set(active);
+                            window.refresh();
+                        })
+                        .log_err();
+                });
             }
         }));
         platform_window.on_input({

@@ -70,11 +70,14 @@ mod visual_test_context;
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 
+type DeferredAppUpdate = Box<dyn FnOnce(&mut App)>;
+
 /// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
 #[doc(hidden)]
 pub struct AppCell {
     app: RefCell<App>,
+    deferred_updates: RefCell<Vec<DeferredAppUpdate>>,
 }
 
 impl AppCell {
@@ -85,7 +88,10 @@ impl AppCell {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
-        AppRef(self.app.borrow())
+        AppRef {
+            app: Some(self.app.borrow()),
+            app_cell: self,
+        }
     }
 
     #[doc(hidden)]
@@ -95,7 +101,10 @@ impl AppCell {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
-        AppRefMut(self.app.borrow_mut())
+        AppRefMut {
+            app: self.app.borrow_mut(),
+            deferred_updates: &self.deferred_updates,
+        }
     }
 
     #[doc(hidden)]
@@ -105,16 +114,54 @@ impl AppCell {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
         }
-        Ok(AppRefMut(self.app.try_borrow_mut()?))
+        Ok(AppRefMut {
+            app: self.app.try_borrow_mut()?,
+            deferred_updates: &self.deferred_updates,
+        })
+    }
+}
+
+fn drain_deferred_updates(app: &mut App, deferred_updates: &RefCell<Vec<DeferredAppUpdate>>) {
+    loop {
+        let updates = {
+            let mut deferred_updates = deferred_updates.borrow_mut();
+            std::mem::take(&mut *deferred_updates)
+        };
+
+        if updates.is_empty() {
+            break;
+        }
+
+        for update in updates {
+            update(app);
+        }
     }
 }
 
 #[doc(hidden)]
-#[derive(Deref, DerefMut)]
-pub struct AppRef<'a>(Ref<'a, App>);
+pub struct AppRef<'a> {
+    app: Option<Ref<'a, App>>,
+    app_cell: &'a AppCell,
+}
+
+impl Deref for AppRef<'_> {
+    type Target = App;
+
+    fn deref(&self) -> &Self::Target {
+        match self.app.as_ref() {
+            Some(app) => app,
+            None => unreachable!("AppRef dereferenced after drop"),
+        }
+    }
+}
 
 impl Drop for AppRef<'_> {
     fn drop(&mut self) {
+        self.app.take();
+        if let Ok(mut app) = self.app_cell.app.try_borrow_mut() {
+            drain_deferred_updates(&mut app, &self.app_cell.deferred_updates);
+        }
+
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped borrow from {thread_id:?}");
@@ -124,10 +171,17 @@ impl Drop for AppRef<'_> {
 
 #[doc(hidden)]
 #[derive(Deref, DerefMut)]
-pub struct AppRefMut<'a>(RefMut<'a, App>);
+pub struct AppRefMut<'a> {
+    #[deref]
+    #[deref_mut]
+    app: RefMut<'a, App>,
+    deferred_updates: &'a RefCell<Vec<DeferredAppUpdate>>,
+}
 
 impl Drop for AppRefMut<'_> {
     fn drop(&mut self) {
+        drain_deferred_updates(&mut self.app, self.deferred_updates);
+
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("dropped {thread_id:?}");
@@ -764,34 +818,33 @@ impl App {
                 #[cfg(any(test, feature = "leak-detection"))]
                 _ref_counts,
             }),
+            deferred_updates: RefCell::new(Vec::new()),
         });
 
         init_app_menus(platform.as_ref(), &app.borrow());
         SystemWindowTabController::init(&mut app.borrow_mut());
 
         platform.on_keyboard_layout_change(Box::new({
-            let app = Rc::downgrade(&app);
+            let cx = app.borrow().to_async();
             move || {
-                if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
+                cx.update_or_defer(|cx| {
                     cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
-                }
+                });
             }
         }));
 
         platform.on_thermal_state_change(Box::new({
-            let app = Rc::downgrade(&app);
+            let cx = app.borrow().to_async();
             move || {
-                if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
+                cx.update_or_defer(|cx| {
                     cx.thermal_state_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
-                }
+                });
             }
         }));
 

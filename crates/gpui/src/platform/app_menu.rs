@@ -332,9 +332,7 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
     platform.on_will_open_app_menu(Box::new({
         let cx = cx.to_async();
         move || {
-            if let Some(app) = cx.app.upgrade() {
-                app.borrow_mut().update(|cx| cx.clear_pending_keystrokes());
-            }
+            cx.update_or_defer(|cx| cx.clear_pending_keystrokes());
         }
     }));
 
@@ -351,9 +349,8 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
     platform.on_app_menu_action(Box::new({
         let cx = cx.to_async();
         move |action| {
-            if let Some(app) = cx.app.upgrade() {
-                app.borrow_mut().update(|cx| cx.dispatch_action(action));
-            }
+            let action = action.boxed_clone();
+            cx.update_or_defer(move |cx| cx.dispatch_action(&*action));
         }
     }));
 }

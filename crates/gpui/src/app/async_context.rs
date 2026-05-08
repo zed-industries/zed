@@ -166,6 +166,17 @@ impl AsyncApp {
         lock.update(f)
     }
 
+    /// Updates the app immediately if it is not borrowed, otherwise defers the update until the current borrow ends.
+    pub fn update_or_defer(&self, f: impl FnOnce(&mut App) + 'static) {
+        let app = self.app();
+
+        if let Ok(mut app) = app.try_borrow_mut() {
+            app.update(f);
+        } else {
+            app.deferred_updates.borrow_mut().push(Box::new(f));
+        }
+    }
+
     /// Arrange for the given callback to be invoked whenever the given entity emits an event of a given type.
     /// The callback is provided a handle to the emitting entity and a reference to the emitted event.
     pub fn subscribe<T, Event>(
