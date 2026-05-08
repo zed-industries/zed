@@ -5742,6 +5742,7 @@ impl Workspace {
             .insert(pane.downgrade(), leader_id);
         self.unfollow(leader_id, window, cx);
         self.unfollow_in_pane(&pane, window, cx);
+        self.auto_watch = AutoWatch::Off;
         self.follower_states.insert(
             leader_id,
             FollowerState {
