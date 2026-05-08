@@ -179,63 +179,8 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn working_directory(&self, cx: &App) -> Option<PathBuf> {
-        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local())
-                && let Some(dir) = file.abs_path(cx).parent()
-            {
-                return Some(dir.to_owned());
-            }
-        }
-
-        None
-    }
-
-    pub fn target_file_abs_path(&self, cx: &mut Context<Self>) -> Option<PathBuf> {
-        self.active_buffer(cx).and_then(|buffer| {
-            let buffer = buffer.read(cx);
-            if let Some(project_path) = buffer.project_path(cx) {
-                let project = self.project()?.read(cx);
-                project.absolute_path(&project_path, cx)
-            } else {
-                buffer
-                    .file()
-                    .and_then(|file| file.as_local().map(|file| file.abs_path(cx)))
-            }
-        })
-    }
-
-    /// Returns the project path for the editor's buffer, if any buffer is
-    /// opened in the editor.
-    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.read(cx).project_path(cx)
-        } else {
-            None
-        }
-    }
-
     pub fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
-    }
-
-    pub fn selection_menu_enabled(&self, cx: &App) -> bool {
-        self.show_selection_menu
-            .unwrap_or_else(|| EditorSettings::get_global(cx).toolbar.selections_menu)
-    }
-
-    pub fn toggle_selection_menu(
-        &mut self,
-        _: &ToggleSelectionMenu,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.show_selection_menu = self
-            .show_selection_menu
-            .map(|show_selections_menu| !show_selections_menu)
-            .or_else(|| Some(!EditorSettings::get_global(cx).toolbar.selections_menu));
-
-        cx.notify();
     }
 
     pub fn blame(&self) -> Option<&Entity<GitBlame>> {
@@ -255,29 +200,6 @@ impl Editor {
             .collect();
         self.buffer
             .update(cx, |buffer, cx| buffer.expand_diff_hunks(ranges, cx))
-    }
-
-    pub fn copy_file_name_without_extension(
-        &mut self,
-        _: &CopyFileNameWithoutExtension,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(file_stem) = self.active_buffer(cx).and_then(|buffer| {
-            let file = buffer.read(cx).file()?;
-            file.path().file_stem()
-        }) {
-            cx.write_to_clipboard(ClipboardItem::new_string(file_stem.to_string()));
-        }
-    }
-
-    pub fn copy_file_name(&mut self, _: &CopyFileName, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(file_name) = self.active_buffer(cx).and_then(|buffer| {
-            let file = buffer.read(cx).file()?;
-            Some(file.file_name(cx))
-        }) {
-            cx.write_to_clipboard(ClipboardItem::new_string(file_name.to_string()));
-        }
     }
 
     pub fn toggle_git_blame(
@@ -1689,120 +1611,6 @@ impl Editor {
         }
     }
 
-    pub(super) fn target_file<'a>(&self, cx: &'a App) -> Option<&'a dyn language::LocalFile> {
-        self.active_buffer(cx)?
-            .read(cx)
-            .file()
-            .and_then(|f| f.as_local())
-    }
-
-    pub(super) fn reveal_in_finder(
-        &mut self,
-        _: &RevealInFileManager,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(path) = self.target_file_abs_path(cx) {
-            if let Some(project) = self.project() {
-                project.update(cx, |project, cx| project.reveal_path(&path, cx));
-            } else {
-                cx.reveal_path(&path);
-            }
-        }
-    }
-
-    pub(super) fn copy_path(
-        &mut self,
-        _: &zed_actions::workspace::CopyPath,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(path) = self.target_file_abs_path(cx)
-            && let Some(path) = path.to_str()
-        {
-            cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
-        } else {
-            cx.propagate();
-        }
-    }
-
-    pub(super) fn copy_relative_path(
-        &mut self,
-        _: &zed_actions::workspace::CopyRelativePath,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(path) = self.active_buffer(cx).and_then(|buffer| {
-            let project = self.project()?.read(cx);
-            let path = buffer.read(cx).file()?.path();
-            let path = path.display(project.path_style(cx));
-            Some(path)
-        }) {
-            cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
-        } else {
-            cx.propagate();
-        }
-    }
-
-    pub(super) fn go_to_active_debug_line(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        maybe!({
-            let breakpoint_store = self.breakpoint_store.as_ref()?;
-
-            let (active_stack_frame, debug_line_pane_id) = {
-                let store = breakpoint_store.read(cx);
-                let active_stack_frame = store.active_position().cloned();
-                let debug_line_pane_id = store.active_debug_line_pane_id();
-                (active_stack_frame, debug_line_pane_id)
-            };
-
-            let Some(active_stack_frame) = active_stack_frame else {
-                self.clear_row_highlights::<ActiveDebugLine>();
-                return None;
-            };
-
-            if let Some(debug_line_pane_id) = debug_line_pane_id {
-                if let Some(workspace) = self
-                    .workspace
-                    .as_ref()
-                    .and_then(|(workspace, _)| workspace.upgrade())
-                {
-                    let editor_pane_id = workspace
-                        .read(cx)
-                        .pane_for_item_id(cx.entity_id())
-                        .map(|pane| pane.entity_id());
-
-                    if editor_pane_id.is_some_and(|id| id != debug_line_pane_id) {
-                        self.clear_row_highlights::<ActiveDebugLine>();
-                        return None;
-                    }
-                }
-            }
-
-            let position = active_stack_frame.position;
-
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            let multibuffer_anchor = snapshot.anchor_in_excerpt(position)?;
-
-            self.clear_row_highlights::<ActiveDebugLine>();
-
-            self.go_to_line::<ActiveDebugLine>(
-                multibuffer_anchor,
-                Some(cx.theme().colors().editor_debugger_active_line_background),
-                window,
-                cx,
-            );
-
-            cx.notify();
-
-            Some(())
-        })
-        .is_some()
-    }
-
     pub(super) fn open_git_blame_commit(
         &mut self,
         _: &OpenGitBlameCommit,
@@ -2647,7 +2455,7 @@ impl Editor {
             }?;
 
             let buffer_range = range.to_point(buffer_snapshot);
-            let buffer = multi_buffer.buffer(buffer_snapshot.remote_id()).unwrap();
+            let buffer = multi_buffer.buffer(buffer_snapshot.remote_id())?;
 
             let Some(buffer_diff) = multi_buffer.diff_for(buffer_snapshot.remote_id()) else {
                 return Some((buffer, buffer_range.start.row..buffer_range.end.row));
