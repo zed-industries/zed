@@ -13,10 +13,7 @@ use gpui::{
 use language::{
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
     language_settings::{AllLanguageSettings, LineEndingSetting},
-    proto::{
-        deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
-        split_operations,
-    },
+    proto::{deserialize_line_ending, deserialize_version, serialize_version, split_operations},
 };
 use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
@@ -93,6 +90,31 @@ pub enum BufferStoreEvent {
         buffer: Entity<Buffer>,
         old_file: Option<Arc<dyn language::File>>,
     },
+    /// Emitted by inbound rpc handlers after applying a peer-originated
+    /// `UpdateBufferFile`. Listeners (`Project`, `HeadlessProject`) forward to
+    /// other peers by re-broadcasting the proto.
+    UpdateBufferFileForwarded {
+        buffer_id: BufferId,
+        file: Option<rpc::proto::File>,
+    },
+    /// Emitted by inbound rpc handlers after applying a peer-originated
+    /// `BufferSaved`. Listeners forward to other peers.
+    BufferSavedForwarded {
+        buffer_id: BufferId,
+        version: Vec<rpc::proto::VectorClockEntry>,
+        mtime: Option<rpc::proto::Timestamp>,
+    },
+    /// Emitted by inbound rpc handlers after applying a peer-originated
+    /// `BufferReloaded`. Listeners forward to other peers.
+    BufferReloadedForwarded {
+        buffer_id: BufferId,
+        version: Vec<rpc::proto::VectorClockEntry>,
+        mtime: Option<rpc::proto::Timestamp>,
+        line_ending: i32,
+    },
+    /// Emitted by `on_buffer_event` when the local buffer reloads. Listeners
+    /// broadcast `BufferReloaded` downstream when shared.
+    LocalBufferReloaded(Entity<Buffer>),
 }
 
 #[derive(Default, Debug, Clone)]
@@ -1154,19 +1176,7 @@ impl BufferStore {
                 self.buffer_changed_file(buffer, cx);
             }
             BufferEvent::Reloaded => {
-                let Some((downstream_client, project_id)) = self.downstream_client.as_ref() else {
-                    return;
-                };
-                let buffer = buffer.read(cx);
-                downstream_client
-                    .send(proto::BufferReloaded {
-                        project_id: *project_id,
-                        buffer_id: buffer.remote_id().to_proto(),
-                        version: serialize_version(&buffer.version()),
-                        mtime: buffer.saved_mtime().map(|t| t.into()),
-                        line_ending: serialize_line_ending(buffer.line_ending()) as i32,
-                    })
-                    .log_err();
+                cx.emit(BufferStoreEvent::LocalBufferReloaded(buffer));
             }
             BufferEvent::LanguageChanged(_) => {}
             _ => {}
@@ -1359,15 +1369,10 @@ impl BufferStore {
                     cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
                 }
             }
-            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
-                downstream_client
-                    .send(proto::UpdateBufferFile {
-                        project_id: *project_id,
-                        buffer_id: buffer_id.into(),
-                        file: envelope.payload.file,
-                    })
-                    .log_err();
-            }
+            cx.emit(BufferStoreEvent::UpdateBufferFileForwarded {
+                buffer_id,
+                file: envelope.payload.file,
+            });
             Ok(())
         })
     }
@@ -1378,15 +1383,8 @@ impl BufferStore {
         mut cx: AsyncApp,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let (buffer, project_id) = this.read_with(&cx, |this, _| {
-            anyhow::Ok((
-                this.get_existing(buffer_id)?,
-                this.downstream_client
-                    .as_ref()
-                    .map(|(_, project_id)| *project_id)
-                    .context("project is not shared")?,
-            ))
-        })?;
+        let project_id = envelope.payload.project_id;
+        let buffer = this.read_with(&cx, |this, _| this.get_existing(buffer_id))?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
@@ -1455,16 +1453,11 @@ impl BufferStore {
                 });
             }
 
-            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
-                downstream_client
-                    .send(proto::BufferSaved {
-                        project_id: *project_id,
-                        buffer_id: buffer_id.into(),
-                        mtime: envelope.payload.mtime,
-                        version: envelope.payload.version,
-                    })
-                    .log_err();
-            }
+            cx.emit(BufferStoreEvent::BufferSavedForwarded {
+                buffer_id,
+                version: envelope.payload.version,
+                mtime: envelope.payload.mtime,
+            });
         });
         Ok(())
     }
@@ -1488,17 +1481,12 @@ impl BufferStore {
                 });
             }
 
-            if let Some((downstream_client, project_id)) = this.downstream_client.as_ref() {
-                downstream_client
-                    .send(proto::BufferReloaded {
-                        project_id: *project_id,
-                        buffer_id: buffer_id.into(),
-                        mtime: envelope.payload.mtime,
-                        version: envelope.payload.version,
-                        line_ending: envelope.payload.line_ending,
-                    })
-                    .log_err();
-            }
+            cx.emit(BufferStoreEvent::BufferReloadedForwarded {
+                buffer_id,
+                version: envelope.payload.version,
+                mtime: envelope.payload.mtime,
+                line_ending: envelope.payload.line_ending,
+            });
         });
         Ok(())
     }

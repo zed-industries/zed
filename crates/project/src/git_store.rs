@@ -1811,6 +1811,10 @@ impl GitStore {
                     .detach();
                 }
             }
+            BufferStoreEvent::UpdateBufferFileForwarded { .. }
+            | BufferStoreEvent::BufferSavedForwarded { .. }
+            | BufferStoreEvent::BufferReloadedForwarded { .. }
+            | BufferStoreEvent::LocalBufferReloaded(_) => {}
         }
     }
 

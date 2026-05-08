@@ -3462,6 +3462,67 @@ impl Project {
                         .log_err();
                 }
             }
+            BufferStoreEvent::LocalBufferReloaded(buffer) => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    let buffer = buffer.read(cx);
+                    self.collab_client
+                        .send(proto::BufferReloaded {
+                            project_id: *remote_id,
+                            buffer_id: buffer.remote_id().to_proto(),
+                            version: language::proto::serialize_version(&buffer.version()),
+                            mtime: buffer.saved_mtime().map(|t| t.into()),
+                            line_ending: language::proto::serialize_line_ending(
+                                buffer.line_ending(),
+                            ) as i32,
+                        })
+                        .log_err();
+                }
+            }
+            BufferStoreEvent::UpdateBufferFileForwarded { buffer_id, file } => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::UpdateBufferFile {
+                            project_id: *remote_id,
+                            buffer_id: buffer_id.to_proto(),
+                            file: file.clone(),
+                        })
+                        .log_err();
+                }
+            }
+            BufferStoreEvent::BufferSavedForwarded {
+                buffer_id,
+                version,
+                mtime,
+            } => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::BufferSaved {
+                            project_id: *remote_id,
+                            buffer_id: buffer_id.to_proto(),
+                            version: version.clone(),
+                            mtime: mtime.clone(),
+                        })
+                        .log_err();
+                }
+            }
+            BufferStoreEvent::BufferReloadedForwarded {
+                buffer_id,
+                version,
+                mtime,
+                line_ending,
+            } => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::BufferReloaded {
+                            project_id: *remote_id,
+                            buffer_id: buffer_id.to_proto(),
+                            version: version.clone(),
+                            mtime: mtime.clone(),
+                            line_ending: *line_ending,
+                        })
+                        .log_err();
+                }
+            }
             _ => {}
         }
     }

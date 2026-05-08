@@ -255,12 +255,8 @@ impl HeadlessProject {
             languages.clone(),
         );
 
-        cx.subscribe(&buffer_store, |_this, _buffer_store, event, cx| {
-            if let BufferStoreEvent::BufferAdded(buffer) = event {
-                cx.subscribe(buffer, Self::on_buffer_event).detach();
-            }
-        })
-        .detach();
+        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+            .detach();
 
         let extensions = HeadlessExtensionStore::new(
             fs.clone(),
@@ -401,6 +397,72 @@ impl HeadlessProject {
                     outside_worktree: Some(path.is_outside_worktree()),
                 })
                 .log_err();
+        }
+    }
+
+    fn on_buffer_store_event(
+        &mut self,
+        _: Entity<BufferStore>,
+        event: &BufferStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                cx.subscribe(buffer, Self::on_buffer_event).detach();
+            }
+            BufferStoreEvent::LocalBufferReloaded(buffer) => {
+                let buffer = buffer.read(cx);
+                self.session
+                    .send(rpc::proto::BufferReloaded {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer.remote_id().to_proto(),
+                        version: language::proto::serialize_version(&buffer.version()),
+                        mtime: buffer.saved_mtime().map(|t| t.into()),
+                        line_ending: language::proto::serialize_line_ending(buffer.line_ending())
+                            as i32,
+                    })
+                    .log_err();
+            }
+            BufferStoreEvent::UpdateBufferFileForwarded { buffer_id, file } => {
+                self.session
+                    .send(rpc::proto::UpdateBufferFile {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer_id.to_proto(),
+                        file: file.clone(),
+                    })
+                    .log_err();
+            }
+            BufferStoreEvent::BufferSavedForwarded {
+                buffer_id,
+                version,
+                mtime,
+            } => {
+                self.session
+                    .send(rpc::proto::BufferSaved {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer_id.to_proto(),
+                        version: version.clone(),
+                        mtime: mtime.clone(),
+                    })
+                    .log_err();
+            }
+            BufferStoreEvent::BufferReloadedForwarded {
+                buffer_id,
+                version,
+                mtime,
+                line_ending,
+            } => {
+                self.session
+                    .send(rpc::proto::BufferReloaded {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer_id.to_proto(),
+                        version: version.clone(),
+                        mtime: mtime.clone(),
+                        line_ending: *line_ending,
+                    })
+                    .log_err();
+            }
+            _ => {}
         }
     }
 
