@@ -60,7 +60,7 @@ You can assign distinct and specific models for the following AI-powered feature
 }
 ```
 
-> If a custom model isn't set for one of these features, they automatically fall back to using the default model. Subagents are the exception: when `subagent_model` isn't set, subagents inherit the model and model settings from their parent thread.
+> If a custom model isn't set for one of these features, they automatically fall back to using the default model.
 
 ### Alternative Models for Inline Assists {#alternative-assists}
 
