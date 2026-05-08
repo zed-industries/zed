@@ -58,23 +58,19 @@ pub enum Model {
 
     #[serde(rename = "magistral-medium-latest", alias = "magistral-medium-latest")]
     MagistralMediumLatest,
-    #[serde(rename = "magistral-small-latest", alias = "magistral-small-latest")]
-    MagistralSmallLatest,
 
     #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
     OpenMistralNemo,
-    #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
-    OpenCodestralMamba,
 
     #[serde(rename = "devstral-medium-latest", alias = "devstral-medium-latest")]
     DevstralMediumLatest,
-    #[serde(rename = "devstral-small-latest", alias = "devstral-small-latest")]
-    DevstralSmallLatest,
 
-    #[serde(rename = "pixtral-12b-latest", alias = "pixtral-12b-latest")]
-    Pixtral12BLatest,
-    #[serde(rename = "pixtral-large-latest", alias = "pixtral-large-latest")]
-    PixtralLargeLatest,
+    #[serde(rename = "ministral-3b-latest", alias = "ministral-3b-latest")]
+    Ministral3bLatest,
+    #[serde(rename = "ministral-8b-latest", alias = "ministral-8b-latest")]
+    Ministral8bLatest,
+    #[serde(rename = "ministral-14b-latest", alias = "ministral-14b-latest")]
+    Ministral14bLatest,
 
     #[serde(rename = "custom")]
     Custom {
@@ -102,13 +98,8 @@ impl Model {
             "mistral-medium-latest" => Ok(Self::MistralMediumLatest),
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
             "magistral-medium-latest" => Ok(Self::MagistralMediumLatest),
-            "magistral-small-latest" => Ok(Self::MagistralSmallLatest),
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
-            "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
             "devstral-medium-latest" => Ok(Self::DevstralMediumLatest),
-            "devstral-small-latest" => Ok(Self::DevstralSmallLatest),
-            "pixtral-12b-latest" => Ok(Self::Pixtral12BLatest),
-            "pixtral-large-latest" => Ok(Self::PixtralLargeLatest),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -120,13 +111,11 @@ impl Model {
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::MagistralMediumLatest => "magistral-medium-latest",
-            Self::MagistralSmallLatest => "magistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
-            Self::OpenCodestralMamba => "open-codestral-mamba",
             Self::DevstralMediumLatest => "devstral-medium-latest",
-            Self::DevstralSmallLatest => "devstral-small-latest",
-            Self::Pixtral12BLatest => "pixtral-12b-latest",
-            Self::PixtralLargeLatest => "pixtral-large-latest",
+            Self::Ministral3bLatest => "ministral-3b-latest",
+            Self::Ministral8bLatest => "ministral-8b-latest",
+            Self::Ministral14bLatest => "ministral-14b-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -138,13 +127,11 @@ impl Model {
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::MagistralMediumLatest => "magistral-medium-latest",
-            Self::MagistralSmallLatest => "magistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
-            Self::OpenCodestralMamba => "open-codestral-mamba",
             Self::DevstralMediumLatest => "devstral-medium-latest",
-            Self::DevstralSmallLatest => "devstral-small-latest",
-            Self::Pixtral12BLatest => "pixtral-12b-latest",
-            Self::PixtralLargeLatest => "pixtral-large-latest",
+            Self::Ministral3bLatest => "ministral-3b-latest",
+            Self::Ministral8bLatest => "ministral-8b-latest",
+            Self::Ministral14bLatest => "ministral-14b-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -153,18 +140,16 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::CodestralLatest => 256000,
+            Self::CodestralLatest => 128000,
             Self::MistralLargeLatest => 256000,
             Self::MistralMediumLatest => 128000,
-            Self::MistralSmallLatest => 32000,
+            Self::MistralSmallLatest => 256000,
             Self::MagistralMediumLatest => 128000,
-            Self::MagistralSmallLatest => 128000,
-            Self::OpenMistralNemo => 131000,
-            Self::OpenCodestralMamba => 256000,
+            Self::OpenMistralNemo => 128000,
             Self::DevstralMediumLatest => 256000,
-            Self::DevstralSmallLatest => 256000,
-            Self::Pixtral12BLatest => 128000,
-            Self::PixtralLargeLatest => 128000,
+            Self::Ministral3bLatest => 256000,
+            Self::Ministral8bLatest => 256000,
+            Self::Ministral14bLatest => 256000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -185,31 +170,25 @@ impl Model {
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
             | Self::MagistralMediumLatest
-            | Self::MagistralSmallLatest
             | Self::OpenMistralNemo
-            | Self::OpenCodestralMamba
             | Self::DevstralMediumLatest
-            | Self::DevstralSmallLatest
-            | Self::Pixtral12BLatest
-            | Self::PixtralLargeLatest => true,
+            | Self::Ministral3bLatest
+            | Self::Ministral8bLatest
+            | Self::Ministral14bLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Pixtral12BLatest
-            | Self::PixtralLargeLatest
+            Self::MistralLargeLatest
             | Self::MistralMediumLatest
-            | Self::MistralSmallLatest => true,
-            Self::CodestralLatest
-            | Self::MistralLargeLatest
+            | Self::MistralSmallLatest
             | Self::MagistralMediumLatest
-            | Self::MagistralSmallLatest
-            | Self::OpenMistralNemo
-            | Self::OpenCodestralMamba
-            | Self::DevstralMediumLatest
-            | Self::DevstralSmallLatest => false,
+            | Self::Ministral3bLatest
+            | Self::Ministral8bLatest
+            | Self::Ministral14bLatest => true,
+            Self::CodestralLatest | Self::OpenMistralNemo | Self::DevstralMediumLatest => false,
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
@@ -218,7 +197,7 @@ impl Model {
 
     pub fn supports_thinking(&self) -> bool {
         match self {
-            Self::MagistralMediumLatest | Self::MagistralSmallLatest => true,
+            Self::MagistralMediumLatest => true,
             Self::Custom {
                 supports_thinking, ..
             } => supports_thinking.unwrap_or(false),

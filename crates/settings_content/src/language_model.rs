@@ -21,7 +21,6 @@ pub struct AllLanguageModelSettingsContent {
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
-    pub vercel: Option<VercelSettingsContent>,
     pub vercel_ai_gateway: Option<VercelAiGatewaySettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
     #[serde(rename = "zed.dev")]
@@ -182,6 +181,9 @@ pub struct OpenCodeAvailableModel {
     pub custom_model_api_url: Option<String>,
     /// Supported reasoning effort levels, for example `["low", "medium", "high"].
     pub reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
+    /// When using OpenAiChat protocol, whether thinking tokens are sent as a dedicated `reasoning_content` field or inline in message text.
+    #[serde(default)]
+    pub interleaved_reasoning: bool,
 }
 
 #[with_fallible_options]
@@ -328,23 +330,6 @@ impl Default for OpenAiCompatibleModelCapabilities {
             interleaved_reasoning: false,
         }
     }
-}
-
-#[with_fallible_options]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
-pub struct VercelSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<VercelAvailableModel>>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct VercelAvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
 }
 
 #[with_fallible_options]

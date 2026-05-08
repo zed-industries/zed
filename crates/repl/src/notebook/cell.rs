@@ -203,12 +203,14 @@ impl Cell {
                 let outputs = convert_outputs(outputs, window, cx);
 
                 Cell::Code(cx.new(|cx| {
-                    CodeCell::load(
+                    CodeCell::new(
+                        CellSource::Existing {
+                            execution_count: *execution_count,
+                            outputs,
+                        },
                         id.clone(),
                         metadata.clone(),
-                        *execution_count,
                         text,
-                        outputs,
                         notebook_language,
                         window,
                         cx,
@@ -430,6 +432,7 @@ impl MarkdownCell {
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
             editor.disable_mouse_wheel_zoom();
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor
         });
 
@@ -659,8 +662,31 @@ pub struct CodeCell {
 
 impl EventEmitter<CellEvent> for CodeCell {}
 
+pub(super) enum CellSource {
+    /// Crate a new empty cell
+    None,
+    /// Backed by an existing notebook cell
+    Existing {
+        execution_count: Option<i32>,
+        outputs: Vec<Output>,
+    },
+}
+
+impl CellSource {
+    fn into_outputs(self) -> (Option<i32>, Vec<Output>) {
+        match self {
+            CellSource::Existing {
+                execution_count,
+                outputs,
+            } => (execution_count, outputs),
+            CellSource::None => Default::default(),
+        }
+    }
+}
+
 impl CodeCell {
-    pub fn new(
+    pub(super) fn new(
+        cell_source: CellSource,
         id: CellId,
         metadata: CellMetadata,
         source: String,
@@ -695,6 +721,7 @@ impl CodeCell {
 
             editor.disable_mouse_wheel_zoom();
             editor.disable_scrollbars_and_minimap(window, cx);
+            editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
@@ -708,13 +735,15 @@ impl CodeCell {
             });
         });
 
+        let (execution_count, outputs) = cell_source.into_outputs();
+
         Self {
             id,
             metadata,
-            execution_count: None,
+            execution_count,
             source,
             editor,
-            outputs: Vec::new(),
+            outputs,
             selected: false,
             cell_position: None,
             execution_start_time: None,
@@ -734,73 +763,6 @@ impl CodeCell {
                 }
             });
         });
-    }
-
-    /// Load a code cell from notebook file data, including existing outputs and execution count
-    pub fn load(
-        id: CellId,
-        metadata: CellMetadata,
-        execution_count: Option<i32>,
-        source: String,
-        outputs: Vec<Output>,
-        notebook_language: Shared<Task<Option<Arc<Language>>>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let buffer = cx.new(|cx| Buffer::local(source.clone(), cx));
-        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-
-        let editor_view = cx.new(|cx| {
-            let mut editor = Editor::new(
-                EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sizing_behavior: SizingBehavior::SizeByContent,
-                },
-                multi_buffer,
-                None,
-                window,
-                cx,
-            );
-
-            let theme = ThemeSettings::get_global(cx);
-            let refinement = TextStyleRefinement {
-                font_family: Some(theme.buffer_font.family.clone()),
-                font_size: Some(theme.buffer_font_size(cx).into()),
-                color: Some(cx.theme().colors().editor_foreground),
-                background_color: Some(gpui::transparent_black()),
-                ..Default::default()
-            };
-
-            editor.disable_mouse_wheel_zoom();
-            editor.set_text(source.clone(), window, cx);
-            editor.set_show_gutter(false, cx);
-            editor.set_text_style_refinement(refinement);
-            editor.set_use_modal_editing(true);
-            editor
-        });
-
-        let language_task = cx.spawn_in(window, async move |_this, cx| {
-            let language = notebook_language.await;
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_language(language.clone(), cx);
-            });
-        });
-
-        Self {
-            id,
-            metadata,
-            execution_count,
-            source,
-            editor: editor_view,
-            outputs,
-            selected: false,
-            cell_position: None,
-            execution_start_time: None,
-            execution_duration: None,
-            is_executing: false,
-            _language_task: language_task,
-        }
     }
 
     pub fn editor(&self) -> &Entity<editor::Editor> {
