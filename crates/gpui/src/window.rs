@@ -5801,7 +5801,7 @@ impl From<Uuid> for ElementId {
 
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
-        ElementId::NamedInteger(SharedString::new_static(name), id as u64)
+        ElementId::NamedInteger(SharedString::new_static(name), u64::from(id))
     }
 }
 
