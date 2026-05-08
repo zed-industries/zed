@@ -152,7 +152,7 @@ impl CloudApiClient {
             .await
             .map_err(|e| ClientApiError::InvalidResponse(e.into()))?;
 
-        Ok(serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))?)
+        serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))
     }
 
     pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
@@ -236,7 +236,7 @@ impl CloudApiClient {
             .await
             .map_err(|e| ClientApiError::InvalidResponse(e.into()))?;
 
-        Ok(serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))?)
+        serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))
     }
 
     pub async fn validate_credentials(&self, user_id: u32, access_token: &str) -> Result<bool> {
