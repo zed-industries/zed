@@ -1670,9 +1670,7 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| {
-                    thread.set_profile(profile_id.clone(), cx);
-                })
+                .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
                 .ok();
         }
     }
