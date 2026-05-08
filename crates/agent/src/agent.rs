@@ -373,14 +373,7 @@ impl NativeAgent {
             .await;
 
         while let Some(changed_paths) = events.next().await {
-            let skill_changed = changed_paths.iter().any(|event| {
-                event
-                    .path
-                    .file_name()
-                    .is_some_and(|name| name == agent_skills::SKILL_FILE_NAME)
-            });
-
-            if !skill_changed {
+            if changed_paths.is_empty() {
                 continue;
             }
 
