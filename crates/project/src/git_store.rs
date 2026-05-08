@@ -479,7 +479,10 @@ pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
     /// Bool is true when the repository that's updated is the active repository
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
-    RepositoryAdded,
+    /// Fired when a repository is added to the host store. The id lets
+    /// `Project` decide ownership against `self.worktrees` before
+    /// claiming the repository in its per-project view.
+    RepositoryAdded(RepositoryId),
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
@@ -1567,7 +1570,7 @@ impl GitStore {
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
                 self.repositories.insert(id, repo);
                 self.worktree_ids.insert(id, HashSet::from([worktree_id]));
-                cx.emit(GitStoreEvent::RepositoryAdded);
+                cx.emit(GitStoreEvent::RepositoryAdded(id));
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                     id
@@ -1787,6 +1790,16 @@ impl GitStore {
         &self.repositories
     }
 
+    /// Returns the set of worktree ids that contain the given repository.
+    /// Used by `Project` to decide whether to claim a repository in its
+    /// per-project owned set when the host store fires `RepositoryAdded`.
+    pub fn worktree_ids_for_repository(
+        &self,
+        repository_id: RepositoryId,
+    ) -> Option<&HashSet<WorktreeId>> {
+        self.worktree_ids.get(&repository_id)
+    }
+
     /// Returns the main repository working directory for the given worktree.
     /// For normal checkouts this equals the worktree's own path. For linked
     /// worktrees it points back to the main worktree, if one exists. Linked
@@ -1981,7 +1994,7 @@ impl GitStore {
                     )
                 });
                 repo_subscription = Some(cx.subscribe(&repo, Self::on_repository_event));
-                cx.emit(GitStoreEvent::RepositoryAdded);
+                cx.emit(GitStoreEvent::RepositoryAdded(id));
                 repo
             });
             this._subscriptions.extend(repo_subscription);

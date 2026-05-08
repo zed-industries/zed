@@ -33,7 +33,7 @@ pub fn classify_worktrees(
     project: &Project,
     cx: &gpui::App,
 ) -> (Vec<Entity<Repository>>, Vec<PathBuf>) {
-    let repositories = project.repositories(cx).clone();
+    let repositories = project.repositories(cx);
     let mut git_repos: Vec<Entity<Repository>> = Vec::new();
     let mut non_git_paths: Vec<PathBuf> = Vec::new();
     let mut seen_repo_ids = HashSet::default();
@@ -259,7 +259,8 @@ fn maybe_propagate_worktree_trust(
         let source_is_trusted = source_workspace
             .upgrade()
             .map(|workspace| {
-                let source_worktree_store = workspace.read(cx).project().read(cx).worktree_store(cx);
+                let source_worktree_store =
+                    workspace.read(cx).project().read(cx).worktree_store(cx);
                 !trusted_store
                     .read(cx)
                     .has_restricted_worktrees(&source_worktree_store, cx)

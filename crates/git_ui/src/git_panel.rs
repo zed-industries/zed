@@ -796,7 +796,7 @@ impl GitPanel {
                         RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
                         true,
                     )
-                    | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::RepositoryAdded(_)
                     | GitStoreEvent::RepositoryRemoved(_)
                     | GitStoreEvent::GlobalConfigurationUpdated
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {

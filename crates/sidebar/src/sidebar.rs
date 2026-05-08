@@ -314,13 +314,16 @@ fn root_repository_snapshots(
 ) -> impl Iterator<Item = project::git_store::RepositorySnapshot> {
     let path_list = workspace_path_list(workspace, cx);
     let project = workspace.read(cx).project().read(cx);
-    project.repositories(cx).values().filter_map(move |repo| {
-        let snapshot = repo.read(cx).snapshot();
-        let is_root = path_list
+    let snapshots: Vec<project::git_store::RepositorySnapshot> = project
+        .repositories(cx)
+        .into_values()
+        .map(|repo| repo.read(cx).snapshot())
+        .collect();
+    snapshots.into_iter().filter(move |snapshot| {
+        path_list
             .paths()
             .iter()
-            .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref());
-        is_root.then_some(snapshot)
+            .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref())
     })
 }
 

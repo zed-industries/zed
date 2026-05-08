@@ -276,6 +276,14 @@ pub struct Project {
     /// that, in Phase 2 sharing, sibling-Project events for buffers we
     /// don't own become no-ops without changing the host store.
     buffers: HashSet<BufferId>,
+    /// Per-project view of which git repositories (by id) this Project
+    /// considers "its own" out of the (potentially shared) host
+    /// `GitStore`. A repository is claimed when the host store fires
+    /// `RepositoryAdded` and at least one of the repository's worktrees
+    /// is in `self.worktrees`. Pruned by `RepositoryRemoved`. Phase 2
+    /// will use this set to filter `Project::repositories(cx)` and the
+    /// downstream-broadcast paths in `on_git_store_event`.
+    repositories: HashSet<RepositoryId>,
     /// Drives the context server maintain loop on this Project's behalf.
     /// Set when a refresh is in flight; cleared when the spawned task
     /// completes. Lives on `Project` (not `ContextServerStore`) so that
@@ -1315,6 +1323,7 @@ impl Project {
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
+                repositories: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             }
@@ -1431,6 +1440,7 @@ impl Project {
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
+                repositories: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -1682,6 +1692,7 @@ impl Project {
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
+                repositories: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -3686,15 +3697,33 @@ impl Project {
 
     fn on_git_store_event(
         &mut self,
-        _: Entity<GitStore>,
+        git_store: Entity<GitStore>,
         event: &GitStoreEvent,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
+        // First, ownership tracking. These run regardless of whether
+        // we're collab-shared.
+        match event {
+            GitStoreEvent::RepositoryAdded(id) => {
+                if self.repository_belongs_to_us(*id, &git_store, cx) {
+                    self.repositories.insert(*id);
+                }
+            }
+            GitStoreEvent::RepositoryRemoved(id) => {
+                self.repositories.remove(id);
+            }
+            _ => {}
+        }
+
+        // Downstream-broadcast paths only run when we're host-sharing.
         let ProjectClientState::Shared { remote_id } = self.client_state else {
             return;
         };
         match event {
             GitStoreEvent::RepositorySnapshotForDownstream(snapshot) => {
+                if !self.repositories.contains(&snapshot.id) {
+                    return;
+                }
                 let update =
                     if let Some(old) = self.git_repository_snapshots_for_peer.get(&snapshot.id) {
                         snapshot.build_update(old, remote_id)
@@ -3708,6 +3737,12 @@ impl Project {
                     .insert(snapshot.id, snapshot.clone());
             }
             GitStoreEvent::RepositorySnapshotRemovedForDownstream(id) => {
+                if !self.git_repository_snapshots_for_peer.contains_key(id) {
+                    // Either we never owned this repo or already cleaned
+                    // up; in either case skip the downstream send to
+                    // avoid duplicate broadcasts in Phase 2 sharing.
+                    return;
+                }
                 self.collab_client
                     .send(proto::RemoveRepository {
                         project_id: remote_id,
@@ -3717,22 +3752,65 @@ impl Project {
                 self.git_repository_snapshots_for_peer.remove(id);
             }
             GitStoreEvent::ForwardRepositoryUpdate(update) => {
+                let id = RepositoryId::from_proto(update.id);
+                if !self.repositories.contains(&id) {
+                    return;
+                }
                 let mut update = update.clone();
                 update.project_id = remote_id;
                 self.collab_client.send(update).log_err();
             }
             GitStoreEvent::ForwardRepositoryRemove(update) => {
+                let id = RepositoryId::from_proto(update.id);
+                if !self.repositories.contains(&id) {
+                    return;
+                }
                 let mut update = update.clone();
                 update.project_id = remote_id;
                 self.collab_client.send(update).log_err();
             }
             GitStoreEvent::DiffBasesUpdatedForDownstream(update) => {
+                // Diff-base updates are buffer-keyed; gate on this
+                // Project owning the buffer.
+                if let Ok(buffer_id) = BufferId::new(update.buffer_id) {
+                    if !self.buffers.contains(&buffer_id) {
+                        return;
+                    }
+                }
                 let mut update = update.clone();
                 update.project_id = remote_id;
                 self.collab_client.send(update).log_err();
             }
             _ => {}
         }
+    }
+
+    /// Returns true if any of the given repository's worktrees are owned
+    /// by this Project. Used by `on_git_store_event` to decide whether
+    /// to claim a repository when the host store fires `RepositoryAdded`.
+    ///
+    /// When the host store has no worktree associations recorded for
+    /// the repository (currently the case for remote/peer-driven
+    /// repositories — `handle_update_repository` doesn't populate
+    /// `worktree_ids`), defaults to claiming. Remote projects are
+    /// effectively single-tenant (one Project per remote endpoint), so
+    /// this preserves Phase 1 behavior. Phase 2 sharing on remote
+    /// endpoints would need to refine this rule.
+    fn repository_belongs_to_us(
+        &self,
+        repository_id: RepositoryId,
+        git_store: &Entity<GitStore>,
+        cx: &App,
+    ) -> bool {
+        let Some(worktree_ids) = git_store
+            .read(cx)
+            .worktree_ids_for_repository(repository_id)
+        else {
+            return true;
+        };
+        let our_worktree_ids: HashSet<WorktreeId> =
+            self.worktrees(cx).map(|w| w.read(cx).id()).collect();
+        worktree_ids.iter().any(|id| our_worktree_ids.contains(id))
     }
 
     fn on_breakpoint_store_event(
@@ -7222,8 +7300,17 @@ impl Project {
         self.git_store(cx).read(cx).active_repository()
     }
 
-    pub fn repositories<'a>(&self, cx: &'a App) -> &'a HashMap<RepositoryId, Entity<Repository>> {
-        self.git_store(cx).read(cx).repositories()
+    pub fn repositories(&self, cx: &App) -> HashMap<RepositoryId, Entity<Repository>> {
+        // Filter the host store's repository map through `self.repositories`
+        // so a shared GitStore in Phase 2 doesn't leak sibling-Project
+        // repositories through this accessor.
+        let host = self.git_store(cx);
+        let host = host.read(cx);
+        let host_repos = host.repositories();
+        self.repositories
+            .iter()
+            .filter_map(|id| host_repos.get(id).map(|repo| (*id, repo.clone())))
+            .collect()
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
