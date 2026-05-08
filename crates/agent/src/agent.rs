@@ -413,6 +413,14 @@ impl NativeAgent {
                     break;
                 }
             }
+
+            // Guard against tight loops if `fs.watch` immediately closes its
+            // stream (e.g. when the watched directory is rapidly
+            // created/destroyed): without a delay before rebinding, we'd spin
+            // as fast as the executor will let us.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
         }
     }
 
