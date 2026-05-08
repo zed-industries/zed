@@ -644,6 +644,16 @@ impl NativeAgent {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         while needs_refresh.changed().await.is_ok() {
+            // Debounce bursts of refresh notifications. The watch::Receiver
+            // coalesces successive `send(())` calls between `.changed().await`
+            // calls, but if a refresh is in flight (e.g. waiting on
+            // `scan_complete()`) and another fires, the second would otherwise
+            // run immediately after the first completes. Sleeping briefly
+            // here lets the next loop iteration's `changed()` pick up any
+            // additional notifications that arrived during the rebuild.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(100))
+                .await;
             let task = this.update(cx, |this, cx| {
                 let state = this
                     .projects
@@ -667,6 +677,20 @@ impl NativeAgent {
                 })
                 .collect();
             this.update(cx, |this, cx| {
+                // Only emit SkillLoadingErrorsUpdated when the error list
+                // actually changed. Refreshes happen frequently (prompt-store
+                // updates, rules-file edits, worktree events, trust-state
+                // changes), and re-emitting an unchanged list causes the UI
+                // to redisplay errors the user has already dismissed.
+                // Transitions from non-empty to empty still count as a change,
+                // so subscribers continue to receive an empty list to clear
+                // previously-displayed errors when they get resolved.
+                let errors_changed = this
+                    .projects
+                    .get(&project_id)
+                    .map(|state| state.skill_loading_errors != skill_loading_errors)
+                    .unwrap_or(true);
+
                 if let Some(state) = this.projects.get_mut(&project_id) {
                     state.skills = skills;
                     state.skill_loading_errors = skill_loading_errors.clone();
@@ -676,14 +700,17 @@ impl NativeAgent {
                             *current_project_context = project_context;
                         });
                 }
-                // Always emit, even with an empty list, so subscribers can
-                // clear previously-displayed errors when they get resolved.
-                cx.emit(SkillLoadingErrorsUpdated {
-                    project_id,
-                    errors: skill_loading_errors,
-                });
+                if errors_changed {
+                    cx.emit(SkillLoadingErrorsUpdated {
+                        project_id,
+                        errors: skill_loading_errors,
+                    });
+                }
                 // Skills appear in the slash-command list, so a change in
                 // the loaded skills needs to be pushed out to active sessions.
+                // This runs unconditionally because MCP prompts (also part of
+                // the available commands) can change without affecting the
+                // skill error list.
                 this.update_available_commands_for_project(project_id, cx);
             })?;
         }
@@ -3005,6 +3032,10 @@ mod internal_tests {
             })
             .await
             .unwrap();
+        // `maintain_project_context` debounces refresh notifications by 100ms;
+        // advance the simulated clock past the debounce so the rebuild runs.
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         let thread = agent.read_with(cx, |agent, _cx| {
@@ -3022,6 +3053,8 @@ mod internal_tests {
             .update(cx, |project, cx| project.create_worktree("/a", true, cx))
             .await
             .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
         agent.read_with(cx, |agent, cx| {
             let project_id = project.entity_id();
@@ -3040,6 +3073,8 @@ mod internal_tests {
 
         // Creating `/a/.rules` updates the project context.
         fs.insert_file("/a/.rules", Vec::new()).await;
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
         agent.read_with(cx, |agent, cx| {
             let project_id = project.entity_id();
@@ -3098,6 +3133,8 @@ mod internal_tests {
             })
             .await
             .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         // The pre-existing skill should be loaded into the project state.
@@ -3115,6 +3152,8 @@ mod internal_tests {
         )
         .await
         .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, _cx| {
@@ -3153,6 +3192,8 @@ mod internal_tests {
             })
             .await
             .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         // No skills directory exists yet, so no skills should be loaded.
@@ -3174,6 +3215,8 @@ mod internal_tests {
             b"---\nname: late-skill\ndescription: Created after startup\n---\n\nbody".to_vec(),
         )
         .await;
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, _cx| {
@@ -3220,6 +3263,8 @@ mod internal_tests {
             })
             .await
             .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         let project_id = project.entity_id();
@@ -3258,6 +3303,8 @@ mod internal_tests {
             b"---\nname: my-skill\ndescription: Created after session\n---\n\nbody".to_vec(),
         )
         .await;
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         // `state.skills` reflects the new skill (the watcher ran).
@@ -3339,6 +3386,8 @@ mod internal_tests {
             })
             .await
             .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         let project_id = project.entity_id();
@@ -3425,6 +3474,8 @@ mod internal_tests {
             })
             .await
             .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         let project_id = project.entity_id();
@@ -3466,6 +3517,8 @@ mod internal_tests {
                 );
             });
         });
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, cx| {
