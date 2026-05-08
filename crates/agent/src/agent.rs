@@ -3360,7 +3360,7 @@ mod internal_tests {
             let catalog: Vec<&str> = state
                 .project_context
                 .read(cx)
-                .skills
+                .skills()
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect();
