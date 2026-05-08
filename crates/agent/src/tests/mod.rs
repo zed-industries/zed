@@ -5496,48 +5496,6 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
 }
 
 #[gpui::test]
-async fn test_subagent_inherits_skills(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    // Skill inheritance is no longer a property of the `Thread` itself:
-    // production threads register a `SkillTool` whose `SkillsLookup` reads
-    // `state.skills` for the project at invocation time, so a subagent
-    // sharing a `project_id` with its parent automatically sees the same
-    // skills (whether they were present at thread construction or added
-    // later). What this test still verifies is the construction path:
-    // that a subagent thread can be built from a parent without taking a
-    // skills snapshot.
-    let parent_thread = cx.new(|cx| {
-        Thread::new(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            Some(model.clone()),
-            cx,
-        )
-    });
-
-    let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, cx));
-    subagent_thread.read_with(cx, |subagent_thread, _cx| {
-        assert!(subagent_thread.is_subagent());
-    });
-}
-
-#[gpui::test]
 async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppContext) {
     init_test(cx);
 

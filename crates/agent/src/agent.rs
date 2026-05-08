@@ -3341,6 +3341,120 @@ mod internal_tests {
         });
     }
 
+    /// Subagents must inherit access to the same skills as their parent.
+    /// Production wires this up in `NativeThreadEnvironment::create_subagent_thread`,
+    /// which calls `agent.register_session(subagent, project_id, ...)` —
+    /// `register_session` is what installs the `SkillTool` on the thread
+    /// using a `SkillsLookup` keyed on `project_id`. Because the subagent
+    /// shares its parent's `project_id`, both threads end up resolving
+    /// skills through the same lookup against the same `state.skills`.
+    ///
+    /// This test exercises that production path directly: it creates a
+    /// parent session via the agent connection, builds a subagent thread
+    /// the same way `create_subagent_thread` does, and runs it through
+    /// `register_session`. It then asserts that the `SkillTool` is
+    /// registered on the subagent thread and that its lookup sees the
+    /// same skill the parent does.
+    #[gpui::test]
+    async fn test_subagent_skills_lookup_matches_parent(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let skill_dir = skills_dir.join("shared-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            &skill_dir.join("SKILL.md"),
+            b"---\nname: shared-skill\ndescription: A shared skill\n---\n\nbody".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        // Open a parent session through the connection, the same way
+        // production does. This triggers project-context refresh which
+        // populates `state.skills` for the project.
+        let connection = NativeAgentConnection(agent.clone());
+        let _parent_acp = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        // Skip the project-context refresh debounce — `cx.run_until_parked()`
+        // does not advance simulated time, so the watcher's debounce
+        // wouldn't fire without this.
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+
+        // Sanity check: the parent's lookup sees the skill.
+        let parent_lookup =
+            cx.update(|_cx| super::skills_lookup_for_project(agent.downgrade(), project_id));
+        cx.update(|cx| {
+            let parent_skills = parent_lookup.current(cx);
+            assert_eq!(parent_skills.len(), 1);
+            assert_eq!(parent_skills[0].name, "shared-skill");
+        });
+
+        // Grab the parent thread out of the agent's session map. This
+        // mirrors what `create_subagent_thread` does internally — it
+        // looks up the parent session by `parent_session_id` and reads
+        // its `project_id` to forward to `register_session`.
+        let (parent_thread, parent_project_id) = agent.read_with(cx, |agent, _cx| {
+            let session = agent
+                .sessions
+                .values()
+                .next()
+                .expect("parent session should exist");
+            (session.thread.clone(), session.project_id)
+        });
+        assert_eq!(parent_project_id, project_id);
+
+        // Build the subagent thread the same way
+        // `NativeThreadEnvironment::create_subagent_thread` does.
+        let subagent_thread = cx.update(|cx| cx.new(|cx| Thread::new_subagent(&parent_thread, cx)));
+
+        // Run the subagent through the production registration path.
+        // This is what installs the `SkillTool` on the thread.
+        let _subagent_acp = agent.update(cx, |agent, cx| {
+            agent.register_session(subagent_thread.clone(), parent_project_id, 1, cx)
+        });
+
+        // Verify the subagent thread has the `SkillTool` installed —
+        // without `register_session`, it would not.
+        subagent_thread.read_with(cx, |thread, _cx| {
+            assert!(thread.is_subagent());
+            assert!(
+                thread.has_registered_tool(SkillTool::NAME),
+                "subagent should have SkillTool registered after register_session"
+            );
+        });
+
+        // The subagent's `SkillTool` is wired to a `SkillsLookup` keyed
+        // on the same `project_id` the parent used, so it sees the same
+        // skill set. We check this by constructing an equivalent lookup
+        // against the same project_id and asserting it matches.
+        let subagent_lookup =
+            cx.update(|_cx| super::skills_lookup_for_project(agent.downgrade(), parent_project_id));
+        cx.update(|cx| {
+            let subagent_skills = subagent_lookup.current(cx);
+            assert_eq!(subagent_skills.len(), 1);
+            assert_eq!(subagent_skills[0].name, "shared-skill");
+        });
+    }
+
     #[gpui::test]
     async fn test_skills_appear_as_slash_commands(cx: &mut TestAppContext) {
         init_test(cx);
