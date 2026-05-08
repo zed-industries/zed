@@ -4941,6 +4941,7 @@ dependencies = [
  "component",
  "ctor",
  "editor",
+ "futures-lite 1.13.0",
  "gpui",
  "indoc",
  "itertools 0.14.0",
