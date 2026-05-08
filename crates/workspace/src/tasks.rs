@@ -184,7 +184,7 @@ impl Workspace {
                 return;
             };
 
-            let git_store = project.git_store().read(cx);
+            let git_store = project.git_store(cx).read(cx);
 
             let mut worktree_tasks = Vec::new();
             for worktree in project.worktrees(cx) {

@@ -127,7 +127,7 @@ impl FileFinder {
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
         let project = workspace.project().read(cx);
-        let fs = project.fs();
+        let fs = project.fs(cx);
 
         let currently_opened_path = workspace.active_item(cx).and_then(|item| {
             let project_path = item.project_path(cx)?;
@@ -887,7 +887,7 @@ impl FileFinderDelegate {
             .currently_opened_path
             .as_ref()
             .map(|found_path| Arc::clone(&found_path.project.path));
-        let worktree_store = self.project.read(cx).worktree_store();
+        let worktree_store = self.project.read(cx).worktree_store(cx);
         let worktrees = worktree_store
             .read(cx)
             .visible_worktrees_and_single_files(cx)
@@ -961,7 +961,7 @@ impl FileFinderDelegate {
 
             let path_style = self.project.read(cx).path_style(cx);
             self.matches.push_new_matches(
-                self.project.read(cx).worktree_store(),
+                self.project.read(cx).worktree_store(cx),
                 cx,
                 &self.history_items,
                 self.currently_opened_path.as_ref(),
@@ -1118,7 +1118,7 @@ impl FileFinderDelegate {
                     if let Some(panel_match) = panel_match {
                         self.labels_for_path_match(&panel_match.0, path_style)
                     } else if let Some(worktree) = worktree {
-                        let worktree_store = self.project.read(cx).worktree_store();
+                        let worktree_store = self.project.read(cx).worktree_store(cx);
                         let full_path = if should_hide_root_in_entry_path(&worktree_store, cx) {
                             entry_path.project.path.clone()
                         } else {
@@ -1466,7 +1466,7 @@ impl PickerDelegate for FileFinderDelegate {
                 let path_style = self.project.read(cx).path_style(cx);
 
                 self.matches.push_new_matches(
-                    project.worktree_store(),
+                    project.worktree_store(cx),
                     cx,
                     self.history_items.iter().filter(|history_item| {
                         project
@@ -1763,7 +1763,7 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Div {
         let has_search_query = self.latest_search_query.is_some();
         let is_project_scan_running = {
-            let worktree_store = self.project.read(cx).worktree_store();
+            let worktree_store = self.project.read(cx).worktree_store(cx);
             !worktree_store.read(cx).initial_scan_completed()
         };
 

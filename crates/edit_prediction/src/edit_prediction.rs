@@ -1033,7 +1033,7 @@ impl EditPredictionStore {
         let node = project.node_runtime(cx);
         if let Some(node) = node {
             let next_id = project.languages().next_language_server_id();
-            let fs = project.fs().clone();
+            let fs = project.fs(cx);
 
             let copilot = cx.new(|cx| Copilot::new(Some(_project), next_id, fs, node, cx));
             state.copilot = Some(copilot.clone());

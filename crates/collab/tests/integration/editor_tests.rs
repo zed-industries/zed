@@ -1265,7 +1265,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         .downcast::<Editor>()
         .unwrap();
     let (lsp_store_b, buffer_b) = editor_b.update(cx_b, |editor, cx| {
-        let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+        let lsp_store = editor.project().unwrap().read(cx).lsp_store(cx);
         let buffer = editor.buffer().read(cx).as_singleton().unwrap();
         (lsp_store, buffer)
     });
@@ -1385,7 +1385,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     let resulting_lens_actions = editor_b
         .update(cx_b, |editor, cx| {
-            let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+            let lsp_store = editor.project().unwrap().read(cx).lsp_store(cx);
             lsp_store.update(cx, |lsp_store, cx| {
                 lsp_store.code_lens_actions(&buffer_b, cx)
             })
@@ -4820,7 +4820,7 @@ fn tab_undo_assert(
 }
 
 fn extract_hint_labels(editor: &Editor, cx: &mut App) -> Vec<String> {
-    let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+    let lsp_store = editor.project().unwrap().read(cx).lsp_store(cx);
 
     let mut all_cached_labels = Vec::new();
     let mut all_fetched_hints = Vec::new();
@@ -5460,7 +5460,7 @@ async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mu
     let has_restricted_worktrees = |project: &gpui::Entity<project::Project>,
                                     cx: &mut VisualTestContext| {
         cx.update(|_, cx| {
-            let worktree_store = project.read(cx).worktree_store();
+            let worktree_store = project.read(cx).worktree_store(cx);
             TrustedWorktrees::try_get_global(cx)
                 .unwrap()
                 .read(cx)
@@ -5551,7 +5551,7 @@ async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mu
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                 trusted_worktrees.trust(
-                    &project_a.read(cx).worktree_store(),
+                    &project_a.read(cx).worktree_store(cx),
                     HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
                     cx,
                 );

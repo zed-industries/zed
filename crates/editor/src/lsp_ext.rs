@@ -72,7 +72,7 @@ async fn lsp_task_context(
     cx: &mut AsyncApp,
 ) -> Option<TaskContext> {
     let (worktree_store, environment) = project.read_with(cx, |project, cx| {
-        (project.worktree_store(), project.environment(cx))
+        (project.worktree_store(cx), project.environment(cx))
     });
 
     let worktree_abs_path = cx.update(|cx| {

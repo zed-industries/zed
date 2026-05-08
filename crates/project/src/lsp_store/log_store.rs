@@ -291,7 +291,7 @@ impl LogStore {
                                     *worktree_id,
                                     project
                                         .read(cx)
-                                        .lsp_store()
+                                        .lsp_store(cx)
                                         .read(cx)
                                         .language_server_for_id(*id),
                                     cx,
@@ -312,7 +312,7 @@ impl LogStore {
                                 let name = name.clone().or_else(|| {
                                     project
                                         .read(cx)
-                                        .lsp_store()
+                                        .lsp_store(cx)
                                         .read(cx)
                                         .language_server_statuses
                                         .get(server_id)

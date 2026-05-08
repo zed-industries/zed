@@ -180,7 +180,7 @@ impl Editor {
 
             let Some(all_colors_task) = project
                 .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
+                    project.lsp_store(cx).update(cx, |lsp_store, cx| {
                         buffers_to_query
                             .into_iter()
                             .filter_map(|buffer| {

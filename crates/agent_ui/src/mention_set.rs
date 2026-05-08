@@ -540,7 +540,7 @@ impl MentionSet {
         };
 
         let server = Rc::new(agent::NativeAgentServer::new(
-            project.read(cx).fs().clone(),
+            project.read(cx).fs(cx).clone(),
             thread_store,
         ));
         let delegate =

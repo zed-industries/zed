@@ -79,7 +79,7 @@ impl AgentTool for OpenTool {
                 (abs_path, initial_title)
             });
 
-            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let fs = project.read_with(cx, |project, cx| project.fs(cx).clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             // Symlink escape authorization replaces (rather than supplements)

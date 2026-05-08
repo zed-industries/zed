@@ -799,7 +799,7 @@ impl LspButton {
                 }
             });
 
-        let lsp_store = workspace.project().read(cx).lsp_store();
+        let lsp_store = workspace.project().read(cx).lsp_store(cx);
         let mut language_servers = LanguageServers::default();
         for (_, status) in lsp_store.read(cx).language_server_statuses() {
             language_servers.binary_statuses.insert(
@@ -1260,7 +1260,13 @@ impl Render for LspButton {
         let is_via_ssh = state
             .workspace
             .upgrade()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server(cx))
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .is_via_remote_server(cx)
+            })
             .unwrap_or(false);
 
         let mut has_errors = false;

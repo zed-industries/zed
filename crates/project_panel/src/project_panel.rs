@@ -587,7 +587,7 @@ impl ProjectPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store().clone();
+        let git_store = project.read(cx).git_store(cx).clone();
         let path_style = project.read(cx).path_style(cx);
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
@@ -1058,7 +1058,7 @@ impl ProjectPanel {
                     worktree_id,
                     path: entry.path.clone(),
                 };
-                let git_store = project.git_store().read(cx);
+                let git_store = project.git_store(cx).read(cx);
                 let has_git_repo = git_store
                     .repository_and_path_for_project_path(&project_path, cx)
                     .is_some();
@@ -2184,7 +2184,7 @@ impl ProjectPanel {
 
             let project_path = project.path_for_entry(selection.entry_id, cx)?;
 
-            let git_store = project.git_store();
+            let git_store = project.git_store(cx);
             let (repository, repo_path) = git_store
                 .read(cx)
                 .repository_and_path_for_project_path(&project_path, cx)?;
@@ -2279,7 +2279,7 @@ impl ProjectPanel {
 
             let project_path = project.path_for_entry(selection.entry_id, cx)?;
 
-            let git_store = project.git_store();
+            let git_store = project.git_store(cx);
             let (repository, repo_path) = git_store
                 .read(cx)
                 .repository_and_path_for_project_path(&project_path, cx)?;
@@ -2472,7 +2472,7 @@ impl ProjectPanel {
             .map(|entry| entry.worktree_id)
             .filter_map(|id| project.worktree_for_id(id, cx).map(|w| (id, w.read(cx))))
             .max_by(|(_, a), (_, b)| a.root_name().cmp(b.root_name()))?;
-        let git_store = project.git_store().read(cx);
+        let git_store = project.git_store(cx).read(cx);
 
         let marked_entries_in_worktree = sanitized_entries
             .iter()
@@ -3947,7 +3947,7 @@ impl ProjectPanel {
         let sort_mode = settings.sort_mode;
         let sort_order = settings.sort_order;
         let project = self.project.read(cx);
-        let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
+        let repo_snapshots = project.git_store(cx).read(cx).repo_snapshots(cx);
 
         let old_ancestors = self.state.ancestors.clone();
         let temporary_unfolded_pending_state = self.state.temporarily_unfolded_pending_state.take();
@@ -4301,7 +4301,7 @@ impl ProjectPanel {
 
         let Some((target_directory, worktree, fs)) = maybe!({
             let project = self.project.read(cx);
-            let fs = project.fs().clone();
+            let fs = project.fs(cx);
             let worktree = project.worktree_for_entry(entry_id, cx)?;
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
             let path = entry.path.clone();
@@ -4914,7 +4914,7 @@ impl ProjectPanel {
         let repo_snapshots = self
             .project
             .read(cx)
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repo_snapshots(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
@@ -4944,7 +4944,7 @@ impl ProjectPanel {
         let repo_snapshots = self
             .project
             .read(cx)
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repo_snapshots(cx);
 

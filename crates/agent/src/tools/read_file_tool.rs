@@ -125,7 +125,7 @@ impl AgentTool for ReadFileTool {
                 .recv()
                 .await
                 .map_err(tool_content_err)?;
-            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let fs = project.read_with(cx, |project, cx| project.fs(cx).clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let (project_path, symlink_canonical_target) =

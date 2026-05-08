@@ -1202,9 +1202,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     })
                                     .collect::<BTreeMap<_, _>>();
                                 let host_repository_snapshots = host_project.read_with(host_cx, |host_project, cx| {
-                                    host_project.git_store().read(cx).repo_snapshots(cx)
+                                    host_project.git_store(cx).read(cx).repo_snapshots(cx)
                                 });
-                                let guest_repository_snapshots = guest_project.git_store().read(cx).repo_snapshots(cx);
+                                let guest_repository_snapshots = guest_project.git_store(cx).read(cx).repo_snapshots(cx);
 
                                 assert_eq!(
                                     guest_worktree_snapshots.values().map(|w| w.abs_path()).collect::<Vec<_>>(),
@@ -1370,7 +1370,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let host_diff_base = host_project.read_with(host_cx, |project, cx| {
                         project
-                            .git_store()
+                            .git_store(cx)
                             .read(cx)
                             .get_unstaged_diff(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
@@ -1379,7 +1379,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     });
                     let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
                         project
-                            .git_store()
+                            .git_store(cx)
                             .read(cx)
                             .get_unstaged_diff(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()

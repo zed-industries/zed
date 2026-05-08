@@ -3150,13 +3150,13 @@ async fn test_git_status_sync(
     executor.run_until_parked();
     project_remote.update(cx_b, |project, cx| {
         pretty_assertions::assert_eq!(
-            project.git_store().read(cx).repo_snapshots(cx),
+            project.git_store(cx).read(cx).repo_snapshots(cx),
             HashMap::default()
         );
     });
     project_remote_c.update(cx_c, |project, cx| {
         pretty_assertions::assert_eq!(
-            project.git_store().read(cx).repo_snapshots(cx),
+            project.git_store(cx).read(cx).repo_snapshots(cx),
             HashMap::default()
         );
     });

@@ -2367,7 +2367,7 @@ impl Editor {
                     _ => {}
                 },
             ));
-            let git_store = project.read(cx).git_store().clone();
+            let git_store = project.read(cx).git_store(cx).clone();
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
                 if let GitStoreEvent::RepositoryAdded = event {
@@ -6904,7 +6904,7 @@ impl Editor {
         let active_entry = self
             .project()
             .and_then(|project| project.read(cx).active_entry());
-        let lsp_store = self.project().map(|project| project.read(cx).lsp_store());
+        let lsp_store = self.project().map(|project| project.read(cx).lsp_store(cx));
         let command = lsp_store.as_ref().and_then(|lsp_store| {
             let CompletionSource::Lsp {
                 lsp_completion,
@@ -20725,7 +20725,7 @@ impl Editor {
         self.pull_diagnostics_task = cx.spawn(async move |_, cx| {
             cx.background_executor().timer(debounce).await;
             if let Ok(task) = project.update(cx, |project, cx| {
-                project.lsp_store().update(cx, |lsp_store, cx| {
+                project.lsp_store(cx).update(cx, |lsp_store, cx| {
                     lsp_store.pull_diagnostics_for_buffer(buffer, cx)
                 })
             }) {
@@ -20733,7 +20733,7 @@ impl Editor {
             }
             project
                 .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
+                    project.lsp_store(cx).update(cx, |lsp_store, cx| {
                         lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
                     })
                 })
@@ -28363,7 +28363,7 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.resolve_completions(buffer, completion_indices, completions, cx)
             })
         })
@@ -28379,7 +28379,7 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.apply_additional_edits_for_completion(
                     buffer,
                     completions,
@@ -28513,7 +28513,7 @@ impl SemanticsProvider for WeakEntity<Project> {
         cx: &mut App,
     ) -> Vec<Range<BufferRow>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.applicable_inlay_chunks(buffer, ranges, cx)
             })
         })
@@ -28522,7 +28522,7 @@ impl SemanticsProvider for WeakEntity<Project> {
 
     fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, _| {
+            project.lsp_store(cx).update(cx, |lsp_store, _| {
                 lsp_store.invalidate_inlay_hints(for_buffers)
             })
         })
@@ -28538,7 +28538,7 @@ impl SemanticsProvider for WeakEntity<Project> {
         cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
             })
         })
@@ -28552,7 +28552,7 @@ impl SemanticsProvider for WeakEntity<Project> {
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>> {
         self.update(cx, |this, cx| {
-            this.lsp_store().update(cx, |lsp_store, cx| {
+            this.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.semantic_tokens(buffer, refresh, cx)
             })
         })

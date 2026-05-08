@@ -4072,7 +4072,7 @@ impl Pane {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                let fs = Arc::clone(workspace.project().read(cx).fs());
+                let fs = workspace.project().read(cx).fs(cx);
                 cx.spawn_in(window, async move |workspace, cx| {
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {

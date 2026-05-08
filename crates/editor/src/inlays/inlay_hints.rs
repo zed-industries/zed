@@ -581,7 +581,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(lsp_store) = self.project().map(|project| project.read(cx).lsp_store()) else {
+        let Some(lsp_store) = self.project().map(|project| project.read(cx).lsp_store(cx)) else {
             return;
         };
         let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
@@ -4877,7 +4877,7 @@ let c = 3;"#
     }
 
     pub fn cached_hint_labels(editor: &Editor, cx: &mut App) -> Vec<String> {
-        let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+        let lsp_store = editor.project().unwrap().read(cx).lsp_store(cx);
 
         let mut all_cached_labels = Vec::new();
         let mut all_fetched_hints = Vec::new();

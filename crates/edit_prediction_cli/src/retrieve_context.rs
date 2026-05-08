@@ -78,7 +78,7 @@ async fn wait_for_language_servers_to_start(
     step_progress: &Arc<StepProgress>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
 
     // Determine which servers exist for this buffer, and which are still starting.
     let mut servers_pending_start = HashSet::default();

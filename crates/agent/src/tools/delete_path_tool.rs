@@ -95,7 +95,7 @@ impl AgentTool for DeletePathTool {
                 return Err(reason);
             }
 
-            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let fs = project.read_with(cx, |project, cx| project.fs(cx).clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let symlink_escape_target = project.read_with(cx, |project, cx| {

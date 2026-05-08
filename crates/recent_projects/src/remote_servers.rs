@@ -427,7 +427,7 @@ impl ProjectPicker {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
                             .update_in(cx, |workspace, window, cx| {
-                                let fs = workspace.project().read(cx).fs().clone();
+                                let fs = workspace.project().read(cx).fs(cx).clone();
                                 let weak = cx.entity().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(
@@ -937,7 +937,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
-        let fs = project.read(cx).fs().clone();
+        let fs = project.read(cx).fs(cx).clone();
         let mut this = Self::new(create_new_window, fs, window, workspace.clone(), cx);
         this.mode = Mode::ProjectPicker(ProjectPicker::new(
             create_new_window,
@@ -1081,7 +1081,7 @@ impl RemoteServerProjects {
                     let Some(fs) = this
                         .workspace
                         .read_with(cx, |workspace, cx| {
-                            workspace.project().read(cx).fs().clone()
+                            workspace.project().read(cx).fs(cx).clone()
                         })
                         .log_err()
                     else {
@@ -1198,7 +1198,7 @@ impl RemoteServerProjects {
                     let Some(Some(session)) = session else {
                         return workspace.update_in(cx, |workspace, window, cx| {
                             let weak = cx.entity().downgrade();
-                            let fs = workspace.project().read(cx).fs().clone();
+                            let fs = workspace.project().read(cx).fs(cx).clone();
                             workspace.toggle_modal(window, cx, |window, cx| {
                                 RemoteServerProjects::new(create_new_window, fs, window, weak, cx)
                             });

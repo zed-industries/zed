@@ -95,7 +95,7 @@ impl ActivityIndicator {
             })
             .detach();
 
-            let fs = project.read(cx).fs().clone();
+            let fs = project.read(cx).fs(cx).clone();
             let mut job_events = fs.subscribe_to_jobs();
             cx.spawn(async move |this, cx| {
                 while let Some(job_event) = job_events.next().await {
@@ -117,7 +117,7 @@ impl ActivityIndicator {
             .detach();
 
             cx.subscribe(
-                &project.read(cx).lsp_store(),
+                &project.read(cx).lsp_store(cx),
                 |activity_indicator, _, event, cx| {
                     if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
                         if let proto::update_language_server::Variant::StatusUpdate(status_update) =
@@ -201,7 +201,7 @@ impl ActivityIndicator {
             .detach();
 
             cx.subscribe(
-                &project.read(cx).git_store().clone(),
+                &project.read(cx).git_store(cx).clone(),
                 |_, _, event: &GitStoreEvent, cx| {
                     if let project::git_store::GitStoreEvent::JobsUpdated = event {
                         cx.notify()

@@ -1075,7 +1075,7 @@ impl ConversationView {
         if let Some(config_options) = config_options_provider {
             // Use config options - don't create mode_selector or model_selector
             let agent_server = self.agent.clone();
-            let fs = self.project.read(cx).fs().clone();
+            let fs = self.project.read(cx).fs(cx).clone();
             config_options_view =
                 Some(cx.new(|cx| {
                     ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
@@ -1087,7 +1087,7 @@ impl ConversationView {
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
                 let agent_server = self.agent.clone();
-                let fs = self.project.read(cx).fs().clone();
+                let fs = self.project.read(cx).fs(cx).clone();
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
                         selector,
@@ -1104,7 +1104,7 @@ impl ConversationView {
             mode_selector = connection
                 .session_modes(&session_id, cx)
                 .map(|session_modes| {
-                    let fs = self.project.read(cx).fs().clone();
+                    let fs = self.project.read(cx).fs(cx).clone();
                     cx.new(|_cx| ModeSelector::new(session_modes, self.agent.clone(), fs))
                 });
         }

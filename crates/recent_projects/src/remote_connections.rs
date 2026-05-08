@@ -403,7 +403,7 @@ pub async fn open_remote_project(
                 }
                 initial_workspace.update(cx, |workspace, cx| {
                     trusted_worktrees::track_worktree_trust(
-                        workspace.project().read(cx).worktree_store(),
+                        workspace.project().read(cx).worktree_store(cx),
                         None,
                         None,
                         None,

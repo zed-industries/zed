@@ -1416,7 +1416,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .unwrap();
     cx.executor().run_until_parked();
     let servers = project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |this, cx| {
+        project.lsp_store(cx).update(cx, |this, cx| {
             first_buffer.update(cx, |buffer, cx| {
                 this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
@@ -1445,7 +1445,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .unwrap();
     cx.executor().run_until_parked();
     let servers = project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |this, cx| {
+        project.lsp_store(cx).update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
                 this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
@@ -1516,7 +1516,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .unwrap();
     cx.run_until_parked();
     let servers = project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |this, cx| {
+        project.lsp_store(cx).update(cx, |this, cx| {
             second_project_buffer.update(cx, |buffer, cx| {
                 this.running_language_servers_for_local_buffer(buffer, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
@@ -2177,8 +2177,8 @@ async fn test_rescan_fs_change_is_reported_to_language_servers_as_changed(
     .await;
 
     let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
-    let (language_registry, _lsp_store) = project.read_with(cx, |project, _| {
-        (project.languages().clone(), project.lsp_store())
+    let (language_registry, _lsp_store) = project.read_with(cx, |project, cx| {
+        (project.languages().clone(), project.lsp_store(cx))
     });
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp(
@@ -2311,8 +2311,8 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     .await;
 
     let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
-    let (language_registry, lsp_store) = project.read_with(cx, |project, _| {
-        (project.languages().clone(), project.lsp_store())
+    let (language_registry, lsp_store) = project.read_with(cx, |project, cx| {
+        (project.languages().clone(), project.lsp_store(cx))
     });
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp(
@@ -2576,7 +2576,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
 
     let buffer_a = project
         .update(cx, |project, cx| {
@@ -2684,7 +2684,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, [path!("/root/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree(path!("/root/dir"), true, cx)
@@ -3670,7 +3670,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |lsp_store, cx| {
+        project.lsp_store(cx).update(cx, |lsp_store, cx| {
             lsp_store
                 .update_diagnostic_entries(
                     LanguageServerId(0),
@@ -3735,7 +3735,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         .await;
 
     let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
@@ -3798,7 +3798,7 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
         .await;
 
     let project = Project::test(fs.clone(), [Path::new(path!("/dir"))], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
 
     lsp_store.update(cx, |lsp_store, cx| {
         lsp_store
@@ -4074,7 +4074,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -4227,7 +4227,7 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
     .await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
     let buffer = project
         .update(cx, |project, cx| {
             project.open_local_buffer(path!("/dir/a.rs"), cx)
@@ -4331,7 +4331,7 @@ async fn test_edits_from_lsp_with_replacement_followed_by_adjacent_insertion(
     .await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
     let buffer = project
         .update(cx, |project, cx| {
             project.open_local_buffer(path!("/dir/a.rs"), cx)
@@ -4394,7 +4394,7 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
     let buffer = project
         .update(cx, |project, cx| {
             project.open_local_buffer(path!("/dir/a.rs"), cx)
@@ -6760,7 +6760,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let lsp_store = project.read_with(cx, |project, cx| project.lsp_store(cx));
     let buffer = project
         .update(cx, |p, cx| p.open_local_buffer(path!("/dir/a.rs"), cx))
         .await
@@ -10156,7 +10156,7 @@ async fn test_repository_and_path_for_project_path(
     cx.run_until_parked();
 
     project.read_with(cx, |project, cx| {
-        let git_store = project.git_store().read(cx);
+        let git_store = project.git_store(cx).read(cx);
         let pairs = [
             ("c.txt", None),
             ("dir1/src/b.txt", Some((path!("/root/dir1"), "src/b.txt"))),
@@ -10197,7 +10197,7 @@ async fn test_repository_and_path_for_project_path(
     cx.run_until_parked();
 
     project.read_with(cx, |project, cx| {
-        let git_store = project.git_store().read(cx);
+        let git_store = project.git_store(cx).read(cx);
         assert_eq!(
             git_store.repository_and_path_for_project_path(
                 &(tree_id, rel_path("dir1/src/b.txt")).into(),
@@ -10235,7 +10235,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
 
     project.read_with(cx, |project, cx| {
         let containing = project
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repository_and_path_for_project_path(&(tree_id, rel_path("a.txt")).into(), cx);
         assert!(containing.is_none());
@@ -10251,7 +10251,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
 
     project.read_with(cx, |project, cx| {
         let containing = project
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repository_and_path_for_project_path(&(tree_id, rel_path("project/a.txt")).into(), cx);
         assert_eq!(
@@ -10557,7 +10557,7 @@ async fn test_repository_pending_ops_staging(
     let pending_ops_all = Arc::new(Mutex::new(SumTree::default()));
     project.update(cx, |project, cx| {
         let pending_ops_all = pending_ops_all.clone();
-        cx.subscribe(project.git_store(), move |_, _, e, _| {
+        cx.subscribe(&project.git_store(cx), move |_, _, e, _| {
             if let GitStoreEvent::RepositoryUpdated(
                 _,
                 RepositoryEvent::PendingOpsChanged { pending_ops },
@@ -10722,7 +10722,7 @@ async fn test_repository_pending_ops_long_running_staging(
     let pending_ops_all = Arc::new(Mutex::new(SumTree::default()));
     project.update(cx, |project, cx| {
         let pending_ops_all = pending_ops_all.clone();
-        cx.subscribe(project.git_store(), move |_, _, e, _| {
+        cx.subscribe(&project.git_store(cx), move |_, _, e, _| {
             if let GitStoreEvent::RepositoryUpdated(
                 _,
                 RepositoryEvent::PendingOpsChanged { pending_ops },
@@ -10836,7 +10836,7 @@ async fn test_repository_pending_ops_stage_all(
     let pending_ops_all = Arc::new(Mutex::new(SumTree::default()));
     project.update(cx, |project, cx| {
         let pending_ops_all = pending_ops_all.clone();
-        cx.subscribe(project.git_store(), move |_, _, e, _| {
+        cx.subscribe(&project.git_store(cx), move |_, _, e, _| {
             if let GitStoreEvent::RepositoryUpdated(
                 _,
                 RepositoryEvent::PendingOpsChanged { pending_ops },
@@ -11509,7 +11509,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     let project_events = Arc::new(Mutex::new(Vec::new()));
     project.update(cx, |project, cx| {
         let repo_events = repository_updates.clone();
-        cx.subscribe(project.git_store(), move |_, _, e, _| {
+        cx.subscribe(&project.git_store(cx), move |_, _, e, _| {
             if let GitStoreEvent::RepositoryUpdated(_, e, _) = e {
                 repo_events.lock().push(e.clone());
             }
@@ -11671,7 +11671,7 @@ async fn test_odd_events_for_ignored_dirs(
     let project_events = Arc::new(Mutex::new(Vec::new()));
     project.update(cx, |project, cx| {
         let repository_updates = repository_updates.clone();
-        cx.subscribe(project.git_store(), move |_, _, e, _| {
+        cx.subscribe(&project.git_store(cx), move |_, _, e, _| {
             if let GitStoreEvent::RepositoryUpdated(_, e, _) = e {
                 repository_updates.lock().push(e.clone());
             }
@@ -11807,7 +11807,7 @@ async fn test_repos_in_invisible_worktrees(
 
     let (_invisible_worktree, _) = project
         .update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
+            project.worktree_store(cx).update(cx, |worktree_store, cx| {
                 worktree_store.find_or_create_worktree(path!("/root/dir1/b.txt"), false, cx)
             })
         })
@@ -12059,7 +12059,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         .unwrap();
     let (worktree_repo, barrier) = project.update(cx, |project, cx| {
         let (repo, _) = project
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
             .unwrap();
@@ -12112,7 +12112,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         .unwrap();
     let (submodule_repo, barrier) = project.update(cx, |project, cx| {
         let (repo, _) = project
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
             .unwrap();
@@ -12450,7 +12450,7 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
 
     project.read_with(cx, |project, cx| {
         assert!(
-            project.worktree_store().read(cx).initial_scan_completed(),
+            project.worktree_store(cx).read(cx).initial_scan_completed(),
             "Expected initial scan to be completed after awaiting wait_for_initial_scan"
         );
     });
@@ -12463,7 +12463,7 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
     );
 
     project.read_with(cx, |project, cx| {
-        let git_store = project.git_store().read(cx);
+        let git_store = project.git_store(cx).read(cx);
         assert_eq!(
             git_store.repositories().len(),
             2,
@@ -12906,7 +12906,7 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
         .get(Path::new(path!("/root/b/script")))
         .unwrap();
 
-    let repos = project.update(cx, |p, cx| p.git_store().read(cx).repositories().clone());
+    let repos = project.update(cx, |p, cx| p.git_store(cx).read(cx).repositories().clone());
     assert_eq!(repos.len(), 2);
 
     project.update(cx, |project, cx| {
@@ -12915,7 +12915,7 @@ async fn test_git_worktree_remove(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     let mut repo_paths = project
-        .update(cx, |p, cx| p.git_store().read(cx).repositories().clone())
+        .update(cx, |p, cx| p.git_store(cx).read(cx).repositories().clone())
         .values()
         .map(|repo| repo.read_with(cx, |r, _| r.work_directory_abs_path.clone()))
         .collect::<Vec<_>>();

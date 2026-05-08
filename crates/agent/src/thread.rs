@@ -1235,7 +1235,7 @@ impl Thread {
             let tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 stream.clone(),
-                Some(self.project.read(cx).fs().clone()),
+                Some(self.project.read(cx).fs(cx).clone()),
                 cancellation_rx,
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
@@ -2403,7 +2403,7 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
-        let fs = self.project.read(cx).fs().clone();
+        let fs = self.project.read(cx).fs(cx).clone();
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
             event_stream.clone(),

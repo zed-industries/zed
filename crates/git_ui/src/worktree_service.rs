@@ -259,7 +259,7 @@ fn maybe_propagate_worktree_trust(
         let source_is_trusted = source_workspace
             .upgrade()
             .map(|workspace| {
-                let source_worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                let source_worktree_store = workspace.read(cx).project().read(cx).worktree_store(cx);
                 !trusted_store
                     .read(cx)
                     .has_restricted_worktrees(&source_worktree_store, cx)
@@ -270,7 +270,7 @@ fn maybe_propagate_worktree_trust(
             return;
         }
 
-        let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store();
+        let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store(cx);
         let paths_to_trust: HashSet<_> = paths
             .iter()
             .filter_map(|path| {

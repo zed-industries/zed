@@ -434,8 +434,8 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (worktree_store, git_store) = project.read_with(cx, |project, _| {
-            (project.worktree_store(), project.git_store().clone())
+        let (worktree_store, git_store) = project.read_with(cx, |project, cx| {
+            (project.worktree_store(cx), project.git_store(cx))
         });
         let rust_language = Arc::new(
             Language::new(

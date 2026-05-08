@@ -1328,7 +1328,7 @@ fn main() {
 
                                 let shutdown_task: Task<()> =
                                     project.update(&mut cx, |project, cx| {
-                                        let lsp_store = project.lsp_store();
+                                        let lsp_store = project.lsp_store(cx);
                                         lsp_store.update(cx, |lsp_store, cx| {
                                             lsp_store.shutdown_all_language_servers(cx)
                                         })

@@ -375,7 +375,7 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store().clone();
+        let git_store = project.read(cx).git_store(cx).clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
@@ -496,7 +496,7 @@ impl TitleBar {
         cx: &App,
     ) -> Option<Entity<project::git_store::Repository>> {
         let project = self.project.read(cx);
-        let git_store = project.git_store().read(cx);
+        let git_store = project.git_store(cx).read(cx);
         let worktree_path = worktree.read(cx).abs_path();
 
         git_store
@@ -562,7 +562,7 @@ impl TitleBar {
             PopoverMenu::new("remote-project-menu")
                 .menu(move |window, cx| {
                     let workspace_entity = workspace.upgrade()?;
-                    let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
+                    let fs = workspace_entity.read(cx).project().read(cx).fs(cx).clone();
                     Some(recent_projects::RemoteServerProjects::popover(
                         fs,
                         workspace.clone(),
@@ -612,7 +612,7 @@ impl TitleBar {
             .map(|trusted_worktrees| {
                 trusted_worktrees
                     .read(cx)
-                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
+                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(cx), cx)
             })
             .unwrap_or(false);
         if !has_restricted_worktrees {

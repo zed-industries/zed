@@ -436,7 +436,7 @@ impl ConfigureContextServerModal {
                         .update(cx, |workspace, cx| {
                             resolve_context_server_extension(
                                 server_id,
-                                workspace.project().read(cx).worktree_store(),
+                                workspace.project().read(cx).worktree_store(cx),
                                 cx,
                             )
                         })

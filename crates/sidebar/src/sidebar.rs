@@ -646,7 +646,7 @@ impl Sidebar {
         )
         .detach();
 
-        let git_store = workspace.read(cx).project().read(cx).git_store().clone();
+        let git_store = workspace.read(cx).project().read(cx).git_store(cx).clone();
         cx.subscribe_in(
             &git_store,
             window,

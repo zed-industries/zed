@@ -36,7 +36,7 @@ impl RepositorySelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let git_store = project_handle.read(cx).git_store().clone();
+        let git_store = project_handle.read(cx).git_store(cx).clone();
         let repository_entries = git_store.update(cx, |git_store, _cx| {
             let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
 

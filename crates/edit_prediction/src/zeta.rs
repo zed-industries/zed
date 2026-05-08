@@ -75,7 +75,7 @@ pub fn request_prediction_with_zeta(
         let buffer_id = buffer.read(cx).remote_id();
         project
             .read(cx)
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
             .and_then(|(repo, _)| repo.read(cx).default_remote_url())

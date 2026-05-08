@@ -294,7 +294,7 @@ mod conflict_set_tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (git_store, buffer) = project.update(cx, |project, cx| {
             (
-                project.git_store().clone(),
+                project.git_store(cx).clone(),
                 project.open_local_buffer(path!("/project/a.txt"), cx),
             )
         });
@@ -397,7 +397,7 @@ mod conflict_set_tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (git_store, buffer) = project.update(cx, |project, cx| {
             (
-                project.git_store().clone(),
+                project.git_store(cx).clone(),
                 project.open_local_buffer(path!("/project/a.txt"), cx),
             )
         });
@@ -513,7 +513,7 @@ mod conflict_set_tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (git_store, buffer) = project.update(cx, |project, cx| {
             (
-                project.git_store().clone(),
+                project.git_store(cx).clone(),
                 project.open_local_buffer(path!("/project/a.txt"), cx),
             )
         });
@@ -708,7 +708,7 @@ mod git_traversal {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store(cx).read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -780,7 +780,7 @@ mod git_traversal {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store(cx).read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -906,7 +906,7 @@ mod git_traversal {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store(cx).read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -1015,7 +1015,7 @@ mod git_traversal {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store(cx).read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -1136,7 +1136,7 @@ mod git_traversal {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store(cx).read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -1476,7 +1476,7 @@ mod trust_tests {
             Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
         let worktree_id = worktree_store.read_with(cx, |store, cx| {
             store.worktrees().next().unwrap().read(cx).id()
         });
@@ -1540,7 +1540,7 @@ mod trust_tests {
             Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
         let worktree_id = worktree_store.read_with(cx, |store, cx| {
             store.worktrees().next().unwrap().read(cx).id()
         });
