@@ -20,7 +20,7 @@ use db::{
 };
 use fs::Fs;
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext as _, Entity, Global, Subscription, Task};
+use gpui::{AppContext as _, Entity, Global, Subscription, Task, TaskExt};
 pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
@@ -162,7 +162,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                 .push(entry);
         }
         for entries in per_project.values_mut() {
-            entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
             for entry in entries.iter_mut().take(5) {
                 entry.archived = false;
             }
@@ -200,27 +200,30 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
             return Ok(());
         }
 
-        let recent_workspaces = workspace_db.recent_project_workspaces(fs.as_ref()).await?;
+        let recent_workspaces = workspace_db
+            .recent_project_workspaces_ungrouped(fs.as_ref())
+            .await?;
 
         let mut local_path_lists = HashSet::<PathList>::default();
         let mut remote_path_lists = HashMap::<PathList, RemoteConnectionOptions>::default();
 
         recent_workspaces
             .iter()
-            .filter(|(_, location, path_list, _)| {
-                !path_list.is_empty() && matches!(location, &SerializedWorkspaceLocation::Local)
+            .filter(|workspace| {
+                !workspace.paths.is_empty()
+                    && matches!(workspace.location, SerializedWorkspaceLocation::Local)
             })
-            .for_each(|(_, _, path_list, _)| {
-                local_path_lists.insert(path_list.clone());
+            .for_each(|workspace| {
+                local_path_lists.insert(workspace.paths.clone());
             });
 
-        for (_, location, path_list, _) in recent_workspaces {
-            match location {
+        for workspace in recent_workspaces {
+            match workspace.location {
                 SerializedWorkspaceLocation::Remote(remote_connection)
-                    if !local_path_lists.contains(&path_list) =>
+                    if !local_path_lists.contains(&workspace.paths) =>
                 {
                     remote_path_lists
-                        .entry(path_list)
+                        .entry(workspace.paths)
                         .or_insert(remote_connection);
                 }
                 _ => {}
@@ -2321,7 +2324,7 @@ mod tests {
             .filter(|m| *m.folder_paths() == project_a_paths)
             .collect();
         assert_eq!(project_a_entries.len(), 7);
-        project_a_entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        project_a_entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
 
         for entry in &project_a_entries[..5] {
             assert!(

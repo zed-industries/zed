@@ -24,6 +24,7 @@ use futures::{
     select_biased,
 };
 use gpui::BackgroundExecutor;
+use gpui::TaskExt;
 use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
@@ -725,7 +726,7 @@ fn compute_diff_between_snapshots_in_range(
     Some((diff, new_start_point..new_end_point))
 }
 
-fn buffer_path_with_id_fallback(
+pub(crate) fn buffer_path_with_id_fallback(
     file: Option<&Arc<dyn File>>,
     snapshot: &TextBufferSnapshot,
     cx: &App,
@@ -2109,8 +2110,7 @@ fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
         EditPredictionProvider::Zed
         | EditPredictionProvider::Mercury
         | EditPredictionProvider::Ollama
-        | EditPredictionProvider::OpenAiCompatibleApi
-        | EditPredictionProvider::Experimental(_) => true,
+        | EditPredictionProvider::OpenAiCompatibleApi => true,
         EditPredictionProvider::None
         | EditPredictionProvider::Copilot
         | EditPredictionProvider::Codestral => false,
@@ -2145,9 +2145,7 @@ impl EditPredictionStore {
 
         let (needs_acceptance_tracking, max_pending_predictions) =
             match all_language_settings(None, cx).edit_predictions.provider {
-                EditPredictionProvider::Zed
-                | EditPredictionProvider::Mercury
-                | EditPredictionProvider::Experimental(_) => (true, 2),
+                EditPredictionProvider::Zed | EditPredictionProvider::Mercury => (true, 2),
                 EditPredictionProvider::Ollama => (false, 1),
                 EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
                 EditPredictionProvider::None
@@ -2517,7 +2515,7 @@ impl EditPredictionStore {
                     .collect()
             });
 
-            candidates.sort_by(|a, b| b.1.cmp(&a.1));
+            candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
 
             for (path, _) in candidates {
                 let candidate_buffer = project

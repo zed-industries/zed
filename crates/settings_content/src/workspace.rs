@@ -705,7 +705,7 @@ pub struct ProjectPanelSettingsContent {
     pub default_width: Option<f32>,
     /// The position of project panel
     ///
-    /// Default: left
+    /// Default: right
     pub dock: Option<DockSide>,
     /// Spacing between worktree entries in the project panel.
     ///

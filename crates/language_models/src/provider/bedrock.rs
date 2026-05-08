@@ -25,7 +25,8 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, Window, actions,
+    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window,
+    actions,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -918,9 +919,10 @@ pub fn into_bedrock(
                         }
                         MessageContent::ToolResult(tool_result) => {
                             messages_contain_tool_content = true;
-                            BedrockToolResultBlock::builder()
-                                .tool_use_id(tool_result.tool_use_id.to_string())
-                                .content(match tool_result.content {
+                            let mut builder = BedrockToolResultBlock::builder()
+                                .tool_use_id(tool_result.tool_use_id.to_string());
+                            for part in tool_result.content {
+                                let block = match part {
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
@@ -961,7 +963,10 @@ pub fn into_bedrock(
                                             }
                                         }
                                     }
-                                })
+                                };
+                                builder = builder.content(block);
+                            }
+                            builder
                                 .status({
                                     if tool_result.is_error {
                                         BedrockToolResultStatus::Error
