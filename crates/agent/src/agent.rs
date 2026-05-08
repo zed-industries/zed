@@ -436,7 +436,6 @@ impl NativeAgent {
             Thread::new(
                 project,
                 project_state.project_context.clone(),
-                project_state.skills.clone(),
                 project_state.context_server_registry.clone(),
                 self.templates.clone(),
                 default_model,
@@ -495,10 +494,23 @@ impl NativeAgent {
                 Rc::new(NativeThreadEnvironment {
                     acp_thread: acp_thread.downgrade(),
                     thread: weak_thread,
-                    agent: weak,
+                    agent: weak.clone(),
                 }) as _,
                 cx,
-            )
+            );
+            // Register the skill tool last so its `SkillsLookup` reflects
+            // the latest `state.skills` for this project at invocation
+            // time, rather than a snapshot taken when the thread was
+            // built. Without this, skills added after thread creation
+            // (e.g. by the SKILL.md watcher) would be advertised in the
+            // system prompt but rejected when the model invokes the
+            // `skill` tool by name.
+            if cx.has_flag::<SkillsFeatureFlag>() {
+                thread.add_tool(SkillTool::new(skills_lookup_for_project(
+                    weak.clone(),
+                    project_id,
+                )));
+            }
         });
 
         let subscriptions = vec![
@@ -1187,7 +1199,6 @@ impl NativeAgent {
                         db_thread,
                         project_state.project.clone(),
                         project_state.project_context.clone(),
-                        project_state.skills.clone(),
                         project_state.context_server_registry.clone(),
                         this.templates.clone(),
                         cx,
@@ -2655,6 +2666,29 @@ fn apply_skill_budget(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadErro
     (kept, errors)
 }
 
+/// Build a `SkillsLookup` that, when invoked, reads the latest
+/// `state.skills` for the given project from the `NativeAgent`. This is
+/// the production lookup used by `register_session`; tests can also use
+/// it to verify that skill changes after thread construction are visible
+/// to the `SkillTool`.
+pub(crate) fn skills_lookup_for_project(
+    weak_agent: WeakEntity<NativeAgent>,
+    project_id: EntityId,
+) -> SkillsLookup {
+    SkillsLookup::Dynamic(Arc::new(move |cx: &App| {
+        weak_agent
+            .upgrade()
+            .and_then(|agent| {
+                agent
+                    .read(cx)
+                    .projects
+                    .get(&project_id)
+                    .map(|state| state.skills.clone())
+            })
+            .unwrap_or_else(|| Arc::new(Vec::new()))
+    }))
+}
+
 /// Merge global and project-local skills.
 /// Project-local skills override global skills with the same name.
 fn merge_skills(
@@ -3134,6 +3168,116 @@ mod internal_tests {
             assert_eq!(state.skills.len(), 1);
             assert_eq!(state.skills[0].name, "late-skill");
             assert_eq!(state.skills[0].description, "Created after startup");
+        });
+    }
+
+    /// Regression test for the case where a skill is added (e.g. by the
+    /// SKILL.md file watcher) AFTER a session is registered. The system
+    /// prompt and slash-command list both read live state, so they pick
+    /// up the new skill automatically. The `SkillTool` registered on the
+    /// thread used to hold a stale snapshot of `state.skills` taken at
+    /// thread-construction time, which meant the model would see the new
+    /// skill in `<available_skills>` but get "not found" when it tried to
+    /// invoke it. The fix wires the tool to a dynamic `SkillsLookup` that
+    /// re-reads `state.skills` for the project on every invocation.
+    #[gpui::test]
+    async fn test_skills_added_after_session_visible_to_skill_tool(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+
+        // No skills directory exists at startup; the watcher should
+        // create one and pick up SKILL.md when it's added later.
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert!(
+                state.skills.is_empty(),
+                "expected no skills before the global skills dir exists, got {:?}",
+                state.skills
+            );
+        });
+
+        // Build the same dynamic lookup that `register_session` uses.
+        // This is the production lookup factored into a helper so the
+        // test can verify the lookup behavior directly without setting
+        // up the full tool-call plumbing (`ToolInput`,
+        // `ToolCallEventStream`, authorization channel, ...).
+        let lookup =
+            cx.update(|_cx| super::skills_lookup_for_project(agent.downgrade(), project_id));
+
+        // Sanity check: before any skills exist, the lookup returns an
+        // empty list — NOT the snapshot that `Thread::new` would have
+        // captured.
+        cx.update(|cx| {
+            assert!(lookup.current(cx).is_empty());
+        });
+
+        // Now create a SKILL.md AFTER the session was registered. With
+        // the old code this would be invisible to the `SkillTool`
+        // because the tool held an `Arc<Vec<Skill>>` snapshot taken at
+        // thread construction time.
+        let new_skill_dir = skills_dir.join("my-skill");
+        fs.create_dir(&new_skill_dir).await.unwrap();
+        fs.insert_file(
+            &new_skill_dir.join("SKILL.md"),
+            b"---\nname: my-skill\ndescription: Created after session\n---\n\nbody".to_vec(),
+        )
+        .await;
+        cx.run_until_parked();
+
+        // `state.skills` reflects the new skill (the watcher ran).
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert_eq!(state.skills.len(), 1);
+            assert_eq!(state.skills[0].name, "my-skill");
+        });
+
+        // The lookup the `SkillTool` uses must see it too. This is the
+        // crux of the regression test: the tool's view of skills is
+        // resolved at invocation time, not at thread-construction time.
+        cx.update(|cx| {
+            let snapshot = lookup.current(cx);
+            assert_eq!(snapshot.len(), 1, "dynamic lookup should see the new skill");
+            assert_eq!(snapshot[0].name, "my-skill");
+            assert_eq!(snapshot[0].description, "Created after session");
+        });
+
+        // And rendering the envelope through the same path the tool uses
+        // produces a `<skill_content name="my-skill">` block, confirming
+        // the model would see the new skill if it invoked the tool.
+        cx.update(|cx| {
+            let snapshot = lookup.current(cx);
+            let skill = snapshot
+                .iter()
+                .find(|s| s.name == "my-skill" && !s.disable_model_invocation)
+                .expect("my-skill should be model-invocable");
+            let rendered = render_skill_envelope(skill);
+            assert!(
+                rendered.contains("<skill_content name=\"my-skill\">"),
+                "rendered envelope missing skill_content tag: {rendered}"
+            );
         });
     }
 

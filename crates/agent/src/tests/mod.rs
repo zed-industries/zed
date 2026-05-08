@@ -4321,7 +4321,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         Thread::new(
             project,
             project_context.clone(),
-            Arc::new(Vec::new()),
             context_server_registry,
             templates,
             Some(model.clone()),
@@ -5469,7 +5468,6 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
         Thread::new(
             project.clone(),
             project_context,
-            Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             Some(model.clone()),
@@ -5514,19 +5512,18 @@ async fn test_subagent_inherits_skills(cx: &mut TestAppContext) {
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
 
-    let parent_skill = agent_skills::parse_skill(
-        std::path::Path::new("/skills/inherited-skill/SKILL.md"),
-        "---\nname: inherited-skill\ndescription: Skill the subagent should inherit\n---\n\nbody",
-        agent_skills::SkillSource::Global,
-    )
-    .unwrap();
-    let parent_skills = Arc::new(vec![parent_skill]);
-
+    // Skill inheritance is no longer a property of the `Thread` itself:
+    // production threads register a `SkillTool` whose `SkillsLookup` reads
+    // `state.skills` for the project at invocation time, so a subagent
+    // sharing a `project_id` with its parent automatically sees the same
+    // skills (whether they were present at thread construction or added
+    // later). What this test still verifies is the construction path:
+    // that a subagent thread can be built from a parent without taking a
+    // skills snapshot.
     let parent_thread = cx.new(|cx| {
         Thread::new(
             project.clone(),
             project_context,
-            parent_skills.clone(),
             context_server_registry,
             Templates::new(),
             Some(model.clone()),
@@ -5536,14 +5533,7 @@ async fn test_subagent_inherits_skills(cx: &mut TestAppContext) {
 
     let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, cx));
     subagent_thread.read_with(cx, |subagent_thread, _cx| {
-        // The subagent must share the same skill list as its parent (by Arc identity
-        // so cloning the parent's skills is cheap and consistent).
-        assert!(
-            Arc::ptr_eq(&subagent_thread.skills, &parent_skills),
-            "subagent should inherit the parent's skills Arc"
-        );
-        assert_eq!(subagent_thread.skills.len(), 1);
-        assert_eq!(subagent_thread.skills[0].name, "inherited-skill");
+        assert!(subagent_thread.is_subagent());
     });
 }
 
@@ -5571,7 +5561,6 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
         let mut thread = Thread::new(
             project.clone(),
             project_context,
-            Arc::new(Vec::new()),
             context_server_registry,
             Templates::new(),
             Some(model.clone()),
@@ -5619,7 +5608,6 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
         Thread::new(
             project.clone(),
             project_context.clone(),
-            Arc::new(Vec::new()),
             context_server_registry.clone(),
             Templates::new(),
             Some(model.clone()),
@@ -6095,7 +6083,6 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
         crate::Thread::new(
             project.clone(),
             cx.new(|_cx| prompt_store::ProjectContext::default()),
-            std::sync::Arc::new(Vec::new()),
             context_server_registry,
             templates.clone(),
             None,
@@ -6530,7 +6517,6 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
         crate::Thread::new(
             project.clone(),
             cx.new(|_cx| prompt_store::ProjectContext::default()),
-            std::sync::Arc::new(Vec::new()),
             context_server_registry,
             templates.clone(),
             None,
@@ -6601,7 +6587,6 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
         crate::Thread::new(
             project.clone(),
             cx.new(|_cx| prompt_store::ProjectContext::default()),
-            std::sync::Arc::new(Vec::new()),
             context_server_registry,
             templates.clone(),
             None,

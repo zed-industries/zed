@@ -431,7 +431,6 @@ impl EditToolTest {
             Thread::new(
                 self.project.clone(),
                 cx.new(|_cx| ProjectContext::default()),
-                Arc::new(Vec::new()),
                 context_server_registry,
                 Templates::new(),
                 Some(self.model.clone()),

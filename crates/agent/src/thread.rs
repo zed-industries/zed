@@ -3,15 +3,13 @@ use crate::{
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RenameTool,
-    RestoreFileFromDiskTool, SaveFileTool, SkillTool, SpawnAgentTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
+    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, SkillsFeatureFlag, UpdatePlanToolFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag, UpdatePlanToolFeatureFlag};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
@@ -966,7 +964,6 @@ pub struct Thread {
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
-    pub(crate) skills: Arc<Vec<agent_skills::Skill>>,
     pub(crate) templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
@@ -999,7 +996,6 @@ impl Thread {
     pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
         let project = parent_thread.read(cx).project.clone();
         let project_context = parent_thread.read(cx).project_context.clone();
-        let skills = parent_thread.read(cx).skills.clone();
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
         let templates = parent_thread.read(cx).templates.clone();
         let model = parent_thread.read(cx).model().cloned();
@@ -1009,7 +1005,6 @@ impl Thread {
         let mut thread = Self::new_internal(
             project,
             project_context,
-            skills,
             context_server_registry,
             templates,
             model,
@@ -1027,7 +1022,6 @@ impl Thread {
     pub fn new(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
-        skills: Arc<Vec<agent_skills::Skill>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
@@ -1036,7 +1030,6 @@ impl Thread {
         Self::new_internal(
             project.clone(),
             project_context,
-            skills,
             context_server_registry,
             templates,
             model,
@@ -1048,7 +1041,6 @@ impl Thread {
     fn new_internal(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
-        skills: Arc<Vec<agent_skills::Skill>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         model: Option<Arc<dyn LanguageModel>>,
@@ -1097,7 +1089,6 @@ impl Thread {
             context_server_registry,
             profile_id,
             project_context,
-            skills,
             templates,
             model,
             summarization_model: None,
@@ -1266,7 +1257,6 @@ impl Thread {
         db_thread: DbThread,
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
-        skills: Arc<Vec<agent_skills::Skill>>,
         context_server_registry: Entity<ContextServerRegistry>,
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
@@ -1328,7 +1318,6 @@ impl Thread {
             context_server_registry,
             profile_id,
             project_context,
-            skills,
             templates,
             model,
             summarization_model: None,
@@ -1579,10 +1568,6 @@ impl Thread {
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
-
-        if cx.has_flag::<SkillsFeatureFlag>() && !self.skills.is_empty() {
-            self.add_tool(SkillTool::new(self.skills.clone()));
-        }
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
         if cx.has_flag::<LspToolFeatureFlag>() {
@@ -4309,7 +4294,6 @@ mod tests {
                 Thread::new(
                     project,
                     project_context,
-                    Arc::new(Vec::new()),
                     context_server_registry,
                     templates,
                     None,

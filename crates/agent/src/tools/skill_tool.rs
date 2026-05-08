@@ -117,23 +117,32 @@ impl From<SkillToolOutput> for LanguageModelToolResultContent {
     }
 }
 
+/// How the `SkillTool` resolves the set of currently-available skills at
+/// invocation time. `Static` is convenient for tests that just want to
+/// hand the tool a fixed list. `Dynamic` is what production uses so the
+/// tool always sees the latest `state.skills` for its project — even if
+/// SKILL.md files were added/removed/edited after the thread was created.
+pub enum SkillsLookup {
+    Static(Arc<Vec<Skill>>),
+    Dynamic(Arc<dyn Fn(&App) -> Arc<Vec<Skill>> + Send + Sync>),
+}
+
+impl SkillsLookup {
+    pub fn current(&self, cx: &App) -> Arc<Vec<Skill>> {
+        match self {
+            Self::Static(skills) => skills.clone(),
+            Self::Dynamic(f) => f(cx),
+        }
+    }
+}
+
 pub struct SkillTool {
-    skills: Arc<Vec<Skill>>,
+    skills: SkillsLookup,
 }
 
 impl SkillTool {
-    pub fn new(skills: Arc<Vec<Skill>>) -> Self {
+    pub fn new(skills: SkillsLookup) -> Self {
         Self { skills }
-    }
-
-    /// Look up a skill by name, returning only those the model is allowed to
-    /// invoke. Skills with `disable_model_invocation` are hidden from the
-    /// model's catalog and rejected here as defense-in-depth: the model
-    /// shouldn't be able to load them even by hallucinating the name.
-    fn find_skill(&self, name: &str) -> Option<&Skill> {
-        self.skills
-            .iter()
-            .find(|s| s.name == name && !s.disable_model_invocation)
     }
 }
 
@@ -170,18 +179,27 @@ impl AgentTool for SkillTool {
                 error: e.to_string(),
             })?;
 
-            // Render the envelope synchronously while we still have a
-            // borrow of `self.skills`, so we can drop the borrow before
-            // suspending across the authorization await. Capture the
-            // SKILL.md path here too so it can key the auth context after
-            // we've dropped the borrow.
+            // Snapshot the current set of skills for this project. Doing
+            // this each time the tool runs (rather than at thread-build
+            // time) ensures the model can invoke skills that were added
+            // after the thread was created.
+            //
+            // Render the envelope synchronously while we still hold the
+            // snapshot, so we can drop the borrow before suspending across
+            // the authorization await. Capture the SKILL.md path here too
+            // so it can key the auth context after we've dropped the
+            // borrow.
+            let snapshot = cx.update(|cx| self.skills.current(cx));
             let (rendered, skill_file_path) = {
-                let Some(skill) = self.find_skill(&input.name) else {
+                let Some(skill) = snapshot
+                    .iter()
+                    .find(|s| s.name == input.name && !s.disable_model_invocation)
+                else {
                     return Err(SkillToolOutput::Error {
                         error: format!(
                             "Skill '{}' not found. Available skills: {}",
                             input.name,
-                            self.skills
+                            snapshot
                                 .iter()
                                 .filter(|s| !s.disable_model_invocation)
                                 .map(|s| s.name.as_str())
@@ -273,7 +291,7 @@ mod tests {
         );
         let skills = Arc::new(vec![skill]);
 
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({
@@ -305,7 +323,7 @@ mod tests {
         let skill = create_test_skill("my-skill", "A test skill", "# Header\n\nSome instructions.");
         let skills = Arc::new(vec![skill]);
 
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({ "name": "my-skill" }));
@@ -344,7 +362,7 @@ mod tests {
         let skill = create_test_skill("safe-skill", "A skill with a hostile body", malicious_body);
         let skills = Arc::new(vec![skill]);
 
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({ "name": "safe-skill" }));
@@ -434,7 +452,7 @@ mod tests {
 
         let skills = Arc::new(vec![global_skill, project_skill]);
 
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         // Test global skill
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
@@ -472,7 +490,7 @@ mod tests {
         let skill = create_test_skill("existing-skill", "An existing skill", "Content");
         let skills = Arc::new(vec![skill]);
 
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({"name": "nonexistent-skill"}));
@@ -500,7 +518,7 @@ mod tests {
         let visible = create_test_skill("visible", "Visible skill", "Hello");
         let skills = Arc::new(vec![hidden, visible]);
 
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({ "name": "deploy" }));
@@ -547,7 +565,7 @@ mod tests {
 
         let skill = create_test_skill("my-skill", "A test skill", "# Body");
         let skills = Arc::new(vec![skill]);
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({ "name": "my-skill" }));
@@ -599,7 +617,7 @@ mod tests {
         let skill = create_test_skill("my-skill", "A test skill", "# Body");
         let expected_path = skill.skill_file_path.to_string_lossy().into_owned();
         let skills = Arc::new(vec![skill]);
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({ "name": "my-skill" }));
@@ -652,7 +670,7 @@ mod tests {
 
         let skill = create_test_skill("my-skill", "A test skill", "# Body");
         let skills = Arc::new(vec![skill]);
-        let tool = Arc::new(SkillTool::new(skills));
+        let tool = Arc::new(SkillTool::new(SkillsLookup::Static(skills)));
 
         let (mut sender, input) = ToolInput::<SkillToolInput>::test();
         sender.send_full(json!({ "name": "my-skill" }));
