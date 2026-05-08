@@ -40,7 +40,24 @@
 >   `LspStore` (deferred — orthogonal to broadcast removal; needs a
 >   back-ref or a structural change for the `on_lsp_workspace_edit`
 >   server-initiated path, see Risks below).
-> - `BufferStore` Phase 1, `GitStore` — not started.
+> - `GitStore` — Phase 0 done. `LocalDownstreamState` (the diff/send
+>   pump that tracked snapshots and forwarded `proto::UpdateRepository`),
+>   `GitStoreState::*::downstream`, `pub fn shared`/`unshared`, and
+>   `fn downstream_client` are gone. New `GitStoreEvent` variants emit
+>   `RepositorySnapshotForDownstream`, `RepositorySnapshotRemovedForDownstream`,
+>   `ForwardRepositoryUpdate`, `ForwardRepositoryRemove`, and
+>   `DiffBasesUpdatedForDownstream`; `Project` and `HeadlessProject` track
+>   per-peer last-sent snapshots in a new
+>   `git_repository_snapshots_for_peer` field and run the diff/send
+>   pipeline in `on_git_store_event`. The askpass rpc handlers
+>   (`handle_fetch`/`push`/`pull`/`commit`) moved to `Project` /
+>   `HeadlessProject` as wrappers that delegate to a new
+>   `GitStore::process_*` worker taking `downstream_client` as a
+>   parameter; `make_remote_delegate` now takes the client directly.
+>   `handle_open_commit_message_buffer` still lives on `GitStore` and
+>   will move with `BufferStore` Phase 1 (it uses
+>   `BufferStore::create_buffer_for_peer`, not the downstream client).
+> - `BufferStore` Phase 1 — not started.
 > - `ImageStore` — already dumb; per-project state will live on
 >   `Project` when we have a host registry to point at.
 >
@@ -311,8 +328,15 @@ order:
    directly. They become a `BufferStore` Phase 1 problem when
    `create_buffer_for_peer` moves to `Project` and `LspStore` no
    longer holds `Entity<BufferStore>`.
-8. `GitStore` — same reason: `handle_open_commit_message_buffer`
-   calls `BufferStore::create_buffer_for_peer`.
+8. `GitStore` *(done)* — broadcast removal split into the same
+   two-commit shape as `LspStore`: first the mechanical Phase 0
+   (events for repo snapshots, diff bases, and remote-mode
+   forwarding; diff/send pipeline relocated to `Project` /
+   `HeadlessProject`), then the move of `handle_fetch`/`push`/`pull`/
+   `commit` askpass handlers up to `Project` / `HeadlessProject` to
+   delete the `downstream_client` field. `handle_open_commit_message_buffer`
+   is the remaining cascade item; it stays on `GitStore` until
+   `BufferStore` Phase 1 moves `create_buffer_for_peer` to `Project`.
 9. `BufferStore` Phase 1 — the move that everything above unblocks.
 10. `ImageStore` — already dumb; just needs per-project state on
     Project once that pattern is established.
