@@ -206,12 +206,18 @@ You are powered by the model named {{model_name}}.
 
 You have access to the following Skills - modular capabilities that provide specialized instructions for specific tasks. When a user's request matches a Skill's description, use the `skill` tool to retrieve the full instructions.
 
+{{!--
+  `name` and `description` use `{{...}}` and are HTML-escaped as defense in
+  depth. `location` uses `{{{...}}}` (no escaping) because it's a filesystem
+  path the model passes back to `read_file` verbatim — escaping characters
+  like `&` or `<` would corrupt the path and break the lookup.
+--}}
 <available_skills>
 {{#each skills}}
   <skill>
     <name>{{name}}</name>
     <description>{{description}}</description>
-    <location>{{location}}</location>
+    <location>{{{location}}}</location>
   </skill>
 {{/each}}
 </available_skills>
