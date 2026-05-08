@@ -144,15 +144,32 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
         .or_else(|| after_opening.strip_prefix('\n'))
         .unwrap_or(after_opening);
 
-    let (end_idx, delimiter_len) =
-        match (after_opening.find("\r\n---"), after_opening.find("\n---")) {
-            (Some(crlf_idx), Some(lf_idx)) if crlf_idx + 1 == lf_idx => (crlf_idx, 6),
-            (_, Some(lf_idx)) => (lf_idx, 4),
-            (Some(crlf_idx), None) => (crlf_idx, 6),
-            (None, None) => {
-                anyhow::bail!("SKILL.md missing closing frontmatter delimiter (---)");
-            }
-        };
+    // The closing `---` must be alone on its own line: the three dashes must be
+    // followed by end-of-input or a line terminator (`\n` or `\r\n`). Iterate
+    // through candidates so that occurrences like `---trailing` or `----` are
+    // skipped in favor of a later valid closer.
+    let mut found = None;
+    for (idx, _) in after_opening.match_indices("\n---") {
+        let after_dashes = idx + 4;
+        let rest = &after_opening[after_dashes..];
+        let valid_terminator =
+            rest.is_empty() || rest.starts_with('\n') || rest.starts_with("\r\n");
+        if !valid_terminator {
+            continue;
+        }
+        let is_crlf = idx > 0 && after_opening.as_bytes()[idx - 1] == b'\r';
+        if is_crlf {
+            // Delimiter is `\r\n---` (5 bytes), starting one byte before `idx`.
+            found = Some((idx - 1, 5));
+        } else {
+            // Delimiter is `\n---` (4 bytes), starting at `idx`.
+            found = Some((idx, 4));
+        }
+        break;
+    }
+    let Some((end_idx, delimiter_len)) = found else {
+        anyhow::bail!("SKILL.md missing closing frontmatter delimiter (---)");
+    };
 
     let frontmatter_yaml = &after_opening[..end_idx];
     let body = &after_opening[end_idx + delimiter_len..];
@@ -669,6 +686,65 @@ description: A skill with no body content
         assert_eq!(skill.description, "Frontmatter uses CRLF, body uses LF");
         assert!(skill.content.contains("# Mixed Skill"));
         assert!(skill.content.contains("Body uses LF only."));
+    }
+
+    #[test]
+    fn test_parse_rejects_closing_delimiter_with_trailing_chars() {
+        // The only `---` after the opener has trailing junk on the same line,
+        // so it isn't a valid closing delimiter and parsing must error.
+        let content = "---\nname: foo\ndescription: bar\n---trailing-junk\nbody content\n";
+
+        let result = parse_skill(
+            Path::new("/skills/test/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing closing frontmatter delimiter")
+        );
+    }
+
+    #[test]
+    fn test_parse_accepts_only_truly_terminated_closing_delimiter() {
+        // The first `---trailing` appears inside a quoted YAML string and is
+        // NOT alone on its line, so it must not be treated as the closer.
+        // The real closer comes later as `\n---\n`.
+        let content = "---\nname: skill-name\ndescription: A real description\nsummary: \"---trailing\"\n---\nbody content\n";
+
+        let skill = parse_skill(
+            Path::new("/skills/skill-name/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("Should pick the truly-terminated closing delimiter");
+
+        assert_eq!(skill.name, "skill-name");
+        assert_eq!(skill.description, "A real description");
+        assert_eq!(skill.content, "body content");
+    }
+
+    #[test]
+    fn test_parse_accepts_four_dashes_as_invalid_closer() {
+        // A line of four dashes is NOT a valid closing delimiter; with no
+        // valid closer following, parsing must error.
+        let content = "---\nname: foo\ndescription: bar\n----\nbody content\n";
+
+        let result = parse_skill(
+            Path::new("/skills/test/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing closing frontmatter delimiter")
+        );
     }
 
     #[gpui::test]
