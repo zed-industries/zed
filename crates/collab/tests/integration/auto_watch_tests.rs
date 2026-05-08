@@ -3,14 +3,15 @@ use call::ActiveCall;
 use client::ChannelId;
 use gpui::{App, BackgroundExecutor, Entity, TestAppContext, TestScreenCaptureSource};
 use project::Project;
-use workspace::{AutoWatch, Workspace};
+use rpc::proto::PeerId;
+use workspace::{AutoWatch, SharedScreen, Workspace};
 
 use super::TestClient;
 
 struct AutoWatchTestSetup {
     client_a: TestClient,
     client_b: TestClient,
-    _client_c: TestClient,
+    client_c: TestClient,
     channel_id: ChannelId,
     user_a_project: Entity<Project>,
     user_b_project: Entity<Project>,
@@ -78,7 +79,7 @@ async fn setup_auto_watch_test_with_initial_participants(
     AutoWatchTestSetup {
         client_a,
         client_b,
-        _client_c: client_c,
+        client_c,
         channel_id,
         user_a_project,
         user_b_project,
@@ -108,7 +109,11 @@ async fn test_auto_watch_opens_existing_share_on_toggle(
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_b's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_b.peer_id().unwrap(),
+            cx,
+        );
     });
 }
 
@@ -133,7 +138,11 @@ async fn test_auto_watch_opens_share_when_no_one_is_sharing_yet(
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_b's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_b.peer_id().unwrap(),
+            cx,
+        );
     });
 }
 
@@ -158,7 +167,11 @@ async fn test_auto_watch_switches_to_next_share_on_share_end(
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_b's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_b.peer_id().unwrap(),
+            cx,
+        );
     });
 
     start_screen_share(user_c).await;
@@ -168,7 +181,11 @@ async fn test_auto_watch_switches_to_next_share_on_share_end(
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_c's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
     });
 }
 
@@ -231,7 +248,11 @@ async fn test_auto_watch_opens_share_after_local_user_stops_sharing(
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_b's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_b.peer_id().unwrap(),
+            cx,
+        );
     });
 }
 
@@ -255,7 +276,11 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_b's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_b.peer_id().unwrap(),
+            cx,
+        );
     });
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
@@ -263,7 +288,11 @@ async fn test_auto_watch_toggle_off_leaves_tabs_open(
     });
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_b's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_b.peer_id().unwrap(),
+            cx,
+        );
     });
 }
 
@@ -302,10 +331,18 @@ async fn test_auto_watch_reopens_screen_share_from_returning_channel_participant
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_c's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
     });
     workspace_b.update(user_b, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_c's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
     });
 
     active_call_c
@@ -340,10 +377,18 @@ async fn test_auto_watch_reopens_screen_share_from_returning_channel_participant
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_c's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
     });
     workspace_b.update(user_b, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_c's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_c.peer_id().unwrap(),
+            cx,
+        );
     });
 }
 
@@ -368,7 +413,11 @@ async fn test_auto_watch_is_disabled_when_following_collaborator(
     executor.run_until_parked();
 
     workspace_a.update(user_a, |workspace, cx| {
-        assert_active_tab_title_matches(workspace, "user_b's screen", cx);
+        assert_active_item_is_screen_share_for_peer(
+            workspace,
+            setup.client_b.peer_id().unwrap(),
+            cx,
+        );
     });
 
     workspace_a.update_in(user_a, |workspace, window, cx| {
@@ -387,19 +436,17 @@ fn assert_no_screen_share_tabs_exist(workspace: &Workspace, message: &str, cx: &
         .active_pane()
         .read(cx)
         .items()
-        .any(|item| item.tab_content_text(0, cx).contains("screen"));
+        .any(|item| item.downcast::<SharedScreen>().is_some());
     assert!(!has_shared_screen_tab, "{message}");
 }
 
 #[track_caller]
-fn assert_active_tab_title_matches(workspace: &Workspace, expected_title: &str, cx: &App) {
+fn assert_active_item_is_screen_share_for_peer(workspace: &Workspace, peer_id: PeerId, cx: &App) {
     let active_item = workspace.active_item(cx).expect("no active item");
-    assert_eq!(
-        active_item.tab_content_text(0, cx),
-        expected_title,
-        "expected active item to be '{}'",
-        expected_title
-    );
+    let shared_screen = active_item
+        .downcast::<SharedScreen>()
+        .expect("expected active item to be a shared screen");
+    assert_eq!(shared_screen.read(cx).peer_id, peer_id);
 }
 
 async fn start_screen_share(cx: &mut TestAppContext) {
