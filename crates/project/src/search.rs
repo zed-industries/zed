@@ -78,6 +78,7 @@ pub enum SearchQuery {
         include_ignored: bool,
         one_match_per_line: bool,
         inner: SearchInputs,
+        escaped: bool,
     },
 }
 
@@ -169,6 +170,7 @@ impl SearchQuery {
             include_ignored,
             one_match_per_line,
             inner,
+            false,
         )
     }
 
@@ -202,6 +204,7 @@ impl SearchQuery {
             include_ignored,
             false,
             inner,
+            true,
         )
     }
 
@@ -212,6 +215,7 @@ impl SearchQuery {
         include_ignored: bool,
         one_match_per_line: bool,
         inner: SearchInputs,
+        escaped: bool,
     ) -> Result<Self> {
         if let Some((case_sensitive_from_pattern, new_pattern)) =
             Self::case_sensitive_from_pattern(&pattern)
@@ -253,6 +257,7 @@ impl SearchQuery {
             include_ignored,
             inner,
             one_match_per_line,
+            escaped,
         })
     }
 
@@ -452,23 +457,30 @@ impl SearchQuery {
         match self {
             SearchQuery::Text { replacement, .. } => replacement.clone().map(Cow::from),
             SearchQuery::Regex {
-                regex, replacement, ..
+                regex,
+                replacement,
+                escaped,
+                ..
             } => {
-                if let Some(replacement) = replacement {
-                    static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
-                        LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
-                    let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
-                        replacement,
-                        |c: &Captures| match c.get(0).unwrap().as_str() {
-                            r"\\" => "\\",
-                            r"\n" => "\n",
-                            r"\t" => "\t",
-                            x => unreachable!("Unexpected escape sequence: {}", x),
-                        },
-                    );
-                    Some(regex.replace(text, replacement))
+                if *escaped {
+                    replacement.clone().map(Cow::from)
                 } else {
-                    None
+                    if let Some(replacement) = replacement {
+                        static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
+                            LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
+                        let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
+                            replacement,
+                            |c: &Captures| match c.get(0).unwrap().as_str() {
+                                r"\\" => "\\",
+                                r"\n" => "\n",
+                                r"\t" => "\t",
+                                x => unreachable!("Unexpected escape sequence: {}", x),
+                            },
+                        );
+                        Some(regex.replace(text, replacement))
+                    } else {
+                        None
+                    }
                 }
             }
         }
