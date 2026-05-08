@@ -817,4 +817,9 @@ impl StatusItemView for ActivityIndicator {
         _: &mut Context<Self>,
     ) {
     }
+
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        // Activity indicator auto-hides when there's no work to display.
+        None
+    }
 }

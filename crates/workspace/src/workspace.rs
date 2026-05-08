@@ -118,7 +118,7 @@ use sqlez::{
     statement::Statement,
 };
 use status_bar::StatusBar;
-pub use status_bar::StatusItemView;
+pub use status_bar::{HideStatusItem, StatusItemView, add_hide_button_entry};
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -152,8 +152,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, FocusFollowsMouse, RestoreOnStartupBehavior,
-    StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
+    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -5742,6 +5742,7 @@ impl Workspace {
             .insert(pane.downgrade(), leader_id);
         self.unfollow(leader_id, window, cx);
         self.unfollow_in_pane(&pane, window, cx);
+        self.auto_watch = AutoWatch::Off;
         self.follower_states.insert(
             leader_id,
             FollowerState {

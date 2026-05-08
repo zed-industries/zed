@@ -1848,6 +1848,10 @@ impl GitStore {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some(diff_state) = self.diffs.get(&buffer_id) {
+                let new_index_text = new_index_text.as_ref().map(|rope| rope.to_string());
+                if new_index_text.as_deref() == diff_state.read(cx).index_text.as_deref() {
+                    return;
+                }
                 let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
                     diff_state.hunk_staging_operation_count += 1;
                     diff_state.hunk_staging_operation_count
@@ -1857,7 +1861,7 @@ impl GitStore {
                         log::debug!("hunks changed for {}", path.as_unix_str());
                         repo.spawn_set_index_text_job(
                             path,
-                            new_index_text.as_ref().map(|rope| rope.to_string()),
+                            new_index_text,
                             Some(hunk_staging_operation_count),
                             cx,
                         )

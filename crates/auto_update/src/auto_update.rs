@@ -81,6 +81,11 @@ fn linux_rsync_install_hint() -> &'static str {
             || distribution_id == "almalinux"
     }) {
         Some("Install it with: sudo dnf install rsync")
+    } else if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "nixos")
+    {
+        Some("Install pkgs.rsync from nixpkgs")
     } else {
         None
     };
