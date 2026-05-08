@@ -62,12 +62,15 @@ pub(crate) struct PhantomDiffReviewIndicator {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DiffReviewDragState {
-    pub start_anchor: Anchor,
-    pub current_anchor: Anchor,
+    start_anchor: Anchor,
+    current_anchor: Anchor,
 }
 
 impl DiffReviewDragState {
-    pub fn row_range(&self, snapshot: &DisplaySnapshot) -> std::ops::RangeInclusive<DisplayRow> {
+    pub(super) fn row_range(
+        &self,
+        snapshot: &DisplaySnapshot,
+    ) -> std::ops::RangeInclusive<DisplayRow> {
         let start = self.start_anchor.to_display_point(snapshot).row();
         let current = self.current_anchor.to_display_point(snapshot).row();
 
@@ -78,11 +81,11 @@ impl DiffReviewDragState {
 /// Identifies a specific hunk in the diff buffer.
 /// Used as a key to group comments by their location.
 #[derive(Clone, Debug)]
-pub struct DiffHunkKey {
+pub(crate) struct DiffHunkKey {
     /// The file path (relative to worktree) this hunk belongs to.
-    pub file_path: Arc<util::rel_path::RelPath>,
+    pub(crate) file_path: Arc<util::rel_path::RelPath>,
     /// An anchor at the start of the hunk. This tracks position as the buffer changes.
-    pub hunk_start_anchor: Anchor,
+    pub(crate) hunk_start_anchor: Anchor,
 }
 
 /// A review comment stored locally before being sent to the Agent panel.
@@ -94,19 +97,16 @@ pub struct StoredReviewComment {
     pub comment: String,
     /// Anchors for the code range being reviewed.
     pub range: Range<Anchor>,
-    /// Timestamp when the comment was created (for chronological ordering).
-    pub created_at: Instant,
     /// Whether this comment is currently being edited inline.
     pub is_editing: bool,
 }
 
 impl StoredReviewComment {
-    pub fn new(id: usize, comment: String, anchor_range: Range<Anchor>) -> Self {
+    fn new(id: usize, comment: String, anchor_range: Range<Anchor>) -> Self {
         Self {
             id,
             comment,
             range: anchor_range,
-            created_at: Instant::now(),
             is_editing: false,
         }
     }
@@ -253,48 +253,6 @@ impl Editor {
         }
     }
 
-    pub fn blame_hover(&mut self, _: &BlameHover, window: &mut Window, cx: &mut Context<Self>) {
-        let snapshot = self.snapshot(window, cx);
-        let cursor = self
-            .selections
-            .newest::<Point>(&snapshot.display_snapshot)
-            .head();
-        let Some((buffer, point)) = snapshot.buffer_snapshot().point_to_buffer_point(cursor) else {
-            return;
-        };
-
-        if self.blame.is_none() {
-            self.start_git_blame(true, window, cx);
-        }
-        let Some(blame) = self.blame.as_ref() else {
-            return;
-        };
-
-        let row_info = RowInfo {
-            buffer_id: Some(buffer.remote_id()),
-            buffer_row: Some(point.row),
-            ..Default::default()
-        };
-        let Some((buffer, blame_entry)) = blame
-            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
-            .flatten()
-        else {
-            return;
-        };
-
-        let anchor = self.selections.newest_anchor().head();
-        let position = self.to_pixel_point(anchor, &snapshot, window, cx);
-        if let (Some(position), Some(last_bounds)) = (position, self.last_bounds) {
-            self.show_blame_popover(
-                buffer,
-                &blame_entry,
-                position + last_bounds.origin,
-                true,
-                cx,
-            );
-        };
-    }
-
     /// Hides the inline blame popover element, in case it's already visible, or
     /// interrupts the task meant to show it, in case the task is running.
     ///
@@ -331,32 +289,6 @@ impl Editor {
         }
     }
 
-    pub fn restore_file(
-        &mut self,
-        _: &::git::RestoreFile,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.read_only(cx) {
-            return;
-        }
-        let mut buffer_ids = HashSet::default();
-        let snapshot = self.buffer().read(cx).snapshot(cx);
-        for selection in self
-            .selections
-            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
-        {
-            buffer_ids.extend(snapshot.buffer_ids_for_range(selection.range()))
-        }
-
-        let ranges = buffer_ids
-            .into_iter()
-            .flat_map(|buffer_id| snapshot.range_for_buffer(buffer_id))
-            .collect::<Vec<_>>();
-
-        self.restore_hunks_in_ranges(ranges, window, cx);
-    }
-
     pub fn git_restore(&mut self, _: &Restore, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
             return;
@@ -368,99 +300,6 @@ impl Editor {
             .map(|s| s.range())
             .collect();
         self.restore_hunks_in_ranges(selections, window, cx);
-    }
-
-    /// Restores the diff hunks in the editor's selections and moves the cursor
-    /// to the next diff hunk. Wraps around to the beginning of the buffer if
-    /// not all diff hunks are expanded.
-    pub fn restore_and_next(
-        &mut self,
-        _: &::git::RestoreAndNext,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.read_only(cx) {
-            return;
-        }
-        let selections = self
-            .selections
-            .all(&self.display_snapshot(cx))
-            .into_iter()
-            .map(|selection| selection.range())
-            .collect();
-
-        self.restore_hunks_in_ranges(selections, window, cx);
-
-        let all_diff_hunks_expanded = self.buffer().read(cx).all_diff_hunks_expanded();
-        let wrap_around = !all_diff_hunks_expanded;
-        let snapshot = self.snapshot(window, cx);
-        let position = self
-            .selections
-            .newest::<Point>(&snapshot.display_snapshot)
-            .head();
-
-        self.go_to_hunk_before_or_after_position(
-            &snapshot,
-            position,
-            Direction::Next,
-            wrap_around,
-            window,
-            cx,
-        );
-    }
-
-    pub fn restore_hunks_in_ranges(
-        &mut self,
-        ranges: Vec<Range<Point>>,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        if self.delegate_stage_and_restore {
-            let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
-            if !hunks.is_empty() {
-                cx.emit(EditorEvent::RestoreRequested { hunks });
-            }
-            return;
-        }
-        let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
-        self.transact(window, cx, |editor, window, cx| {
-            editor.restore_diff_hunks(hunks, cx);
-            let selections = editor
-                .selections
-                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
-            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select(selections);
-            });
-        });
-    }
-
-    pub(crate) fn restore_diff_hunks(&self, hunks: Vec<MultiBufferDiffHunk>, cx: &mut App) {
-        let mut revert_changes = HashMap::default();
-        let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
-        for (buffer_id, hunks) in &chunk_by {
-            let hunks = hunks.collect::<Vec<_>>();
-            for hunk in &hunks {
-                self.prepare_restore_change(&mut revert_changes, hunk, cx);
-            }
-            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), cx);
-        }
-        if !revert_changes.is_empty() {
-            self.buffer().update(cx, |multi_buffer, cx| {
-                for (buffer_id, changes) in revert_changes {
-                    if let Some(buffer) = multi_buffer.buffer(buffer_id) {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit(
-                                changes
-                                    .into_iter()
-                                    .map(|(range, text)| (range, text.to_string())),
-                                None,
-                                cx,
-                            );
-                        });
-                    }
-                }
-            });
-        }
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
@@ -475,19 +314,6 @@ impl Editor {
             .as_ref()?
             .read(cx)
             .status_for_buffer_id(buffer_id, cx)
-    }
-
-    pub fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
-        let snapshot = self.snapshot(window, cx);
-        let selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
-        self.go_to_hunk_before_or_after_position(
-            &snapshot,
-            selection.head(),
-            Direction::Next,
-            true,
-            window,
-            cx,
-        );
     }
 
     pub fn go_to_hunk_before_or_after_position(
@@ -532,121 +358,6 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
         });
-    }
-
-    pub fn collapse_all_diff_hunks(
-        &mut self,
-        _: &CollapseAllDiffHunks,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
-        });
-    }
-
-    pub fn toggle_selected_diff_hunks(
-        &mut self,
-        _: &ToggleSelectedDiffHunks,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ranges: Vec<_> = self
-            .selections
-            .disjoint_anchors()
-            .iter()
-            .map(|s| s.range())
-            .collect();
-        self.toggle_diff_hunks_in_ranges(ranges, cx);
-    }
-
-    pub fn show_diff_review_button(&self) -> bool {
-        self.show_diff_review_button
-    }
-
-    pub fn render_diff_review_button(
-        &self,
-        display_row: DisplayRow,
-        width: Pixels,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let text_color = cx.theme().colors().text;
-        let icon_color = cx.theme().colors().icon_accent;
-
-        h_flex()
-            .id("diff_review_button")
-            .cursor_pointer()
-            .w(width - px(1.))
-            .h(relative(0.9))
-            .justify_center()
-            .rounded_sm()
-            .border_1()
-            .border_color(text_color.opacity(0.1))
-            .bg(text_color.opacity(0.15))
-            .hover(|s| {
-                s.bg(icon_color.opacity(0.4))
-                    .border_color(icon_color.opacity(0.5))
-            })
-            .child(Icon::new(IconName::Plus).size(IconSize::Small))
-            .tooltip(Tooltip::text("Add Review (drag to select multiple lines)"))
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(move |editor, _event: &gpui::MouseDownEvent, window, cx| {
-                    editor.start_diff_review_drag(display_row, window, cx);
-                }),
-            )
-    }
-
-    pub fn start_diff_review_drag(
-        &mut self,
-        display_row: DisplayRow,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let snapshot = self.snapshot(window, cx);
-        let point = snapshot
-            .display_snapshot
-            .display_point_to_point(DisplayPoint::new(display_row, 0), Bias::Left);
-        let anchor = snapshot.buffer_snapshot().anchor_before(point);
-        self.diff_review_drag_state = Some(DiffReviewDragState {
-            start_anchor: anchor,
-            current_anchor: anchor,
-        });
-        cx.notify();
-    }
-
-    pub fn update_diff_review_drag(
-        &mut self,
-        display_row: DisplayRow,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.diff_review_drag_state.is_none() {
-            return;
-        }
-        let snapshot = self.snapshot(window, cx);
-        let point = snapshot
-            .display_snapshot
-            .display_point_to_point(display_row.as_display_point(), Bias::Left);
-        let anchor = snapshot.buffer_snapshot().anchor_before(point);
-        if let Some(drag_state) = &mut self.diff_review_drag_state {
-            drag_state.current_anchor = anchor;
-            cx.notify();
-        }
-    }
-
-    pub fn end_diff_review_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(drag_state) = self.diff_review_drag_state.take() {
-            let snapshot = self.snapshot(window, cx);
-            let range = drag_state.row_range(&snapshot.display_snapshot);
-            self.show_diff_review_overlay(*range.start()..*range.end(), window, cx);
-        }
-        cx.notify();
-    }
-
-    pub fn cancel_diff_review_drag(&mut self, cx: &mut Context<Self>) {
-        self.diff_review_drag_state = None;
-        cx.notify();
     }
 
     pub fn show_diff_review_overlay(
@@ -787,30 +498,6 @@ impl Editor {
         cx.notify();
     }
 
-    /// Dismisses all diff review overlays.
-    pub fn dismiss_all_diff_review_overlays(&mut self, cx: &mut Context<Self>) {
-        if self.diff_review_overlays.is_empty() {
-            return;
-        }
-        let block_ids: HashSet<_> = self
-            .diff_review_overlays
-            .drain(..)
-            .map(|overlay| overlay.block_id)
-            .collect();
-        self.remove_blocks(block_ids, None, cx);
-        cx.notify();
-    }
-
-    /// Action handler for SubmitDiffReviewComment.
-    pub fn submit_diff_review_comment_action(
-        &mut self,
-        _: &SubmitDiffReviewComment,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.submit_diff_review_comment(window, cx);
-    }
-
     /// Stores the diff review comment locally.
     /// Comments are stored per-hunk and can later be batch-submitted to the Agent panel.
     pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -855,24 +542,6 @@ impl Editor {
             .map(|overlay| &overlay.prompt_editor)
     }
 
-    /// Returns the line range for the first diff review overlay, if one is active.
-    /// Returns (start_row, end_row) as physical line numbers in the underlying file.
-    pub fn diff_review_line_range(&self, cx: &App) -> Option<(u32, u32)> {
-        let overlay = self.diff_review_overlays.first()?;
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let start_point = overlay.anchor_range.start.to_point(&snapshot);
-        let end_point = overlay.anchor_range.end.to_point(&snapshot);
-        let start_row = snapshot
-            .point_to_buffer_point(start_point)
-            .map(|(_, p)| p.row)
-            .unwrap_or(start_point.row);
-        let end_row = snapshot
-            .point_to_buffer_point(end_point)
-            .map(|(_, p)| p.row)
-            .unwrap_or(end_point.row);
-        Some((start_row, end_row))
-    }
-
     /// Sets whether the comments section is expanded in the diff review overlay.
     /// This is primarily used for testing.
     pub fn set_diff_review_comments_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
@@ -882,44 +551,16 @@ impl Editor {
         cx.notify();
     }
 
-    /// Returns comments for a specific hunk, ordered by creation time.
-    pub fn comments_for_hunk<'a>(
-        &'a self,
-        key: &DiffHunkKey,
-        snapshot: &MultiBufferSnapshot,
-    ) -> &'a [StoredReviewComment] {
-        let key_point = key.hunk_start_anchor.to_point(snapshot);
-        self.stored_review_comments
-            .iter()
-            .find(|(k, _)| {
-                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
-            })
-            .map(|(_, comments)| comments.as_slice())
-            .unwrap_or(&[])
-    }
-
     /// Returns the total count of stored review comments across all hunks.
-    pub fn total_review_comment_count(&self) -> usize {
+    pub(super) fn total_review_comment_count(&self) -> usize {
         self.stored_review_comments
             .iter()
             .map(|(_, v)| v.len())
             .sum()
     }
 
-    /// Returns the count of comments for a specific hunk.
-    pub fn hunk_comment_count(&self, key: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> usize {
-        let key_point = key.hunk_start_anchor.to_point(snapshot);
-        self.stored_review_comments
-            .iter()
-            .find(|(k, _)| {
-                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
-            })
-            .map(|(_, v)| v.len())
-            .unwrap_or(0)
-    }
-
     /// Adds a new review comment to a specific hunk.
-    pub fn add_review_comment(
+    pub(super) fn add_review_comment(
         &mut self,
         hunk_key: DiffHunkKey,
         comment: String,
@@ -952,8 +593,338 @@ impl Editor {
         id
     }
 
+    pub(super) fn blame_hover(
+        &mut self,
+        _: &BlameHover,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let cursor = self
+            .selections
+            .newest::<Point>(&snapshot.display_snapshot)
+            .head();
+        let Some((buffer, point)) = snapshot.buffer_snapshot().point_to_buffer_point(cursor) else {
+            return;
+        };
+
+        if self.blame.is_none() {
+            self.start_git_blame(true, window, cx);
+        }
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        let row_info = RowInfo {
+            buffer_id: Some(buffer.remote_id()),
+            buffer_row: Some(point.row),
+            ..Default::default()
+        };
+        let Some((buffer, blame_entry)) = blame
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
+            .flatten()
+        else {
+            return;
+        };
+
+        let anchor = self.selections.newest_anchor().head();
+        let position = self.to_pixel_point(anchor, &snapshot, window, cx);
+        if let (Some(position), Some(last_bounds)) = (position, self.last_bounds) {
+            self.show_blame_popover(
+                buffer,
+                &blame_entry,
+                position + last_bounds.origin,
+                true,
+                cx,
+            );
+        };
+    }
+
+    pub(super) fn restore_file(
+        &mut self,
+        _: &::git::RestoreFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+        let mut buffer_ids = HashSet::default();
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        for selection in self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
+        {
+            buffer_ids.extend(snapshot.buffer_ids_for_range(selection.range()))
+        }
+
+        let ranges = buffer_ids
+            .into_iter()
+            .flat_map(|buffer_id| snapshot.range_for_buffer(buffer_id))
+            .collect::<Vec<_>>();
+
+        self.restore_hunks_in_ranges(ranges, window, cx);
+    }
+
+    /// Restores the diff hunks in the editor's selections and moves the cursor
+    /// to the next diff hunk. Wraps around to the beginning of the buffer if
+    /// not all diff hunks are expanded.
+    pub(super) fn restore_and_next(
+        &mut self,
+        _: &::git::RestoreAndNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+        let selections = self
+            .selections
+            .all(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect();
+
+        self.restore_hunks_in_ranges(selections, window, cx);
+
+        let all_diff_hunks_expanded = self.buffer().read(cx).all_diff_hunks_expanded();
+        let wrap_around = !all_diff_hunks_expanded;
+        let snapshot = self.snapshot(window, cx);
+        let position = self
+            .selections
+            .newest::<Point>(&snapshot.display_snapshot)
+            .head();
+
+        self.go_to_hunk_before_or_after_position(
+            &snapshot,
+            position,
+            Direction::Next,
+            wrap_around,
+            window,
+            cx,
+        );
+    }
+
+    pub(super) fn restore_diff_hunks(&self, hunks: Vec<MultiBufferDiffHunk>, cx: &mut App) {
+        let mut revert_changes = HashMap::default();
+        let chunk_by = hunks.into_iter().chunk_by(|hunk| hunk.buffer_id);
+        for (buffer_id, hunks) in &chunk_by {
+            let hunks = hunks.collect::<Vec<_>>();
+            for hunk in &hunks {
+                self.prepare_restore_change(&mut revert_changes, hunk, cx);
+            }
+            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), cx);
+        }
+        if !revert_changes.is_empty() {
+            self.buffer().update(cx, |multi_buffer, cx| {
+                for (buffer_id, changes) in revert_changes {
+                    if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit(
+                                changes
+                                    .into_iter()
+                                    .map(|(range, text)| (range, text.to_string())),
+                                None,
+                                cx,
+                            );
+                        });
+                    }
+                }
+            });
+        }
+    }
+
+    pub(super) fn go_to_next_hunk(
+        &mut self,
+        _: &GoToHunk,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+        self.go_to_hunk_before_or_after_position(
+            &snapshot,
+            selection.head(),
+            Direction::Next,
+            true,
+            window,
+            cx,
+        );
+    }
+
+    pub(super) fn collapse_all_diff_hunks(
+        &mut self,
+        _: &CollapseAllDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
+        });
+    }
+
+    pub(super) fn toggle_selected_diff_hunks(
+        &mut self,
+        _: &ToggleSelectedDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ranges: Vec<_> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.range())
+            .collect();
+        self.toggle_diff_hunks_in_ranges(ranges, cx);
+    }
+
+    pub(super) fn show_diff_review_button(&self) -> bool {
+        self.show_diff_review_button
+    }
+
+    pub(super) fn render_diff_review_button(
+        &self,
+        display_row: DisplayRow,
+        width: Pixels,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let text_color = cx.theme().colors().text;
+        let icon_color = cx.theme().colors().icon_accent;
+
+        h_flex()
+            .id("diff_review_button")
+            .cursor_pointer()
+            .w(width - px(1.))
+            .h(relative(0.9))
+            .justify_center()
+            .rounded_sm()
+            .border_1()
+            .border_color(text_color.opacity(0.1))
+            .bg(text_color.opacity(0.15))
+            .hover(|s| {
+                s.bg(icon_color.opacity(0.4))
+                    .border_color(icon_color.opacity(0.5))
+            })
+            .child(Icon::new(IconName::Plus).size(IconSize::Small))
+            .tooltip(Tooltip::text("Add Review (drag to select multiple lines)"))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |editor, _event: &gpui::MouseDownEvent, window, cx| {
+                    editor.start_diff_review_drag(display_row, window, cx);
+                }),
+            )
+    }
+
+    pub(super) fn start_diff_review_drag(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let point = snapshot
+            .display_snapshot
+            .display_point_to_point(DisplayPoint::new(display_row, 0), Bias::Left);
+        let anchor = snapshot.buffer_snapshot().anchor_before(point);
+        self.diff_review_drag_state = Some(DiffReviewDragState {
+            start_anchor: anchor,
+            current_anchor: anchor,
+        });
+        cx.notify();
+    }
+
+    pub(super) fn update_diff_review_drag(
+        &mut self,
+        display_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.diff_review_drag_state.is_none() {
+            return;
+        }
+        let snapshot = self.snapshot(window, cx);
+        let point = snapshot
+            .display_snapshot
+            .display_point_to_point(display_row.as_display_point(), Bias::Left);
+        let anchor = snapshot.buffer_snapshot().anchor_before(point);
+        if let Some(drag_state) = &mut self.diff_review_drag_state {
+            drag_state.current_anchor = anchor;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn end_diff_review_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(drag_state) = self.diff_review_drag_state.take() {
+            let snapshot = self.snapshot(window, cx);
+            let range = drag_state.row_range(&snapshot.display_snapshot);
+            self.show_diff_review_overlay(*range.start()..*range.end(), window, cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn cancel_diff_review_drag(&mut self, cx: &mut Context<Self>) {
+        self.diff_review_drag_state = None;
+        cx.notify();
+    }
+
+    /// Dismisses all diff review overlays.
+    pub(super) fn dismiss_all_diff_review_overlays(&mut self, cx: &mut Context<Self>) {
+        if self.diff_review_overlays.is_empty() {
+            return;
+        }
+        let block_ids: HashSet<_> = self
+            .diff_review_overlays
+            .drain(..)
+            .map(|overlay| overlay.block_id)
+            .collect();
+        self.remove_blocks(block_ids, None, cx);
+        cx.notify();
+    }
+
+    /// Action handler for SubmitDiffReviewComment.
+    pub(super) fn submit_diff_review_comment_action(
+        &mut self,
+        _: &SubmitDiffReviewComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.submit_diff_review_comment(window, cx);
+    }
+
+    /// Returns comments for a specific hunk, ordered by creation time.
+    pub(super) fn comments_for_hunk<'a>(
+        &'a self,
+        key: &DiffHunkKey,
+        snapshot: &MultiBufferSnapshot,
+    ) -> &'a [StoredReviewComment] {
+        let key_point = key.hunk_start_anchor.to_point(snapshot);
+        self.stored_review_comments
+            .iter()
+            .find(|(k, _)| {
+                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+            })
+            .map(|(_, comments)| comments.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Returns the count of comments for a specific hunk.
+    pub(super) fn hunk_comment_count(
+        &self,
+        key: &DiffHunkKey,
+        snapshot: &MultiBufferSnapshot,
+    ) -> usize {
+        let key_point = key.hunk_start_anchor.to_point(snapshot);
+        self.stored_review_comments
+            .iter()
+            .find(|(k, _)| {
+                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+            })
+            .map(|(_, v)| v.len())
+            .unwrap_or(0)
+    }
+
     /// Removes a review comment by ID from any hunk.
-    pub fn remove_review_comment(&mut self, id: usize, cx: &mut Context<Self>) -> bool {
+    pub(super) fn remove_review_comment(&mut self, id: usize, cx: &mut Context<Self>) -> bool {
         for (_, comments) in self.stored_review_comments.iter_mut() {
             if let Some(index) = comments.iter().position(|c| c.id == id) {
                 comments.remove(index);
@@ -968,7 +939,7 @@ impl Editor {
     }
 
     /// Updates a review comment's text by ID.
-    pub fn update_review_comment(
+    pub(super) fn update_review_comment(
         &mut self,
         id: usize,
         new_comment: String,
@@ -989,7 +960,12 @@ impl Editor {
     }
 
     /// Sets a comment's editing state.
-    pub fn set_comment_editing(&mut self, id: usize, is_editing: bool, cx: &mut Context<Self>) {
+    pub(super) fn set_comment_editing(
+        &mut self,
+        id: usize,
+        is_editing: bool,
+        cx: &mut Context<Self>,
+    ) {
         for (_, comments) in self.stored_review_comments.iter_mut() {
             if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
                 comment.is_editing = is_editing;
@@ -999,28 +975,12 @@ impl Editor {
         }
     }
 
-    /// Takes all stored comments from all hunks, clearing the storage.
-    /// Returns a Vec of (hunk_key, comments) pairs.
-    pub fn take_all_review_comments(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Vec<(DiffHunkKey, Vec<StoredReviewComment>)> {
-        // Dismiss all overlays when taking comments (e.g., when sending to agent)
-        self.dismiss_all_diff_review_overlays(cx);
-        let comments = std::mem::take(&mut self.stored_review_comments);
-        // Reset the ID counter since all comments have been taken
-        self.next_review_comment_id = 0;
-        cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
-        cx.notify();
-        comments
-    }
-
     /// Removes review comments whose anchors are no longer valid or whose
     /// associated diff hunks no longer exist.
     ///
     /// This should be called when the buffer changes to prevent orphaned comments
     /// from accumulating.
-    pub fn cleanup_orphaned_review_comments(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn cleanup_orphaned_review_comments(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let original_count = self.total_review_comment_count();
 
@@ -1049,7 +1009,7 @@ impl Editor {
     }
 
     /// Toggles the expanded state of the comments section in the overlay.
-    pub fn toggle_review_comments_expanded(
+    pub(super) fn toggle_review_comments_expanded(
         &mut self,
         _: &ToggleReviewCommentsExpanded,
         window: &mut Window,
@@ -1080,7 +1040,7 @@ impl Editor {
     }
 
     /// Handles the EditReviewComment action - sets a comment into editing mode.
-    pub fn edit_review_comment(
+    pub(super) fn edit_review_comment(
         &mut self,
         action: &EditReviewComment,
         window: &mut Window,
@@ -1165,7 +1125,7 @@ impl Editor {
     }
 
     /// Confirms an inline edit of a review comment.
-    pub fn confirm_edit_review_comment(
+    pub(super) fn confirm_edit_review_comment(
         &mut self,
         comment_id: usize,
         _window: &mut Window,
@@ -1219,7 +1179,7 @@ impl Editor {
     }
 
     /// Cancels an inline edit of a review comment.
-    pub fn cancel_edit_review_comment(
+    pub(super) fn cancel_edit_review_comment(
         &mut self,
         comment_id: usize,
         _window: &mut Window,
@@ -1255,7 +1215,7 @@ impl Editor {
     }
 
     /// Action handler for ConfirmEditReviewComment.
-    pub fn confirm_edit_review_comment_action(
+    pub(super) fn confirm_edit_review_comment_action(
         &mut self,
         action: &ConfirmEditReviewComment,
         window: &mut Window,
@@ -1265,7 +1225,7 @@ impl Editor {
     }
 
     /// Action handler for CancelEditReviewComment.
-    pub fn cancel_edit_review_comment_action(
+    pub(super) fn cancel_edit_review_comment_action(
         &mut self,
         action: &CancelEditReviewComment,
         window: &mut Window,
@@ -1275,7 +1235,7 @@ impl Editor {
     }
 
     /// Handles the DeleteReviewComment action - removes a comment.
-    pub fn delete_review_comment(
+    pub(super) fn delete_review_comment(
         &mut self,
         action: &DeleteReviewComment,
         window: &mut Window,
@@ -1309,7 +1269,7 @@ impl Editor {
         }
     }
 
-    pub fn copy_permalink_to_line(
+    pub(super) fn copy_permalink_to_line(
         &mut self,
         _: &CopyPermalinkToLine,
         window: &mut Window,
@@ -1350,7 +1310,7 @@ impl Editor {
         .detach();
     }
 
-    pub fn open_permalink_to_line(
+    pub(super) fn open_permalink_to_line(
         &mut self,
         _: &OpenPermalinkToLine,
         window: &mut Window,
@@ -1805,6 +1765,31 @@ impl Editor {
             // Just header when collapsed
             base_height + 1
         }
+    }
+
+    fn restore_hunks_in_ranges(
+        &mut self,
+        ranges: Vec<Range<Point>>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if self.delegate_stage_and_restore {
+            let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
+            if !hunks.is_empty() {
+                cx.emit(EditorEvent::RestoreRequested { hunks });
+            }
+            return;
+        }
+        let hunks = self.snapshot(window, cx).hunks_for_ranges(ranges);
+        self.transact(window, cx, |editor, window, cx| {
+            editor.restore_diff_hunks(hunks, cx);
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select(selections);
+            });
+        });
     }
 
     fn has_stageable_diff_hunks_in_ranges(
@@ -2484,43 +2469,44 @@ impl Editor {
     }
 }
 
-impl EditorSnapshot {
-    pub fn hunks_for_ranges(
-        &self,
-        ranges: impl IntoIterator<Item = Range<Point>>,
-    ) -> Vec<MultiBufferDiffHunk> {
-        let mut hunks = Vec::new();
-        let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
-            HashMap::default();
-        for query_range in ranges {
-            let query_rows =
-                MultiBufferRow(query_range.start.row)..MultiBufferRow(query_range.end.row + 1);
-            for hunk in self.buffer_snapshot().diff_hunks_in_range(
-                Point::new(query_rows.start.0, 0)..Point::new(query_rows.end.0, 0),
-            ) {
-                // Include deleted hunks that are adjacent to the query range, because
-                // otherwise they would be missed.
-                let mut intersects_range = hunk.row_range.overlaps(&query_rows);
-                if hunk.status().is_deleted() {
-                    intersects_range |= hunk.row_range.start == query_rows.end;
-                    intersects_range |= hunk.row_range.end == query_rows.start;
-                }
-                if intersects_range {
-                    if !processed_buffer_rows
-                        .entry(hunk.buffer_id)
-                        .or_default()
-                        .insert(hunk.buffer_range.start..hunk.buffer_range.end)
-                    {
-                        continue;
-                    }
-                    hunks.push(hunk);
-                }
-            }
-        }
-
-        hunks
+#[cfg(test)]
+impl Editor {
+    /// Returns the line range for the first diff review overlay, if one is active.
+    /// Returns (start_row, end_row) as physical line numbers in the underlying file.
+    pub(super) fn diff_review_line_range(&self, cx: &App) -> Option<(u32, u32)> {
+        let overlay = self.diff_review_overlays.first()?;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let start_point = overlay.anchor_range.start.to_point(&snapshot);
+        let end_point = overlay.anchor_range.end.to_point(&snapshot);
+        let start_row = snapshot
+            .point_to_buffer_point(start_point)
+            .map(|(_, p)| p.row)
+            .unwrap_or(start_point.row);
+        let end_row = snapshot
+            .point_to_buffer_point(end_point)
+            .map(|(_, p)| p.row)
+            .unwrap_or(end_point.row);
+        Some((start_row, end_row))
     }
 
+    /// Takes all stored comments from all hunks, clearing the storage.
+    /// Returns a Vec of (hunk_key, comments) pairs.
+    pub(super) fn take_all_review_comments(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Vec<(DiffHunkKey, Vec<StoredReviewComment>)> {
+        // Dismiss all overlays when taking comments (e.g., when sending to agent)
+        self.dismiss_all_diff_review_overlays(cx);
+        let comments = std::mem::take(&mut self.stored_review_comments);
+        // Reset the ID counter since all comments have been taken
+        self.next_review_comment_id = 0;
+        cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
+        cx.notify();
+        comments
+    }
+}
+
+impl EditorSnapshot {
     pub(super) fn display_diff_hunks_for_rows<'a>(
         &'a self,
         display_rows: Range<DisplayRow>,
@@ -2577,101 +2563,40 @@ impl EditorSnapshot {
             })
     }
 
-    pub fn gutter_dimensions(
+    fn hunks_for_ranges(
         &self,
-        font_id: FontId,
-        font_size: Pixels,
-        style: &EditorStyle,
-        window: &mut Window,
-        cx: &App,
-    ) -> GutterDimensions {
-        if self.show_gutter
-            && let Some(ch_width) = cx.text_system().ch_width(font_id, font_size).log_err()
-            && let Some(ch_advance) = cx.text_system().ch_advance(font_id, font_size).log_err()
-        {
-            let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
-                matches!(
-                    ProjectSettings::get_global(cx).git.git_gutter,
-                    GitGutterSetting::TrackedFiles
-                )
-            });
-            let gutter_settings = EditorSettings::get_global(cx).gutter;
-            let show_line_numbers = self
-                .show_line_numbers
-                .unwrap_or(gutter_settings.line_numbers);
-            let line_gutter_width = if show_line_numbers {
-                // Avoid flicker-like gutter resizes when the line number gains another digit by
-                // only resizing the gutter on files with > 10**min_line_number_digits lines.
-                let min_width_for_number_on_gutter =
-                    ch_advance * gutter_settings.min_line_number_digits as f32;
-                self.max_line_number_width(style, window)
-                    .max(min_width_for_number_on_gutter)
-            } else {
-                0.0.into()
-            };
-
-            let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
-            let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
-            let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
-
-            let git_blame_entries_width =
-                self.git_blame_gutter_max_author_length
-                    .map(|max_author_length| {
-                        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-                        const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
-
-                        /// The number of characters to dedicate to gaps and margins.
-                        const SPACING_WIDTH: usize = 4;
-
-                        let max_char_count = max_author_length.min(renderer.max_author_length())
-                            + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len()
-                            + SPACING_WIDTH;
-
-                        ch_advance * max_char_count
-                    });
-
-            let is_singleton = self.buffer_snapshot().is_singleton();
-
-            let left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO)
-                + if !is_singleton {
-                    ch_width * 4.0
-                // runnables, breakpoints and bookmarks are shown in the same place
-                // if all three are there only the runnable is shown
-                } else if show_runnables || show_breakpoints || show_bookmarks {
-                    ch_width * 3.0
-                } else if show_git_gutter && show_line_numbers {
-                    ch_width * 2.0
-                } else if show_git_gutter || show_line_numbers {
-                    ch_width
-                } else {
-                    px(0.)
-                };
-
-            let shows_folds = is_singleton && gutter_settings.folds;
-
-            let right_padding = if shows_folds && show_line_numbers {
-                ch_width * 4.0
-            } else if shows_folds || (!is_singleton && show_line_numbers) {
-                ch_width * 3.0
-            } else if show_line_numbers {
-                ch_width
-            } else {
-                px(0.)
-            };
-
-            GutterDimensions {
-                left_padding,
-                right_padding,
-                width: line_gutter_width + left_padding + right_padding,
-                margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
-                git_blame_entries_width,
+        ranges: impl IntoIterator<Item = Range<Point>>,
+    ) -> Vec<MultiBufferDiffHunk> {
+        let mut hunks = Vec::new();
+        let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
+            HashMap::default();
+        for query_range in ranges {
+            let query_rows =
+                MultiBufferRow(query_range.start.row)..MultiBufferRow(query_range.end.row + 1);
+            for hunk in self.buffer_snapshot().diff_hunks_in_range(
+                Point::new(query_rows.start.0, 0)..Point::new(query_rows.end.0, 0),
+            ) {
+                // Include deleted hunks that are adjacent to the query range, because
+                // otherwise they would be missed.
+                let mut intersects_range = hunk.row_range.overlaps(&query_rows);
+                if hunk.status().is_deleted() {
+                    intersects_range |= hunk.row_range.start == query_rows.end;
+                    intersects_range |= hunk.row_range.end == query_rows.start;
+                }
+                if intersects_range {
+                    if !processed_buffer_rows
+                        .entry(hunk.buffer_id)
+                        .or_default()
+                        .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                    {
+                        continue;
+                    }
+                    hunks.push(hunk);
+                }
             }
-        } else if self.offset_content {
-            GutterDimensions::default_with_margin(font_id, font_size, cx)
-        } else {
-            GutterDimensions::default()
         }
+
+        hunks
     }
 }
 

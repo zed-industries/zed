@@ -89,12 +89,13 @@ pub use element::{
     render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
-pub use git::{DiffHunkKey, RenderDiffHunkControlsFn, StoredReviewComment, set_blame_renderer};
+pub(crate) use git::{DiffHunkKey, StoredReviewComment};
 use git::{
     DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, render_diff_hunk_controls,
     update_uncommitted_diff_for_buffer,
 };
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
+pub use git::{RenderDiffHunkControlsFn, set_blame_renderer};
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -18781,6 +18782,103 @@ impl EditorSnapshot {
     pub fn max_line_number_width(&self, style: &EditorStyle, window: &mut Window) -> Pixels {
         let digit_count = self.widest_line_number().ilog10() + 1;
         column_pixels(style, digit_count as usize, window)
+    }
+
+    pub fn gutter_dimensions(
+        &self,
+        font_id: FontId,
+        font_size: Pixels,
+        style: &EditorStyle,
+        window: &mut Window,
+        cx: &App,
+    ) -> GutterDimensions {
+        if self.show_gutter
+            && let Some(ch_width) = cx.text_system().ch_width(font_id, font_size).log_err()
+            && let Some(ch_advance) = cx.text_system().ch_advance(font_id, font_size).log_err()
+        {
+            let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
+                matches!(
+                    ProjectSettings::get_global(cx).git.git_gutter,
+                    GitGutterSetting::TrackedFiles
+                )
+            });
+            let gutter_settings = EditorSettings::get_global(cx).gutter;
+            let show_line_numbers = self
+                .show_line_numbers
+                .unwrap_or(gutter_settings.line_numbers);
+            let line_gutter_width = if show_line_numbers {
+                // Avoid flicker-like gutter resizes when the line number gains another digit by
+                // only resizing the gutter on files with > 10**min_line_number_digits lines.
+                let min_width_for_number_on_gutter =
+                    ch_advance * gutter_settings.min_line_number_digits as f32;
+                self.max_line_number_width(style, window)
+                    .max(min_width_for_number_on_gutter)
+            } else {
+                0.0.into()
+            };
+
+            let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
+            let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
+            let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
+
+            let git_blame_entries_width =
+                self.git_blame_gutter_max_author_length
+                    .map(|max_author_length| {
+                        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+                        const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
+
+                        /// The number of characters to dedicate to gaps and margins.
+                        const SPACING_WIDTH: usize = 4;
+
+                        let max_char_count = max_author_length.min(renderer.max_author_length())
+                            + ::git::SHORT_SHA_LENGTH
+                            + MAX_RELATIVE_TIMESTAMP.len()
+                            + SPACING_WIDTH;
+
+                        ch_advance * max_char_count
+                    });
+
+            let is_singleton = self.buffer_snapshot().is_singleton();
+
+            let left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO)
+                + if !is_singleton {
+                    ch_width * 4.0
+                // runnables, breakpoints and bookmarks are shown in the same place
+                // if all three are there only the runnable is shown
+                } else if show_runnables || show_breakpoints || show_bookmarks {
+                    ch_width * 3.0
+                } else if show_git_gutter && show_line_numbers {
+                    ch_width * 2.0
+                } else if show_git_gutter || show_line_numbers {
+                    ch_width
+                } else {
+                    px(0.)
+                };
+
+            let shows_folds = is_singleton && gutter_settings.folds;
+
+            let right_padding = if shows_folds && show_line_numbers {
+                ch_width * 4.0
+            } else if shows_folds || (!is_singleton && show_line_numbers) {
+                ch_width * 3.0
+            } else if show_line_numbers {
+                ch_width
+            } else {
+                px(0.)
+            };
+
+            GutterDimensions {
+                left_padding,
+                right_padding,
+                width: line_gutter_width + left_padding + right_padding,
+                margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
+                git_blame_entries_width,
+            }
+        } else if self.offset_content {
+            GutterDimensions::default_with_margin(font_id, font_size, cx)
+        } else {
+            GutterDimensions::default()
+        }
     }
 
     /// Returns the line delta from `base` to `line` in the multibuffer, ignoring wrapped lines.
