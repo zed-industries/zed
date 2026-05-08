@@ -296,6 +296,19 @@ pub struct NativeAgent {
 
 impl gpui::EventEmitter<SkillLoadingErrorsUpdated> for NativeAgent {}
 
+static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
+    RULES_FILE_NAMES
+        .iter()
+        .filter_map(|name| RelPath::unix(name).ok().map(|path| path.into_arc()))
+        .collect()
+});
+
+static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
+    RelPath::unix(project_skills_relative_path())
+        .ok()
+        .map(|path| path.into_arc())
+});
+
 impl NativeAgent {
     pub fn new(
         thread_store: Entity<ThreadStore>,
@@ -830,11 +843,11 @@ impl NativeAgent {
     ) -> Option<Task<Result<RulesFileContext>>> {
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
-        let selected_rules_file = RULES_FILE_NAMES
-            .into_iter()
+        let selected_rules_file = RULES_FILE_REL_PATHS
+            .iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(RelPath::unix(name).unwrap())
+                    .entry_for_path(name)
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -924,12 +937,15 @@ impl NativeAgent {
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
                 let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
-                let skills_prefix = RelPath::unix(project_skills_relative_path()).unwrap();
                 if items.iter().any(|(path, _, _)| {
-                    RULES_FILE_NAMES
+                    let path_ref = path.as_ref();
+                    RULES_FILE_REL_PATHS
                         .iter()
-                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
-                        || (skills_enabled && path.starts_with(skills_prefix))
+                        .any(|rules_path| path_ref == rules_path.as_ref())
+                        || (skills_enabled
+                            && SKILLS_PREFIX
+                                .as_ref()
+                                .is_some_and(|prefix| path_ref.starts_with(prefix)))
                 }) {
                     state.project_context_needs_refresh.send(()).ok();
                 }
