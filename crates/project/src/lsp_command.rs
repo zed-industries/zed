@@ -5,7 +5,7 @@ use crate::{
     DocumentHighlight, DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
-    ProjectTransaction, PulledDiagnostics, ResolveState,
+    ProjectEntryId, ProjectTransaction, PulledDiagnostics, ResolveState,
     buffer_store::PeerBufferAccess,
     lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
 };
@@ -194,6 +194,13 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     ) -> Result<Self::Response>;
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
+
+    /// Hook for the `Project::handle_lsp_command_with_project::<T>` rpc
+    /// path to inject the host's `active_entry` into the request after
+    /// `from_proto` builds it. Used by `PerformRename` to gate snippet
+    /// emission in `LocalLspStore::deserialize_workspace_edit`. Default
+    /// is a no-op for commands that don't care.
+    fn set_active_entry(&mut self, _active_entry: Option<ProjectEntryId>) {}
 }
 
 pub enum LspParamsOrResponse<P, R> {
@@ -211,6 +218,12 @@ pub struct PerformRename {
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
+    /// Set by callers (`Project::perform_rename` and the
+    /// `Project::handle_lsp_command_with_project::<PerformRename>` rpc
+    /// path) so `response_from_lsp` can pass it to
+    /// `LocalLspStore::deserialize_workspace_edit` for snippet-vs-edit
+    /// gating.
+    pub active_entry: Option<ProjectEntryId>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -595,6 +608,7 @@ impl LspCommand for PerformRename {
                 edit,
                 self.push_to_history,
                 lsp_server,
+                self.active_entry,
                 &mut cx,
             )
             .await
@@ -634,6 +648,10 @@ impl LspCommand for PerformRename {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             new_name: message.new_name,
             push_to_history: false,
+            // The host's `active_entry` is injected later by
+            // `Project::handle_lsp_command_with_project::<PerformRename>`
+            // via `set_active_entry`; collab peers don't carry that state.
+            active_entry: None,
         })
     }
 
@@ -697,6 +715,10 @@ impl LspCommand for PerformRename {
 
     fn buffer_id_from_proto(message: &proto::PerformRename) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+
+    fn set_active_entry(&mut self, active_entry: Option<ProjectEntryId>) {
+        self.active_entry = active_entry;
     }
 }
 

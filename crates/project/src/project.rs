@@ -1164,6 +1164,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
+        client.add_entity_request_handler(Self::handle_rename_project_entry);
         client.add_entity_request_handler(Self::handle_lsp_command_with_project::<PerformRename>);
         client.add_entity_request_handler(
             Self::handle_lsp_command_with_project::<lsp_store::lsp_ext_command::GoToParentModule>,
@@ -1690,6 +1691,7 @@ impl Project {
             remote_proto
                 .add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
             remote_proto.add_entity_request_handler(Self::handle_open_commit_message_buffer);
+            remote_proto.add_entity_request_handler(Self::handle_rename_project_entry);
             remote_proto
                 .add_entity_request_handler(Self::handle_lsp_command_with_project::<PerformRename>);
             remote_proto.add_entity_request_handler(
@@ -2662,6 +2664,7 @@ impl Project {
         let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
 
         let lsp_store = self.lsp_store().downgrade();
+        let active_entry = self.active_entry;
         cx.spawn(async move |project, cx| {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.read_with(cx, |this, _| this.abs_path());
@@ -2681,6 +2684,7 @@ impl Project {
                 &old_abs_path,
                 &new_abs_path,
                 is_dir,
+                active_entry,
                 cx.clone(),
             )
             .await;
@@ -4074,6 +4078,29 @@ impl Project {
             LspStoreEvent::WorkspaceEditApplied(transaction) => {
                 cx.emit(Event::WorkspaceEditApplied(transaction.clone()))
             }
+            LspStoreEvent::ApplyWorkspaceEditRequested {
+                server_id,
+                params,
+                response,
+            } => {
+                let lsp_store = self.lsp_store.downgrade();
+                let active_entry = self.active_entry;
+                let server_id = *server_id;
+                let params = params.clone();
+                let response = response.clone();
+                cx.spawn(async move |_, cx| {
+                    let result = lsp_store::LocalLspStore::on_lsp_workspace_edit(
+                        lsp_store,
+                        params,
+                        server_id,
+                        active_entry,
+                        cx,
+                    )
+                    .await;
+                    response.send(result).await.ok();
+                })
+                .detach();
+            }
         }
     }
 
@@ -4865,8 +4892,9 @@ impl Project {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<ProjectTransaction>> {
+        let active_entry = self.active_entry;
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.apply_code_action(buffer_handle, action, push_to_history, cx)
+            lsp_store.apply_code_action(buffer_handle, action, push_to_history, active_entry, cx)
         })
     }
 
@@ -4877,8 +4905,9 @@ impl Project {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<ProjectTransaction>> {
+        let active_entry = self.active_entry;
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.apply_code_action_kind(buffers, kind, push_to_history, cx)
+            lsp_store.apply_code_action_kind(buffers, kind, push_to_history, active_entry, cx)
         })
     }
 
@@ -4906,6 +4935,7 @@ impl Project {
     ) -> Task<Result<ProjectTransaction>> {
         let push_to_history = true;
         let position = position.to_point_utf16(buffer.read(cx));
+        let active_entry = self.active_entry;
         self.request_lsp(
             buffer,
             LanguageServerToQuery::FirstCapable,
@@ -4913,6 +4943,7 @@ impl Project {
                 position,
                 new_name,
                 push_to_history,
+                active_entry,
             },
             cx,
         )
@@ -5530,9 +5561,6 @@ impl Project {
         });
         if new_active_entry != self.active_entry {
             self.active_entry = new_active_entry;
-            self.lsp_store.update(cx, |lsp_store, _| {
-                lsp_store.set_active_entry(new_active_entry);
-            });
             cx.emit(Event::ActiveEntryChanged(new_active_entry));
         }
     }
@@ -5820,9 +5848,12 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
-        let lsp_store = this.read_with(&cx, |project, _| project.lsp_store.clone());
+        let (lsp_store, active_entry) = this.read_with(&cx, |project, _| {
+            (project.lsp_store.clone(), project.active_entry)
+        });
         let project_transaction =
-            LspStore::process_apply_code_action(lsp_store, envelope, cx.clone()).await?;
+            LspStore::process_apply_code_action(lsp_store, envelope, active_entry, cx.clone())
+                .await?;
         let serialized = this.update(&mut cx, |project, cx| {
             project.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
         });
@@ -5838,9 +5869,12 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::ApplyCodeActionKindResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
-        let lsp_store = this.read_with(&cx, |project, _| project.lsp_store.clone());
+        let (lsp_store, active_entry) = this.read_with(&cx, |project, _| {
+            (project.lsp_store.clone(), project.active_entry)
+        });
         let project_transaction =
-            LspStore::process_apply_code_action_kind(lsp_store, envelope, cx.clone()).await?;
+            LspStore::process_apply_code_action_kind(lsp_store, envelope, active_entry, cx.clone())
+                .await?;
         let serialized = this.update(&mut cx, |project, cx| {
             project.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
         });
@@ -5896,6 +5930,22 @@ impl Project {
         })
     }
 
+    /// Forwards `proto::RenameProjectEntry`. Calls
+    /// `LspStore::process_rename_project_entry` with the host's
+    /// `active_entry` so the snippet-vs-edit gating in
+    /// `LocalLspStore::deserialize_workspace_edit` has the project state
+    /// it needs.
+    async fn handle_rename_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RenameProjectEntry>,
+        cx: AsyncApp,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let (lsp_store, active_entry) = this.read_with(&cx, |project, _| {
+            (project.lsp_store.clone(), project.active_entry)
+        });
+        LspStore::process_rename_project_entry(lsp_store, envelope, active_entry, cx).await
+    }
+
     /// Forwards `proto::RegisterBufferWithLanguageServers`. Calls into the
     /// LSP store and (when not just forwarding upstream) records the LSP
     /// handle in `Project::shared_buffers`.
@@ -5933,17 +5983,23 @@ impl Project {
     {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let buffer_id = T::buffer_id_from_proto(&envelope.payload)?;
-        let lsp_store = this.read_with(&cx, |project, _| project.lsp_store.clone());
+        let (lsp_store, active_entry) = this.read_with(&cx, |project, _| {
+            (project.lsp_store.clone(), project.active_entry)
+        });
         let buffer_handle = lsp_store.update(&mut cx, |lsp_store, cx| {
             lsp_store.buffer_store().read(cx).get_existing(buffer_id)
         })?;
-        let request = T::from_proto(
+        let mut request = T::from_proto(
             envelope.payload,
             lsp_store.clone(),
             buffer_handle.clone(),
             cx.clone(),
         )
         .await?;
+        // For `PerformRename`, inject the host's `active_entry` so
+        // `LocalLspStore::deserialize_workspace_edit` can gate snippet
+        // emission. Default no-op for other commands.
+        request.set_active_entry(active_entry);
         let response = lsp_store
             .update(&mut cx, |lsp_store, cx| {
                 lsp_store.request_lsp(

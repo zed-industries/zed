@@ -1032,13 +1032,22 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     let this = this.clone();
                     async move {
-                        LocalLspStore::on_lsp_workspace_edit(
-                            this.clone(),
-                            params,
-                            server_id,
-                            &mut cx,
-                        )
-                        .await
+                        // Route to `Project` / `HeadlessProject` via an
+                        // event so the listener can supply its
+                        // `active_entry` (per-project state) to the
+                        // snippet-vs-edit gating in
+                        // `deserialize_workspace_edit`.
+                        let (tx, rx) = async_channel::bounded(1);
+                        this.update(&mut cx, |_, cx| {
+                            cx.emit(LspStoreEvent::ApplyWorkspaceEditRequested {
+                                server_id,
+                                params,
+                                response: tx,
+                            });
+                        })?;
+                        rx.recv()
+                            .await
+                            .context("workspace edit response channel closed")?
                     }
                 }
             })
@@ -1385,6 +1394,7 @@ impl LocalLspStore {
         mut buffers: Vec<Entity<Buffer>>,
         kind: CodeActionKind,
         push_to_history: bool,
+        active_entry: Option<ProjectEntryId>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<ProjectTransaction> {
         // Do not allow multiple concurrent code actions requests for the
@@ -1438,6 +1448,7 @@ impl LocalLspStore {
                     language_server,
                     actions,
                     push_to_history,
+                    active_entry,
                     &mut project_transaction,
                     cx,
                 )
@@ -3065,6 +3076,7 @@ impl LocalLspStore {
         language_server: &Arc<LanguageServer>,
         actions: Vec<CodeAction>,
         push_to_history: bool,
+        active_entry: Option<ProjectEntryId>,
         project_transaction: &mut ProjectTransaction,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
@@ -3089,6 +3101,7 @@ impl LocalLspStore {
                     edit.clone(),
                     push_to_history,
                     language_server.clone(),
+                    active_entry,
                     cx,
                 )
                 .await?;
@@ -3275,6 +3288,7 @@ impl LocalLspStore {
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
         language_server: Arc<LanguageServer>,
+        active_entry: Option<ProjectEntryId>,
         cx: &mut AsyncApp,
     ) -> Result<ProjectTransaction> {
         let fs = this.read_with(cx, |this, _| this.as_local().unwrap().fs.clone());
@@ -3388,7 +3402,6 @@ impl LocalLspStore {
                     let edits = this
                         .update(cx, |this, cx| {
                             let path = buffer_to_edit.read(cx).project_path(cx);
-                            let active_entry = this.active_entry;
                             let is_active_entry = path.is_some_and(|project_path| {
                                 this.worktree_store
                                     .read(cx)
@@ -3497,10 +3510,11 @@ impl LocalLspStore {
         Ok(project_transaction)
     }
 
-    async fn on_lsp_workspace_edit(
+    pub async fn on_lsp_workspace_edit(
         this: WeakEntity<LspStore>,
         params: lsp::ApplyWorkspaceEditParams,
         server_id: LanguageServerId,
+        active_entry: Option<ProjectEntryId>,
         cx: &mut AsyncApp,
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
         let this = this.upgrade().context("project project closed")?;
@@ -3512,6 +3526,7 @@ impl LocalLspStore {
             params.edit,
             true,
             language_server.clone(),
+            active_entry,
             cx,
         )
         .await
@@ -3944,7 +3959,6 @@ pub struct LspStore {
     worktree_store: Entity<WorktreeStore>,
     pub languages: Arc<LanguageRegistry>,
     pub language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
-    active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
@@ -4076,6 +4090,19 @@ pub enum LspStoreEvent {
         most_recent_edit: clock::Lamport,
     },
     WorkspaceEditApplied(ProjectTransaction),
+    /// A language server requested an `applyEdit`. The listener
+    /// (`Project` / `HeadlessProject`) supplies its `active_entry` to
+    /// `LocalLspStore::on_lsp_workspace_edit` and sends the resulting
+    /// `lsp::ApplyWorkspaceEditResponse` (or an error) back to the LSP
+    /// request handler in `setup_lsp_messages` via `response`. This
+    /// indirection exists because the snippet-vs-edit gating in
+    /// `deserialize_workspace_edit` needs project state that
+    /// `LspStore` doesn't have.
+    ApplyWorkspaceEditRequested {
+        server_id: LanguageServerId,
+        params: lsp::ApplyWorkspaceEditParams,
+        response: async_channel::Sender<Result<lsp::ApplyWorkspaceEditResponse>>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -4154,7 +4181,10 @@ impl LspStore {
         // handle_register_buffer_with_language_servers moved to `Project`
         // and `HeadlessProject`; it registers an LSP handle in
         // `Project::shared_buffers` (formerly on `BufferStore`).
-        client.add_entity_request_handler(Self::handle_rename_project_entry);
+        // handle_rename_project_entry moved to `Project` and
+        // `HeadlessProject` because the snippet-vs-edit gating in
+        // `LocalLspStore::deserialize_workspace_edit` needs the host's
+        // `active_entry`, which lives on `Project` (not `LspStore`).
         client.add_entity_request_handler(Self::handle_pull_workspace_diagnostics);
         client.add_entity_request_handler(Self::handle_lsp_get_completions);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
@@ -4299,7 +4329,6 @@ impl LspStore {
             lsp_data: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
             next_hint_id: Arc::default(),
-            active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
         }
@@ -4360,7 +4389,6 @@ impl LspStore {
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
-            active_entry: None,
 
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
@@ -4980,10 +5008,6 @@ impl LspStore {
         self.buffer_store.clone()
     }
 
-    pub fn set_active_entry(&mut self, active_entry: Option<ProjectEntryId>) {
-        self.active_entry = active_entry;
-    }
-
     /// Returns a `proto::UpdateDiagnosticSummary` for the given worktree if
     /// any diagnostic summaries are recorded for it. Returns `None` otherwise.
     /// `project_id` is filled in by the caller (Project / HeadlessProject)
@@ -5511,6 +5535,7 @@ impl LspStore {
         buffer_handle: Entity<Buffer>,
         mut action: CodeAction,
         push_to_history: bool,
+        active_entry: Option<ProjectEntryId>,
         cx: &mut Context<Self>,
     ) -> Task<Result<ProjectTransaction>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -5556,6 +5581,7 @@ impl LspStore {
                         edit.clone(),
                         push_to_history,
                         lang_server.clone(),
+                        active_entry,
                         cx,
                     )
                     .await;
@@ -5624,6 +5650,7 @@ impl LspStore {
         buffers: HashSet<Entity<Buffer>>,
         kind: CodeActionKind,
         push_to_history: bool,
+        active_entry: Option<ProjectEntryId>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         if self.as_local().is_some() {
@@ -5634,6 +5661,7 @@ impl LspStore {
                     buffers,
                     kind,
                     push_to_history,
+                    active_entry,
                     cx,
                 )
                 .await;
@@ -9437,6 +9465,7 @@ impl LspStore {
     pub async fn process_apply_code_action(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeAction>,
+        active_entry: Option<ProjectEntryId>,
         mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
         let action =
@@ -9444,7 +9473,7 @@ impl LspStore {
         let apply_code_action = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
-            anyhow::Ok(this.apply_code_action(buffer, action, false, cx))
+            anyhow::Ok(this.apply_code_action(buffer, action, false, active_entry, cx))
         })?;
 
         apply_code_action.await
@@ -9505,9 +9534,16 @@ impl LspStore {
         })
     }
 
-    async fn handle_rename_project_entry(
+    /// Worker for the `proto::RenameProjectEntry` rpc. The caller
+    /// (`Project::handle_rename_project_entry` /
+    /// `HeadlessProject::handle_rename_project_entry`) supplies its
+    /// `active_entry` so that any LSP `WorkspaceEdit`s produced by
+    /// `willRenameFiles` can decide whether to emit snippet events
+    /// (active buffer) or apply plain text edits.
+    pub async fn process_rename_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RenameProjectEntry>,
+        active_entry: Option<ProjectEntryId>,
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
@@ -9545,6 +9581,7 @@ impl LspStore {
             &old_abs_path,
             &new_abs_path,
             old_entry.is_dir(),
+            active_entry,
             cx.clone(),
         )
         .await;
@@ -10019,6 +10056,7 @@ impl LspStore {
         old_path: &Path,
         new_path: &Path,
         is_dir: bool,
+        active_entry: Option<ProjectEntryId>,
         cx: AsyncApp,
     ) -> Task<ProjectTransaction> {
         let old_uri = lsp::Uri::from_file_path(old_path)
@@ -10071,6 +10109,7 @@ impl LspStore {
                                 edit,
                                 false,
                                 language_server.clone(),
+                                active_entry,
                                 cx,
                             )
                             .await
@@ -10928,6 +10967,7 @@ impl LspStore {
     pub async fn process_apply_code_action_kind(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeActionKind>,
+        active_entry: Option<ProjectEntryId>,
         mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
         let format = this.update(&mut cx, |this, cx| {
@@ -10951,7 +10991,7 @@ impl LspStore {
                     envelope.payload.kind.as_str()
                 ),
             };
-            anyhow::Ok(this.apply_code_action_kind(buffers, kind, false, cx))
+            anyhow::Ok(this.apply_code_action_kind(buffers, kind, false, active_entry, cx))
         })?;
 
         format.await

@@ -51,17 +51,31 @@
 >   The host's `WorktreeStore` now holds only weak references. Project
 >   and HeadlessProject hold the strong handles per the per-project
 >   retention policy.
-> - `LspStore` — Phase 0 done. `downstream_client` field, `shared`,
->   `disconnected_from_host`, and `pub fn downstream_client()` accessor
->   are gone. `LspStore::handle_lsp_query` moved to `Project` /
->   `HeadlessProject` as `handle_lsp_query` rpc handlers that delegate
->   to a new `LspStore::process_lsp_query(downstream_client,
+> - `LspStore` — Phase 0 done, plus `active_entry` mirror removed.
+>   `downstream_client` field, `shared`, `disconnected_from_host`, and
+>   `pub fn downstream_client()` accessor are gone.
+>   `LspStore::handle_lsp_query` moved to `Project` / `HeadlessProject`
+>   as `handle_lsp_query` rpc handlers that delegate to a new
+>   `LspStore::process_lsp_query(downstream_client,
 >   downstream_project_id, ...)` worker. `LogStore`'s `LocalSsh` kind
 >   now carries `(session, project_id)` directly instead of a
->   `WeakEntity<LspStore>`. The `active_entry` mirror remains on
->   `LspStore` (deferred — orthogonal to broadcast removal; needs a
->   back-ref or a structural change for the `on_lsp_workspace_edit`
->   server-initiated path, see Risks below).
+>   `WeakEntity<LspStore>`. `LspStore::active_entry` /
+>   `set_active_entry` are gone: `deserialize_workspace_edit` now takes
+>   `active_entry` as a parameter; the four direct callers thread it
+>   through, and the fifth (`on_lsp_workspace_edit`, registered as an
+>   `ApplyWorkspaceEdit` request handler in `setup_lsp_messages`)
+>   routes through a new `LspStoreEvent::ApplyWorkspaceEditRequested`
+>   event with an `async_channel` response, handled in
+>   `Project::on_lsp_store_event` /
+>   `HeadlessProject::on_lsp_store_event`. `PerformRename` gained an
+>   `active_entry` field; `LspCommand` gained a default-no-op
+>   `set_active_entry` hook called by
+>   `Project::handle_lsp_command_with_project::<T>` /
+>   `HeadlessProject::handle_lsp_command_with_project::<T>` after
+>   `T::from_proto`. `handle_rename_project_entry` moved from `LspStore`
+>   to `Project` / `HeadlessProject` (both call a new
+>   `LspStore::process_rename_project_entry` worker that takes
+>   `active_entry`).
 > - `GitStore` — Phase 0 done. `LocalDownstreamState` (the diff/send
 >   pump that tracked snapshots and forwarded `proto::UpdateRepository`),
 >   `GitStoreState::*::downstream`, `pub fn shared`/`unshared`, and
@@ -103,23 +117,14 @@
 > recorded for future store splits: identify cross-store rpc handler
 > calls early.
 >
-> **Note on `active_entry`**: the per-project `active_entry` mirror on
-> `LspStore` is read in exactly one place — `deserialize_workspace_edit`,
-> for the snippet-vs-edit gating. It is *not* relayed to LSP servers;
-> it's a purely local UI decision. Five callers (`apply_code_action`,
-> `will_rename_entry`, `execute_code_actions_on_server`, `PerformRename`'s
-> `response_from_lsp`, and `on_lsp_workspace_edit`) use it. The first
-> four have access to a `Project` and could pass `active_entry` as a
-> parameter. The fifth — `on_lsp_workspace_edit` — is a closure
-> registered at language-server-startup time in `setup_lsp_messages`,
-> with only `WeakEntity<LspStore>` captured; it has no `Project`
-> context. Removing the mirror requires either (a) a `WeakEntity<Project>`
-> back-ref on `LocalLspStore` (small, narrowly scoped, but technically
-> Phase 1 scaffolding the doc cautions against), or (b) a structural
-> change that defers the snippet-vs-edit decision to a caller — which
-> ends up needing the same back-ref *somewhere*, or changes
-> transaction-granularity behavior. Deferred to a focused follow-up
-> after `BufferStore` Phase 1.
+> **Note on `active_entry`** *(resolved)*: previously a mirror lived on
+> `LspStore` so `deserialize_workspace_edit` could gate snippet emission.
+> That field is gone — the deserializer now takes `active_entry` as a
+> parameter and the LSP-server-initiated `ApplyWorkspaceEdit` path goes
+> through a new event/`async_channel` response (handled in
+> `Project::on_lsp_store_event` / `HeadlessProject::on_lsp_store_event`)
+> so the listener supplies its `active_entry`. See the `LspStore` entry
+> above for the full set of changes.
 
 ## Why
 
@@ -449,11 +454,12 @@ lives on `Project`.
   `shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>`
   is per-project-collab-session state. Move it to `Project` in the
   `BufferStore` step of Phase 0.
-- **`active_entry` on `LspStore`.** Used in
-  `deserialize_workspace_edit` to gate snippet emission. The calling
-  project must pass its `active_entry` into the LSP call site, or the
-  workspace-edit deserialization moves project-side. Resolve in the
-  `LspStore` step of Phase 0.
+- ~~**`active_entry` on `LspStore`.**~~ *(resolved)* The mirror is
+  gone. `deserialize_workspace_edit` now takes `active_entry` as a
+  parameter; the LSP-server-initiated path emits
+  `LspStoreEvent::ApplyWorkspaceEditRequested` and `Project` /
+  `HeadlessProject` reply with the result via an `async_channel`
+  response. See the `LspStore` entry in the progress section above.
 - **Initial-state announcements on share.** `Project::shared` must
   walk host stores' state (language servers, diagnostic summaries,
   worktree metadata) filtered to its own worktrees. This requires

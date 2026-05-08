@@ -314,6 +314,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         session.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         session.add_entity_request_handler(Self::handle_open_commit_message_buffer);
+        session.add_entity_request_handler(Self::handle_rename_project_entry);
         session.add_entity_request_handler(
             Self::handle_lsp_command_with_project::<project::lsp_command::PerformRename>,
         );
@@ -788,6 +789,26 @@ impl HeadlessProject {
                 })
                 .detach();
             }
+            LspStoreEvent::ApplyWorkspaceEditRequested {
+                server_id,
+                params,
+                response,
+            } => {
+                // HeadlessProject has no UI, hence no active entry; pass
+                // `None` so all snippet edits are baked in as plain text.
+                let lsp_store = lsp_store.downgrade();
+                let server_id = *server_id;
+                let params = params.clone();
+                let response = response.clone();
+                cx.spawn(async move |_, cx| {
+                    let result = project::lsp_store::LocalLspStore::on_lsp_workspace_edit(
+                        lsp_store, params, server_id, None, cx,
+                    )
+                    .await;
+                    response.send(result).await.ok();
+                })
+                .detach();
+            }
             _ => {}
         }
     }
@@ -1006,8 +1027,9 @@ impl HeadlessProject {
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        // HeadlessProject has no UI, hence no active entry; pass `None`.
         let project_transaction =
-            LspStore::process_apply_code_action(lsp_store, envelope, cx.clone()).await?;
+            LspStore::process_apply_code_action(lsp_store, envelope, None, cx.clone()).await?;
         let serialized = this.update(&mut cx, |this, cx| {
             this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
         });
@@ -1023,8 +1045,9 @@ impl HeadlessProject {
     ) -> Result<proto::ApplyCodeActionKindResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        // HeadlessProject has no UI, hence no active entry; pass `None`.
         let project_transaction =
-            LspStore::process_apply_code_action_kind(lsp_store, envelope, cx.clone()).await?;
+            LspStore::process_apply_code_action_kind(lsp_store, envelope, None, cx.clone()).await?;
         let serialized = this.update(&mut cx, |this, cx| {
             this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
         });
@@ -1076,6 +1099,18 @@ impl HeadlessProject {
         })
     }
 
+    /// Forwards `proto::RenameProjectEntry`. Mirrors
+    /// `Project::handle_rename_project_entry`. HeadlessProject has no UI
+    /// and therefore no active entry; pass `None`.
+    async fn handle_rename_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RenameProjectEntry>,
+        cx: AsyncApp,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        LspStore::process_rename_project_entry(lsp_store, envelope, None, cx).await
+    }
+
     async fn handle_register_buffer_with_language_servers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RegisterBufferWithLanguageServers>,
@@ -1112,13 +1147,16 @@ impl HeadlessProject {
         let buffer_handle = lsp_store.update(&mut cx, |lsp_store, cx| {
             lsp_store.buffer_store().read(cx).get_existing(buffer_id)
         })?;
-        let request = T::from_proto(
+        let mut request = T::from_proto(
             envelope.payload,
             lsp_store.clone(),
             buffer_handle.clone(),
             cx.clone(),
         )
         .await?;
+        // HeadlessProject has no UI, hence no active entry; pass `None`
+        // (no-op for commands other than `PerformRename`).
+        request.set_active_entry(None);
         let response = lsp_store
             .update(&mut cx, |lsp_store, cx| {
                 lsp_store.request_lsp(

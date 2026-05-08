@@ -6901,6 +6901,9 @@ impl Editor {
 
         let provider = self.completion_provider.as_ref()?;
 
+        let active_entry = self
+            .project()
+            .and_then(|project| project.read(cx).active_entry());
         let lsp_store = self.project().map(|project| project.read(cx).lsp_store());
         let command = lsp_store.as_ref().and_then(|lsp_store| {
             let CompletionSource::Lsp {
@@ -6958,7 +6961,7 @@ impl Editor {
                 let title = command.lsp_action.title().to_owned();
                 let project_transaction = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.apply_code_action(buffer_handle, command, false, cx)
+                        lsp_store.apply_code_action(buffer_handle, command, false, active_entry, cx)
                     })
                     .await
                     .context("applying post-completion command")?;
