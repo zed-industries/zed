@@ -497,6 +497,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 #
 
 accesskit = "0.24.0"
+accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.32.1"
 agent-client-protocol = { version = "=0.11.1", features = ["unstable"] }

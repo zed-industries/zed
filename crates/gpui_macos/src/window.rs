@@ -504,6 +504,8 @@ struct MacWindowState {
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
     activated_least_once: bool,
     closed: Arc<AtomicBool>,
+    a11y_active: Arc<AtomicBool>,
+    accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
 }
@@ -833,6 +835,8 @@ impl MacWindow {
                 toggle_tab_bar_callback: None,
                 activated_least_once: false,
                 closed: Arc::new(AtomicBool::new(false)),
+                accesskit_adapter: None,
+                a11y_active: Arc::new(AtomicBool::new(false)),
                 sheet_parent: None,
             })));
 
@@ -1748,6 +1752,64 @@ impl PlatformWindow for MacWindow {
         let mut this = self.0.lock();
         this.renderer.render_to_image(scene)
     }
+
+    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        let mut lock = self.0.lock();
+        let a11y_active = lock.a11y_active.clone();
+
+        let activation_handler = A11yActivationHandler {
+            callback: callbacks.activation,
+            a11y_active,
+        };
+        let action_handler = A11yActionHandler(callbacks.action);
+
+        let adapter = unsafe {
+            accesskit_macos::SubclassingAdapter::new(
+                lock.native_view.as_ptr() as *mut c_void,
+                activation_handler,
+                action_handler,
+            )
+        };
+
+        lock.accesskit_adapter = Some(adapter);
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        let mut lock = self.0.lock();
+        if let Some(adapter) = lock.accesskit_adapter.as_mut() {
+            if let Some(events) = adapter.update_if_active(|| tree_update) {
+                events.raise();
+            }
+        }
+    }
+
+    fn a11y_update_window_bounds(&self) {
+        // macOS handles window bounds tracking automatically via NSAccessibility.
+    }
+
+    fn is_a11y_active(&self) -> bool {
+        self.0.lock().a11y_active.load(Ordering::SeqCst)
+    }
+}
+
+struct A11yActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+    a11y_active: Arc<AtomicBool>,
+}
+
+impl accesskit::ActivationHandler for A11yActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        self.a11y_active.store(true, Ordering::SeqCst);
+        (self.callback)()
+    }
+}
+
+struct A11yActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+
+impl accesskit::ActionHandler for A11yActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        (self.0)(request);
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {
@@ -2358,6 +2420,15 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
     let executor = lock.foreground_executor.clone();
     drop(lock);
+
+    {
+        let mut lock = window_state.lock();
+        if let Some(adapter) = lock.accesskit_adapter.as_mut() {
+            if let Some(events) = adapter.update_view_focus_state(is_active) {
+                events.raise();
+            }
+        }
+    }
 
     // When a window becomes active, trigger an immediate synchronous frame request to prevent
     // tab flicker when switching between windows in native tabs mode.
