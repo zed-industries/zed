@@ -1171,6 +1171,7 @@ impl DisableAiSettings {
 impl Project {
     pub fn init(client: &Arc<Client>, cx: &mut App) {
         connection_manager::init(client.clone(), cx);
+        host::init(cx);
 
         let client: AnyProtoClient = client.clone().into();
         client.add_entity_message_handler(Self::handle_add_collaborator);

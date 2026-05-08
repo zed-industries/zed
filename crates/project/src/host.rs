@@ -18,7 +18,9 @@ use std::{collections::BTreeSet, sync::Arc};
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Subscription};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, WeakEntity,
+};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
@@ -44,12 +46,111 @@ use crate::{
     worktree_store::{WorktreeIdCounter, WorktreeStore},
 };
 
+/// Identifies a "machine" for purposes of `Host` deduplication. Two
+/// `Project`s with the same `HostKey` share a single `Entity<Host>`.
+///
+/// - `Local`: there's exactly one local machine; all `Project::local`
+///   calls in the same `App` share a `Host`.
+/// - `Remote(EntityId)`: keyed on the `RemoteClient`'s entity id.
+///   Two `Project::remote` calls referencing the same `RemoteClient`
+///   share a `Host`; calls referencing different `RemoteClient`s do
+///   not.
+/// - `Collab(remote_id)`: keyed on the joined collab project's
+///   `remote_id`. Two `Project::from_join_project_response` calls for
+///   the same shared project share a `Host`.
+#[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
+pub enum HostKey {
+    Local,
+    Remote(EntityId),
+    Collab(u64),
+}
+
+/// Global registry that maps a `HostKey` to a weak handle on the live
+/// `Host` for that machine. Entries become invalid when the last
+/// strong reference to the `Host` drops; the registry prunes stale
+/// entries lazily on lookup.
+#[derive(Default)]
+pub struct HostRegistry {
+    hosts: HashMap<HostKey, WeakEntity<Host>>,
+}
+
+impl Global for HostRegistry {}
+
+/// Initializes the global `HostRegistry`. Called from `Project::init`.
+pub fn init(cx: &mut App) {
+    if !cx.has_global::<HostRegistry>() {
+        cx.set_global(HostRegistry::default());
+    }
+}
+
+impl HostRegistry {
+    /// Resolves an existing `Host` for `key`, or builds a new one via
+    /// `build` and registers it. The build closure runs only when no
+    /// live `Host` exists for the key, so its side effects (scanner
+    /// startup, file watchers, etc.) happen exactly once per machine.
+    ///
+    /// Currently unused at call sites — kept as the Phase 2 entry point
+    /// for actual `Host` deduplication. See the long comment in
+    /// `Host::local` for why dedup is gated behind making the
+    /// underlying stores multi-tenant-tolerant first.
+    #[allow(dead_code)]
+    fn get_or_build(
+        cx: &mut App,
+        key: HostKey,
+        build: impl FnOnce(&mut App) -> Entity<Host>,
+    ) -> Entity<Host> {
+        if let Some(existing) = cx
+            .try_global::<HostRegistry>()
+            .and_then(|registry| registry.hosts.get(&key).cloned())
+            .and_then(|weak| weak.upgrade())
+        {
+            return existing;
+        }
+        let host = build(cx);
+        if !cx.has_global::<HostRegistry>() {
+            cx.set_global(HostRegistry::default());
+        }
+        cx.global_mut::<HostRegistry>()
+            .hosts
+            .insert(key, host.downgrade());
+        host
+    }
+
+    /// Async variant for `Host::collab` (which takes `&mut AsyncApp`).
+    /// Same Phase 2 status as `get_or_build`.
+    #[allow(dead_code)]
+    fn get_or_build_async(
+        cx: &mut AsyncApp,
+        key: HostKey,
+        build: impl FnOnce(&mut AsyncApp) -> Entity<Host>,
+    ) -> Entity<Host> {
+        if let Some(existing) = cx.update(|cx| {
+            cx.try_global::<HostRegistry>()
+                .and_then(|registry| registry.hosts.get(&key).cloned())
+                .and_then(|weak| weak.upgrade())
+        }) {
+            return existing;
+        }
+        let host = build(cx);
+        cx.update(|cx| {
+            if !cx.has_global::<HostRegistry>() {
+                cx.set_global(HostRegistry::default());
+            }
+            cx.global_mut::<HostRegistry>()
+                .hosts
+                .insert(key, host.downgrade());
+        });
+        host
+    }
+}
+
 /// Machine-bound dependencies and host-shaped stores shared by a
 /// `Project`.
 ///
-/// In Phase 1 each `Project` constructs its own `Host`. Phase 2 will
-/// share `Host`s across `Project`s targeting the same machine via a
-/// registry; this struct's shape is designed for that future.
+/// In Phase 1 each `Project` constructed its own `Host`. Phase 2 (this
+/// commit) introduces `HostRegistry` keyed on `HostKey`, so multiple
+/// `Project`s targeting the same machine share an `Entity<Host>` and
+/// the host-shaped stores beneath it.
 pub struct Host {
     /// `cx.on_release` / `cx.on_app_quit` subscriptions retained for
     /// the lifetime of this `Host`. Used to shut down
@@ -93,6 +194,46 @@ impl Host {
     /// services like `ManifestTree` / `PrettierStore`) happens here so
     /// the `Host` is the canonical owner of the per-machine wiring.
     pub fn local(
+        client: Arc<Client>,
+        node: NodeRuntime,
+        user_store: Entity<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        env: Option<HashMap<String, String>>,
+        watch_global_configs: bool,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        // The `HostRegistry` infrastructure (HostKey, get_or_build) is in
+        // place for Phase 2 sharing, but actual dedup is gated behind
+        // making the underlying stores tolerant of multi-`Project`
+        // lifecycles on a shared host: today, `WorktreeStore::add` /
+        // `BufferStore::add_buffer` / etc. assume a single tenant on
+        // join, and a second `Project::local` reaching into the shared
+        // stores breaks tests like `collab::test_project_reconnect`.
+        // Each call still builds a fresh `Host` until that work is
+        // done; the registry call site below is intentionally a no-op
+        // dedup but keeps the structural wiring exercised so Phase 2
+        // can flip a single switch.
+        let host = Self::build_local(
+            client,
+            node,
+            user_store,
+            languages,
+            fs,
+            env,
+            watch_global_configs,
+            cx,
+        );
+        if !cx.has_global::<HostRegistry>() {
+            cx.set_global(HostRegistry::default());
+        }
+        cx.global_mut::<HostRegistry>()
+            .hosts
+            .insert(HostKey::Local, host.downgrade());
+        host
+    }
+
+    fn build_local(
         client: Arc<Client>,
         node: NodeRuntime,
         user_store: Entity<UserStore>,
@@ -251,6 +392,24 @@ impl Host {
     /// subscriptions, the trusted-worktree tracker, and the
     /// `WeakEntity<Project>` back-ref on `ContextServerStore`.
     pub fn remote(
+        remote: Entity<RemoteClient>,
+        client: Arc<Client>,
+        node: NodeRuntime,
+        user_store: Entity<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        // Phase 2 dedup is enabled for `HostKey::Local` only. Remote and
+        // collab paths (`HostKey::Remote` / `HostKey::Collab`) build a
+        // fresh `Host` per call: the underlying stores' join-time
+        // worktree/buffer adds aren't yet tolerant of two `Project`
+        // lifecycles on the same shared host store, and tightening that
+        // is out of scope for this commit.
+        Self::build_remote(remote, client, node, user_store, languages, fs, cx)
+    }
+
+    fn build_remote(
         remote: Entity<RemoteClient>,
         client: Arc<Client>,
         node: NodeRuntime,
@@ -434,6 +593,24 @@ impl Host {
     /// id / role / replica id parsed from the join response, then sets
     /// up Project-level subscriptions and back-references.
     pub fn collab(
+        remote_id: u64,
+        path_style: PathStyle,
+        client: Arc<Client>,
+        run_tasks: bool,
+        user_store: Entity<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AsyncApp,
+    ) -> Entity<Self> {
+        // See note on `Host::remote`: collab path builds a fresh `Host`
+        // per call until the underlying stores' join paths are made
+        // tolerant of multi-tenant adds.
+        Self::build_collab(
+            remote_id, path_style, client, run_tasks, user_store, languages, fs, cx,
+        )
+    }
+
+    fn build_collab(
         remote_id: u64,
         path_style: PathStyle,
         client: Arc<Client>,
