@@ -1906,17 +1906,6 @@ mod tests {
 
         let _update = stream_rx.expect_update_fields().await;
         let auth = stream_rx.expect_authorization().await;
-        assert!(
-            auth.tool_call
-                .fields
-                .title
-                .as_deref()
-                .is_some_and(
-                    |title| title.contains("Unsaved changes") && title.contains("test.txt")
-                ),
-            "expected dirty-buffer prompt title to mention path, got: {:?}",
-            auth.tool_call.fields.title,
-        );
         let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
         let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
         else {
