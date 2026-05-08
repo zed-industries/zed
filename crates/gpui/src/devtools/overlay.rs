@@ -497,14 +497,16 @@ fn overlay_snapshot(window_id: WindowId) -> OverlaySnapshot {
 }
 
 fn heat_style(rate: usize, opacity: f32) -> HeatStyle {
-    let (hue, fill_alpha, border_alpha, border_width) = if rate >= 30 {
-        (0.0, 0.24, 0.98, 3.0)
+    let (hue, fill_alpha, border_alpha, border_width) = if rate >= 60 {
+        (0.0, 0.26, 0.98, 3.0)
+    } else if rate >= 30 {
+        (0.025, 0.21, 0.92, 2.5)
     } else if rate >= 15 {
-        (0.025, 0.19, 0.90, 2.25)
+        (0.075, 0.16, 0.82, 1.9)
     } else if rate >= 5 {
-        (0.075, 0.14, 0.74, 1.5)
+        (0.13, 0.12, 0.68, 1.35)
     } else {
-        (0.13, 0.10, 0.58, 1.0)
+        (0.54, 0.10, 0.58, 1.0)
     };
 
     HeatStyle {
@@ -1118,6 +1120,15 @@ mod tests {
         let bounds = hud_bounds(4, size(px(800.), px(600.)), Some(point(px(120.), px(140.))));
 
         assert_eq!(bounds.origin, point(px(120.), px(140.)));
+    }
+
+    #[test]
+    fn heat_style_uses_expected_rate_bands() {
+        assert_eq!(heat_style(4, 1.).hue, 0.54);
+        assert_eq!(heat_style(5, 1.).hue, 0.13);
+        assert_eq!(heat_style(15, 1.).hue, 0.075);
+        assert_eq!(heat_style(30, 1.).hue, 0.025);
+        assert_eq!(heat_style(60, 1.).hue, 0.0);
     }
 }
 
