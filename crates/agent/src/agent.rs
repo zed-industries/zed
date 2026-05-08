@@ -733,9 +733,17 @@ impl NativeAgent {
                     let worktree_snapshot = worktree.read(cx);
                     let abs_path = worktree_snapshot.abs_path();
                     let worktree_root_name: Arc<str> = worktree_snapshot.root_name_str().into();
+                    // Capture scan_complete *before* spawning so we don't have to re-borrow
+                    // the worktree from inside the async task (which would require a cx).
+                    let scan_complete = worktree_snapshot
+                        .as_local()
+                        .map(|local| local.scan_complete());
                     let skills_dir = abs_path.join(project_skills_relative_path());
                     let fs = fs.clone();
                     Some(cx.background_spawn(async move {
+                        if let Some(scan_complete) = scan_complete {
+                            scan_complete.await;
+                        }
                         load_skills_from_directory(
                             &fs,
                             &skills_dir,
