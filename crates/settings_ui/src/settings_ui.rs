@@ -763,6 +763,7 @@ pub struct SettingsWindow {
     list_state: ListState,
     shown_errors: HashSet<String>,
     pub(crate) regex_validation_error: Option<String>,
+    last_copied_link_path: Option<&'static str>,
 }
 
 struct SearchDocument {
@@ -1035,6 +1036,7 @@ impl SettingsPageItem {
                             sub_page_link.title.clone(),
                             sub_page_link.json_path,
                             false,
+                            settings_window,
                             cx,
                         )),
                 )
@@ -1228,6 +1230,7 @@ fn render_settings_item(
                 setting_item.description,
                 setting_item.field.json_path(),
                 sub_field,
+                settings_window,
                 cx,
             ))
         })
@@ -1237,16 +1240,13 @@ fn render_settings_item_link(
     id: impl Into<ElementId>,
     json_path: Option<&'static str>,
     sub_field: bool,
+    settings_window: &SettingsWindow,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> impl IntoElement {
-    let clipboard_has_link = cx
-        .read_from_clipboard()
-        .and_then(|entry| entry.text())
-        .map_or(false, |maybe_url| {
-            json_path.is_some() && maybe_url.strip_prefix("zed://settings/") == json_path
-        });
+    let copied_link_matches =
+        json_path.is_some() && json_path == settings_window.last_copied_link_path;
 
-    let (link_icon, link_icon_color) = if clipboard_has_link {
+    let (link_icon, link_icon_color) = if copied_link_matches {
         (IconName::Check, Color::Success)
     } else {
         (IconName::Link, Color::Muted)
@@ -1271,9 +1271,10 @@ fn render_settings_item_link(
                 .shape(IconButtonShape::Square)
                 .tooltip(Tooltip::text("Copy Link"))
                 .when_some(json_path, |this, path| {
-                    this.on_click(cx.listener(move |_, _, _, cx| {
+                    this.on_click(cx.listener(move |this, _, _, cx| {
                         let link = format!("zed://settings/{}", path);
                         cx.write_to_clipboard(ClipboardItem::new_string(link));
+                        this.last_copied_link_path = Some(path);
                         cx.notify();
                     }))
                 }),
@@ -1685,6 +1686,7 @@ impl SettingsWindow {
             shown_errors: HashSet::default(),
             regex_validation_error: None,
             list_state,
+            last_copied_link_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -4472,6 +4474,7 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
                 regex_validation_error: None,
+                last_copied_link_path: None,
             }
         }
     }
@@ -4597,6 +4600,7 @@ pub mod test {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
             regex_validation_error: None,
+            last_copied_link_path: None,
         };
 
         settings_window.build_filter_table();

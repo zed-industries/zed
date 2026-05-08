@@ -278,9 +278,7 @@ impl WgpuContext {
             };
 
             let backend_priority: u8 = match info.backend {
-                wgpu::Backend::Vulkan => 0,
-                wgpu::Backend::Metal => 0,
-                wgpu::Backend::Dx12 => 0,
+                wgpu::Backend::Vulkan | wgpu::Backend::Metal | wgpu::Backend::Dx12 => 0,
                 _ => 1,
             };
 
