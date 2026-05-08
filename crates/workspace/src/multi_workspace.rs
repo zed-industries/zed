@@ -324,12 +324,15 @@ impl MultiWorkspace {
         });
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
         let settings_subscription = cx.observe_global_in::<settings::SettingsStore>(window, {
-            let mut previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+            let mut previous_multi_workspace_enabled = !DisableAiSettings::get_global(cx)
+                .disable_ai
+                && AgentSettings::get_global(cx).enabled;
             move |this, window, cx| {
-                if DisableAiSettings::get_global(cx).disable_ai != previous_disable_ai {
+                let multi_workspace_enabled = this.multi_workspace_enabled(cx);
+                if previous_multi_workspace_enabled && !multi_workspace_enabled {
                     this.collapse_to_single_workspace(window, cx);
-                    previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
                 }
+                previous_multi_workspace_enabled = multi_workspace_enabled;
             }
         });
         Self::subscribe_to_workspace(&workspace, window, cx);
@@ -1477,7 +1480,7 @@ impl MultiWorkspace {
     }
 
     /// Collapses to a single workspace, discarding all groups.
-    /// Used when multi-workspace is disabled (e.g. disable_ai).
+    /// Used when multi-workspace is disabled by settings.
     fn collapse_to_single_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sidebar_open {
             self.close_sidebar(window, cx);
