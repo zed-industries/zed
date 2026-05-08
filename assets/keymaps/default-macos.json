@@ -1317,6 +1317,13 @@
     },
   },
   {
+    "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewThread",
+    },
+  },
+  {
     "context": "RatePredictionsModal",
     "use_key_equivalents": true,
     "bindings": {

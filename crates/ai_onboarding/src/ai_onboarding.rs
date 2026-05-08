@@ -156,11 +156,11 @@ impl ZedAiOnboarding {
             .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
             .child(
-                Label::new("Sign in to try Zed Pro for 14 days, no credit card required.")
+                Label::new("Sign in to try Zed Pro free for 14 days.")
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan())
+            .child(PlanDefinitions.sign_in_upsell())
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)

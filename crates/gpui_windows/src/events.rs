@@ -1174,6 +1174,11 @@ impl WindowsWindowInner {
         {
             panic!("Device lost: {err}");
         }
+        // Make sure the first `draw_window` after recovery (whether it comes
+        // from the forced WM_GPUI_FORCE_UPDATE_WINDOW or a stray WM_PAINT in
+        // between) is treated as a forced render so it both clears
+        // `skip_draws` and bypasses the view cache.
+        self.state.force_render_after_recovery.set(true);
         Some(0)
     }
 
@@ -1198,6 +1203,7 @@ impl WindowsWindowInner {
             }
         }
 
+        let force_render = force_render || self.state.force_render_after_recovery.take();
         if force_render {
             // Re-enable drawing after a device loss recovery. The forced render
             // will rebuild the scene with fresh atlas textures.
