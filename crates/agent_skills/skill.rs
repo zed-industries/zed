@@ -1,10 +1,16 @@
 use anyhow::{Context as _, Result};
 use fs::Fs;
-use futures::{StreamExt, future};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use worktree::WorktreeId;
+
+/// Cap on concurrent filesystem operations during skill discovery and loading.
+/// Without this bound, a `.agents/skills` directory containing thousands of
+/// entries would fan out an equally large number of concurrent OS-level I/O
+/// operations, potentially exhausting file descriptors or stalling the app.
+const SKILL_IO_CONCURRENCY: usize = 16;
 
 /// Maximum size for a single SKILL.md file (100KB)
 pub const MAX_SKILL_FILE_SIZE: usize = 100 * 1024;
@@ -187,12 +193,15 @@ pub async fn load_skills_from_directory(
 
     let skill_files = find_skill_files(fs, directory).await;
 
-    let mut results = future::join_all(
-        skill_files
-            .into_iter()
-            .map(|path| load_single_skill(fs.clone(), path, source.clone())),
-    )
-    .await;
+    let mut results: Vec<Result<Skill, SkillLoadError>> = futures::stream::iter(skill_files)
+        .map(|path| {
+            let fs = fs.clone();
+            let source = source.clone();
+            async move { load_single_skill(fs, path, source).await }
+        })
+        .buffer_unordered(SKILL_IO_CONCURRENCY)
+        .collect()
+        .await;
 
     // Sort by path so that name conflict resolution in `merge_skills`
     // (in `crates/agent/src/agent.rs`) is deterministic across runs.
@@ -234,23 +243,25 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
         }
     }
 
-    let checks = entry_paths.into_iter().map(|entry_path| async move {
-        if !fs.is_dir(&entry_path).await {
-            return None;
-        }
-        let skill_file = entry_path.join(SKILL_FILE_NAME);
-        if fs.is_file(&skill_file).await {
-            Some(skill_file)
-        } else {
-            None
-        }
-    });
-
-    future::join_all(checks)
-        .await
-        .into_iter()
-        .flatten()
+    futures::stream::iter(entry_paths)
+        .map(|entry_path| {
+            let fs = fs.clone();
+            async move {
+                if !fs.is_dir(&entry_path).await {
+                    return None;
+                }
+                let skill_file = entry_path.join(SKILL_FILE_NAME);
+                if fs.is_file(&skill_file).await {
+                    Some(skill_file)
+                } else {
+                    None
+                }
+            }
+        })
+        .buffer_unordered(SKILL_IO_CONCURRENCY)
+        .filter_map(|x| async move { x })
         .collect()
+        .await
 }
 
 async fn load_single_skill(
