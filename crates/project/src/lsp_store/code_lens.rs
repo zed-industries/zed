@@ -9,7 +9,7 @@ use futures::{
     future::{Shared, join_all},
 };
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task};
-use language::{Anchor, Buffer};
+use language::{Anchor, Buffer, ToPoint as _};
 use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
@@ -435,9 +435,13 @@ impl Project {
                 return Ok(None);
             };
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let cursor_point = range.start.to_point(&snapshot);
             tagged.retain(|_, action| {
-                range.start.cmp(&action.range.start, &snapshot).is_ge()
-                    && range.end.cmp(&action.range.end, &snapshot).is_le()
+                let start = action.range.start.to_point(&snapshot);
+                let end = action.range.end.to_point(&snapshot);
+                (cursor_point.row > start.row
+                    || (cursor_point.row == start.row && cursor_point.column >= start.column))
+                    && cursor_point.row <= end.row
             });
             let resolve_tasks = lsp_store.update(cx, |lsp_store, cx| {
                 tagged

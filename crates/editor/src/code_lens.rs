@@ -666,6 +666,7 @@ mod tests {
     use gpui::TestAppContext;
     use settings::CodeLens;
     use util::path;
+    use workspace::OpenOptions;
 
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
@@ -1591,5 +1592,111 @@ mod tests {
             HashSet::from_iter([70, 80, 90]),
             "Only newly visible lenses at the bottom should be resolved, not middle ones"
         );
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_menu_point_range(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_editor_settings(cx, &|settings| {
+            settings.code_lens = Some(CodeLens::Menu);
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            serde_json::json!({ "main_test.go": "package main\n\nfunc TestFoo(t *testing.T) {}\nfunc TestBar(t *testing.T) {}" }),
+        )
+        .await;
+
+        let project = project::Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Go".into(),
+                matcher: language::LanguageMatcher {
+                    path_suffixes: vec!["go".to_string()],
+                    ..language::LanguageMatcher::default()
+                },
+                ..language::LanguageConfig::default()
+            },
+            Some(tree_sitter_go::LANGUAGE.into()),
+        )));
+
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Go",
+            language::FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    code_lens_provider: Some(lsp::CodeLensOptions {
+                        resolve_provider: None,
+                    }),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..language::FakeLspAdapter::default()
+            },
+        );
+
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    std::path::PathBuf::from(path!("/dir/main_test.go")),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let fake_server = fake_servers.next().await.unwrap();
+        // gopls emits zero-length point ranges for test/bench lenses: Start == End == {line, col: 0}
+        // https://github.com/golang/tools/blob/master/gopls/internal/golang/code_lens.go#L54
+        fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async {
+            Ok(Some(vec![lsp::CodeLens {
+                range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 0)),
+                command: Some(lsp::Command {
+                    title: "run test".to_owned(),
+                    command: "gopls.run_tests".to_owned(),
+                    arguments: None,
+                }),
+                data: None,
+            }]))
+        });
+
+        let buffer = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).as_singleton().unwrap()
+        });
+
+        let has_run_test = |actions: Vec<project::CodeAction>| {
+            actions
+                .iter()
+                .any(|a| a.lsp_action.command().is_some_and(|c| c.title == "run test"))
+        };
+
+        let mut lens_actions_at = |row: u32, col: u32| {
+            let anchor = buffer.read_with(cx, |buffer, _| {
+                buffer
+                    .snapshot()
+                    .anchor_before(language::Point::new(row, col))
+            });
+            project.update(cx, |project, cx| {
+                project.code_lens_actions(&buffer, anchor..anchor, cx)
+            })
+        };
+
+        let actions = lens_actions_at(2, 0).await.unwrap().unwrap_or_default();
+        assert!(has_run_test(actions), "lens must appear at exact point col 0");
+
+        let actions = lens_actions_at(2, 5).await.unwrap().unwrap_or_default();
+        assert!(has_run_test(actions), "lens must appear at col 5 on same row");
+
+        let actions = lens_actions_at(3, 0).await.unwrap().unwrap_or_default();
+        assert!(!has_run_test(actions), "lens must not appear on a different row");
     }
 }
