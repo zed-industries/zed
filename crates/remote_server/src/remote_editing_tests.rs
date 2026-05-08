@@ -262,8 +262,8 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     // test that the headless server is tracking which buffers we have open correctly.
     cx.run_until_parked();
-    headless.update(server_cx, |headless, cx| {
-        assert!(headless.buffer_store.read(cx).has_shared_buffers())
+    headless.update(server_cx, |headless, _| {
+        assert!(headless.has_shared_buffers())
     });
     do_search_and_assert(
         &project,
@@ -280,8 +280,8 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     });
     cx.run_until_parked();
     server_cx.run_until_parked();
-    headless.update(server_cx, |headless, cx| {
-        assert!(!headless.buffer_store.read(cx).has_shared_buffers())
+    headless.update(server_cx, |headless, _| {
+        assert!(!headless.has_shared_buffers())
     });
 
     do_search_and_assert(

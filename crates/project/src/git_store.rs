@@ -657,7 +657,9 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_checkout_files);
-        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
+        // handle_open_commit_message_buffer moved to `Project` /
+        // `HeadlessProject` because it needs `create_buffer_for_peer`,
+        // which lives on Project after BufferStore Phase 1.
         client.add_entity_request_handler(Self::handle_set_index_text);
         client.add_entity_request_handler(Self::handle_askpass);
         client.add_entity_request_handler(Self::handle_check_for_pushed_commits);
@@ -2956,11 +2958,14 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
-    async fn handle_open_commit_message_buffer(
+    /// Worker for the `proto::OpenCommitMessageBuffer` rpc. Returns the
+    /// `Entity<Buffer>` for the caller to share with the requesting peer
+    /// via `Project::create_buffer_for_peer`.
+    pub async fn process_open_commit_message_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
         mut cx: AsyncApp,
-    ) -> Result<proto::OpenBufferResponse> {
+    ) -> Result<Entity<Buffer>> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let buffer = repository
@@ -2968,23 +2973,7 @@ impl GitStore {
                 repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
             })
             .await?;
-
-        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
-        this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store
-                    .create_buffer_for_peer(
-                        &buffer,
-                        envelope.original_sender_id.unwrap_or(envelope.sender_id),
-                        cx,
-                    )
-                    .detach_and_log_err(cx);
-            })
-        });
-
-        Ok(proto::OpenBufferResponse {
-            buffer_id: buffer_id.to_proto(),
-        })
+        Ok(buffer)
     }
 
     async fn handle_askpass(

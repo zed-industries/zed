@@ -6,6 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, PulledDiagnostics, ResolveState,
+    buffer_store::PeerBufferAccess,
     lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
@@ -158,6 +159,32 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         cx: &mut App,
     ) -> <Self::ProtoRequest as proto::RequestMessage>::Response;
 
+    /// Variant of [`Self::response_to_proto`] aware of per-peer buffer
+    /// state. Some commands (`PerformRename`, `GetReferences`, the
+    /// location-link family `GetDefinitions`/`GetDeclarations`/
+    /// `GetTypeDefinitions`/`GetImplementations`, and the lsp-ext
+    /// `GoToParentModule`/`GetLspRunnables`) need to call
+    /// `create_buffer_for_peer` or `serialize_project_transaction_for_peer`,
+    /// which after `BufferStore` Phase 1 live behind the `PeerBufferAccess`
+    /// trait on `Project` / `HeadlessProject`. Those commands override this
+    /// method.
+    ///
+    /// The default delegates to `response_to_proto` via `lsp_store.update`,
+    /// preserving behavior for the impls that don't touch per-peer buffer
+    /// state.
+    fn response_to_proto_project(
+        response: Self::Response,
+        lsp_store: Entity<LspStore>,
+        _peer_buffer_access: &mut dyn PeerBufferAccess,
+        peer_id: PeerId,
+        buffer_version: &clock::Global,
+        cx: &mut App,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
+        lsp_store.update(cx, |lsp_store, cx| {
+            Self::response_to_proto(response, lsp_store, peer_id, buffer_version, cx)
+        })
+    }
+
     async fn response_from_proto(
         self,
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
@@ -180,7 +207,7 @@ pub(crate) struct PrepareRename {
 }
 
 #[derive(Debug)]
-pub(crate) struct PerformRename {
+pub struct PerformRename {
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
@@ -612,14 +639,40 @@ impl LspCommand for PerformRename {
 
     fn response_to_proto(
         response: ProjectTransaction,
-        lsp_store: &mut LspStore,
+        _: &mut LspStore,
+        _peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::PerformRenameResponse {
+        // Per-peer buffer sharing happens in `response_to_proto_project`;
+        // this fallback only constructs the proto data.
+        let mut serialized_transaction = proto::ProjectTransaction {
+            buffer_ids: Default::default(),
+            transactions: Default::default(),
+        };
+        for (buffer, transaction) in response.0 {
+            serialized_transaction
+                .buffer_ids
+                .push(buffer.read(cx).remote_id().into());
+            serialized_transaction
+                .transactions
+                .push(language::proto::serialize_transaction(&transaction));
+        }
+        proto::PerformRenameResponse {
+            transaction: Some(serialized_transaction),
+        }
+    }
+
+    fn response_to_proto_project(
+        response: ProjectTransaction,
+        _: Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
         peer_id: PeerId,
         _: &clock::Global,
         cx: &mut App,
     ) -> proto::PerformRenameResponse {
-        let transaction = lsp_store.buffer_store().update(cx, |buffer_store, cx| {
-            buffer_store.serialize_project_transaction_for_peer(response, peer_id, cx)
-        });
+        let transaction =
+            peer_buffer_access.serialize_project_transaction_for_peer(response, peer_id, cx);
         proto::PerformRenameResponse {
             transaction: Some(transaction),
         }
@@ -734,6 +787,18 @@ impl LspCommand for GetDefinitions {
         proto::GetDefinitionResponse { links }
     }
 
+    fn response_to_proto_project(
+        response: Vec<LocationLink>,
+        _: Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::GetDefinitionResponse {
+        let links = location_links_to_proto_project(response, peer_buffer_access, peer_id, cx);
+        proto::GetDefinitionResponse { links }
+    }
+
     async fn response_from_proto(
         self,
         message: proto::GetDefinitionResponse,
@@ -834,6 +899,18 @@ impl LspCommand for GetDeclarations {
         cx: &mut App,
     ) -> proto::GetDeclarationResponse {
         let links = location_links_to_proto(response, lsp_store, peer_id, cx);
+        proto::GetDeclarationResponse { links }
+    }
+
+    fn response_to_proto_project(
+        response: Vec<LocationLink>,
+        _: Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::GetDeclarationResponse {
+        let links = location_links_to_proto_project(response, peer_buffer_access, peer_id, cx);
         proto::GetDeclarationResponse { links }
     }
 
@@ -939,6 +1016,18 @@ impl LspCommand for GetImplementations {
         proto::GetImplementationResponse { links }
     }
 
+    fn response_to_proto_project(
+        response: Vec<LocationLink>,
+        _: Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::GetImplementationResponse {
+        let links = location_links_to_proto_project(response, peer_buffer_access, peer_id, cx);
+        proto::GetImplementationResponse { links }
+    }
+
     async fn response_from_proto(
         self,
         message: proto::GetImplementationResponse,
@@ -1035,6 +1124,18 @@ impl LspCommand for GetTypeDefinitions {
         cx: &mut App,
     ) -> proto::GetTypeDefinitionResponse {
         let links = location_links_to_proto(response, lsp_store, peer_id, cx);
+        proto::GetTypeDefinitionResponse { links }
+    }
+
+    fn response_to_proto_project(
+        response: Vec<LocationLink>,
+        _: Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::GetTypeDefinitionResponse {
+        let links = location_links_to_proto_project(response, peer_buffer_access, peer_id, cx);
         proto::GetTypeDefinitionResponse { links }
     }
 
@@ -1286,16 +1387,47 @@ pub fn location_links_to_proto(
 
 pub fn location_link_to_proto(
     location: LocationLink,
-    lsp_store: &mut LspStore,
+    _: &mut LspStore,
+    _peer_id: PeerId,
+    cx: &mut App,
+) -> proto::LocationLink {
+    // Per-peer buffer sharing happens via `location_link_to_proto_project`;
+    // this fallback only constructs the proto.
+    let origin = location.origin.map(|origin| {
+        let buffer_id = origin.buffer.read(cx).remote_id().into();
+        proto::Location {
+            start: Some(serialize_anchor(&origin.range.start)),
+            end: Some(serialize_anchor(&origin.range.end)),
+            buffer_id,
+        }
+    });
+
+    let buffer_id = location.target.buffer.read(cx).remote_id().into();
+    let target = proto::Location {
+        start: Some(serialize_anchor(&location.target.range.start)),
+        end: Some(serialize_anchor(&location.target.range.end)),
+        buffer_id,
+    };
+
+    proto::LocationLink {
+        origin,
+        target: Some(target),
+    }
+}
+
+/// Variant of [`location_link_to_proto`] aware of per-peer buffer sharing.
+/// Used by the `response_to_proto_project` overrides for `GetDefinitions`,
+/// `GetDeclarations`, `GetTypeDefinitions`, `GetImplementations`, and the
+/// lsp-ext `GoToParentModule` / `GetLspRunnables`.
+pub fn location_link_to_proto_project(
+    location: LocationLink,
+    peer_buffer_access: &mut dyn PeerBufferAccess,
     peer_id: PeerId,
     cx: &mut App,
 ) -> proto::LocationLink {
     let origin = location.origin.map(|origin| {
-        lsp_store
-            .buffer_store()
-            .update(cx, |buffer_store, cx| {
-                buffer_store.create_buffer_for_peer(&origin.buffer, peer_id, cx)
-            })
+        peer_buffer_access
+            .create_buffer_for_peer(&origin.buffer, peer_id, cx)
             .detach_and_log_err(cx);
 
         let buffer_id = origin.buffer.read(cx).remote_id().into();
@@ -1306,11 +1438,8 @@ pub fn location_link_to_proto(
         }
     });
 
-    lsp_store
-        .buffer_store()
-        .update(cx, |buffer_store, cx| {
-            buffer_store.create_buffer_for_peer(&location.target.buffer, peer_id, cx)
-        })
+    peer_buffer_access
+        .create_buffer_for_peer(&location.target.buffer, peer_id, cx)
         .detach_and_log_err(cx);
 
     let buffer_id = location.target.buffer.read(cx).remote_id().into();
@@ -1324,6 +1453,21 @@ pub fn location_link_to_proto(
         origin,
         target: Some(target),
     }
+}
+
+/// Variant of [`location_links_to_proto`] using `location_link_to_proto_project`.
+pub fn location_links_to_proto_project(
+    links: Vec<LocationLink>,
+    peer_buffer_access: &mut dyn PeerBufferAccess,
+    peer_id: PeerId,
+    cx: &mut App,
+) -> Vec<proto::LocationLink> {
+    links
+        .into_iter()
+        .map(|definition| {
+            location_link_to_proto_project(definition, peer_buffer_access, peer_id, cx)
+        })
+        .collect()
 }
 
 #[async_trait(?Send)]
@@ -1441,7 +1585,30 @@ impl LspCommand for GetReferences {
 
     fn response_to_proto(
         response: Vec<Location>,
-        lsp_store: &mut LspStore,
+        _: &mut LspStore,
+        _peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::GetReferencesResponse {
+        // Per-peer buffer sharing happens in `response_to_proto_project`.
+        let locations = response
+            .into_iter()
+            .map(|definition| {
+                let buffer_id = definition.buffer.read(cx).remote_id();
+                proto::Location {
+                    start: Some(serialize_anchor(&definition.range.start)),
+                    end: Some(serialize_anchor(&definition.range.end)),
+                    buffer_id: buffer_id.into(),
+                }
+            })
+            .collect();
+        proto::GetReferencesResponse { locations }
+    }
+
+    fn response_to_proto_project(
+        response: Vec<Location>,
+        _: Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
         peer_id: PeerId,
         _: &clock::Global,
         cx: &mut App,
@@ -1449,11 +1616,8 @@ impl LspCommand for GetReferences {
         let locations = response
             .into_iter()
             .map(|definition| {
-                lsp_store
-                    .buffer_store()
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.create_buffer_for_peer(&definition.buffer, peer_id, cx)
-                    })
+                peer_buffer_access
+                    .create_buffer_for_peer(&definition.buffer, peer_id, cx)
                     .detach_and_log_err(cx);
                 let buffer_id = definition.buffer.read(cx).remote_id();
                 proto::Location {

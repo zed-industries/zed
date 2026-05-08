@@ -4136,27 +4136,34 @@ impl LspStore {
         client.add_entity_message_handler(Self::handle_update_language_server);
         client.add_entity_message_handler(Self::handle_language_server_log);
         client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
-        client.add_entity_request_handler(Self::handle_format_buffers);
-        client.add_entity_request_handler(Self::handle_apply_code_action_kind);
+        // handle_format_buffers / handle_apply_code_action /
+        // handle_apply_code_action_kind / handle_open_buffer_for_symbol
+        // moved to `Project` and `HeadlessProject` because they need
+        // `Project::create_buffer_for_peer` /
+        // `serialize_project_transaction_for_peer` after BufferStore
+        // Phase 1.
         client.add_entity_request_handler(Self::handle_resolve_completion_documentation);
-        client.add_entity_request_handler(Self::handle_apply_code_action);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
         client.add_entity_request_handler(Self::handle_get_color_presentation);
-        client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
         client.add_entity_request_handler(Self::handle_refresh_semantic_tokens);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
+        // handle_register_buffer_with_language_servers moved to `Project`
+        // and `HeadlessProject`; it registers an LSP handle in
+        // `Project::shared_buffers` (formerly on `BufferStore`).
         client.add_entity_request_handler(Self::handle_rename_project_entry);
         client.add_entity_request_handler(Self::handle_pull_workspace_diagnostics);
         client.add_entity_request_handler(Self::handle_lsp_get_completions);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentSymbols>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
+        // PerformRename, GoToParentModule, GetLspRunnables moved to
+        // `Project::handle_lsp_command_with_project::<T>` after BufferStore
+        // Phase 1 (they need `response_to_proto_project` for buffer
+        // sharing).
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
 
         client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
@@ -4164,12 +4171,6 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_ext_clear_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::OpenDocs>);
-        client.add_entity_request_handler(
-            Self::handle_lsp_command::<lsp_ext_command::GoToParentModule>,
-        );
-        client.add_entity_request_handler(
-            Self::handle_lsp_command::<lsp_ext_command::GetLspRunnables>,
-        );
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
         );
@@ -9049,14 +9050,19 @@ impl LspStore {
 
     /// Worker for the `proto::LspQuery` rpc. The rpc registration lives on
     /// `Project` (and `HeadlessProject`); they look up the downstream peer
-    /// info and call this with `(downstream_client, downstream_project_id)`.
-    pub async fn process_lsp_query(
+    /// info and call this with `(downstream_client, downstream_project_id)`
+    /// and a weak handle to themselves (their `PeerBufferAccess` impl).
+    pub async fn process_lsp_query<E>(
         lsp_store: Entity<Self>,
+        peer_buffer_access: WeakEntity<E>,
         downstream_client: AnyProtoClient,
         downstream_project_id: u64,
         envelope: TypedEnvelope<proto::LspQuery>,
         mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+    ) -> Result<proto::Ack>
+    where
+        E: crate::buffer_store::PeerBufferAccess + 'static,
+    {
         use proto::lsp_query::Request;
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let lsp_query = envelope.payload;
@@ -9065,8 +9071,9 @@ impl LspStore {
         match lsp_query.request.context("invalid LSP query request")? {
             Request::GetReferences(get_references) => {
                 let position = get_references.position.clone().and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetReferences>(
+                Self::query_lsp_locally::<GetReferences, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9079,8 +9086,9 @@ impl LspStore {
                 .await?;
             }
             Request::GetDocumentColor(get_document_color) => {
-                Self::query_lsp_locally::<GetDocumentColor>(
+                Self::query_lsp_locally::<GetDocumentColor, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9093,8 +9101,9 @@ impl LspStore {
                 .await?;
             }
             Request::GetFoldingRanges(get_folding_ranges) => {
-                Self::query_lsp_locally::<GetFoldingRanges>(
+                Self::query_lsp_locally::<GetFoldingRanges, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9107,8 +9116,9 @@ impl LspStore {
                 .await?;
             }
             Request::GetDocumentSymbols(get_document_symbols) => {
-                Self::query_lsp_locally::<GetDocumentSymbols>(
+                Self::query_lsp_locally::<GetDocumentSymbols, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9122,8 +9132,9 @@ impl LspStore {
             }
             Request::GetHover(get_hover) => {
                 let position = get_hover.position.clone().and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetHover>(
+                Self::query_lsp_locally::<GetHover, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9136,8 +9147,9 @@ impl LspStore {
                 .await?;
             }
             Request::GetCodeActions(get_code_actions) => {
-                Self::query_lsp_locally::<GetCodeActions>(
+                Self::query_lsp_locally::<GetCodeActions, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9154,8 +9166,9 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetSignatureHelp>(
+                Self::query_lsp_locally::<GetSignatureHelp, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9168,8 +9181,9 @@ impl LspStore {
                 .await?;
             }
             Request::GetCodeLens(get_code_lens) => {
-                Self::query_lsp_locally::<GetCodeLens>(
+                Self::query_lsp_locally::<GetCodeLens, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9183,8 +9197,9 @@ impl LspStore {
             }
             Request::GetDefinition(get_definition) => {
                 let position = get_definition.position.clone().and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetDefinitions>(
+                Self::query_lsp_locally::<GetDefinitions, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9201,8 +9216,9 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetDeclarations>(
+                Self::query_lsp_locally::<GetDeclarations, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9219,8 +9235,9 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetTypeDefinitions>(
+                Self::query_lsp_locally::<GetTypeDefinitions, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9237,8 +9254,9 @@ impl LspStore {
                     .position
                     .clone()
                     .and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetImplementations>(
+                Self::query_lsp_locally::<GetImplementations, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9271,8 +9289,9 @@ impl LspStore {
                 )
                 .await
                 .context("preparing inlay hints request")?;
-                Self::query_lsp_locally::<InlayHints>(
+                Self::query_lsp_locally::<InlayHints, E>(
                     lsp_store,
+                    peer_buffer_access.clone(),
                     downstream_client.clone(),
                     downstream_project_id,
                     server_id,
@@ -9412,12 +9431,14 @@ impl LspStore {
         Ok(())
     }
 
-    async fn handle_apply_code_action(
+    /// Worker for the `proto::ApplyCodeAction` rpc. Returns the resulting
+    /// `ProjectTransaction` for the caller (`Project::handle_apply_code_action`)
+    /// to serialize via `Project::serialize_project_transaction_for_peer`.
+    pub async fn process_apply_code_action(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeAction>,
         mut cx: AsyncApp,
-    ) -> Result<proto::ApplyCodeActionResponse> {
-        let sender_id = envelope.original_sender_id().unwrap_or_default();
+    ) -> Result<ProjectTransaction> {
         let action =
             Self::deserialize_code_action(envelope.payload.action.context("invalid action")?)?;
         let apply_code_action = this.update(&mut cx, |this, cx| {
@@ -9426,35 +9447,27 @@ impl LspStore {
             anyhow::Ok(this.apply_code_action(buffer, action, false, cx))
         })?;
 
-        let project_transaction = apply_code_action.await?;
-        let project_transaction = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.serialize_project_transaction_for_peer(
-                    project_transaction,
-                    sender_id,
-                    cx,
-                )
-            })
-        });
-        Ok(proto::ApplyCodeActionResponse {
-            transaction: Some(project_transaction),
-        })
+        apply_code_action.await
     }
 
-    async fn handle_register_buffer_with_language_servers(
+    /// Worker for the `proto::RegisterBufferWithLanguageServers` rpc.
+    /// Returns `Some((buffer_id, lsp_handle))` for the caller to register
+    /// in `Project::shared_buffers`, or `None` if the request was forwarded
+    /// upstream (remote-mode LspStore).
+    pub fn process_register_buffer_with_language_servers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RegisterBufferWithLanguageServers>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
+        cx: &mut AsyncApp,
+    ) -> Result<Option<(BufferId, OpenLspBufferHandle)>> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
-        this.update(&mut cx, |this, cx| {
+        this.update(cx, |this, cx| {
             if let Some((upstream_client, upstream_project_id)) = this.upstream_client() {
-                return upstream_client.send(proto::RegisterBufferWithLanguageServers {
+                upstream_client.send(proto::RegisterBufferWithLanguageServers {
                     project_id: upstream_project_id,
                     buffer_id: buffer_id.to_proto(),
                     only_servers: envelope.payload.only_servers,
-                });
+                })?;
+                return Ok(None);
             }
 
             let Some(buffer) = this.buffer_store().read(cx).get(buffer_id) else {
@@ -9488,13 +9501,8 @@ impl LspStore {
             // but it's unclear if we need it.
             this.pull_diagnostics_for_buffer(buffer.clone(), cx)
                 .detach();
-            this.buffer_store().update(cx, |buffer_store, _| {
-                buffer_store.register_shared_lsp_handle(peer_id, buffer_id, handle);
-            });
-
-            Ok(())
-        })?;
-        Ok(proto::Ack {})
+            Ok(Some((buffer_id, handle)))
+        })
     }
 
     async fn handle_rename_project_entry(
@@ -10486,12 +10494,14 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
-    async fn handle_open_buffer_for_symbol(
+    /// Worker for the `proto::OpenBufferForSymbol` rpc. Returns the
+    /// `Entity<Buffer>` for the caller (`Project::handle_open_buffer_for_symbol`)
+    /// to share with the requesting peer.
+    pub async fn process_open_buffer_for_symbol(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
         mut cx: AsyncApp,
-    ) -> Result<proto::OpenBufferForSymbolResponse> {
-        let peer_id = envelope.original_sender_id().unwrap_or_default();
+    ) -> Result<Entity<Buffer>> {
         let symbol = envelope.payload.symbol.context("invalid symbol")?;
         let symbol = Self::deserialize_symbol(symbol)?;
         this.read_with(&cx, |this, _| {
@@ -10524,24 +10534,7 @@ impl LspStore {
             })
             .await?;
 
-        this.update(&mut cx, |this, cx| {
-            let is_private = buffer
-                .read(cx)
-                .file()
-                .map(|f| f.is_private())
-                .unwrap_or_default();
-            if is_private {
-                Err(anyhow!(rpc::ErrorCode::UnsharedItem))
-            } else {
-                this.buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.create_buffer_for_peer(&buffer, peer_id, cx)
-                    })
-                    .detach_and_log_err(cx);
-                let buffer_id = buffer.read(cx).remote_id().to_proto();
-                Ok(proto::OpenBufferForSymbolResponse { buffer_id })
-            }
-        })
+        Ok(buffer)
     }
 
     fn symbol_signature(&self, abs_path: &Path) -> [u8; 32] {
@@ -10891,12 +10884,13 @@ impl LspStore {
         }
     }
 
-    async fn handle_format_buffers(
+    /// Worker for the `proto::FormatBuffers` rpc; see
+    /// [`Self::process_apply_code_action`].
+    pub async fn process_format_buffers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FormatBuffers>,
         mut cx: AsyncApp,
-    ) -> Result<proto::FormatBuffersResponse> {
-        let sender_id = envelope.original_sender_id().unwrap_or_default();
+    ) -> Result<ProjectTransaction> {
         let format = this.update(&mut cx, |this, cx| {
             let mut buffers = HashSet::default();
             for buffer_id in &envelope.payload.buffer_ids {
@@ -10926,27 +10920,16 @@ impl LspStore {
             anyhow::Ok(this.format(buffers, target, false, trigger, cx))
         })?;
 
-        let project_transaction = format.await?;
-        let project_transaction = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.serialize_project_transaction_for_peer(
-                    project_transaction,
-                    sender_id,
-                    cx,
-                )
-            })
-        });
-        Ok(proto::FormatBuffersResponse {
-            transaction: Some(project_transaction),
-        })
+        format.await
     }
 
-    async fn handle_apply_code_action_kind(
+    /// Worker for the `proto::ApplyCodeActionKind` rpc; see
+    /// [`Self::process_apply_code_action`].
+    pub async fn process_apply_code_action_kind(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ApplyCodeActionKind>,
         mut cx: AsyncApp,
-    ) -> Result<proto::ApplyCodeActionKindResponse> {
-        let sender_id = envelope.original_sender_id().unwrap_or_default();
+    ) -> Result<ProjectTransaction> {
         let format = this.update(&mut cx, |this, cx| {
             let mut buffers = HashSet::default();
             for buffer_id in &envelope.payload.buffer_ids {
@@ -10971,19 +10954,7 @@ impl LspStore {
             anyhow::Ok(this.apply_code_action_kind(buffers, kind, false, cx))
         })?;
 
-        let project_transaction = format.await?;
-        let project_transaction = this.update(&mut cx, |this, cx| {
-            this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.serialize_project_transaction_for_peer(
-                    project_transaction,
-                    sender_id,
-                    cx,
-                )
-            })
-        });
-        Ok(proto::ApplyCodeActionKindResponse {
-            transaction: Some(project_transaction),
-        })
+        format.await
     }
 
     async fn shutdown_language_server(
@@ -13191,8 +13162,9 @@ impl LspStore {
         Ok(())
     }
 
-    async fn query_lsp_locally<T>(
+    async fn query_lsp_locally<T, E>(
         lsp_store: Entity<Self>,
+        peer_buffer_access: WeakEntity<E>,
         downstream_client: AnyProtoClient,
         downstream_project_id: u64,
         for_server_id: Option<LanguageServerId>,
@@ -13207,6 +13179,7 @@ impl LspStore {
         T::ProtoRequest: proto::LspRequestMessage,
         <T::ProtoRequest as proto::RequestMessage>::Response:
             Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
+        E: crate::buffer_store::PeerBufferAccess + 'static,
     {
         let (buffer_version, buffer) =
             Self::wait_for_buffer_version::<T>(&lsp_store, &proto_request, cx).await?;
@@ -13216,6 +13189,7 @@ impl LspStore {
             request_type: TypeId::of::<T>(),
             server_queried: for_server_id,
         };
+        let lsp_store_for_spawn = lsp_store.clone();
         lsp_store.update(cx, |lsp_store, cx| {
             let request_task = match for_server_id {
                 Some(server_id) => {
@@ -13246,20 +13220,23 @@ impl LspStore {
                     lsp_requests.clear();
                 }
             }
+            let lsp_store_handle = lsp_store_for_spawn.clone();
             lsp_data.lsp_requests.entry(key).or_default().insert(
                 lsp_request_id,
-                cx.spawn(async move |lsp_store, cx| {
+                cx.spawn(async move |_, cx| {
                     let response = request_task.await;
-                    lsp_store
-                        .update(cx, |lsp_store, cx| {
-                            let response = response
+                    let lsp_store_for_response = lsp_store_handle.clone();
+                    let proto_response = peer_buffer_access
+                        .update(cx, |access, cx| {
+                            response
                                 .into_iter()
                                 .map(|(server_id, response)| {
                                     (
                                         server_id.to_proto(),
-                                        T::response_to_proto(
+                                        T::response_to_proto_project(
                                             response,
-                                            lsp_store,
+                                            lsp_store_for_response.clone(),
+                                            access,
                                             sender_id,
                                             &buffer_version,
                                             cx,
@@ -13267,19 +13244,21 @@ impl LspStore {
                                         .into(),
                                     )
                                 })
-                                .collect::<HashMap<_, _>>();
-                            match downstream_client.send_lsp_response::<T::ProtoRequest>(
-                                downstream_project_id,
-                                lsp_request_id,
-                                response,
-                            ) {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    log::error!("Failed to send LSP response: {e:#}",)
-                                }
-                            }
+                                .collect::<HashMap<_, _>>()
                         })
                         .ok();
+                    if let Some(proto_response) = proto_response {
+                        match downstream_client.send_lsp_response::<T::ProtoRequest>(
+                            downstream_project_id,
+                            lsp_request_id,
+                            proto_response,
+                        ) {
+                            Ok(()) => {}
+                            Err(e) => {
+                                log::error!("Failed to send LSP response: {e:#}",)
+                            }
+                        }
+                    }
                 }),
             );
         });
