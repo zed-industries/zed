@@ -14833,20 +14833,16 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remaining_pane_becomes_active_pane_after_current_active_pane_removal_without_focus_target(
-        cx: &mut TestAppContext,
-    ) {
-        assert_active_pane_updates_after_current_active_pane_removal(cx, false).await;
+    async fn test_active_pane_updates_to_focus_target_on_removal(cx: &mut TestAppContext) {
+        assert_active_pane_is_replaced_after_removal(cx, true).await;
     }
 
     #[gpui::test]
-    async fn test_focus_target_becomes_active_pane_after_current_active_pane_removal_with_focus_target(
-        cx: &mut TestAppContext,
-    ) {
-        assert_active_pane_updates_after_current_active_pane_removal(cx, true).await;
+    async fn test_active_pane_updates_to_fallback_on_removal(cx: &mut TestAppContext) {
+        assert_active_pane_is_replaced_after_removal(cx, false).await;
     }
 
-    async fn assert_active_pane_updates_after_current_active_pane_removal(
+    async fn assert_active_pane_is_replaced_after_removal(
         cx: &mut TestAppContext,
         use_focus_target: bool,
     ) {
