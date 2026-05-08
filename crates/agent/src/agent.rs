@@ -695,14 +695,19 @@ impl NativeAgent {
                     if !is_trusted {
                         return None;
                     }
-                    let abs_path = worktree.read(cx).abs_path();
+                    let worktree_snapshot = worktree.read(cx);
+                    let abs_path = worktree_snapshot.abs_path();
+                    let worktree_root_name: Arc<str> = worktree_snapshot.root_name_str().into();
                     let skills_dir = abs_path.join(project_skills_relative_path());
                     let fs = fs.clone();
                     Some(cx.background_spawn(async move {
                         load_skills_from_directory(
                             &fs,
                             &skills_dir,
-                            SkillSource::ProjectLocal { worktree_id },
+                            SkillSource::ProjectLocal {
+                                worktree_id,
+                                worktree_root_name,
+                            },
                         )
                         .await
                     }))
@@ -2677,6 +2682,7 @@ mod internal_tests {
             description: "Project review".to_string(),
             source: SkillSource::ProjectLocal {
                 worktree_id: WorktreeId::from_usize(1),
+                worktree_root_name: "project".into(),
             },
             directory_path: PathBuf::from("/project/.agents/skills/review"),
             skill_file_path: PathBuf::from("/project/.agents/skills/review/SKILL.md"),

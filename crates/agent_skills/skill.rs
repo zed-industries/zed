@@ -45,7 +45,10 @@ pub enum SkillSource {
     /// From ~/.agents/skills/
     Global,
     /// From {project}/.agents/skills/
-    ProjectLocal { worktree_id: WorktreeId },
+    ProjectLocal {
+        worktree_id: WorktreeId,
+        worktree_root_name: Arc<str>,
+    },
 }
 
 /// Just the frontmatter, used for parsing

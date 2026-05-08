@@ -57,9 +57,9 @@ pub fn render_skill_envelope(skill: &Skill) -> String {
     };
     let worktree = match &skill.source {
         agent_skills::SkillSource::Global => None,
-        agent_skills::SkillSource::ProjectLocal { worktree_id } => {
-            Some(format!("worktree-{}", worktree_id.to_usize()))
-        }
+        agent_skills::SkillSource::ProjectLocal {
+            worktree_root_name, ..
+        } => Some(worktree_root_name.clone()),
     };
     let directory = skill.directory_path.to_string_lossy();
 
@@ -70,7 +70,10 @@ pub fn render_skill_envelope(skill: &Skill) -> String {
     ));
     out.push_str(&format!("<source>{}</source>\n", xml_escape(source)));
     if let Some(worktree) = worktree {
-        out.push_str(&format!("<worktree>{}</worktree>\n", xml_escape(&worktree)));
+        out.push_str(&format!(
+            "<worktree>{}</worktree>\n",
+            xml_escape(worktree.as_ref())
+        ));
     }
     out.push_str(&format!(
         "<directory>{}</directory>\n",
@@ -403,10 +406,23 @@ mod tests {
 
         let project_skill_content =
             "---\nname: project-skill\ndescription: A project skill\n---\n\nProject content";
+        let worktree_root_name = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .root_name_str()
+                .into()
+        });
+
         let project_skill = parse_skill(
             Path::new("/test/.agents/skills/project-skill/SKILL.md"),
             project_skill_content,
-            SkillSource::ProjectLocal { worktree_id },
+            SkillSource::ProjectLocal {
+                worktree_id,
+                worktree_root_name,
+            },
         )
         .unwrap();
 
@@ -437,7 +453,7 @@ mod tests {
         match output {
             SkillToolOutput::Found { rendered } => {
                 assert!(rendered.contains("<source>project-local</source>"));
-                assert!(rendered.contains("<worktree>worktree-"));
+                assert!(rendered.contains("<worktree>test</worktree>"));
             }
             SkillToolOutput::Error { error } => panic!("expected Found, got: {error}"),
         }
