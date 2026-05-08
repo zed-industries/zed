@@ -59,15 +59,11 @@ impl ProjectContext {
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
 
-        // Skills with disable_model_invocation are hidden from the model's
-        // catalog — they're slash-command-only. The catalog size budget is
-        // enforced upstream (see `apply_skill_budget` in `agent.rs`) so that
-        // dropped skills can surface as load errors in the UI.
-        let skill_summaries: Vec<SkillSummary> = skills
-            .iter()
-            .filter(|skill| !skill.disable_model_invocation)
-            .map(SkillSummary::from)
-            .collect();
+        // Hidden skills (`disable_model_invocation: true`) and any skills
+        // dropped to fit the catalog description budget are excluded
+        // upstream by `apply_skill_budget` in `agent.rs`, which produces
+        // only catalog skills. We just convert to summaries here.
+        let skill_summaries: Vec<SkillSummary> = skills.iter().map(SkillSummary::from).collect();
 
         let has_skills = !skill_summaries.is_empty();
 
@@ -173,32 +169,11 @@ mod tests {
         assert!(context.skills.is_empty());
     }
 
-    #[test]
-    fn test_skills_with_disable_model_invocation_excluded_from_catalog() {
-        let visible = Skill {
-            name: "visible".to_string(),
-            description: "Shown to model".to_string(),
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/skills/visible"),
-            skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
-            content: "body".to_string(),
-            disable_model_invocation: false,
-        };
-        let hidden = Skill {
-            name: "hidden".to_string(),
-            description: "Slash-only".to_string(),
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/skills/hidden"),
-            skill_file_path: PathBuf::from("/skills/hidden/SKILL.md"),
-            content: "body".to_string(),
-            disable_model_invocation: true,
-        };
-
-        let context = ProjectContext::new(vec![], vec![], vec![visible, hidden]);
-        let names: Vec<&str> = context.skills.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, vec!["visible"]);
-        assert!(context.has_skills);
-    }
+    // Hidden-skill filtering used to live here, but it's now the
+    // responsibility of `apply_skill_budget` in `agent.rs`, which is the
+    // single source of truth for which skills enter the catalog.
+    // `ProjectContext::new` simply converts whatever skills it receives
+    // into summaries, so there's no behavior left to test at this layer.
 }
 
 #[derive(Serialize)]

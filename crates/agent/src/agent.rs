@@ -2560,12 +2560,12 @@ impl TerminalHandle for AcpTerminalHandle {
     }
 }
 
-/// Enforce the fixed catalog description budget. Skills are walked in
-/// iteration order; visible skills accumulate against the budget, and any
-/// that don't fit are dropped with a `SkillLoadError` so the UI can surface
-/// the failure. Hidden skills (`disable_model_invocation: true`) are left
-/// in place because they don't appear in the model's catalog and therefore
-/// don't count against the budget.
+/// Enforce the fixed catalog description budget. Walks `skills` in iteration
+/// order, dropping any with `disable_model_invocation: true` (they belong to
+/// slash commands, not the model's catalog), and accumulating the remaining
+/// (visible) skills against the budget. Once the budget is exceeded, every
+/// subsequent visible skill is dropped with a `SkillLoadError` so the UI can
+/// surface the failure.
 fn apply_skill_budget(skills: &[Skill]) -> (Vec<Skill>, Vec<SkillLoadError>) {
     let mut kept = Vec::with_capacity(skills.len());
     let mut errors = Vec::new();
@@ -2574,7 +2574,6 @@ fn apply_skill_budget(skills: &[Skill]) -> (Vec<Skill>, Vec<SkillLoadError>) {
 
     for skill in skills {
         if skill.disable_model_invocation {
-            kept.push(skill.clone());
             continue;
         }
 
@@ -2844,10 +2843,13 @@ mod internal_tests {
     }
 
     #[test]
-    fn test_apply_skill_budget_keeps_hidden_skills_without_charging_budget() {
-        // A hidden skill larger than the entire budget should be retained
-        // (it's slash-only and never enters the catalog), and shouldn't
-        // prevent later visible skills from fitting.
+    fn test_apply_skill_budget_excludes_hidden_skills_from_catalog() {
+        // Hidden skills (`disable_model_invocation: true`) are slash-only and
+        // must not appear in the catalog returned by `apply_skill_budget`,
+        // even when they would otherwise fit in the budget. They also don't
+        // count against the budget, so a hidden skill larger than the entire
+        // budget shouldn't generate a load error or prevent later visible
+        // skills from fitting.
         let huge_description = "y".repeat(MAX_SKILL_DESCRIPTIONS_SIZE * 2);
         let hidden = Skill {
             name: "hidden-huge".to_string(),
@@ -2872,7 +2874,7 @@ mod internal_tests {
 
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
         let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(kept_names, vec!["hidden-huge", "visible"]);
+        assert_eq!(kept_names, vec!["visible"]);
     }
 
     #[gpui::test]
