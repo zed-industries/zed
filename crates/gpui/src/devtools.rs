@@ -6,6 +6,7 @@ mod state;
 
 use crate::{App, Bounds, EntityId, Pixels, Window, WindowId};
 use parking_lot::RwLock;
+use scheduler::Instant;
 use sources::{
     NotifySourceKey, NotifySourceStats, PinnedNotifySource, RenderSourceKey, RenderSourceStats,
     parse_pinned_notify_source,
@@ -23,6 +24,8 @@ const FRAME_CAPACITY: usize = 2048;
 const VIEW_RENDER_CAPACITY: usize = 8192;
 const DIRTY_PATH_CAPACITY: usize = 4096;
 const ANIMATION_CAPACITY: usize = 4096;
+const DEVTOOLS_RECORDING_SAMPLE_CAPACITY: usize = 16384;
+const DEVTOOLS_HUD_SAMPLE_CAPACITY: usize = 512;
 const WINDOW_FRAME_CAPACITY: usize = 240;
 const FLASH_DURATION: Duration = Duration::from_millis(200);
 const RENDER_HEAT_WINDOW: Duration = Duration::from_secs(1);
@@ -55,6 +58,7 @@ pub(crate) fn record_notify(event: NotifyEvent) {
         return;
     }
 
+    let started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     let source = NotifySourceKey::from(&event);
     *devtools
@@ -73,6 +77,7 @@ pub(crate) fn record_notify(event: NotifyEvent) {
         devtools.initial_pinned_notify_source_resolved = true;
     }
     devtools.notifications.push(event);
+    devtools.record_recording_duration(started_at, started_at.elapsed());
 }
 
 pub(crate) fn record_frame(event: FrameEvent) {
@@ -80,12 +85,14 @@ pub(crate) fn record_frame(event: FrameEvent) {
         return;
     }
 
+    let started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     let window_id = event.window_id;
     devtools.frames.push(event.clone());
     if devtools.paused_at.is_none() {
         devtools.window_state(window_id).recent_frames.push(event);
     }
+    devtools.record_recording_duration(started_at, started_at.elapsed());
 }
 
 pub(crate) fn record_dirty_path(event: DirtyPathEvent) {
@@ -93,7 +100,10 @@ pub(crate) fn record_dirty_path(event: DirtyPathEvent) {
         return;
     }
 
-    GPUI_DEVTOOLS.write().dirty_paths.push(event);
+    let started_at = Instant::now();
+    let mut devtools = GPUI_DEVTOOLS.write();
+    devtools.dirty_paths.push(event);
+    devtools.record_recording_duration(started_at, started_at.elapsed());
 }
 
 pub(crate) fn record_view_bounds(window_id: WindowId, entity_id: EntityId, bounds: Bounds<Pixels>) {
@@ -101,6 +111,7 @@ pub(crate) fn record_view_bounds(window_id: WindowId, entity_id: EntityId, bound
         return;
     }
 
+    let started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     if devtools.paused_at.is_none() {
         devtools
@@ -108,6 +119,7 @@ pub(crate) fn record_view_bounds(window_id: WindowId, entity_id: EntityId, bound
             .view_bounds
             .insert(entity_id, bounds);
     }
+    devtools.record_recording_duration(started_at, started_at.elapsed());
 }
 
 pub(crate) fn record_view_render(event: ViewRenderEvent) {
@@ -115,6 +127,7 @@ pub(crate) fn record_view_render(event: ViewRenderEvent) {
         return;
     }
 
+    let started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     let source = RenderSourceKey::from(&event);
     devtools
@@ -123,6 +136,7 @@ pub(crate) fn record_view_render(event: ViewRenderEvent) {
     let source_is_hidden = devtools.hidden_render_sources.contains(&source);
     if devtools.paused_at.is_some() {
         devtools.renders.push(event);
+        devtools.record_recording_duration(started_at, started_at.elapsed());
         return;
     }
 
@@ -152,6 +166,7 @@ pub(crate) fn record_view_render(event: ViewRenderEvent) {
         window_state.record_reuse_outline(event.entity_id, event.timestamp, bounds, source);
     }
     devtools.renders.push(event);
+    devtools.record_recording_duration(started_at, started_at.elapsed());
 }
 
 pub(crate) fn record_animation(event: AnimationEvent) {
@@ -159,7 +174,10 @@ pub(crate) fn record_animation(event: AnimationEvent) {
         return;
     }
 
-    GPUI_DEVTOOLS.write().animations.push(event);
+    let started_at = Instant::now();
+    let mut devtools = GPUI_DEVTOOLS.write();
+    devtools.animations.push(event);
+    devtools.record_recording_duration(started_at, started_at.elapsed());
 }
 
 pub(crate) fn prepaint_window_overlay(window: &mut Window) {

@@ -1,6 +1,7 @@
 use super::{
-    ANIMATION_CAPACITY, DIRTY_PATH_CAPACITY, FRAME_CAPACITY, NOTIFICATION_CAPACITY,
-    RENDER_HEAT_DECAY, RENDER_HEAT_WINDOW, REUSE_OUTLINE_DURATION, VIEW_RENDER_CAPACITY,
+    ANIMATION_CAPACITY, DEVTOOLS_HUD_SAMPLE_CAPACITY, DEVTOOLS_RECORDING_SAMPLE_CAPACITY,
+    DIRTY_PATH_CAPACITY, FRAME_CAPACITY, NOTIFICATION_CAPACITY, RENDER_HEAT_DECAY,
+    RENDER_HEAT_WINDOW, REUSE_OUTLINE_DURATION, SOURCE_WINDOW, VIEW_RENDER_CAPACITY,
     WINDOW_FRAME_CAPACITY,
     events::{
         AnimationEvent, CacheMissReasons, DirtyPathEvent, FrameEvent, NotifyEvent, ViewRenderEvent,
@@ -12,7 +13,7 @@ use super::{
 use crate::{Bounds, EntityId, Pixels, Point, WindowId};
 use collections::{FxHashMap, FxHashSet};
 use scheduler::Instant;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 #[derive(Debug)]
 pub(super) struct GpuiDevTools {
@@ -34,6 +35,7 @@ pub(super) struct GpuiDevTools {
     paused_notify_source_total_counts: Option<FxHashMap<NotifySourceKey, usize>>,
     paused_notify_source_last_stats: Option<FxHashMap<NotifySourceKey, NotifySourceStats>>,
     paused_render_source_last_stats: Option<FxHashMap<RenderSourceKey, RenderSourceStats>>,
+    pub(super) performance: DevtoolsPerformance,
     pub(super) show_flashes: bool,
     pub(super) show_heat: bool,
     pub(super) initial_pinned_notify_source_resolved: bool,
@@ -60,6 +62,7 @@ impl GpuiDevTools {
             paused_notify_source_total_counts: None,
             paused_notify_source_last_stats: None,
             paused_render_source_last_stats: None,
+            performance: DevtoolsPerformance::new(),
             show_flashes: true,
             show_heat: true,
             initial_pinned_notify_source_resolved: false,
@@ -121,12 +124,45 @@ impl GpuiDevTools {
             .copied()
     }
 
+    pub(super) fn record_recording_duration(&mut self, timestamp: Instant, duration: Duration) {
+        self.performance.recording.push(DevtoolsDurationSample {
+            timestamp,
+            duration,
+        });
+    }
+
+    pub(super) fn record_snapshot_duration(&mut self, timestamp: Instant, duration: Duration) {
+        self.performance.snapshot.push(DevtoolsDurationSample {
+            timestamp,
+            duration,
+        });
+    }
+
+    pub(super) fn record_prepaint_duration(&mut self, timestamp: Instant, duration: Duration) {
+        self.performance.prepaint.push(DevtoolsDurationSample {
+            timestamp,
+            duration,
+        });
+    }
+
+    pub(super) fn record_paint_duration(&mut self, timestamp: Instant, duration: Duration) {
+        self.performance.paint.push(DevtoolsDurationSample {
+            timestamp,
+            duration,
+        });
+    }
+
+    pub(super) fn performance_summary(&self, now: Instant) -> DevtoolsPerformanceSummary {
+        self.performance.summary(now)
+    }
+
     pub(super) fn clear_counters(&mut self) {
         self.notifications.clear();
         self.frames.clear();
         self.renders.clear();
         self.dirty_paths.clear();
         self.animations.clear();
+        self.performance.clear();
         self.notify_source_total_counts.clear();
 
         let notify_source_last_stats = self
@@ -162,6 +198,94 @@ impl GpuiDevTools {
         for window_state in self.windows.values_mut() {
             window_state.clear_counters();
         }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct DevtoolsPerformance {
+    recording: RingBuffer<DevtoolsDurationSample>,
+    snapshot: RingBuffer<DevtoolsDurationSample>,
+    prepaint: RingBuffer<DevtoolsDurationSample>,
+    paint: RingBuffer<DevtoolsDurationSample>,
+}
+
+impl DevtoolsPerformance {
+    fn new() -> Self {
+        Self {
+            recording: RingBuffer::new(DEVTOOLS_RECORDING_SAMPLE_CAPACITY),
+            snapshot: RingBuffer::new(DEVTOOLS_HUD_SAMPLE_CAPACITY),
+            prepaint: RingBuffer::new(DEVTOOLS_HUD_SAMPLE_CAPACITY),
+            paint: RingBuffer::new(DEVTOOLS_HUD_SAMPLE_CAPACITY),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.recording.clear();
+        self.snapshot.clear();
+        self.prepaint.clear();
+        self.paint.clear();
+    }
+
+    fn summary(&self, now: Instant) -> DevtoolsPerformanceSummary {
+        DevtoolsPerformanceSummary {
+            recording: summarize_duration_samples(&self.recording, now),
+            snapshot: summarize_duration_samples(&self.snapshot, now),
+            prepaint: summarize_duration_samples(&self.prepaint, now),
+            paint: summarize_duration_samples(&self.paint, now),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DevtoolsDurationSample {
+    timestamp: Instant,
+    duration: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct DevtoolsDurationSummary {
+    pub(super) count: usize,
+    pub(super) average: Duration,
+    pub(super) max: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct DevtoolsPerformanceSummary {
+    pub(super) recording: DevtoolsDurationSummary,
+    pub(super) snapshot: DevtoolsDurationSummary,
+    pub(super) prepaint: DevtoolsDurationSummary,
+    pub(super) paint: DevtoolsDurationSummary,
+}
+
+fn summarize_duration_samples(
+    samples: &RingBuffer<DevtoolsDurationSample>,
+    now: Instant,
+) -> DevtoolsDurationSummary {
+    let mut count = 0;
+    let mut total_nanos = 0_u128;
+    let mut max = Duration::default();
+
+    for sample in samples.iter() {
+        if sample.timestamp > now || now.duration_since(sample.timestamp) > SOURCE_WINDOW {
+            continue;
+        }
+
+        count += 1;
+        total_nanos += sample.duration.as_nanos();
+        max = max.max(sample.duration);
+    }
+
+    let average = if count == 0 {
+        Duration::default()
+    } else {
+        let average_nanos = (total_nanos / count as u128).min(u64::MAX as u128) as u64;
+        Duration::from_nanos(average_nanos)
+    };
+
+    DevtoolsDurationSummary {
+        count,
+        average,
+        max,
     }
 }
 
@@ -437,5 +561,25 @@ mod tests {
         assert!(outline.opacity(fading) < 1.);
 
         assert!(outline.expired(now + REUSE_OUTLINE_DURATION + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn performance_summary_uses_recent_non_future_samples() {
+        let mut devtools = GpuiDevTools::new();
+        let base = Instant::now();
+        let now = base + SOURCE_WINDOW + Duration::from_millis(100);
+
+        devtools.record_recording_duration(base, Duration::from_millis(9));
+        devtools
+            .record_recording_duration(base + Duration::from_millis(100), Duration::from_millis(1));
+        devtools
+            .record_recording_duration(base + Duration::from_millis(200), Duration::from_millis(3));
+        devtools
+            .record_recording_duration(now + Duration::from_millis(1), Duration::from_millis(100));
+
+        let summary = devtools.performance_summary(now).recording;
+        assert_eq!(summary.count, 2);
+        assert_eq!(summary.average, Duration::from_millis(2));
+        assert_eq!(summary.max, Duration::from_millis(3));
     }
 }

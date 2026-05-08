@@ -14,17 +14,19 @@ use crate::{
     WindowId, fill, font, hsla, outline, point, px, quad, rgba, size,
 };
 use scheduler::Instant;
+use std::time::Duration;
 
 pub(super) fn prepaint_window_overlay(window: &mut Window) {
     let window_id = window.handle.window_id();
     let snapshot = overlay_snapshot(window_id);
+    let prepaint_started_at = Instant::now();
     let hud_origin = GPUI_DEVTOOLS.write().window_state(window_id).hud_origin;
     let prepared_overlay = prepaint_overlay(window, snapshot, hud_origin);
+    let prepaint_duration = prepaint_started_at.elapsed();
 
-    GPUI_DEVTOOLS
-        .write()
-        .window_state(window_id)
-        .prepared_overlay = Some(prepared_overlay);
+    let mut devtools = GPUI_DEVTOOLS.write();
+    devtools.record_prepaint_duration(prepaint_started_at, prepaint_duration);
+    devtools.window_state(window_id).prepared_overlay = Some(prepared_overlay);
 }
 
 pub(super) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
@@ -39,6 +41,7 @@ pub(super) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
         return;
     };
 
+    let paint_started_at = Instant::now();
     for heat in &prepared_overlay.snapshot.heats {
         let style = heat_style(heat.rate, heat.opacity);
         window.paint_quad(quad(
@@ -71,6 +74,10 @@ pub(super) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
     }
 
     paint_hud(window, cx, &prepared_overlay);
+    let paint_duration = paint_started_at.elapsed();
+    GPUI_DEVTOOLS
+        .write()
+        .record_paint_duration(paint_started_at, paint_duration);
 }
 
 #[derive(Clone, Debug)]
@@ -335,6 +342,7 @@ enum SourceFilterAction {
 }
 
 fn overlay_snapshot(window_id: WindowId) -> OverlaySnapshot {
+    let snapshot_started_at = Instant::now();
     let mut devtools = GPUI_DEVTOOLS.write();
     let now = devtools.paused_at.unwrap_or_else(Instant::now);
     let show_flashes = devtools.show_flashes;
@@ -443,12 +451,14 @@ fn overlay_snapshot(window_id: WindowId) -> OverlaySnapshot {
         .unwrap_or_default();
 
     let rows = hud_rows(&devtools, window_id, now);
-    OverlaySnapshot {
+    let snapshot = OverlaySnapshot {
         heats,
         reuse_outlines,
         flashes,
         rows,
-    }
+    };
+    devtools.record_snapshot_duration(snapshot_started_at, snapshot_started_at.elapsed());
+    snapshot
 }
 
 fn heat_style(rate: usize, opacity: f32) -> HeatStyle {
@@ -467,6 +477,17 @@ fn heat_style(rate: usize, opacity: f32) -> HeatStyle {
         fill_alpha: fill_alpha * opacity,
         border_alpha: border_alpha * opacity,
         border_width,
+    }
+}
+
+fn format_performance_duration_ms(duration: Duration) -> String {
+    let ms = duration.as_secs_f64() * 1000.;
+    if ms < 0.1 {
+        format!("{ms:.3}")
+    } else if ms < 10. {
+        format!("{ms:.2}")
+    } else {
+        format!("{ms:.1}")
     }
 }
 
@@ -541,6 +562,26 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
         } else {
             rows.push(OverlayRow::plain("last frame --"));
         }
+
+        let performance = devtools.performance_summary(now);
+        rows.push(OverlayRow::plain(format!(
+            "devtools rec 5s {:>4} avg {} max {}ms",
+            performance.recording.count,
+            format_performance_duration_ms(performance.recording.average),
+            format_performance_duration_ms(performance.recording.max),
+        )));
+        rows.push(OverlayRow::plain(format!(
+            "devtools hud avg pre {} snap {} paint {}ms",
+            format_performance_duration_ms(performance.prepaint.average),
+            format_performance_duration_ms(performance.snapshot.average),
+            format_performance_duration_ms(performance.paint.average),
+        )));
+        rows.push(OverlayRow::plain(format!(
+            "devtools hud max pre {} snap {} paint {}ms",
+            format_performance_duration_ms(performance.prepaint.max),
+            format_performance_duration_ms(performance.snapshot.max),
+            format_performance_duration_ms(performance.paint.max),
+        )));
     }
 
     if section_expanded(devtools, HudSection::Notify) {
