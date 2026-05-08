@@ -206,7 +206,6 @@ pub enum WorktreeStoreEvent {
     WorktreeAdded(Entity<Worktree>),
     WorktreeRemoved(EntityId, WorktreeId),
     WorktreeReleased(EntityId, WorktreeId),
-    WorktreeOrderChanged,
     WorktreeUpdateSent(Entity<Worktree>),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId, UpdatedGitRepositoriesSet),
@@ -1039,50 +1038,11 @@ impl WorktreeStore {
         Ok(())
     }
 
-    pub fn move_worktree(
-        &mut self,
-        source: WorktreeId,
-        destination: WorktreeId,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        if source == destination {
-            return Ok(());
-        }
-
-        let mut source_index = None;
-        let mut destination_index = None;
-        for (i, worktree) in self.worktrees.iter().enumerate() {
-            if let Some(worktree) = worktree.upgrade() {
-                let worktree_id = worktree.read(cx).id();
-                if worktree_id == source {
-                    source_index = Some(i);
-                    if destination_index.is_some() {
-                        break;
-                    }
-                } else if worktree_id == destination {
-                    destination_index = Some(i);
-                    if source_index.is_some() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        let source_index =
-            source_index.with_context(|| format!("Missing worktree for id {source}"))?;
-        let destination_index =
-            destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
-
-        if source_index == destination_index {
-            return Ok(());
-        }
-
-        let worktree_to_move = self.worktrees.remove(source_index);
-        self.worktrees.insert(destination_index, worktree_to_move);
-        cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
-        cx.notify();
-        Ok(())
-    }
+    // `move_worktree` lives on `Project` now — worktree order is
+    // per-project, not per-host. The host's `WorktreeStore` treats its
+    // worktree list as a set; iteration order is defined by the
+    // `Project::worktrees` accessor, which reads `Project::worktrees`
+    // (a per-project Vec).
 
     pub fn disconnected_from_host(&mut self, cx: &mut App) {
         for worktree in &self.worktrees {

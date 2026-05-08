@@ -4457,7 +4457,6 @@ impl LspStore {
                 self.invalidate_diagnostic_summaries_for_removed_entries(*worktree_id, changes, cx);
             }
             WorktreeStoreEvent::WorktreeReleased(..)
-            | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
             | WorktreeStoreEvent::WorktreeDeletedEntry(..)
             | WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(..)

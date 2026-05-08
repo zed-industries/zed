@@ -2149,13 +2149,20 @@ impl Project {
         self.collaborators.values().find(|c| c.is_host)
     }
 
-    /// Collect all worktrees, including ones that don't appear in the project panel
+    /// Collect all worktrees this `Project` owns, including ones that
+    /// don't appear in the project panel.
+    ///
+    /// This iterates the `Project`'s own `worktrees` list (a per-project
+    /// view) rather than the host's `WorktreeStore`. With Phase 2 host
+    /// sharing the host's store can hold worktrees from sibling
+    /// `Project`s targeting the same machine; this filter narrows to
+    /// just the ones owned by this project.
     #[inline]
     pub fn worktrees<'a>(
-        &self,
-        cx: &'a App,
+        &'a self,
+        _cx: &App,
     ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
-        self.worktree_store(cx).read(cx).worktrees()
+        self.worktrees.iter().filter_map(|handle| handle.upgrade())
     }
 
     /// Collect all user-visible worktrees, the ones that appear in the project panel.
@@ -2164,7 +2171,8 @@ impl Project {
         &'a self,
         cx: &'a App,
     ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
-        self.worktree_store(cx).read(cx).visible_worktrees(cx)
+        self.worktrees(cx)
+            .filter(move |worktree| worktree.read(cx).is_visible())
     }
 
     pub(crate) fn default_visible_worktree_paths(
@@ -2224,7 +2232,8 @@ impl Project {
 
     #[inline]
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
-        self.worktree_store(cx).read(cx).worktree_for_id(id, cx)
+        self.worktrees(cx)
+            .find(|worktree| worktree.read(cx).id() == id)
     }
 
     pub fn worktree_for_entry(
@@ -3920,13 +3929,23 @@ impl Project {
                 // are always strong; invisible worktrees are strong only
                 // while we're collab-sharing (so they outlive their sole
                 // external user).
-                let push_strong = self.retain_worktrees || worktree.read(cx).is_visible();
-                let handle = if push_strong {
-                    WorktreeHandle::Strong(worktree.clone())
-                } else {
-                    WorktreeHandle::Weak(worktree.downgrade())
-                };
-                self.worktrees.push(handle);
+                //
+                // Idempotent: `set_worktrees_from_proto` may already have
+                // pushed this worktree before the queued event fires.
+                let already_owned = self.worktrees.iter().any(|handle| {
+                    handle
+                        .upgrade()
+                        .is_some_and(|w| w.entity_id() == worktree.entity_id())
+                });
+                if !already_owned {
+                    let push_strong = self.retain_worktrees || worktree.read(cx).is_visible();
+                    let handle = if push_strong {
+                        WorktreeHandle::Strong(worktree.clone())
+                    } else {
+                        WorktreeHandle::Weak(worktree.downgrade())
+                    };
+                    self.worktrees.push(handle);
+                }
 
                 self.on_worktree_added(worktree, cx);
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
@@ -3955,7 +3974,7 @@ impl Project {
             WorktreeStoreEvent::WorktreeReleased(_, id) => {
                 self.on_worktree_released(*id, cx);
             }
-            WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
+
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     let summaries = self
@@ -4812,9 +4831,43 @@ impl Project {
         destination: WorktreeId,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        self.worktree_store(cx).update(cx, |worktree_store, cx| {
-            worktree_store.move_worktree(source, destination, cx)
-        })
+        if source == destination {
+            return Ok(());
+        }
+
+        let mut source_index = None;
+        let mut destination_index = None;
+        for (i, handle) in self.worktrees.iter().enumerate() {
+            if let Some(worktree) = handle.upgrade() {
+                let id = worktree.read(cx).id();
+                if id == source {
+                    source_index = Some(i);
+                    if destination_index.is_some() {
+                        break;
+                    }
+                } else if id == destination {
+                    destination_index = Some(i);
+                    if source_index.is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let source_index =
+            source_index.with_context(|| format!("Missing worktree for id {source}"))?;
+        let destination_index =
+            destination_index.with_context(|| format!("Missing worktree for id {destination}"))?;
+
+        if source_index == destination_index {
+            return Ok(());
+        }
+
+        let handle = self.worktrees.remove(source_index);
+        self.worktrees.insert(destination_index, handle);
+        cx.emit(Event::WorktreeOrderChanged);
+        cx.notify();
+        Ok(())
     }
 
     /// Attempts to convert the input path to a WSL path if this is a wsl remote project and the input path is a host windows path.
@@ -6713,9 +6766,23 @@ impl Project {
     }
 
     pub fn worktree_metadata_protos(&self, cx: &App) -> Vec<proto::WorktreeMetadata> {
-        self.worktree_store(cx)
-            .read(cx)
-            .worktree_metadata_protos(cx)
+        // Use this Project's worktree order, not the host's. The host's
+        // `WorktreeStore` is unordered (a multi-tenant set); the
+        // metadata sent downstream represents *this* project's view.
+        self.worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                proto::WorktreeMetadata {
+                    id: worktree.id().to_proto(),
+                    root_name: worktree.root_name_str().to_owned(),
+                    visible: worktree.is_visible(),
+                    abs_path: worktree.abs_path().to_string_lossy().into_owned(),
+                    root_repo_common_dir: worktree
+                        .root_repo_common_dir()
+                        .map(|p| p.to_string_lossy().into_owned()),
+                }
+            })
+            .collect()
     }
 
     /// Iterator of all open buffers that have unsaved changes
@@ -6737,8 +6804,47 @@ impl Project {
     ) -> Result<()> {
         let replica_id = self.replica_id(cx);
         self.worktree_store(cx).update(cx, |worktree_store, cx| {
-            worktree_store.set_worktrees_from_proto(worktrees, replica_id, cx)
-        })
+            worktree_store.set_worktrees_from_proto(worktrees.clone(), replica_id, cx)
+        })?;
+
+        // Rebuild `self.worktrees` to match the proto's order, dropping
+        // entries that no longer exist on the host. The shared
+        // WorktreeStore may still hold worktrees from sibling Projects;
+        // we only update *this* project's view.
+        let kept_ids: HashSet<WorktreeId> = worktrees
+            .iter()
+            .map(|w| WorktreeId::from_proto(w.id))
+            .collect();
+        let mut existing_by_id: HashMap<WorktreeId, WorktreeHandle> = self
+            .worktrees
+            .drain(..)
+            .filter_map(|handle| {
+                let id = handle.upgrade()?.read(cx).id();
+                if kept_ids.contains(&id) {
+                    Some((id, handle))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let worktree_store = self.worktree_store(cx);
+        for proto_worktree in &worktrees {
+            let id = WorktreeId::from_proto(proto_worktree.id);
+            if let Some(handle) = existing_by_id.remove(&id) {
+                self.worktrees.push(handle);
+            } else if let Some(worktree) = worktree_store.read(cx).worktree_for_id(id, cx) {
+                // Newly added: pin it on the project side. Visible
+                // worktrees are always strong; invisible follow
+                // `retain_worktrees`.
+                let push_strong = self.retain_worktrees || worktree.read(cx).is_visible();
+                self.worktrees.push(if push_strong {
+                    WorktreeHandle::Strong(worktree)
+                } else {
+                    WorktreeHandle::Weak(worktree.downgrade())
+                });
+            }
+        }
+        Ok(())
     }
 
     fn set_collaborators_from_proto(
