@@ -2008,6 +2008,40 @@ impl Editor {
         hunks.any(|hunk| hunk.status().has_secondary_hunk())
     }
 
+    fn prepare_restore_change(
+        &self,
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
+        hunk: &MultiBufferDiffHunk,
+        cx: &mut App,
+    ) -> Option<()> {
+        if hunk.is_created_file() {
+            return None;
+        }
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let diff_snapshot = multi_buffer_snapshot.diff_for_buffer_id(hunk.buffer_id)?;
+        let original_text = diff_snapshot
+            .base_text()
+            .as_rope()
+            .slice(hunk.diff_base_byte_range.start.0..hunk.diff_base_byte_range.end.0);
+        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = buffer.read(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
+        if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
+            probe
+                .0
+                .start
+                .cmp(&hunk.buffer_range.start, &buffer_snapshot)
+                .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
+        }) {
+            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), original_text));
+            Some(())
+        } else {
+            None
+        }
+    }
+
     fn save_buffers_for_ranges_if_needed(
         &mut self,
         ranges: &[Range<Anchor>],
@@ -3003,4 +3037,33 @@ pub(super) fn render_diff_hunk_controls(
             },
         )
         .into_any_element()
+}
+
+pub(super) fn update_uncommitted_diff_for_buffer(
+    editor: Entity<Editor>,
+    project: &Entity<Project>,
+    buffers: impl IntoIterator<Item = Entity<Buffer>>,
+    buffer: Entity<MultiBuffer>,
+    cx: &mut App,
+) -> Task<()> {
+    let mut tasks = Vec::new();
+    project.update(cx, |project, cx| {
+        for buffer in buffers {
+            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            }
+        }
+    });
+    cx.spawn(async move |cx| {
+        let diffs = future::join_all(tasks).await;
+        if editor.read_with(cx, |editor, _cx| editor.temporary_diff_override) {
+            return;
+        }
+
+        buffer.update(cx, |buffer, cx| {
+            for diff in diffs.into_iter().flatten() {
+                buffer.add_diff(diff, cx);
+            }
+        });
+    })
 }
