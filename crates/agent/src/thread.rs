@@ -1017,6 +1017,9 @@ impl Thread {
             depth: parent_thread.read(cx).depth() + 1,
         });
         thread.inherit_parent_settings(parent_thread, cx);
+        if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
+            thread.apply_model_selection(&subagent_model, cx);
+        }
         thread
     }
 
@@ -1119,6 +1122,29 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+    }
+
+    fn apply_model_selection(
+        &mut self,
+        selection: &LanguageModelSelection,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(model) = Self::resolve_model_from_selection(selection, cx) else {
+            log::warn!(
+                "failed to resolve configured subagent model: {}/{}",
+                selection.provider.0,
+                selection.model
+            );
+            return;
+        };
+
+        self.model = Some(model.clone());
+        self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
+        self.thinking_effort = selection.effort.clone();
+        self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.prompt_capabilities_tx
+            .send(Self::prompt_capabilities(self.model.as_deref()))
+            .log_err();
     }
 
     pub fn id(&self) -> &acp::SessionId {
