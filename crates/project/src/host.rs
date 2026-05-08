@@ -107,10 +107,8 @@ impl Host {
             let worktree_store =
                 cx.new(|cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx)));
 
-            // `weak_project` is filled in by `Project::local` after the
-            // `Project` entity exists.
             let context_server_store =
-                cx.new(|cx| ContextServerStore::local(worktree_store.clone(), None, false, cx));
+                cx.new(|cx| ContextServerStore::local(worktree_store.clone(), false, cx));
 
             let environment = cx.new(|cx| {
                 ProjectEnvironment::new(env, worktree_store.downgrade(), None, false, cx)
@@ -300,14 +298,11 @@ impl Host {
                 )
             });
 
-            // `weak_project` is filled in by `Project::remote` after the
-            // `Project` entity exists.
             let context_server_store = cx.new(|cx| {
                 ContextServerStore::remote(
                     rpc::proto::REMOTE_SERVER_PROJECT_ID,
                     remote.clone(),
                     worktree_store.clone(),
-                    None,
                     cx,
                 )
             });
@@ -542,12 +537,10 @@ impl Host {
 
             let agent_server_store = cx.new(|_cx| AgentServerStore::collab());
 
-            // `weak_project` is filled in by
-            // `Project::from_join_project_response` after the `Project`
-            // entity exists. Note: collab uses `ContextServerStore::local`
-            // (not `::remote`), matching the pre-Host wiring.
+            // Note: collab uses `ContextServerStore::local` (not
+            // `::remote`), matching the pre-Host wiring.
             let context_server_store =
-                cx.new(|cx| ContextServerStore::local(worktree_store.clone(), None, false, cx));
+                cx.new(|cx| ContextServerStore::local(worktree_store.clone(), false, cx));
 
             Self {
                 _subscriptions: Vec::new(),

@@ -30,7 +30,6 @@ async fn test_context_server_status(cx: &mut TestAppContext) {
         ContextServerStore::test(
             registry.clone(),
             project.read(cx).worktree_store(cx),
-            Some(project.downgrade()),
             cx,
         )
     });
@@ -104,7 +103,6 @@ async fn test_context_server_status_events(cx: &mut TestAppContext) {
         ContextServerStore::test(
             registry.clone(),
             project.read(cx).worktree_store(cx),
-            Some(project.downgrade()),
             cx,
         )
     });
@@ -159,7 +157,6 @@ async fn test_context_server_concurrent_starts(cx: &mut TestAppContext) {
         ContextServerStore::test(
             registry.clone(),
             project.read(cx).worktree_store(cx),
-            Some(project.downgrade()),
             cx,
         )
     });
@@ -860,12 +857,7 @@ async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(cx),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let mut async_cx = cx.to_async();
@@ -918,12 +910,7 @@ async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(cx),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let mut async_cx = cx.to_async();
@@ -951,12 +938,7 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(cx),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let mut async_cx = cx.to_async();

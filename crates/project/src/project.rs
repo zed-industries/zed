@@ -1222,7 +1222,6 @@ impl Project {
                 git_store,
                 settings_observer,
                 lsp_store,
-                context_server_store,
             ) = {
                 let host = host.read(cx);
                 (
@@ -1234,16 +1233,8 @@ impl Project {
                     host.git_store.clone(),
                     host.settings_observer.clone(),
                     host.lsp_store.clone(),
-                    host.context_server_store.clone(),
                 )
             };
-
-            // Now that the `Project` entity exists, fill in the back-ref
-            // on `ContextServerStore` (Host construction left it `None`).
-            let weak_self = cx.weak_entity();
-            context_server_store.update(cx, |store, _| {
-                store.set_project(weak_self);
-            });
 
             if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
@@ -1340,7 +1331,6 @@ impl Project {
                 git_store,
                 settings_observer,
                 lsp_store,
-                context_server_store,
             ) = {
                 let host = host.read(cx);
                 (
@@ -1350,16 +1340,8 @@ impl Project {
                     host.git_store.clone(),
                     host.settings_observer.clone(),
                     host.lsp_store.clone(),
-                    host.context_server_store.clone(),
                 )
             };
-
-            // Now that the `Project` entity exists, fill in the back-ref
-            // on `ContextServerStore` (Host construction left it `None`).
-            let weak_self = cx.weak_entity();
-            context_server_store.update(cx, |store, _| {
-                store.set_project(weak_self);
-            });
 
             if init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
@@ -1583,7 +1565,6 @@ impl Project {
             git_store,
             settings_observer,
             lsp_store,
-            context_server_store,
         ) = host.read_with(&cx, |host, _| {
             (
                 host.worktree_store.clone(),
@@ -1593,18 +1574,10 @@ impl Project {
                 host.git_store.clone(),
                 host.settings_observer.clone(),
                 host.lsp_store.clone(),
-                host.context_server_store.clone(),
             )
         });
 
         let project = cx.new(|cx: &mut Context<Self>| {
-            // Now that the `Project` entity exists, fill in the back-ref
-            // on `ContextServerStore` (Host construction left it `None`).
-            let weak_self = cx.weak_entity();
-            context_server_store.update(cx, |store, _| {
-                store.set_project(weak_self);
-            });
-
             let mut worktrees = Vec::new();
             for worktree in &response.payload.worktrees {
                 let worktree = Worktree::remote(

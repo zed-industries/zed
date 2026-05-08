@@ -24,7 +24,7 @@ use settings::{Settings as _, SettingsStore};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
-    DisableAiSettings, Project,
+    DisableAiSettings,
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
@@ -258,7 +258,6 @@ pub struct ContextServerStore {
     servers: HashMap<ContextServerId, ContextServerState>,
     server_ids: Vec<ContextServerId>,
     worktree_store: Entity<WorktreeStore>,
-    project: Option<WeakEntity<Project>>,
     registry: Entity<ContextServerDescriptorRegistry>,
     update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
@@ -277,7 +276,6 @@ impl EventEmitter<ServerStatusChangedEvent> for ContextServerStore {}
 impl ContextServerStore {
     pub fn local(
         worktree_store: Entity<WorktreeStore>,
-        weak_project: Option<WeakEntity<Project>>,
         headless: bool,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -286,7 +284,6 @@ impl ContextServerStore {
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
-            weak_project,
             ContextServerStoreState::Local {
                 downstream_client: None,
                 is_headless: headless,
@@ -299,7 +296,6 @@ impl ContextServerStore {
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
         worktree_store: Entity<WorktreeStore>,
-        weak_project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
@@ -307,7 +303,6 @@ impl ContextServerStore {
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
-            weak_project,
             ContextServerStoreState::Remote {
                 project_id,
                 upstream_client,
@@ -318,15 +313,6 @@ impl ContextServerStore {
 
     pub fn init_headless(session: &AnyProtoClient) {
         session.add_entity_request_handler(Self::handle_get_context_server_command);
-    }
-
-    /// Set the back-reference to the owning `Project`. Used by
-    /// `Project::local` / `remote` / `from_join_project_response` after
-    /// the `Project` entity is created (the `ContextServerStore` itself
-    /// is constructed inside `Host::local` etc., before the `Project`
-    /// exists).
-    pub fn set_project(&mut self, weak_project: WeakEntity<Project>) {
-        self.project = Some(weak_project);
     }
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient) {
@@ -355,7 +341,6 @@ impl ContextServerStore {
     pub fn test(
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
-        weak_project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
@@ -363,7 +348,6 @@ impl ContextServerStore {
             None,
             registry,
             worktree_store,
-            weak_project,
             ContextServerStoreState::Local {
                 downstream_client: None,
                 is_headless: false,
@@ -377,7 +361,6 @@ impl ContextServerStore {
         context_server_factory: Option<ContextServerFactory>,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
-        weak_project: Option<WeakEntity<Project>>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
@@ -385,7 +368,6 @@ impl ContextServerStore {
             context_server_factory,
             registry,
             worktree_store,
-            weak_project,
             ContextServerStoreState::Local {
                 downstream_client: None,
                 is_headless: false,
@@ -423,7 +405,6 @@ impl ContextServerStore {
         context_server_factory: Option<ContextServerFactory>,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
-        weak_project: Option<WeakEntity<Project>>,
         state: ContextServerStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -471,7 +452,6 @@ impl ContextServerStore {
                 .context_servers
                 .clone(),
             worktree_store,
-            project: weak_project,
             registry,
             needs_server_update: false,
             ai_disabled,
@@ -735,25 +715,15 @@ impl ContextServerStore {
         })?;
 
         let root_path: Option<Arc<Path>> = this.update(cx, |this, cx| {
-            this.project
-                .as_ref()
-                .and_then(|project| {
-                    project
-                        .read_with(cx, |project, cx| project.active_project_directory(cx))
-                        .ok()
-                        .flatten()
+            this.worktree_store.read_with(cx, |store, cx| {
+                store.visible_worktrees(cx).fold(None, |acc, item| {
+                    if acc.is_none() {
+                        item.read(cx).root_dir()
+                    } else {
+                        acc
+                    }
                 })
-                .or_else(|| {
-                    this.worktree_store.read_with(cx, |store, cx| {
-                        store.visible_worktrees(cx).fold(None, |acc, item| {
-                            if acc.is_none() {
-                                item.read(cx).root_dir()
-                            } else {
-                                acc
-                            }
-                        })
-                    })
-                })
+            })
         })?;
 
         let configuration = if let Some((project_id, upstream_client)) = remote_state {
