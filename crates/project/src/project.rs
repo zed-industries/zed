@@ -68,7 +68,9 @@ use collections::{BTreeSet, HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
-    breakpoint_store::{ActiveStackFrame, BreakpointStore},
+    breakpoint_store::{
+        ActiveStackFrame, BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason,
+    },
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
@@ -1213,6 +1215,8 @@ impl Project {
 
             let breakpoint_store =
                 cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+            cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
+                .detach();
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
@@ -1474,6 +1478,8 @@ impl Project {
                     worktree_store.clone(),
                 )
             });
+            cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
+                .detach();
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_remote(
@@ -1834,6 +1840,8 @@ impl Project {
                 .detach();
 
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
+            cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
+                .detach();
 
             let mut project = Self {
                 buffer_ordered_messages_tx: tx,
@@ -2739,18 +2747,13 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
-        self.breakpoint_store.update(cx, |breakpoint_store, _| {
-            breakpoint_store.shared(project_id, self.collab_client.clone().into())
-        });
-        self.dap_store.update(cx, |dap_store, cx| {
-            dap_store.shared(project_id, self.collab_client.clone().into(), cx);
-        });
-        self.task_store.update(cx, |task_store, cx| {
-            task_store.shared(project_id, self.collab_client.clone().into(), cx);
-        });
-        self.settings_observer.update(cx, |settings_observer, cx| {
-            settings_observer.shared(project_id, self.collab_client.clone().into(), cx)
-        });
+        let initial_settings_protos = self
+            .settings_observer
+            .read(cx)
+            .initial_worktree_settings_protos(project_id, cx);
+        for proto in initial_settings_protos {
+            self.collab_client.send(proto).log_err();
+        }
         self.git_store.update(cx, |git_store, cx| {
             git_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
@@ -2840,18 +2843,6 @@ impl Project {
             self.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers();
                 buffer_store.unshared(cx)
-            });
-            self.task_store.update(cx, |task_store, cx| {
-                task_store.unshared(cx);
-            });
-            self.breakpoint_store.update(cx, |breakpoint_store, cx| {
-                breakpoint_store.unshared(cx);
-            });
-            self.dap_store.update(cx, |dap_store, cx| {
-                dap_store.unshared(cx);
-            });
-            self.settings_observer.update(cx, |settings_observer, cx| {
-                settings_observer.unshared(cx);
             });
             self.git_store.update(cx, |git_store, cx| {
                 git_store.unshared(cx);
@@ -3497,12 +3488,52 @@ impl Project {
         event: &DapStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        if let DapStoreEvent::Notification(message) = event {
-            cx.emit(Event::Toast {
-                notification_id: "dap".into(),
-                message: message.clone(),
-                link: None,
-            });
+        match event {
+            DapStoreEvent::Notification(message) => {
+                cx.emit(Event::Toast {
+                    notification_id: "dap".into(),
+                    message: message.clone(),
+                    link: None,
+                });
+            }
+            DapStoreEvent::LogToDebugConsole {
+                session_id,
+                message,
+            } => {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::LogToDebugConsole {
+                            project_id: *remote_id,
+                            session_id: *session_id,
+                            message: message.clone(),
+                        })
+                        .log_err();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_breakpoint_store_event(
+        &mut self,
+        breakpoint_store: Entity<BreakpointStore>,
+        event: &BreakpointStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        // Mirror the previous in-store broadcast: only broadcast on Toggled,
+        // and only when this project is the host of a collab share running
+        // a local breakpoint store (not via remote-server).
+        if let BreakpointStoreEvent::BreakpointsUpdated(path, BreakpointUpdatedReason::Toggled) =
+            event
+        {
+            if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                if self.remote_client.is_none() {
+                    let proto = breakpoint_store
+                        .read(cx)
+                        .breakpoints_for_file_proto(path, *remote_id);
+                    let _ = self.collab_client.send(proto);
+                }
+            }
         }
     }
 
@@ -3684,6 +3715,26 @@ impl Project {
         event: &SettingsObserverEvent,
         cx: &mut Context<Self>,
     ) {
+        if let SettingsObserverEvent::LocalSettingsApplied {
+            worktree_id,
+            path,
+            kind,
+            content,
+        } = event
+        {
+            if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                self.collab_client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id: *remote_id,
+                        worktree_id: worktree_id.to_proto(),
+                        path: path.to_proto(),
+                        content: content.clone(),
+                        kind: Some(project_settings::local_settings_kind_to_proto(*kind).into()),
+                        outside_worktree: Some(path.is_outside_worktree()),
+                    })
+                    .log_err();
+            }
+        }
         match event {
             SettingsObserverEvent::LocalSettingsUpdated(result) => match result {
                 Err(InvalidSettingsError::LocalSettings { message, path }) => {
@@ -3731,6 +3782,7 @@ impl Project {
                 }),
                 Err(_) => {}
             },
+            SettingsObserverEvent::LocalSettingsApplied { .. } => {}
         }
     }
 
@@ -5104,7 +5156,11 @@ impl Project {
             this.buffer_store.update(cx, |buffer_store, _| {
                 buffer_store.forget_shared_buffers_for(&collaborator.peer_id);
             });
-            this.breakpoint_store.read(cx).broadcast();
+            if let ProjectClientState::Shared { remote_id } = &this.client_state {
+                this.breakpoint_store
+                    .read(cx)
+                    .broadcast(&this.collab_client.clone().into(), *remote_id);
+            }
             cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);

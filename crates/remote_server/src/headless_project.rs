@@ -18,11 +18,14 @@ use project::{
     agent_server_store::AgentServerStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     context_server_store::ContextServerStore,
-    debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
+    debugger::{
+        breakpoint_store::{BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason},
+        dap_store::{DapStore, DapStoreEvent},
+    },
     git_store::GitStore,
     image_store::ImageId,
     lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
-    project_settings::SettingsObserver,
+    project_settings::{self, SettingsObserver, SettingsObserverEvent},
     search::SearchQuery,
     task_store::TaskStore,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
@@ -139,16 +142,13 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let breakpoint_store = cx.new(|_| {
-            let mut breakpoint_store =
-                BreakpointStore::local(worktree_store.clone(), buffer_store.clone());
-            breakpoint_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
-
-            breakpoint_store
-        });
+        let breakpoint_store =
+            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+        cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
+            .detach();
 
         let dap_store = cx.new(|cx| {
-            let mut dap_store = DapStore::new_local(
+            DapStore::new_local(
                 http_client.clone(),
                 node_runtime.clone(),
                 fs.clone(),
@@ -158,10 +158,9 @@ impl HeadlessProject {
                 breakpoint_store.clone(),
                 true,
                 cx,
-            );
-            dap_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            dap_store
+            )
         });
+        cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
         let git_store = cx.new(|cx| {
             let mut store = GitStore::local(
@@ -186,28 +185,26 @@ impl HeadlessProject {
         });
 
         let task_store = cx.new(|cx| {
-            let mut task_store = TaskStore::local(
+            TaskStore::local(
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
                 git_store.clone(),
                 cx,
-            );
-            task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            task_store
+            )
         });
         let settings_observer = cx.new(|cx| {
-            let mut observer = SettingsObserver::new_local(
+            SettingsObserver::new_local(
                 fs.clone(),
                 worktree_store.clone(),
                 task_store.clone(),
                 true,
                 cx,
-            );
-            observer.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            observer
+            )
         });
+        cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+            .detach();
 
         let lsp_store = cx.new(|cx| {
             let mut lsp_store = LspStore::new_local(
@@ -378,6 +375,69 @@ impl HeadlessProject {
                 operations: vec![serialize_operation(operation)],
             }))
             .detach()
+        }
+    }
+
+    fn on_settings_observer_event(
+        &mut self,
+        _: Entity<SettingsObserver>,
+        event: &SettingsObserverEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        if let SettingsObserverEvent::LocalSettingsApplied {
+            worktree_id,
+            path,
+            kind,
+            content,
+        } = event
+        {
+            self.session
+                .send(proto::UpdateWorktreeSettings {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    worktree_id: worktree_id.to_proto(),
+                    path: path.to_proto(),
+                    content: content.clone(),
+                    kind: Some(project_settings::local_settings_kind_to_proto(*kind).into()),
+                    outside_worktree: Some(path.is_outside_worktree()),
+                })
+                .log_err();
+        }
+    }
+
+    fn on_dap_store_event(
+        &mut self,
+        _: Entity<DapStore>,
+        event: &DapStoreEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        if let DapStoreEvent::LogToDebugConsole {
+            session_id,
+            message,
+        } = event
+        {
+            self.session
+                .send(proto::LogToDebugConsole {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    session_id: *session_id,
+                    message: message.clone(),
+                })
+                .log_err();
+        }
+    }
+
+    fn on_breakpoint_store_event(
+        &mut self,
+        breakpoint_store: Entity<BreakpointStore>,
+        event: &BreakpointStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if let BreakpointStoreEvent::BreakpointsUpdated(path, BreakpointUpdatedReason::Toggled) =
+            event
+        {
+            let proto = breakpoint_store
+                .read(cx)
+                .breakpoints_for_file_proto(path, REMOTE_SERVER_PROJECT_ID);
+            let _ = self.session.send(proto);
         }
     }
 

@@ -66,6 +66,13 @@ pub enum DapStoreEvent {
     },
     Notification(String),
     RemoteHasInitialized,
+    /// A streaming log message produced while resolving a debug adapter binary
+    /// for a downstream client. Listeners (`Project`, `HeadlessProject`)
+    /// forward these as `proto::LogToDebugConsole`.
+    LogToDebugConsole {
+        session_id: u64,
+        message: String,
+    },
 }
 
 enum DapStoreMode {
@@ -93,7 +100,6 @@ pub struct RemoteDapStore {
 
 pub struct DapStore {
     mode: DapStoreMode,
-    downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
@@ -232,7 +238,6 @@ impl DapStore {
         Self {
             mode,
             next_session_id: 0,
-            downstream_client: None,
             breakpoint_store,
             worktree_store,
             sessions: Default::default(),
@@ -789,21 +794,6 @@ impl DapStore {
         })
     }
 
-    pub fn shared(
-        &mut self,
-        project_id: u64,
-        downstream_client: AnyProtoClient,
-        _: &mut Context<Self>,
-    ) {
-        self.downstream_client = Some((downstream_client, project_id));
-    }
-
-    pub fn unshared(&mut self, cx: &mut Context<Self>) {
-        self.downstream_client.take();
-
-        cx.notify();
-    }
-
     async fn handle_run_debug_locator(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RunDebugLocators>,
@@ -838,16 +828,11 @@ impl DapStore {
             let this = this.clone();
             async move |cx| {
                 while let Some(message) = rx.next().await {
-                    this.read_with(cx, |this, _| {
-                        if let Some((downstream, project_id)) = this.downstream_client.clone() {
-                            downstream
-                                .send(proto::LogToDebugConsole {
-                                    project_id,
-                                    session_id,
-                                    message,
-                                })
-                                .ok();
-                        }
+                    this.update(cx, |_, cx| {
+                        cx.emit(DapStoreEvent::LogToDebugConsole {
+                            session_id,
+                            message,
+                        });
                     });
                 }
             }

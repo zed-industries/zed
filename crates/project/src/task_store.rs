@@ -39,7 +39,6 @@ pub struct StoreState {
 
 enum StoreMode {
     Local {
-        downstream_client: Option<(AnyProtoClient, u64)>,
         environment: Entity<ProjectEnvironment>,
     },
     Remote {
@@ -168,10 +167,7 @@ impl TaskStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::Functional(StoreState {
-            mode: StoreMode::Local {
-                downstream_client: None,
-                environment,
-            },
+            mode: StoreMode::Local { environment },
             task_inventory: Inventory::new(cx),
             buffer_store,
             git_store,
@@ -241,30 +237,6 @@ impl TaskStore {
         match self {
             TaskStore::Functional(state) => Some(&state.task_inventory),
             TaskStore::Noop => None,
-        }
-    }
-
-    pub fn shared(&mut self, remote_id: u64, new_downstream_client: AnyProtoClient, _cx: &mut App) {
-        if let Self::Functional(StoreState {
-            mode: StoreMode::Local {
-                downstream_client, ..
-            },
-            ..
-        }) = self
-        {
-            *downstream_client = Some((new_downstream_client, remote_id));
-        }
-    }
-
-    pub fn unshared(&mut self, _: &mut Context<Self>) {
-        if let Self::Functional(StoreState {
-            mode: StoreMode::Local {
-                downstream_client, ..
-            },
-            ..
-        }) = self
-        {
-            *downstream_client = None;
         }
     }
 
