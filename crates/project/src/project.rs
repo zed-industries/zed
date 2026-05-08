@@ -29,7 +29,7 @@ use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
-use git_store::{Repository, RepositoryId};
+use git_store::{GitStoreEvent, Repository, RepositoryId, RepositorySnapshot};
 pub mod search_history;
 pub mod yarn;
 
@@ -261,6 +261,12 @@ pub struct Project {
     /// While true, all worktrees (visible or not) are retained as strong
     /// handles. Toggled on `Project::shared` and off `Project::unshare`.
     retain_worktrees: bool,
+    /// Last `RepositorySnapshot` that we sent downstream for each repository,
+    /// used to compute incremental `proto::UpdateRepository` payloads when
+    /// the host's `GitStore` reports a snapshot change. Populated on share,
+    /// updated on each forwarded change, cleared on unshare.
+    git_repository_snapshots_for_peer:
+        HashMap<git_store::RepositoryId, git_store::RepositorySnapshot>,
 }
 
 struct DownloadingFile {
@@ -1265,6 +1271,7 @@ impl Project {
                     cx,
                 )
             });
+            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             let task_store = cx.new(|cx| {
                 TaskStore::local(
@@ -1367,6 +1374,7 @@ impl Project {
                 last_worktree_paths: WorktreePaths::default(),
                 worktrees: Vec::new(),
                 retain_worktrees: false,
+                git_repository_snapshots_for_peer: HashMap::default(),
             }
         })
     }
@@ -1513,6 +1521,7 @@ impl Project {
                     cx,
                 )
             });
+            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
@@ -1612,6 +1621,7 @@ impl Project {
                 last_worktree_paths: WorktreePaths::default(),
                 worktrees: Vec::new(),
                 retain_worktrees: false,
+                git_repository_snapshots_for_peer: HashMap::default(),
             };
 
             // remote server -> local machine handlers
@@ -1854,6 +1864,7 @@ impl Project {
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
             cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
                 .detach();
+            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             let mut project = Self {
                 buffer_ordered_messages_tx: tx,
@@ -1905,6 +1916,7 @@ impl Project {
                 // Joined collab projects retain all worktrees because the
                 // host's view (which we mirror) keeps them all alive.
                 retain_worktrees: true,
+                git_repository_snapshots_for_peer: HashMap::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2867,6 +2879,26 @@ impl Project {
         self.git_store.update(cx, |git_store, cx| {
             git_store.shared(project_id, self.collab_client.clone().into(), cx)
         });
+        // Announce all current repositories to the downstream peer. The
+        // diff/send pipeline used to live inside `GitStore::shared`; in
+        // Phase 0 it moves here, with `git_repository_snapshots_for_peer`
+        // tracking what we last sent so subsequent
+        // `RepositorySnapshotForDownstream` events can build incremental
+        // updates.
+        let initial_snapshots: Vec<RepositorySnapshot> = self
+            .git_store
+            .read(cx)
+            .repositories()
+            .values()
+            .map(|repo| repo.read(cx).snapshot())
+            .collect();
+        for snapshot in initial_snapshots {
+            for chunk in proto::split_repository_update(snapshot.initial_update(project_id)) {
+                self.collab_client.send(chunk).log_err();
+            }
+            self.git_repository_snapshots_for_peer
+                .insert(snapshot.id, snapshot);
+        }
 
         self.client_state = ProjectClientState::Shared {
             remote_id: project_id,
@@ -2892,6 +2924,24 @@ impl Project {
             self.git_store.update(cx, |git_store, cx| {
                 git_store.shared(remote_id, self.collab_client.clone().into(), cx)
             });
+            // Re-announce all repositories to the new peer. Previous
+            // snapshots are stale (the new peer has no state yet), so clear
+            // and re-send full initial updates.
+            self.git_repository_snapshots_for_peer.clear();
+            let initial_snapshots: Vec<RepositorySnapshot> = self
+                .git_store
+                .read(cx)
+                .repositories()
+                .values()
+                .map(|repo| repo.read(cx).snapshot())
+                .collect();
+            for snapshot in initial_snapshots {
+                for chunk in proto::split_repository_update(snapshot.initial_update(remote_id)) {
+                    self.collab_client.send(chunk).log_err();
+                }
+                self.git_repository_snapshots_for_peer
+                    .insert(snapshot.id, snapshot);
+            }
         }
         cx.emit(Event::Reshared);
         Ok(())
@@ -2958,6 +3008,7 @@ impl Project {
             self.git_store.update(cx, |git_store, cx| {
                 git_store.unshared(cx);
             });
+            self.git_repository_snapshots_for_peer.clear();
 
             self.collab_client
                 .send(proto::UnshareProject {
@@ -3679,6 +3730,57 @@ impl Project {
                         })
                         .log_err();
                 }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_git_store_event(
+        &mut self,
+        _: Entity<GitStore>,
+        event: &GitStoreEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        let ProjectClientState::Shared { remote_id } = self.client_state else {
+            return;
+        };
+        match event {
+            GitStoreEvent::RepositorySnapshotForDownstream(snapshot) => {
+                let update =
+                    if let Some(old) = self.git_repository_snapshots_for_peer.get(&snapshot.id) {
+                        snapshot.build_update(old, remote_id)
+                    } else {
+                        snapshot.initial_update(remote_id)
+                    };
+                for chunk in proto::split_repository_update(update) {
+                    self.collab_client.send(chunk).log_err();
+                }
+                self.git_repository_snapshots_for_peer
+                    .insert(snapshot.id, snapshot.clone());
+            }
+            GitStoreEvent::RepositorySnapshotRemovedForDownstream(id) => {
+                self.collab_client
+                    .send(proto::RemoveRepository {
+                        project_id: remote_id,
+                        id: id.to_proto(),
+                    })
+                    .log_err();
+                self.git_repository_snapshots_for_peer.remove(id);
+            }
+            GitStoreEvent::ForwardRepositoryUpdate(update) => {
+                let mut update = update.clone();
+                update.project_id = remote_id;
+                self.collab_client.send(update).log_err();
+            }
+            GitStoreEvent::ForwardRepositoryRemove(update) => {
+                let mut update = update.clone();
+                update.project_id = remote_id;
+                self.collab_client.send(update).log_err();
+            }
+            GitStoreEvent::DiffBasesUpdatedForDownstream(update) => {
+                let mut update = update.clone();
+                update.project_id = remote_id;
+                self.collab_client.send(update).log_err();
             }
             _ => {}
         }

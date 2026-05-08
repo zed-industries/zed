@@ -59,7 +59,7 @@ use pending_op::{PendingOp, PendingOpId, PendingOps, PendingOpsSummary};
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, git_reset, split_repository_update},
+    proto::{self, git_reset},
 };
 use serde::Deserialize;
 use settings::{Settings, WorktreeId};
@@ -106,6 +106,12 @@ pub struct GitStore {
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
+    /// Residual scaffolding used by the rpc handlers that still need to
+    /// reach the downstream peer directly: askpass round-trips in
+    /// `handle_fetch`/`handle_push`/`handle_pull`/`handle_commit` and the
+    /// buffer creation in `handle_open_commit_message_buffer`. The next
+    /// commit moves those handlers to `Project` and removes this field.
+    downstream_client: Option<(AnyProtoClient, u64)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -183,7 +189,6 @@ pub enum GitAccess {
 enum GitStoreState {
     Local {
         next_repository_id: Arc<AtomicU64>,
-        downstream: Option<LocalDownstreamState>,
         project_environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         _fs_watches: Box<[Task<()>]>,
@@ -191,20 +196,7 @@ enum GitStoreState {
     Remote {
         upstream_client: AnyProtoClient,
         upstream_project_id: u64,
-        downstream: Option<(AnyProtoClient, ProjectId)>,
     },
-}
-
-enum DownstreamUpdate {
-    UpdateRepository(RepositorySnapshot),
-    RemoveRepository(RepositoryId),
-}
-
-struct LocalDownstreamState {
-    client: AnyProtoClient,
-    project_id: ProjectId,
-    updates_tx: mpsc::UnboundedSender<DownstreamUpdate>,
-    _task: Task<Result<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -499,6 +491,21 @@ pub enum GitStoreEvent {
     JobsUpdated,
     ConflictsUpdated,
     GlobalConfigurationUpdated,
+    /// A repository's snapshot changed; in `GitStoreState::Local` this is
+    /// the source data for the downstream `proto::UpdateRepository` push.
+    /// Listener (Project / HeadlessProject) does the diff against the last
+    /// sent snapshot.
+    RepositorySnapshotForDownstream(RepositorySnapshot),
+    /// A repository was removed locally; listener forwards `proto::RemoveRepository`.
+    RepositorySnapshotRemovedForDownstream(RepositoryId),
+    /// `GitStoreState::Remote` received a `proto::UpdateRepository` from upstream
+    /// and the listener should forward it to its downstream peer.
+    ForwardRepositoryUpdate(proto::UpdateRepository),
+    /// `GitStoreState::Remote` received a `proto::RemoveRepository` from upstream
+    /// and the listener should forward it to its downstream peer.
+    ForwardRepositoryRemove(proto::RemoveRepository),
+    /// Buffer diff bases changed; listener forwards `proto::UpdateDiffBases`.
+    DiffBasesUpdatedForDownstream(proto::UpdateDiffBases),
 }
 
 impl EventEmitter<RepositoryEvent> for Repository {}
@@ -548,7 +555,7 @@ impl GitStore {
                                         let (job_sender, state) = (this.refetch_repo_state)(cx);
                                         this.repository_state = state;
                                         this.job_sender = job_sender;
-                                        this.schedule_scan(None, cx);
+                                        this.schedule_scan(cx);
                                     }
                                 })
                             }
@@ -568,7 +575,6 @@ impl GitStore {
             buffer_store,
             GitStoreState::Local {
                 next_repository_id: Arc::new(AtomicU64::new(1)),
-                downstream: None,
                 project_environment: environment,
                 _fs_watches,
                 fs,
@@ -590,7 +596,6 @@ impl GitStore {
             GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
-                downstream: None,
             },
             cx,
         )
@@ -622,6 +627,7 @@ impl GitStore {
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
+            downstream_client: None,
         }
     }
 
@@ -728,102 +734,17 @@ impl GitStore {
         self.set_active_repo_id(repo_id, cx);
     }
 
-    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
-        match &mut self.state {
-            GitStoreState::Remote {
-                downstream: downstream_client,
-                ..
-            } => {
-                for repo in self.repositories.values() {
-                    let update = repo.read(cx).snapshot.initial_update(project_id);
-                    for update in split_repository_update(update) {
-                        client.send(update).log_err();
-                    }
-                }
-                *downstream_client = Some((client, ProjectId(project_id)));
-            }
-            GitStoreState::Local {
-                downstream: downstream_client,
-                ..
-            } => {
-                let mut snapshots = HashMap::default();
-                let (updates_tx, mut updates_rx) = mpsc::unbounded();
-                for repo in self.repositories.values() {
-                    updates_tx
-                        .unbounded_send(DownstreamUpdate::UpdateRepository(
-                            repo.read(cx).snapshot.clone(),
-                        ))
-                        .ok();
-                }
-                *downstream_client = Some(LocalDownstreamState {
-                    client: client.clone(),
-                    project_id: ProjectId(project_id),
-                    updates_tx,
-                    _task: cx.spawn(async move |this, cx| {
-                        cx.background_spawn(async move {
-                            while let Some(update) = updates_rx.next().await {
-                                match update {
-                                    DownstreamUpdate::UpdateRepository(snapshot) => {
-                                        if let Some(old_snapshot) = snapshots.get_mut(&snapshot.id)
-                                        {
-                                            let update =
-                                                snapshot.build_update(old_snapshot, project_id);
-                                            *old_snapshot = snapshot;
-                                            for update in split_repository_update(update) {
-                                                client.send(update)?;
-                                            }
-                                        } else {
-                                            let update = snapshot.initial_update(project_id);
-                                            for update in split_repository_update(update) {
-                                                client.send(update)?;
-                                            }
-                                            snapshots.insert(snapshot.id, snapshot);
-                                        }
-                                    }
-                                    DownstreamUpdate::RemoveRepository(id) => {
-                                        client.send(proto::RemoveRepository {
-                                            project_id,
-                                            id: id.to_proto(),
-                                        })?;
-                                    }
-                                }
-                            }
-                            anyhow::Ok(())
-                        })
-                        .await
-                        .ok();
-                        this.update(cx, |this, _| {
-                            if let GitStoreState::Local {
-                                downstream: downstream_client,
-                                ..
-                            } = &mut this.state
-                            {
-                                downstream_client.take();
-                            } else {
-                                unreachable!("unshared called on remote store");
-                            }
-                        })
-                    }),
-                });
-            }
-        }
+    /// Records the downstream peer used by the residual rpc handlers
+    /// (askpass + open-commit-message-buffer). The initial-share repository
+    /// announce loop, the diff/send pipeline, and broadcast forwarding all
+    /// live on `Project` / `HeadlessProject` listeners now. The next commit
+    /// removes this method and the `downstream_client` field.
+    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, _cx: &mut Context<Self>) {
+        self.downstream_client = Some((client, project_id));
     }
 
     pub fn unshared(&mut self, _cx: &mut Context<Self>) {
-        match &mut self.state {
-            GitStoreState::Local {
-                downstream: downstream_client,
-                ..
-            } => {
-                downstream_client.take();
-            }
-            GitStoreState::Remote {
-                downstream: downstream_client,
-                ..
-            } => {
-                downstream_client.take();
-            }
-        }
+        self.downstream_client.take();
         self.shared_diffs.clear();
     }
 
@@ -1424,18 +1345,9 @@ impl GitStore {
     }
 
     fn downstream_client(&self) -> Option<(AnyProtoClient, ProjectId)> {
-        match &self.state {
-            GitStoreState::Local {
-                downstream: downstream_client,
-                ..
-            } => downstream_client
-                .as_ref()
-                .map(|state| (state.client.clone(), state.project_id)),
-            GitStoreState::Remote {
-                downstream: downstream_client,
-                ..
-            } => downstream_client.clone(),
-        }
+        self.downstream_client
+            .as_ref()
+            .map(|(client, project_id)| (client.clone(), ProjectId(*project_id)))
     }
 
     fn upstream_client(&self) -> Option<AnyProtoClient> {
@@ -1455,7 +1367,6 @@ impl GitStore {
     ) {
         let GitStoreState::Local {
             project_environment,
-            downstream,
             next_repository_id,
             fs,
             ..
@@ -1473,14 +1384,11 @@ impl GitStore {
                 {
                     let paths_by_git_repo =
                         self.process_updated_entries(&worktree, updated_entries, cx);
-                    let downstream = downstream
-                        .as_ref()
-                        .map(|downstream| downstream.updates_tx.clone());
                     cx.spawn(async move |_, cx| {
                         let paths_by_git_repo = paths_by_git_repo.await;
                         for (repo, paths) in paths_by_git_repo {
                             repo.update(cx, |repo, cx| {
-                                repo.paths_changed(paths, downstream.clone(), cx);
+                                repo.paths_changed(paths, cx);
                             });
                         }
                     })
@@ -1503,9 +1411,6 @@ impl GitStore {
                     *worktree_id,
                     project_environment.clone(),
                     next_repository_id.clone(),
-                    downstream
-                        .as_ref()
-                        .map(|downstream| downstream.updates_tx.clone()),
                     changed_repos.clone(),
                     fs.clone(),
                     cx,
@@ -1532,13 +1437,9 @@ impl GitStore {
                 for repo_id in repos_without_worktree {
                     self.repositories.remove(&repo_id);
                     self.worktree_ids.remove(&repo_id);
-                    if let Some(updates_tx) =
-                        downstream.as_ref().map(|downstream| &downstream.updates_tx)
-                    {
-                        updates_tx
-                            .unbounded_send(DownstreamUpdate::RemoveRepository(repo_id))
-                            .ok();
-                    }
+                    cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(
+                        repo_id,
+                    ));
                 }
 
                 if is_active_repo_removed {
@@ -1604,7 +1505,6 @@ impl GitStore {
         worktree_id: WorktreeId,
         project_environment: Entity<ProjectEnvironment>,
         next_repository_id: Arc<AtomicU64>,
-        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         updated_git_repositories: UpdatedGitRepositoriesSet,
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
@@ -1629,7 +1529,7 @@ impl GitStore {
                         .insert(worktree_id);
                     existing.update(cx, |existing, cx| {
                         existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
-                        existing.schedule_scan(updates_tx.clone(), cx);
+                        existing.schedule_scan(cx);
                     });
                 } else {
                     if let Some(worktree_ids) = self.worktree_ids.get_mut(&repo_id) {
@@ -1671,15 +1571,14 @@ impl GitStore {
                         git_store,
                         cx,
                     );
-                    if let Some(updates_tx) = updates_tx.as_ref() {
-                        // trigger an empty `UpdateRepository` to ensure remote active_repo_id is set correctly
-                        updates_tx
-                            .unbounded_send(DownstreamUpdate::UpdateRepository(repo.snapshot()))
-                            .ok();
-                    }
-                    repo.schedule_scan(updates_tx.clone(), cx);
+                    repo.schedule_scan(cx);
                     repo
                 });
+                // Trigger an empty repository update so the listener
+                // (Project / HeadlessProject) sets remote active_repo_id correctly.
+                cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(
+                    repo.read(cx).snapshot(),
+                ));
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_repository_event));
                 self._subscriptions
@@ -1700,11 +1599,7 @@ impl GitStore {
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
             }
             self.repositories.remove(&id);
-            if let Some(updates_tx) = updates_tx.as_ref() {
-                updates_tx
-                    .unbounded_send(DownstreamUpdate::RemoveRepository(id))
-                    .ok();
-            }
+            cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(id));
         }
     }
 
@@ -2073,7 +1968,7 @@ impl GitStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let path_style = this.worktree_store.read(cx).path_style();
-            let mut update = envelope.payload;
+            let update = envelope.payload;
 
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
@@ -2119,10 +2014,7 @@ impl GitStore {
                 id
             });
 
-            if let Some((client, project_id)) = this.downstream_client() {
-                update.project_id = project_id.to_proto();
-                client.send(update).log_err();
-            }
+            cx.emit(GitStoreEvent::ForwardRepositoryUpdate(update));
             Ok(())
         })
     }
@@ -2133,13 +2025,10 @@ impl GitStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let mut update = envelope.payload;
+            let update = envelope.payload;
             let id = RepositoryId::from_proto(update.id);
             this.repositories.remove(&id);
-            if let Some((client, project_id)) = this.downstream_client() {
-                update.project_id = project_id.to_proto();
-                client.send(update).log_err();
-            }
+            cx.emit(GitStoreEvent::ForwardRepositoryRemove(update));
             if this.active_repo_id == Some(id) {
                 this.active_repo_id = None;
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
@@ -3973,7 +3862,7 @@ impl RepositorySnapshot {
         }
     }
 
-    fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
+    pub fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
             branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
@@ -4017,7 +3906,7 @@ impl RepositorySnapshot {
         }
     }
 
-    fn build_update(&self, old: &Self, project_id: u64) -> proto::UpdateRepository {
+    pub fn build_update(&self, old: &Self, project_id: u64) -> proto::UpdateRepository {
         let mut updated_statuses: Vec<proto::StatusEntry> = Vec::new();
         let mut removed_statuses: Vec<String> = Vec::new();
 
@@ -4572,36 +4461,30 @@ impl Repository {
                             continue;
                         };
 
-                        let downstream_client = git_store.downstream_client();
-                        diff_state.update(cx, |diff_state, cx| {
+                        if let Some(diff_bases_change) = diff_bases_change.clone() {
                             use proto::update_diff_bases::Mode;
-
-                            if let Some((diff_bases_change, (client, project_id))) =
-                                diff_bases_change.clone().zip(downstream_client)
-                            {
-                                let (staged_text, committed_text, mode) = match diff_bases_change {
-                                    DiffBasesChange::SetIndex(index) => {
-                                        (index, None, Mode::IndexOnly)
-                                    }
-                                    DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
-                                    DiffBasesChange::SetEach { index, head } => {
-                                        (index, head, Mode::IndexAndHead)
-                                    }
-                                    DiffBasesChange::SetBoth(text) => {
-                                        (None, text, Mode::IndexMatchesHead)
-                                    }
-                                };
-                                client
-                                    .send(proto::UpdateDiffBases {
-                                        project_id: project_id.to_proto(),
-                                        buffer_id: buffer_id.to_proto(),
-                                        staged_text,
-                                        committed_text,
-                                        mode: mode as i32,
-                                    })
-                                    .log_err();
-                            }
-
+                            let (staged_text, committed_text, mode) = match diff_bases_change {
+                                DiffBasesChange::SetIndex(index) => (index, None, Mode::IndexOnly),
+                                DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
+                                DiffBasesChange::SetEach { index, head } => {
+                                    (index, head, Mode::IndexAndHead)
+                                }
+                                DiffBasesChange::SetBoth(text) => {
+                                    (None, text, Mode::IndexMatchesHead)
+                                }
+                            };
+                            cx.emit(GitStoreEvent::DiffBasesUpdatedForDownstream(
+                                proto::UpdateDiffBases {
+                                    // Filled in by the listener with the project's id.
+                                    project_id: 0,
+                                    buffer_id: buffer_id.to_proto(),
+                                    staged_text,
+                                    committed_text,
+                                    mode: mode as i32,
+                                },
+                            ));
+                        }
+                        diff_state.update(cx, |diff_state, cx| {
                             diff_state.diff_bases_changed(buffer_snapshot, diff_bases_change, cx);
                         });
                     }
@@ -5961,18 +5844,11 @@ impl Repository {
     pub fn stash_drop(
         &mut self,
         index: Option<usize>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let id = self.id;
-        let updates_tx = self
-            .git_store()
-            .and_then(|git_store| match &git_store.read(cx).state {
-                GitStoreState::Local { downstream, .. } => downstream
-                    .as_ref()
-                    .map(|downstream| downstream.updates_tx.clone()),
-                _ => None,
-            });
-        let this = cx.weak_entity();
+        let git_store = self.git_store.clone();
+        let this = self.this.clone();
         self.send_job(None, move |git_repo, mut cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState {
@@ -5990,10 +5866,10 @@ impl Repository {
                             cx.emit(RepositoryEvent::StashEntriesChanged);
                             this.snapshot.clone()
                         })?;
-                        if let Some(updates_tx) = updates_tx {
-                            updates_tx
-                                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                                .ok();
+                        if let Some(git_store) = git_store.upgrade() {
+                            git_store.update(&mut cx, |_, cx| {
+                                cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(snapshot));
+                            });
                         }
                     }
 
@@ -6159,15 +6035,7 @@ impl Repository {
             })
             .unwrap_or("");
 
-        let updates_tx = self
-            .git_store()
-            .and_then(|git_store| match &git_store.read(cx).state {
-                GitStoreState::Local { downstream, .. } => downstream
-                    .as_ref()
-                    .map(|downstream| downstream.updates_tx.clone()),
-                _ => None,
-            });
-
+        let git_store = self.git_store.clone();
         let this = cx.weak_entity();
         self.send_job(
             Some(format!("git push {} {} {}:{}", args, remote, branch, remote_branch).into()),
@@ -6199,10 +6067,12 @@ impl Repository {
                                 cx.emit(RepositoryEvent::HeadChanged);
                                 this.snapshot.clone()
                             })?;
-                            if let Some(updates_tx) = updates_tx {
-                                updates_tx
-                                    .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                                    .ok();
+                            if let Some(git_store) = git_store.upgrade() {
+                                git_store.update(&mut cx, |_, cx| {
+                                    cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(
+                                        snapshot,
+                                    ));
+                                });
                             }
                         }
                         result
@@ -7385,16 +7255,13 @@ impl Repository {
         self.pending_ops = updated;
     }
 
-    fn schedule_scan(
-        &mut self,
-        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
-        cx: &mut Context<Self>,
-    ) {
+    fn schedule_scan(&mut self, cx: &mut Context<Self>) {
         let this = cx.weak_entity();
+        let git_store = self.git_store.clone();
         let _ = self.send_keyed_job(
             Some(GitJobKey::ReloadGitState),
             None,
-            |state, mut cx| async move {
+            move |state, mut cx| async move {
                 log::debug!("run scheduled git status scan");
 
                 let Some(this) = this.upgrade() else {
@@ -7407,10 +7274,10 @@ impl Repository {
                 this.update(&mut cx, |this, cx| {
                     this.clear_pending_ops(cx);
                 });
-                if let Some(updates_tx) = updates_tx {
-                    updates_tx
-                        .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                        .ok();
+                if let Some(git_store) = git_store.upgrade() {
+                    git_store.update(&mut cx, |_, cx| {
+                        cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(snapshot));
+                    });
                 }
                 Ok(())
             },
@@ -7605,21 +7472,17 @@ impl Repository {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
-    fn paths_changed(
-        &mut self,
-        paths: Vec<RepoPath>,
-        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
-        cx: &mut Context<Self>,
-    ) {
+    fn paths_changed(&mut self, paths: Vec<RepoPath>, cx: &mut Context<Self>) {
         if !paths.is_empty() {
             self.paths_needing_status_update.push(paths);
         }
 
         let this = cx.weak_entity();
+        let git_store = self.git_store.clone();
         let _ = self.send_keyed_job(
             Some(GitJobKey::RefreshStatuses),
             None,
-            |state, mut cx| async move {
+            move |state, mut cx| async move {
                 let (prev_snapshot, changed_paths) = this.update(&mut cx, |this, _| {
                     (
                         this.snapshot.clone(),
@@ -7706,12 +7569,11 @@ impl Repository {
                         this.snapshot.scan_id += 1;
                     }
 
-                    if let Some(updates_tx) = updates_tx {
-                        updates_tx
-                            .unbounded_send(DownstreamUpdate::UpdateRepository(
-                                this.snapshot.clone(),
-                            ))
-                            .ok();
+                    let snapshot = this.snapshot.clone();
+                    if let Some(git_store) = git_store.upgrade() {
+                        git_store.update(cx, |_, cx| {
+                            cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(snapshot));
+                        });
                     }
                 })
             },

@@ -811,6 +811,13 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(_, _, _) => {}
                     GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
+                    // Downstream-broadcast variants are routed by `Project` /
+                    // `HeadlessProject`; the panel does not consume them.
+                    GitStoreEvent::RepositorySnapshotForDownstream(_)
+                    | GitStoreEvent::RepositorySnapshotRemovedForDownstream(_)
+                    | GitStoreEvent::ForwardRepositoryUpdate(_)
+                    | GitStoreEvent::ForwardRepositoryRemove(_)
+                    | GitStoreEvent::DiffBasesUpdatedForDownstream(_) => {}
                 },
             )
             .detach();

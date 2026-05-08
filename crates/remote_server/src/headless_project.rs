@@ -22,7 +22,7 @@ use project::{
         breakpoint_store::{BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason},
         dap_store::{DapStore, DapStoreEvent},
     },
-    git_store::GitStore,
+    git_store::{GitStore, GitStoreEvent, RepositoryId, RepositorySnapshot},
     image_store::ImageId,
     lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
     project_settings::{self, SettingsObserver, SettingsObserverEvent},
@@ -78,6 +78,11 @@ pub struct HeadlessProject {
     /// what keeps them alive while the connected client cares about them.
     /// Headless always retains all worktrees (no visibility distinction).
     worktrees: Vec<Entity<Worktree>>,
+    /// Last `RepositorySnapshot` we forwarded to the connected zed client
+    /// for each repository, used to compute incremental
+    /// `proto::UpdateRepository` payloads. Mirrors `Project::
+    /// git_repository_snapshots_for_peer`.
+    git_repository_snapshots_for_peer: HashMap<RepositoryId, RepositorySnapshot>,
 }
 
 pub struct HeadlessAppState {
@@ -177,9 +182,14 @@ impl HeadlessProject {
                 fs.clone(),
                 cx,
             );
+            // Records the residual downstream client used by askpass and the
+            // open-commit-message-buffer rpc handlers. The repository
+            // announce/diff/send pipeline lives below in
+            // `Self::on_git_store_event`.
             store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });
+        cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
@@ -358,6 +368,7 @@ impl HeadlessProject {
             _toolchain_store: toolchain_store,
             kernels: Default::default(),
             worktrees: Vec::new(),
+            git_repository_snapshots_for_peer: HashMap::default(),
         }
     }
 
@@ -536,6 +547,54 @@ impl HeadlessProject {
                     message: message.clone(),
                 })
                 .log_err();
+        }
+    }
+
+    fn on_git_store_event(
+        &mut self,
+        _: Entity<GitStore>,
+        event: &GitStoreEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        match event {
+            GitStoreEvent::RepositorySnapshotForDownstream(snapshot) => {
+                let update =
+                    if let Some(old) = self.git_repository_snapshots_for_peer.get(&snapshot.id) {
+                        snapshot.build_update(old, REMOTE_SERVER_PROJECT_ID)
+                    } else {
+                        snapshot.initial_update(REMOTE_SERVER_PROJECT_ID)
+                    };
+                for chunk in proto::split_repository_update(update) {
+                    self.session.send(chunk).log_err();
+                }
+                self.git_repository_snapshots_for_peer
+                    .insert(snapshot.id, snapshot.clone());
+            }
+            GitStoreEvent::RepositorySnapshotRemovedForDownstream(id) => {
+                self.session
+                    .send(proto::RemoveRepository {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        id: id.to_proto(),
+                    })
+                    .log_err();
+                self.git_repository_snapshots_for_peer.remove(id);
+            }
+            GitStoreEvent::ForwardRepositoryUpdate(update) => {
+                let mut update = update.clone();
+                update.project_id = REMOTE_SERVER_PROJECT_ID;
+                self.session.send(update).log_err();
+            }
+            GitStoreEvent::ForwardRepositoryRemove(update) => {
+                let mut update = update.clone();
+                update.project_id = REMOTE_SERVER_PROJECT_ID;
+                self.session.send(update).log_err();
+            }
+            GitStoreEvent::DiffBasesUpdatedForDownstream(update) => {
+                let mut update = update.clone();
+                update.project_id = REMOTE_SERVER_PROJECT_ID;
+                self.session.send(update).log_err();
+            }
+            _ => {}
         }
     }
 
