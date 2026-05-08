@@ -5693,6 +5693,8 @@ mod tests {
             sha: commit_sha,
             parents: smallvec![],
             ref_names: vec![
+                SharedString::from("HEAD -> main"),
+                SharedString::from("origin/main"),
                 SharedString::from("tag: v1.0.0"),
                 SharedString::from("tag: v1.1.0"),
             ],
