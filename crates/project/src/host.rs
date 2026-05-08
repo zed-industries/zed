@@ -237,4 +237,182 @@ impl Host {
             }
         })
     }
+
+    /// Build a `Host` for a remote-server project (ssh / wsl).
+    ///
+    /// `Project::remote` calls this and then sets up Project-level
+    /// subscriptions, the trusted-worktree tracker, and the
+    /// `WeakEntity<Project>` back-ref on `ContextServerStore`.
+    pub fn remote(
+        remote: Entity<RemoteClient>,
+        client: Arc<Client>,
+        node: NodeRuntime,
+        user_store: Entity<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let (remote_proto, path_style) =
+            remote.read_with(cx, |remote, _| (remote.proto_client(), remote.path_style()));
+
+        cx.new(|cx: &mut Context<Self>| {
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
+            let worktree_store = cx.new(|cx| {
+                WorktreeStore::remote(
+                    remote_proto.clone(),
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    path_style,
+                    WorktreeIdCounter::get(cx),
+                )
+            });
+
+            let buffer_store = cx.new(|cx| {
+                BufferStore::remote(
+                    worktree_store.clone(),
+                    remote_proto.clone(),
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    cx,
+                )
+            });
+            let image_store = cx.new(|cx| {
+                ImageStore::remote(
+                    worktree_store.clone(),
+                    remote_proto.clone(),
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    cx,
+                )
+            });
+            let toolchain_store = cx.new(|cx| {
+                ToolchainStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    worktree_store.clone(),
+                    remote_proto.clone(),
+                    cx,
+                )
+            });
+
+            // `weak_project` is filled in by `Project::remote` after the
+            // `Project` entity exists.
+            let context_server_store = cx.new(|cx| {
+                ContextServerStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                    None,
+                    cx,
+                )
+            });
+
+            let environment = cx.new(|cx| {
+                ProjectEnvironment::new(
+                    None,
+                    worktree_store.downgrade(),
+                    Some(remote.downgrade()),
+                    false,
+                    cx,
+                )
+            });
+
+            let lsp_store = cx.new(|cx| {
+                LspStore::new_remote(
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    languages.clone(),
+                    remote_proto.clone(),
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    cx,
+                )
+            });
+
+            let bookmark_store =
+                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+
+            let breakpoint_store = cx.new(|_| {
+                BreakpointStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote_proto.clone(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                )
+            });
+
+            let dap_store = cx.new(|cx| {
+                DapStore::new_remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    breakpoint_store.clone(),
+                    worktree_store.clone(),
+                    node.clone(),
+                    client.http_client(),
+                    fs.clone(),
+                    cx,
+                )
+            });
+
+            let git_store = cx.new(|cx| {
+                GitStore::remote(
+                    &worktree_store,
+                    buffer_store.clone(),
+                    remote_proto.clone(),
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    cx,
+                )
+            });
+
+            let task_store = cx.new(|cx| {
+                TaskStore::remote(
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
+                    remote_proto.clone(),
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    git_store.clone(),
+                    cx,
+                )
+            });
+
+            let settings_observer = cx.new(|cx| {
+                SettingsObserver::new_remote(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    Some(remote_proto.clone()),
+                    false,
+                    cx,
+                )
+            });
+
+            let agent_server_store = cx.new(|_| {
+                AgentServerStore::remote(
+                    rpc::proto::REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                )
+            });
+
+            Self {
+                fs,
+                languages,
+                node: Some(node),
+                user_store,
+                collab_client: client,
+                remote_client: Some(remote),
+                environment,
+                snippets,
+                worktree_store,
+                buffer_store,
+                image_store,
+                lsp_store,
+                dap_store,
+                breakpoint_store,
+                bookmark_store,
+                git_store,
+                task_store,
+                settings_observer,
+                agent_server_store,
+                context_server_store,
+                toolchain_store: Some(toolchain_store),
+            }
+        })
+    }
 }
