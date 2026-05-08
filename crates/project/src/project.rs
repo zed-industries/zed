@@ -8,6 +8,7 @@ pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
 pub mod git_store;
+pub mod host;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
@@ -213,6 +214,13 @@ pub enum OpenedBufferEvent {
 ///
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
+    /// Machine-bound services and host-shaped stores. See [`Host`] for
+    /// the rationale and Phase 1/2 split. The fields below this one
+    /// (`languages`, `lsp_store`, `worktree_store`, etc.) are *cached
+    /// clones* of what's in `host` so that `Project`'s public accessor
+    /// signatures don't take `cx`. They will be removed as accessors
+    /// migrate to forward through `host` directly.
+    host: Entity<host::Host>,
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
@@ -1355,7 +1363,32 @@ impl Project {
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let host = cx.new(|_| host::Host {
+                fs: fs.clone(),
+                languages: languages.clone(),
+                node: Some(node.clone()),
+                user_store: user_store.clone(),
+                collab_client: client.clone(),
+                remote_client: None,
+                environment: environment.clone(),
+                snippets: snippets.clone(),
+                worktree_store: worktree_store.clone(),
+                buffer_store: buffer_store.clone(),
+                image_store: image_store.clone(),
+                lsp_store: lsp_store.clone(),
+                dap_store: dap_store.clone(),
+                breakpoint_store: breakpoint_store.clone(),
+                bookmark_store: bookmark_store.clone(),
+                git_store: git_store.clone(),
+                task_store: task_store.clone(),
+                settings_observer: settings_observer.clone(),
+                agent_server_store: agent_server_store.clone(),
+                context_server_store: context_server_store.clone(),
+                toolchain_store: Some(toolchain_store.clone()),
+            });
+
             Self {
+                host,
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
                 worktree_store,
@@ -1587,7 +1620,32 @@ impl Project {
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
+            let host = cx.new(|_| host::Host {
+                fs: fs.clone(),
+                languages: languages.clone(),
+                node: Some(node.clone()),
+                user_store: user_store.clone(),
+                collab_client: client.clone(),
+                remote_client: Some(remote.clone()),
+                environment: environment.clone(),
+                snippets: snippets.clone(),
+                worktree_store: worktree_store.clone(),
+                buffer_store: buffer_store.clone(),
+                image_store: image_store.clone(),
+                lsp_store: lsp_store.clone(),
+                dap_store: dap_store.clone(),
+                breakpoint_store: breakpoint_store.clone(),
+                bookmark_store: bookmark_store.clone(),
+                git_store: git_store.clone(),
+                task_store: task_store.clone(),
+                settings_observer: settings_observer.clone(),
+                agent_server_store: agent_server_store.clone(),
+                context_server_store: context_server_store.clone(),
+                toolchain_store: Some(toolchain_store.clone()),
+            });
+
             let this = Self {
+                host,
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
                 worktree_store,
@@ -1920,7 +1978,32 @@ impl Project {
                 .detach();
             cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
+            let host = cx.new(|_| host::Host {
+                fs: fs.clone(),
+                languages: languages.clone(),
+                node: None,
+                user_store: user_store.clone(),
+                collab_client: client.clone(),
+                remote_client: None,
+                environment: environment.clone(),
+                snippets: snippets.clone(),
+                worktree_store: worktree_store.clone(),
+                buffer_store: buffer_store.clone(),
+                image_store: image_store.clone(),
+                lsp_store: lsp_store.clone(),
+                dap_store: dap_store.clone(),
+                breakpoint_store: breakpoint_store.clone(),
+                bookmark_store: bookmark_store.clone(),
+                git_store: git_store.clone(),
+                task_store: task_store.clone(),
+                settings_observer: settings_observer.clone(),
+                agent_server_store: agent_server_store.clone(),
+                context_server_store: context_server_store.clone(),
+                toolchain_store: None,
+            });
+
             let mut project = Self {
+                host,
                 buffer_ordered_messages_tx: tx,
                 buffer_store: buffer_store.clone(),
                 image_store,
