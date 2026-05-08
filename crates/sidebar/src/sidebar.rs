@@ -4626,7 +4626,6 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // TODO: Drop workspaces?
         workspace.update(cx, |ws, cx| {
             if let Some(panel) = ws.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
