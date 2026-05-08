@@ -2885,9 +2885,6 @@ impl Project {
                 .set_entity(&self.git_store, &cx.to_async()),
         ]);
 
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.shared(project_id, self.collab_client.clone().into(), cx)
-        });
         self.retain_all_worktrees();
         self.send_worktree_project_updates(project_id, cx);
         // Announce all language servers that belong to this project. After
@@ -3048,8 +3045,6 @@ impl Project {
             });
             self.release_invisible_worktrees(cx);
             self.forget_shared_buffers();
-            self.buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.unshared(cx));
             self.git_store.update(cx, |git_store, _| {
                 git_store.forget_all_shared_diffs();
             });

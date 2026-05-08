@@ -157,11 +157,7 @@ impl HeadlessProject {
             )
         });
 
-        let buffer_store = cx.new(|cx| {
-            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
-            buffer_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            buffer_store
-        });
+        let buffer_store = cx.new(|cx| BufferStore::local(worktree_store.clone(), cx));
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));

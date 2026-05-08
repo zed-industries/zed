@@ -34,7 +34,6 @@ pub struct BufferStore {
     worktree_store: Entity<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     path_to_buffer_id: HashMap<ProjectPath, BufferId>,
-    downstream_client: Option<(AnyProtoClient, u64)>,
     non_searchable_buffers: HashSet<BufferId>,
     project_search: RemoteProjectSearchState,
 }
@@ -457,26 +456,18 @@ impl LocalBufferStore {
         cx.spawn(async move |this, cx| {
             let new_file = save.await?;
             let mtime = new_file.disk_state().mtime();
-            this.update(cx, |this, cx| {
-                if let Some((downstream_client, project_id)) = this.downstream_client.clone() {
-                    if has_changed_file {
-                        downstream_client
-                            .send(proto::UpdateBufferFile {
-                                project_id,
-                                buffer_id: buffer_id.to_proto(),
-                                file: Some(language::File::to_proto(&*new_file, cx)),
-                            })
-                            .log_err();
-                    }
-                    downstream_client
-                        .send(proto::BufferSaved {
-                            project_id,
-                            buffer_id: buffer_id.to_proto(),
-                            version: serialize_version(&version),
-                            mtime: mtime.map(|time| time.into()),
-                        })
-                        .log_err();
+            this.update(cx, |_, cx| {
+                if has_changed_file {
+                    cx.emit(BufferStoreEvent::UpdateBufferFileForwarded {
+                        buffer_id,
+                        file: Some(language::File::to_proto(&*new_file, cx)),
+                    });
                 }
+                cx.emit(BufferStoreEvent::BufferSavedForwarded {
+                    buffer_id,
+                    version: serialize_version(&version),
+                    mtime: mtime.map(|time| time.into()),
+                });
             })?;
             buffer_handle.update(cx, |buffer, cx| {
                 if has_changed_file {
@@ -630,15 +621,10 @@ impl LocalBufferStore {
                 }
             }
 
-            if let Some((client, project_id)) = &this.downstream_client {
-                client
-                    .send(proto::UpdateBufferFile {
-                        project_id: *project_id,
-                        buffer_id: buffer_id.to_proto(),
-                        file: Some(new_file.to_proto(cx)),
-                    })
-                    .ok();
-            }
+            events.push(BufferStoreEvent::UpdateBufferFileForwarded {
+                buffer_id,
+                file: Some(new_file.to_proto(cx)),
+            });
 
             buffer.file_updated(Arc::new(new_file), cx);
             Some(events)
@@ -838,7 +824,6 @@ impl BufferStore {
                     }
                 }),
             }),
-            downstream_client: None,
             opened_buffers: Default::default(),
             path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
@@ -863,7 +848,6 @@ impl BufferStore {
                 upstream_client,
                 worktree_store: worktree_store.clone(),
             }),
-            downstream_client: None,
             opened_buffers: Default::default(),
             path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
@@ -1143,14 +1127,6 @@ impl BufferStore {
             // to give them a chance to fail now that we've disconnected.
             remote.remote_buffer_listeners.clear()
         }
-    }
-
-    pub fn shared(&mut self, remote_id: u64, downstream_client: AnyProtoClient, _cx: &mut App) {
-        self.downstream_client = Some((downstream_client, remote_id));
-    }
-
-    pub fn unshared(&mut self, _cx: &mut Context<Self>) {
-        self.downstream_client.take();
     }
 
     pub fn discard_incomplete(&mut self) {
