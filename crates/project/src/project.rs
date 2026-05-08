@@ -267,6 +267,15 @@ pub struct Project {
     /// `register_shared_lsp_handle`. Moved here from `BufferStore` so that
     /// the host store has no per-project state.
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
+    /// Per-project view of which buffers (by id) this Project considers
+    /// "its own" out of the (potentially shared) host `BufferStore`.
+    /// Populated idempotently by `on_buffer_store_event::BufferAdded`,
+    /// pruned by `BufferDropped`. Every Project accessor that walks
+    /// buffers (`opened_buffers`, `buffer_for_id`, `dirty_buffers`,
+    /// `has_open_buffer`, `get_open_buffer`) filters through this set so
+    /// that, in Phase 2 sharing, sibling-Project events for buffers we
+    /// don't own become no-ops without changing the host store.
+    buffers: HashSet<BufferId>,
     /// Drives the context server maintain loop on this Project's behalf.
     /// Set when a refresh is in flight; cleared when the spawned task
     /// completes. Lives on `Project` (not `ContextServerStore`) so that
@@ -1305,6 +1314,7 @@ impl Project {
                 retain_worktrees: false,
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
+                buffers: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             }
@@ -1420,6 +1430,7 @@ impl Project {
                 retain_worktrees: false,
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
+                buffers: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -1670,6 +1681,7 @@ impl Project {
                 retain_worktrees: true,
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
+                buffers: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -2047,6 +2059,11 @@ impl Project {
 
     #[inline]
     pub fn buffer_for_id(&self, remote_id: BufferId, cx: &App) -> Option<Entity<Buffer>> {
+        // Filter through this Project's owned set so that Phase 2
+        // sibling-Project buffers don't bleed through.
+        if !self.buffers.contains(&remote_id) {
+            return None;
+        }
         self.buffer_store(cx).read(cx).get(remote_id)
     }
 
@@ -2077,7 +2094,15 @@ impl Project {
 
     #[inline]
     pub fn opened_buffers(&self, cx: &App) -> Vec<Entity<Buffer>> {
-        self.buffer_store(cx).read(cx).buffers().collect()
+        // Iterate this Project's owned ids and resolve through the host
+        // BufferStore. The store may hold buffers owned by sibling
+        // Projects in Phase 2; we surface only ours.
+        let buffer_store = self.buffer_store(cx);
+        let buffer_store = buffer_store.read(cx);
+        self.buffers
+            .iter()
+            .filter_map(|id| buffer_store.get(*id))
+            .collect()
     }
 
     #[inline]
@@ -2114,10 +2139,12 @@ impl Project {
     #[cfg(feature = "test-support")]
     #[inline]
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &App) -> bool {
-        self.buffer_store(cx)
-            .read(cx)
-            .get_by_path(&path.into())
-            .is_some()
+        let buffer_store = self.buffer_store(cx);
+        let buffer_store = buffer_store.read(cx);
+        buffer_store
+            .buffer_id_for_project_path(&path.into())
+            .map(|id| self.buffers.contains(id))
+            .unwrap_or(false)
     }
 
     #[inline]
@@ -3276,7 +3303,11 @@ impl Project {
     }
 
     pub fn get_open_buffer(&self, path: &ProjectPath, cx: &App) -> Option<Entity<Buffer>> {
-        self.buffer_store(cx).read(cx).get_by_path(path)
+        let buffer = self.buffer_store(cx).read(cx).get_by_path(path)?;
+        if !self.buffers.contains(&buffer.read(cx).remote_id()) {
+            return None;
+        }
+        Some(buffer)
     }
 
     fn register_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
@@ -3453,9 +3484,26 @@ impl Project {
     ) {
         match event {
             BufferStoreEvent::BufferAdded(buffer) => {
+                // Idempotent claim: if `set_buffers_from_proto` (or a
+                // direct call site) has already pushed this buffer into
+                // `self.buffers`, skip re-registering. In Phase 2
+                // sharing, sibling Projects subscribed to the same host
+                // BufferStore would also receive this event; today every
+                // Project claims every buffer it sees because each
+                // Project still has its own host.
+                let buffer_id = buffer.read(cx).remote_id();
+                if !self.buffers.insert(buffer_id) {
+                    return;
+                }
                 self.register_buffer(buffer, cx).log_err();
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
+                // Only act if this Project actually owns the buffer.
+                // Skipping the proto send for non-owned buffers prevents
+                // duplicate `CloseBuffer` broadcasts in Phase 2 sharing.
+                if !self.buffers.remove(buffer_id) {
+                    return;
+                }
                 if let Some(ref remote_client) = self.host.read(cx).remote_client {
                     remote_client
                         .read(cx)
@@ -3468,6 +3516,12 @@ impl Project {
                 }
             }
             BufferStoreEvent::LocalBufferReloaded(buffer) => {
+                // Only the Project that owns this buffer should rebroadcast,
+                // to avoid duplicate sends when multiple Projects share a host
+                // BufferStore in Phase 2.
+                if !self.buffers.contains(&buffer.read(cx).remote_id()) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     let buffer = buffer.read(cx);
                     self.collab_client
@@ -3484,6 +3538,9 @@ impl Project {
                 }
             }
             BufferStoreEvent::UpdateBufferFileForwarded { buffer_id, file } => {
+                if !self.buffers.contains(buffer_id) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::UpdateBufferFile {
@@ -3499,6 +3556,9 @@ impl Project {
                 version,
                 mtime,
             } => {
+                if !self.buffers.contains(buffer_id) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::BufferSaved {
@@ -3516,6 +3576,9 @@ impl Project {
                 mtime,
                 line_ending,
             } => {
+                if !self.buffers.contains(buffer_id) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::BufferReloaded {
@@ -6874,8 +6937,10 @@ impl Project {
 
     /// Iterator of all open buffers that have unsaved changes
     pub fn dirty_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = ProjectPath> + 'a {
-        self.buffer_store(cx).read(cx).buffers().filter_map(|buf| {
-            let buf = buf.read(cx);
+        let buffer_store = self.buffer_store(cx);
+        self.buffers.iter().filter_map(move |id| {
+            let buffer = buffer_store.read(cx).get(*id)?;
+            let buf = buffer.read(cx);
             if buf.is_dirty() {
                 buf.project_path(cx)
             } else {
