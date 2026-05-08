@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::component_prelude::*;
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::RegisterComponent;
@@ -384,6 +386,8 @@ impl RenderOnce for Button {
         } else {
             self.label_color.unwrap_or_default()
         };
+        let loading_icon_id =
+            ElementId::NamedChild(Arc::new(self.base.id().clone()), "loading".into());
 
         self.base.child(
             h_flex()
@@ -394,7 +398,7 @@ impl RenderOnce for Button {
                         Icon::new(IconName::LoadCircle)
                             .size(IconSize::Small)
                             .color(Color::Muted)
-                            .with_rotate_animation(2),
+                            .with_keyed_rotate_animation(loading_icon_id, 2),
                     )
                 })
                 .when(!self.loading, |this| {

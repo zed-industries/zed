@@ -2046,8 +2046,10 @@ impl Editor {
         self.sticky_headers_task = cx.spawn(async move |this, cx| {
             let sticky_headers = background_task.await;
             this.update(cx, |this, cx| {
-                this.sticky_headers = Some(sticky_headers);
-                cx.notify();
+                if this.sticky_headers.as_ref() != Some(&sticky_headers) {
+                    this.sticky_headers = Some(sticky_headers);
+                    cx.notify();
+                }
             })
             .ok();
         });
