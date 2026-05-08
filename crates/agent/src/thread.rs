@@ -924,6 +924,7 @@ pub struct ToolCallAuthorization {
     pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp_thread::SelectedPermissionOutcome>,
     pub context: Option<ToolPermissionContext>,
+    pub kind: acp_thread::AuthorizationKind,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -3877,11 +3878,6 @@ impl ToolCallEventStream {
     /// are responsible for handling each `option_id` explicitly. Use this
     /// when a tool needs the user to pick between several side-effecting
     /// actions (for example, "Save" vs "Discard" for a dirty buffer).
-    ///
-    /// `message`, when provided, is rendered as a Markdown body above the
-    /// option buttons (via the tool call's `content` field). Use it to
-    /// explain *why* the prompt is appearing in addition to the short
-    /// `title` shown in the tool-call header.
     pub fn prompt_for_decision(
         &self,
         title: impl Into<String>,
@@ -3908,6 +3904,7 @@ impl ToolCallEventStream {
                         options,
                         response: response_tx,
                         context: None,
+                        kind: acp_thread::AuthorizationKind::ActionChoice,
                     },
                 )))
             {
@@ -3969,6 +3966,7 @@ impl ToolCallEventStream {
                         options,
                         response: response_tx,
                         context,
+                        kind: acp_thread::AuthorizationKind::PermissionGrant,
                     },
                 )))
             {

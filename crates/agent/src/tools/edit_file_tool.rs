@@ -1927,7 +1927,7 @@ mod tests {
         };
         assert!(
             text.text.contains("unsaved changes")
-                && text.text.contains("Save")
+                && text.text.contains("save")
                 && text.text.contains("discard"),
             "unexpected message body: {:?}",
             text.text,
@@ -2012,7 +2012,7 @@ mod tests {
         auth.response
             .send(acp_thread::SelectedPermissionOutcome::new(
                 acp::PermissionOptionId::new("discard"),
-                acp::PermissionOptionKind::AllowOnce,
+                acp::PermissionOptionKind::RejectOnce,
             ))
             .unwrap();
 

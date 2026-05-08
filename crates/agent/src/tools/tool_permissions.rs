@@ -550,8 +550,6 @@ pub fn authorize_dirty_buffer(
         "File has unsaved changes. Do you want to save or discard them before the agent continues?"
             .to_string();
 
-    // Both options use AllowOnce so that the tool call transitions to
-    // InProgress after the user picks. We distinguish them by option_id.
     let options = vec![
         acp::PermissionOption::new(
             acp::PermissionOptionId::new("save"),

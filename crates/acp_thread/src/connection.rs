@@ -1,4 +1,4 @@
-use crate::AcpThread;
+use crate::{AcpThread, AuthorizationKind};
 use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -915,6 +915,7 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
+                                        AuthorizationKind::PermissionGrant,
                                         cx,
                                     )
                                 })??
