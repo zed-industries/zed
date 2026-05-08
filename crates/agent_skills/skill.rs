@@ -350,6 +350,12 @@ async fn load_single_skill(
     })
 }
 
+/// Returns the global skills directory: `~/.agents/skills`.
+///
+/// In test builds, `paths::home_dir()` is hardcoded to a fixed path
+/// (e.g. `/Users/zed`), so all tests using this function operate on the
+/// same simulated home directory. Each test should use its own `FakeFs`
+/// instance to keep skill setups from leaking across tests.
 pub fn global_skills_dir() -> PathBuf {
     paths::home_dir().join(".agents").join("skills")
 }
