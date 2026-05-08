@@ -37,7 +37,7 @@ pub(super) fn parse_pinned_notify_source(source: &str) -> Option<PinnedNotifySou
         return None;
     }
 
-    let source = source.replace(',', " ").replace(':', " ");
+    let source = source.replace([',', ':'], " ");
     let mut parts = source.split_whitespace();
     let entity_type = parts.next()?.to_string();
     let caller_file = parts.next()?.to_string();
@@ -208,6 +208,14 @@ pub(super) fn hidden_notify_sources(
     counts
 }
 
+// Column widths must match `format_notify_source`.
+pub(super) fn notify_column_header() -> String {
+    format!(
+        "{:<3} {:<18} {:<24} {:>4} {:>6} {:>7} {:>9} {}",
+        "#", "source", "caller", "5s", "total", "age", "live", "id",
+    )
+}
+
 pub(super) fn format_notify_source(
     index: usize,
     source: NotifySourceKey,
@@ -226,16 +234,19 @@ pub(super) fn format_notify_source(
         .and_then(|timestamp| event_age(now, timestamp))
         .map(format_age)
         .unwrap_or_else(|| "--".to_string());
+    let live = format!(
+        "{}/{}",
+        stats.live_window_count, stats.registered_window_count
+    );
     format!(
-        "{:<4} {:<17} {:<20} 5s {:>3} total {:>5} age {:>5} live {:>3}/{:<3} id {}",
+        "{:<3} {:<18} {:<24} {:>4} {:>6} {:>7} {:>9} {}",
         index,
         short_type_name(source.entity_type),
         caller,
         stats.count,
         total_count,
         age,
-        stats.live_window_count,
-        stats.registered_window_count,
+        live,
         stats.entity_id.as_u64(),
     )
 }
@@ -449,6 +460,14 @@ impl RenderSourceStats {
     }
 }
 
+// Column widths must match `format_render_source`.
+pub(super) fn render_column_header() -> String {
+    format!(
+        "{:<3} {:<28} {:<14} {:>4} {:>5} {:>7} {:>8} {:>5}",
+        "#", "view", "phase", "r/s", "reuse", "age", "cost", "miss",
+    )
+}
+
 pub(super) fn format_render_source(
     index: usize,
     source: RenderSourceKey,
@@ -461,33 +480,31 @@ pub(super) fn format_render_source(
         .map(format_age)
         .unwrap_or_else(|| "--".to_string());
     let total = stats.count + stats.reuse_count;
-    let miss_percent = if total == 0 {
-        None
+    let miss = (stats.count * 100)
+        .checked_div(total)
+        .map(|percent| format!("{percent}%"))
+        .unwrap_or_else(|| "--".to_string());
+    let cost = if stats.duration.is_zero() {
+        "--".to_string()
     } else {
-        Some((stats.count * 100) / total)
+        format!("{}ms", format_duration_ms(stats.duration))
     };
+    let view = format!(
+        "{}#{}",
+        short_type_name(source.entity_type),
+        stats.sample_entity_id.as_u64()
+    );
     let mut label = format!(
-        "{:<4} {:<15} {:<11} r/s{:>3} reuse{:>3} age{:>5} ",
+        "{:<3} {:<28} {:<14} {:>4} {:>5} {:>7} {:>8} {:>5}",
         index,
-        format!(
-            "{}#{}",
-            short_type_name(source.entity_type),
-            stats.sample_entity_id.as_u64()
-        ),
+        view,
         source.phase.as_str(),
         stats.count,
         stats.reuse_count,
         age,
+        cost,
+        miss,
     );
-    if !stats.duration.is_zero() {
-        label.push_str(&format!("{:>5}ms", format_duration_ms(stats.duration)));
-    } else {
-        label.push_str("   --");
-    }
-
-    if let Some(miss_percent) = miss_percent {
-        label.push_str(&format!(" miss{:>3}%", miss_percent));
-    }
 
     let chips = cache_miss_chips(stats);
     if !chips.is_empty() {
@@ -740,10 +757,28 @@ mod tests {
         stats.count = 3;
 
         let label = format_notify_source(1, NotifySourceKey::from(&event), stats, 9, now);
-        assert!(label.contains("5s   3"));
-        assert!(label.contains("total     9"));
-        assert!(label.contains("age 125ms"));
-        assert!(label.contains("live   1/2"));
+        assert!(
+            label.starts_with("1   Editor"),
+            "expected rank+type prefix, got: {label:?}"
+        );
+        assert!(label.contains("editor.rs:2111:17"));
+        assert!(label.contains("125ms"));
+        assert!(label.contains("1/2"));
+        let trailing_id = format!(" {}", event.entity_id.as_u64());
+        assert!(
+            label.ends_with(&trailing_id),
+            "expected trailing entity id, got: {label:?}"
+        );
+
+        // Column header lines up with data rows because they share format widths.
+        let header = notify_column_header();
+        let column_starts = |line: &str| -> Vec<usize> {
+            line.match_indices(|c: char| !c.is_whitespace())
+                .filter(|(i, _)| *i == 0 || line.as_bytes()[i - 1] == b' ')
+                .map(|(i, _)| i)
+                .collect()
+        };
+        assert_eq!(column_starts(&header).len(), column_starts(&label).len());
     }
 
     #[test]
@@ -915,11 +950,14 @@ mod tests {
         stats.reuse_count = 4;
 
         let label = format_render_source(1, RenderSourceKey::from(&event), stats, now);
-        assert!(label.contains("r/s  1"));
-        assert!(label.contains("reuse  4"));
-        assert!(label.contains("age 25ms"));
+        assert!(
+            label.starts_with("1   Editor#42"),
+            "expected rank+view prefix, got: {label:?}"
+        );
+        assert!(label.contains("render"));
+        assert!(label.contains("25ms"));
         assert!(label.contains("1.2ms"));
-        assert!(label.contains("miss 20%"));
+        assert!(label.contains("20%"));
         assert!(label.contains("[bounds][dirty][inspector]"));
     }
 

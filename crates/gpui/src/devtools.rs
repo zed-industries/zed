@@ -35,7 +35,7 @@ const FRAME_RATE_WINDOW: Duration = Duration::from_secs(1);
 const SOURCE_WINDOW: Duration = Duration::from_secs(5);
 const ANIMATION_EXPIRY: Duration = Duration::from_secs(1);
 const TOP_SOURCE_COUNT: usize = 5;
-const HUD_MAX_LINE_CHARS: usize = 84;
+const HUD_MAX_LINE_CHARS: usize = 110;
 
 static GPUI_DEVTOOLS_ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var_os("ZED_GPUI_DEVTOOLS").is_some());

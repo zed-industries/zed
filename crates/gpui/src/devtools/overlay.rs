@@ -3,8 +3,8 @@ use super::{
     sources::{
         NotifySourceKey, RenderSourceKey, active_animation_count, file_name, format_age,
         format_duration_ms, format_notify_source, format_render_source, hidden_notify_sources,
-        hidden_render_sources, render_summary, short_type_name, top_dirty_path, top_notify_sources,
-        truncate_chars,
+        hidden_render_sources, notify_column_header, render_column_header, render_summary,
+        short_type_name, top_dirty_path, top_notify_sources, truncate_chars,
     },
     state::{GpuiDevTools, HudDragState, HudSection, RenderHeatCause},
 };
@@ -121,6 +121,9 @@ struct OverlayRow {
     text: String,
     kind: OverlayRowKind,
     actions: Vec<OverlayAction>,
+    /// Action indices after which a wider gap is inserted to visually
+    /// separate toolbar groups (e.g. collection control vs visual toggles).
+    action_group_breaks: Vec<usize>,
 }
 
 impl OverlayRow {
@@ -129,6 +132,7 @@ impl OverlayRow {
             text: text.into(),
             kind: OverlayRowKind::Data,
             actions: Vec::new(),
+            action_group_breaks: Vec::new(),
         }
     }
 
@@ -137,6 +141,25 @@ impl OverlayRow {
             text: text.into(),
             kind: OverlayRowKind::Header,
             actions: Vec::new(),
+            action_group_breaks: Vec::new(),
+        }
+    }
+
+    fn column_header(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            kind: OverlayRowKind::ColumnHeader,
+            actions: Vec::new(),
+            action_group_breaks: Vec::new(),
+        }
+    }
+
+    fn spacer() -> Self {
+        Self {
+            text: String::new(),
+            kind: OverlayRowKind::Spacer,
+            actions: Vec::new(),
+            action_group_breaks: Vec::new(),
         }
     }
 
@@ -150,6 +173,7 @@ impl OverlayRow {
                     OverlayAction::section(section, !devtools.collapsed_sections.contains(&section))
                 })
                 .collect(),
+            action_group_breaks: Vec::new(),
         }
     }
 
@@ -174,6 +198,8 @@ impl OverlayRow {
                 OverlayAction::toolbar("heat", devtools.show_heat, SourceFilterAction::ToggleHeat),
                 OverlayAction::toolbar("reset filters", false, SourceFilterAction::ResetFilters),
             ],
+            // Split into [pause, clear] | [flashes, heat] | [reset filters].
+            action_group_breaks: vec![1, 3],
         }
     }
 
@@ -182,6 +208,7 @@ impl OverlayRow {
             text: text.into(),
             kind: OverlayRowKind::Data,
             actions,
+            action_group_breaks: Vec::new(),
         }
     }
 
@@ -195,6 +222,11 @@ impl OverlayRow {
 enum OverlayRowKind {
     Data,
     Header,
+    /// Column header for a section. Painted with the same indent as
+    /// data rows so column headings line up with row values.
+    ColumnHeader,
+    /// Empty row used to separate sections; paints no background or text.
+    Spacer,
     SectionBar,
     Toolbar,
 }
@@ -304,7 +336,10 @@ impl OverlayAction {
     }
 
     fn width(self) -> Pixels {
-        px((self.label.len() as f32 * 6.5 + 18.).clamp(42., 104.))
+        // Floor of 52px keeps `hide`/`pin`/`show`/`unpin` data-row buttons at
+        // a single uniform width, so column headers and pinned/unpinned rows
+        // all align under the same indent.
+        px((self.label.len() as f32 * 6.5 + 18.).clamp(52., 104.))
     }
 }
 
@@ -523,7 +558,17 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
             .find(|frame| frame.timestamp <= now);
     }
 
+    let mut any_section_rendered = false;
+    let mut start_section = |rows: &mut Vec<OverlayRow>, started: &mut bool| {
+        if *started {
+            rows.push(OverlayRow::spacer());
+        }
+        *started = true;
+    };
+
     if section_expanded(devtools, HudSection::Frame) {
+        start_section(&mut rows, &mut any_section_rendered);
+
         rows.push(OverlayRow::plain(format!(
             "draw/s {:>3}  dirty/s {:>3}  frame/s {:>3}",
             draw_count, dirty_frame_count, frame_count
@@ -585,13 +630,13 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     }
 
     if section_expanded(devtools, HudSection::Notify) {
+        start_section(&mut rows, &mut any_section_rendered);
+
         let notify_sources = top_notify_sources(devtools, now, TOP_SOURCE_COUNT);
         if notify_sources.is_empty() {
             rows.push(OverlayRow::plain("no notify sources in the last 5s"));
         } else {
-            rows.push(OverlayRow::plain(
-                "rank source            caller               5s total age   live",
-            ));
+            rows.push(OverlayRow::column_header(notify_column_header()));
             for (index, (source, stats)) in notify_sources.into_iter().enumerate() {
                 let is_pinned = devtools.pinned_notify_sources.contains(&source);
                 let pin_action = if is_pinned {
@@ -617,6 +662,8 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     }
 
     if section_expanded(devtools, HudSection::Dirty) {
+        start_section(&mut rows, &mut any_section_rendered);
+
         if let Some((label, count)) = top_dirty_path(devtools, window_id, now) {
             rows.push(OverlayRow::plain(format!(
                 "top path x{:>4} {}",
@@ -628,6 +675,8 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     }
 
     if section_expanded(devtools, HudSection::Render) {
+        start_section(&mut rows, &mut any_section_rendered);
+
         let render_summary = render_summary(devtools, window_id, now);
         rows.push(OverlayRow::plain(format!(
             "renders/s {} reuse/s {}",
@@ -636,9 +685,7 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
         if render_summary.top_sources.is_empty() {
             rows.push(OverlayRow::plain("no real renders in the last 1s"));
         } else {
-            rows.push(OverlayRow::plain(
-                "rank view            phase       r/s reuse age   cost  miss why",
-            ));
+            rows.push(OverlayRow::column_header(render_column_header()));
             for (index, (source, stats)) in render_summary.top_sources.into_iter().enumerate() {
                 let is_pinned = devtools.pinned_render_sources.contains(&source);
                 let pin_action = if is_pinned {
@@ -658,6 +705,8 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     }
 
     if section_expanded(devtools, HudSection::Animation) {
+        start_section(&mut rows, &mut any_section_rendered);
+
         rows.push(OverlayRow::plain(format!(
             "active animations {}",
             active_animation_count(devtools, window_id, now)
@@ -669,6 +718,12 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
     if section_expanded(devtools, HudSection::Hidden)
         && (!hidden_notify_sources.is_empty() || !hidden_render_sources.is_empty())
     {
+        start_section(&mut rows, &mut any_section_rendered);
+
+        rows.push(OverlayRow::column_header(format!(
+            "{:<8} {:<18} {:<24} {:>5}",
+            "kind", "source", "caller", "count"
+        )));
         for (source, count) in hidden_notify_sources {
             let is_pinned = devtools.pinned_notify_sources.contains(&source);
             let pin_action = if is_pinned {
@@ -678,7 +733,8 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
             };
             rows.push(OverlayRow::actions(
                 format!(
-                    "notify {:<16} {:<20} 5s {:>4}",
+                    "{:<8} {:<18} {:<24} {:>5}",
+                    "notify",
                     short_type_name(source.entity_type),
                     format!("{}:{}", file_name(source.caller_file), source.caller_line),
                     count
@@ -698,7 +754,8 @@ fn hud_rows(devtools: &GpuiDevTools, window_id: WindowId, now: Instant) -> Vec<O
             };
             rows.push(OverlayRow::actions(
                 format!(
-                    "render {:<16} {:<14} 1s {:>4}",
+                    "{:<8} {:<18} {:<24} {:>5}",
+                    "render",
                     short_type_name(source.entity_type),
                     source.phase.as_str(),
                     count
@@ -729,7 +786,13 @@ fn prepaint_overlay(
     for (row_index, row) in snapshot.rows.iter().enumerate() {
         for (action_index, action) in row.actions.iter().copied().enumerate() {
             let hitbox = window.insert_hitbox(
-                hud_button_bounds(hud_bounds, row_index, &row.actions, action_index),
+                hud_button_bounds(
+                    hud_bounds,
+                    row_index,
+                    &row.actions,
+                    &row.action_group_breaks,
+                    action_index,
+                ),
                 HitboxBehavior::BlockMouse,
             );
             row_hitboxes.push(OverlayRowHitbox { hitbox, action });
@@ -751,7 +814,7 @@ fn hud_bounds(
 ) -> Bounds<Pixels> {
     let margin = px(12.);
     let padding = hud_padding();
-    let hud_width = px(760.);
+    let hud_width = px(680.);
     let line_height = hud_line_height();
     let hud_height = padding * 2. + line_height * (row_count as f32);
     let hud_size = size(hud_width, hud_height);
@@ -785,17 +848,19 @@ fn hud_button_bounds(
     hud_bounds: Bounds<Pixels>,
     row_index: usize,
     actions: &[OverlayAction],
+    group_breaks: &[usize],
     action_index: usize,
 ) -> Bounds<Pixels> {
     let padding = hud_padding();
     let line_height = hud_line_height();
-    let button_gap = hud_button_gap();
-    let action_offset = actions
-        .iter()
-        .take(action_index)
-        .fold(px(0.), |offset, action| {
-            offset + action.width() + button_gap
-        });
+    let action_offset = (0..action_index).fold(px(0.), |offset, i| {
+        let gap = if group_breaks.contains(&i) {
+            hud_group_gap()
+        } else {
+            hud_button_gap()
+        };
+        offset + actions[i].width() + gap
+    });
     let button_width = actions
         .get(action_index)
         .map(|action| action.width())
@@ -821,14 +886,32 @@ fn hud_row_bounds(hud_bounds: Bounds<Pixels>, row_index: usize) -> Bounds<Pixels
     )
 }
 
-fn hud_action_text_offset(actions: &[OverlayAction]) -> Pixels {
+fn hud_action_text_offset(actions: &[OverlayAction], group_breaks: &[usize]) -> Pixels {
     if actions.is_empty() {
         px(0.)
     } else {
-        actions.iter().fold(px(0.), |offset, action| {
-            offset + action.width() + hud_button_gap()
-        }) + px(3.)
+        actions
+            .iter()
+            .enumerate()
+            .fold(px(0.), |offset, (i, action)| {
+                let gap = if group_breaks.contains(&i) {
+                    hud_group_gap()
+                } else {
+                    hud_button_gap()
+                };
+                offset + action.width() + gap
+            })
+            + px(3.)
     }
+}
+
+/// Indent applied to `ColumnHeader` rows so their column labels line up with
+/// data-row text (which is offset by the `[hide, pin]`/`[show, unpin]`
+/// buttons that precede it).
+fn data_row_text_indent() -> Pixels {
+    let hide = OverlayAction::toolbar("hide", false, SourceFilterAction::ResetFilters);
+    let pin = OverlayAction::toolbar("pin", false, SourceFilterAction::ResetFilters);
+    hud_action_text_offset(&[hide, pin], &[])
 }
 
 fn hud_padding() -> Pixels {
@@ -841,6 +924,10 @@ fn hud_line_height() -> Pixels {
 
 fn hud_button_gap() -> Pixels {
     px(4.)
+}
+
+fn hud_group_gap() -> Pixels {
+    px(14.)
 }
 
 fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverlay) {
@@ -865,7 +952,10 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
             OverlayRowKind::SectionBar | OverlayRowKind::Toolbar => {
                 window.paint_quad(fill(row_bounds, rgba(0x273244aa)));
             }
-            OverlayRowKind::Header | OverlayRowKind::Data => {}
+            OverlayRowKind::ColumnHeader => {
+                window.paint_quad(fill(row_bounds, rgba(0x1a2233aa)));
+            }
+            OverlayRowKind::Header | OverlayRowKind::Data | OverlayRowKind::Spacer => {}
         }
     }
 
@@ -898,13 +988,22 @@ fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverl
     }
 
     for (line_index, row) in prepared_overlay.snapshot.rows.iter().enumerate() {
+        if matches!(row.kind, OverlayRowKind::Spacer) {
+            continue;
+        }
         let text_color = match row.kind {
             OverlayRowKind::Header => hsla(0.58, 0.44, 0.94, 1.),
+            OverlayRowKind::ColumnHeader => hsla(0.58, 0.30, 0.74, 0.92),
             OverlayRowKind::SectionBar | OverlayRowKind::Toolbar => hsla(0.12, 0.62, 0.76, 1.),
             OverlayRowKind::Data => hsla(0.58, 0.38, 0.92, 0.96),
+            OverlayRowKind::Spacer => unreachable!(),
+        };
+        let row_indent = match row.kind {
+            OverlayRowKind::ColumnHeader => data_row_text_indent(),
+            _ => hud_action_text_offset(&row.actions, &row.action_group_breaks),
         };
         let origin = point(
-            bounds.origin.x + padding + hud_action_text_offset(&row.actions),
+            bounds.origin.x + padding + row_indent,
             bounds.origin.y + padding + line_height * (line_index as f32),
         );
         paint_text_line_with_color(window, cx, origin, &row.text, line_height, text_color);
