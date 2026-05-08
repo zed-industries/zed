@@ -1,10 +1,22 @@
 # Host / Project split
 
-> Status: **planning** — no code changes yet. This document describes the
+> Status: **in progress** — Phase 0 partially complete (5 of 10 stores),
+> Phase 1 started (1 of 3 view stores). This document describes the
 > target architecture and the staged migration plan for splitting
 > `crates/project/src/project.rs` into a `Host` (machine-bound services)
 > and `Project` (per-workspace state). Read top to bottom before making
 > changes.
+>
+> Progress checkpoints (commits on `host-project-refactor`):
+> - `BreakpointStore`, `TaskStore`, `SettingsObserver`, `DapStore` —
+>   Phase 0 done.
+> - `BookmarkStore` — already dumb, no work needed.
+> - `BufferStore` — Phase 0 partial (inbound rpc forwards moved out;
+>   `create_buffer_for_peer` and `LocalBufferStore::save_local_buffer` /
+>   `local_worktree_entry_changed` still use `downstream_client`).
+> - `ProjectImageStore` — Phase 1 wrapper introduced; `ImageStore` is
+>   still the actual data store underneath. Sets the wrapping pattern.
+> - `GitStore`, `WorktreeStore`, `LspStore` — not started.
 
 ## Why
 
@@ -95,7 +107,39 @@ pub struct Project {
 ### Per-project view stores
 
 First-class entities (not `Vec` fields) so we have a stable type for
-per-project methods:
+per-project methods.
+
+The pragmatic introduction pattern, demonstrated on `ProjectImageStore`,
+is to start with a thin wrapper around the existing store. The wrapper
+holds an `Entity<XxxStore>`, exposes the per-project method surface,
+and re-emits the inner store's events so existing subscribers keep
+working against the wrapper. The inner store keeps its existing logic
+(including any `downstream_client` / `shared` / `unshared` machinery
+for stores that haven't finished Phase 0 yet).
+
+```rust
+pub struct ProjectImageStore {
+    image_store: Entity<ImageStore>,
+    _subscription: Subscription,
+}
+
+impl ProjectImageStore {
+    pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+        let image_store = cx.new(|cx| ImageStore::local(worktree_store, cx));
+        let subscription = cx.subscribe(&image_store, |_, _, event, cx| {
+            cx.emit(event.clone());
+        });
+        Self { image_store, _subscription: subscription }
+    }
+
+    pub fn host_store(&self) -> &Entity<ImageStore> { &self.image_store }
+
+    // ...delegating methods for the per-project surface...
+}
+```
+
+In the eventual target shape, the wrapper grows beyond delegation to
+own per-project state (strong handles to this project's slice, etc.):
 
 ```rust
 pub struct ProjectWorktreeStore {
@@ -150,6 +194,17 @@ doesn't subscribe to task events when it doesn't run tasks).
 
 Three phases. Each is independently shippable. Phase 0 and Phase 1
 produce no behavioral change. Phase 2 delivers the user-visible win.
+
+Phases 0 and 1 can interleave per store. The sweet spot established
+so far: do Phase 0 (dumb store) first, then Phase 1 (wrapper) — but
+for stores like `ImageStore` that are already dumb, Phase 1 can
+proceed immediately. Phase 0 partial is also acceptable for stores
+with pervasive `downstream_client` use; Phase 1's wrapper just inherits
+the inner store's still-existing collab logic.
+
+The wrapper-pattern works against any store. Wrapping a store with a
+wide public API (e.g. `BufferStore`) requires more delegation methods,
+but it's mechanical.
 
 ### Phase 0 — Dumb stores (no `Host` yet)
 
