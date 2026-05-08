@@ -557,13 +557,12 @@ pub(super) fn active_animation_count(
                     continue;
                 }
 
-                sources.insert(format!(
-                    "frame:{}:{}:{}:{}",
-                    short_type_name(event.entity_type),
-                    file_name(caller_file),
-                    caller_line,
-                    caller_column
-                ));
+                sources.insert(ActiveAnimationSource::FrameRequest {
+                    entity_type: event.entity_type,
+                    caller_file,
+                    caller_line: *caller_line,
+                    caller_column: *caller_column,
+                });
             }
             AnimationEventKind::ElementTick {
                 element_id,
@@ -572,18 +571,33 @@ pub(super) fn active_animation_count(
                 repeats,
             } => {
                 if *repeats {
-                    sources.insert(format!(
-                        "element:{}:{}:{}:{:.0}",
-                        event.entity_id.as_u64(),
+                    sources.insert(ActiveAnimationSource::ElementTick {
+                        entity_id: event.entity_id,
                         element_id,
-                        animation_index,
-                        duration_ms(*duration)
-                    ));
+                        animation_index: *animation_index,
+                        duration: *duration,
+                    });
                 }
             }
         }
     }
     sources.len()
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum ActiveAnimationSource<'a> {
+    FrameRequest {
+        entity_type: &'static str,
+        caller_file: &'static str,
+        caller_line: u32,
+        caller_column: u32,
+    },
+    ElementTick {
+        entity_id: EntityId,
+        element_id: &'a str,
+        animation_index: usize,
+        duration: Duration,
+    },
 }
 
 pub(super) fn format_duration_ms(duration: Duration) -> String {

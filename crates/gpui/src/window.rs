@@ -4408,6 +4408,13 @@ impl Window {
 
     #[inline]
     pub(crate) fn record_view_type_name(&mut self, id: EntityId, type_name: &'static str) {
+        if !crate::devtools::enabled()
+            && !*GPUI_FRAME_STATS_ENABLED
+            && !*GPUI_INVALIDATION_STATS_ENABLED
+        {
+            return;
+        }
+
         self.next_frame.view_type_names.insert(id, type_name);
     }
 
