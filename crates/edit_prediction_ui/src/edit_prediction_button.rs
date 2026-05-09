@@ -594,15 +594,15 @@ impl EditPredictionButton {
                     continue;
                 };
                 let is_current = provider == current_provider;
-                let is_provider_disabled =
+                let is_disabled_zed_provider =
                     provider == EditPredictionProvider::Zed && is_zed_provider_disabled;
                 let fs = self.fs.clone();
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(IconPosition::Start, is_current && !is_provider_disabled)
-                        .disabled(is_provider_disabled)
-                        .when(is_provider_disabled, |item| {
+                        .toggleable(IconPosition::Start, is_current && !is_disabled_zed_provider)
+                        .disabled(is_disabled_zed_provider)
+                        .when(is_disabled_zed_provider, |item| {
                             item.documentation_aside(DocumentationSide::Left, move |_cx| {
                                 Label::new("Edit predictions are disabled for this organization.")
                                     .into_any_element()
