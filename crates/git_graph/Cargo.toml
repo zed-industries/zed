@@ -30,6 +30,7 @@ git_ui.workspace = true
 gpui.workspace = true
 language.workspace = true
 menu.workspace = true
+picker.workspace = true
 project.workspace = true
 project_panel.workspace = true
 search.workspace = true

@@ -8198,14 +8198,13 @@ async fn add_test_project(
 }
 
 #[gpui::test]
-async fn test_transient_workspace_lifecycle(cx: &mut TestAppContext) {
+async fn test_workspace_lifecycle_retains_projects_when_sidebar_is_closed(cx: &mut TestAppContext) {
     let (fs, project_a) =
         init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
     let _sidebar = setup_sidebar_closed(&multi_workspace, cx);
 
-    // Sidebar starts closed. Initial workspace A is transient.
     let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     assert!(!multi_workspace.read_with(cx, |mw, _| mw.sidebar_open()));
     assert_eq!(
@@ -8214,25 +8213,25 @@ async fn test_transient_workspace_lifecycle(cx: &mut TestAppContext) {
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_a));
 
-    // Add B — replaces A as the transient workspace.
     let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        2
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_b));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_a)));
 
-    // Add C — replaces B as the transient workspace.
     let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        3
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_b)));
 }
 
 #[gpui::test]
-async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
+async fn test_workspaces_remain_retained_after_sidebar_closes(cx: &mut TestAppContext) {
     let (fs, project_a) = init_multi_project_test(
         &["/project-a", "/project-b", "/project-c", "/project-d"],
         cx,
@@ -8242,15 +8241,14 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
     let _sidebar = setup_sidebar(&multi_workspace, cx);
     assert!(multi_workspace.read_with(cx, |mw, _| mw.sidebar_open()));
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-    // Add B — retained since sidebar is open.
-    let workspace_a = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
         2
     );
 
-    // Switch to A — B survives. (Switching from one internal workspace, to another)
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.activate(workspace_a, None, window, cx)
     });
@@ -8259,8 +8257,8 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
         2
     );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_b)));
 
-    // Close sidebar — both A and B remain retained.
     multi_workspace.update_in(cx, |mw, window, cx| mw.close_sidebar(window, cx));
     cx.run_until_parked();
     assert_eq!(
@@ -8268,7 +8266,6 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
         2
     );
 
-    // Add C — added as new transient workspace. (switching from retained, to transient)
     let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
@@ -8276,52 +8273,50 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
 
-    // Add D — replaces C as the transient workspace (Have retained and transient workspaces, transient workspace is dropped)
     let workspace_d = add_test_project("/project-d", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        3
+        4
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_d));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_c)));
 }
 
 #[gpui::test]
-async fn test_transient_workspace_promotion(cx: &mut TestAppContext) {
+async fn test_sidebar_opening_keeps_existing_retained_workspaces(cx: &mut TestAppContext) {
     let (fs, project_a) =
         init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
     setup_sidebar_closed(&multi_workspace, cx);
 
-    // Add B — replaces A as the transient workspace (A is discarded).
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        2
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_b));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_a)));
 
-    // Open sidebar — promotes the transient B to retained.
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.toggle_sidebar(window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        2
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_b)));
 
-    // Close sidebar — the retained B remains.
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.toggle_sidebar(window, cx);
     });
 
-    // Add C — added as new transient workspace.
     let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        2
+        3
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
 }
