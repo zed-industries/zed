@@ -2501,6 +2501,154 @@ async fn test_non_project_file_open_with_filter(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_non_project_file_matches_history_with_hidden_root(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                }
+            }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/external"), json!({ "notes.txt": "some notes" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/external/notes.txt")),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate
+                .spawn_search(test_path_position("notes"), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+
+    finder.update(cx, |f, _| {
+        let entries = collect_search_matches(f);
+        assert_eq!(
+            entries.search.len(),
+            0,
+            "External file should appear as a history match, not a search match"
+        );
+        assert_eq!(
+            entries.history.len(),
+            1,
+            "Expected the external file in history matches"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_single_file_search_result_split_open(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({ "the-parent-dir": { "the-file": "" } }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/root/the-parent-dir/the-file").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = cx.read(|cx| {
+        workspace
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .expect("Expected a single-file worktree")
+            .read(cx)
+            .id()
+    });
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .spawn_search(test_path_position("thf"), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+
+    finder.update(cx, |finder, _| {
+        let matches = collect_search_matches(finder);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(matches.search.len(), 1);
+    });
+
+    cx.dispatch_action(pane::SplitRight::default());
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let active_editor = workspace
+            .read(cx)
+            .active_item_as::<Editor>(cx)
+            .expect("Should have an active editor after splitting the search result");
+        assert_eq!(
+            active_editor.read(cx).project_path(cx),
+            Some(ProjectPath {
+                worktree_id,
+                path: RelPath::empty().into_arc(),
+            }),
+            "Should split-open the single-file worktree root with an empty relative path"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
