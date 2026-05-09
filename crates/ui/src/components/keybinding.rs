@@ -4,8 +4,8 @@ use crate::PlatformStyle;
 use crate::utils::capitalize;
 use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
-    Action, AnyElement, App, FocusHandle, Global, IntoElement, KeybindingKeystroke, Keystroke,
-    Modifiers, Window, relative,
+    Action, AnyElement, App, FocusHandle, Global, IntoElement, KeyContext, KeybindingKeystroke,
+    Keystroke, Modifiers, Window, relative,
 };
 use itertools::Itertools;
 
@@ -14,6 +14,7 @@ enum Source {
     Action {
         action: Box<dyn Action>,
         focus_handle: Option<FocusHandle>,
+        key_context: Option<KeyContext>,
     },
     Keystrokes {
         /// A keybinding consists of a set of keystrokes,
@@ -31,9 +32,11 @@ impl Clone for Source {
             Source::Action {
                 action,
                 focus_handle,
+                key_context,
             } => Source::Action {
                 action: action.boxed_clone(),
                 focus_handle: focus_handle.clone(),
+                key_context: key_context.clone(),
             },
             Source::Keystrokes { keystrokes } => Source::Keystrokes {
                 keystrokes: keystrokes.clone(),
@@ -68,11 +71,45 @@ impl KeyBinding {
     pub fn for_action_in(action: &dyn Action, focus: &FocusHandle, cx: &App) -> Self {
         Self::new(action, Some(focus.clone()), cx)
     }
+
+    /// Like `for_action_in`, but appends a child context when matching keybindings.
+    pub fn for_action_in_with_context(
+        action: &dyn Action,
+        focus: &FocusHandle,
+        key_context: KeyContext,
+        cx: &App,
+    ) -> Self {
+        Self {
+            source: Source::Action {
+                action: action.boxed_clone(),
+                focus_handle: Some(focus.clone()),
+                key_context: Some(key_context),
+            },
+            size: None,
+            vim_mode: KeyBinding::is_vim_mode(cx),
+            platform_style: PlatformStyle::platform(),
+            disabled: false,
+        }
+    }
+
     pub fn has_binding(&self, window: &Window) -> bool {
         match &self.source {
             Source::Action {
                 action,
                 focus_handle: Some(focus),
+                key_context: Some(key_context),
+            } => window
+                .highest_precedence_binding_for_action_in_with_context(
+                    action.as_ref(),
+                    focus,
+                    key_context,
+                )
+                .or_else(|| window.highest_precedence_binding_for_action(action.as_ref()))
+                .is_some(),
+            Source::Action {
+                action,
+                focus_handle: Some(focus),
+                key_context: None,
             } => window
                 .highest_precedence_binding_for_action_in(action.as_ref(), focus)
                 .or_else(|| window.highest_precedence_binding_for_action(action.as_ref()))
@@ -94,6 +131,7 @@ impl KeyBinding {
             source: Source::Action {
                 action: action.boxed_clone(),
                 focus_handle,
+                key_context: None,
             },
             size: None,
             vim_mode: KeyBinding::is_vim_mode(cx),
@@ -187,10 +225,22 @@ impl RenderOnce for KeyBinding {
             Source::Action {
                 action,
                 focus_handle,
+                key_context,
             } => focus_handle
                 .or_else(|| window.focused(cx))
                 .and_then(|focus| {
-                    window.highest_precedence_binding_for_action_in(action.as_ref(), &focus)
+                    key_context
+                        .as_ref()
+                        .and_then(|key_context| {
+                            window.highest_precedence_binding_for_action_in_with_context(
+                                action.as_ref(),
+                                &focus,
+                                key_context,
+                            )
+                        })
+                        .or_else(|| {
+                            window.highest_precedence_binding_for_action_in(action.as_ref(), &focus)
+                        })
                 })
                 .or_else(|| window.highest_precedence_binding_for_action(action.as_ref()))
                 .map(|binding| render_keybinding(binding.keystrokes())),

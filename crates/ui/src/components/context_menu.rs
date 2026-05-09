@@ -4,8 +4,8 @@ use crate::{
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
-    Subscription, TaskExt, anchored, canvas, prelude::*, px,
+    Focusable, KeyContext, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, Size, Subscription, TaskExt, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -478,11 +478,6 @@ impl ContextMenu {
 
     pub fn context(mut self, focus: FocusHandle) -> Self {
         self.action_context = Some(focus);
-        self
-    }
-
-    pub fn context_self(mut self) -> Self {
-        self.action_context = Some(self.focus_handle.clone());
         self
     }
 
@@ -1968,7 +1963,20 @@ impl ContextMenu {
                                 let binding = self
                                     .action_context
                                     .as_ref()
-                                    .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
+                                    .map(|focus| {
+                                        KeyContext::parse(self.key_context.as_ref())
+                                            .map(|key_context| {
+                                                KeyBinding::for_action_in_with_context(
+                                                    &**action,
+                                                    focus,
+                                                    key_context,
+                                                    cx,
+                                                )
+                                            })
+                                            .unwrap_or_else(|_| {
+                                                KeyBinding::for_action_in(&**action, focus, cx)
+                                            })
+                                    })
                                     .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
 
                                 div()

@@ -5028,6 +5028,20 @@ impl Window {
         dispatch_tree.highest_precedence_binding_for_action(action, &[context])
     }
 
+    /// Returns the highest precedence key binding for an action in a focus handle's context stack,
+    /// plus an additional child context.
+    pub fn highest_precedence_binding_for_action_in_with_context(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+        context: &KeyContext,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let mut context_stack = self.context_stack_for_focus_handle(focus_handle)?;
+        context_stack.push(context.clone());
+        dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
+    }
+
     /// Returns any bindings that would invoke an action on the given focus handle if it were
     /// focused. Bindings are returned in the order they were added. For display, the last binding
     /// should take precedence.
