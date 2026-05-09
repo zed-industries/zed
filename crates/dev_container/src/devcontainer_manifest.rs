@@ -4744,7 +4744,7 @@ ENV DOCKER_BUILDKIT=1
           "name": "Rust and PostgreSQL",
           "dockerComposeFile": "docker-compose.yml",
           "service": "app",
-          "runServices": ["app"],
+          "runServices": ["app", "db"],
           "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
           "forwardPorts": [
             8083,
@@ -4819,7 +4819,12 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         assert!(
             compose_up
                 .args
-                .ends_with(&["up".to_string(), "-d".to_string(), "app".to_string()]),
+                .ends_with(&[
+                    "up".to_string(),
+                    "-d".to_string(),
+                    "app".to_string(),
+                    "db".to_string(),
+                ]),
             "compose up should target only the requested service, got: {:?}",
             compose_up.args
         );
