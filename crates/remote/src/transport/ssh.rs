@@ -129,7 +129,10 @@ impl From<settings::SshConnection> for SshConnectionOptions {
             username: val.username,
             port: val.port,
             password: None,
-            args: Some(val.args),
+            args: match val.args.is_empty() {
+                false => Some(val.args),
+                true => None,
+            },
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
             port_forwards: val.port_forwards,
@@ -1681,7 +1684,10 @@ impl SshConnectionOptions {
             username,
             port,
             port_forwards,
-            args: Some(args),
+            args: match args.is_empty() {
+                false => Some(args),
+                true => None,
+            },
             password: None,
             nickname: None,
             upload_binary_over_ssh: false,

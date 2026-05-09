@@ -782,7 +782,10 @@ impl RecentProjects {
                 picker.delegate.filtered_entries.get(ix)
             {
                 if let Some(workspace) = picker.delegate.workspaces.get(hit.candidate_id) {
-                    if matches!(workspace.location, SerializedWorkspaceLocation::Local) {
+                    if picker
+                        .delegate
+                        .can_add_folder_to_current_project(&workspace.location)
+                    {
                         let paths_to_add = workspace.paths.paths().to_vec();
                         picker
                             .delegate
@@ -868,6 +871,16 @@ impl RecentProjectsDelegate {
             .all(|workspace| matches!(workspace.location, SerializedWorkspaceLocation::Local));
         self.has_any_non_local_projects =
             self.project_connection_options.is_some() || has_non_local_recent;
+    }
+
+    fn can_add_folder_to_current_project(&self, location: &SerializedWorkspaceLocation) -> bool {
+        match (location, &self.project_connection_options) {
+            (SerializedWorkspaceLocation::Local, None) => true,
+            (SerializedWorkspaceLocation::Remote(selected), Some(current)) => {
+                selected == current
+            }
+            _ => false,
+        }
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
@@ -1489,7 +1502,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let location = &workspace.location;
                 let raw_paths = &workspace.paths;
                 let identity_paths = &workspace.identity_paths;
-                let is_local = matches!(location, SerializedWorkspaceLocation::Local);
+                let can_add = self.can_add_folder_to_current_project(location);
                 let paths_to_add = raw_paths.paths().to_vec();
                 let ordered_paths: Vec<_> = identity_paths
                     .ordered_paths()
@@ -1543,7 +1556,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let secondary_actions = h_flex()
                     .gap_px()
-                    .when(is_local, |this| {
+                    .when(can_add, |this| {
                         this.child(
                             IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
                                 .icon_size(IconSize::Small)
@@ -1883,10 +1896,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     .workspaces
                                     .get(hit.candidate_id)
                                     .map(|workspace| {
-                                        matches!(
-                                            workspace.location,
-                                            SerializedWorkspaceLocation::Local
-                                        )
+                                        self.can_add_folder_to_current_project(&workspace.location)
                                     })
                                     .unwrap_or(false),
                                 _ => false,
@@ -2357,6 +2367,23 @@ mod tests {
         }
     }
 
+    fn recent_workspace_remote(index: usize) -> RecentWorkspace {
+        let paths = PathList::new(&[PathBuf::from(format!(
+            "/recent/remote-project-{index:02}"
+        ))]);
+        RecentWorkspace {
+            workspace_id: WorkspaceId::from_i64(index as i64 + 100),
+            location: SerializedWorkspaceLocation::Remote(
+                RemoteConnectionOptions::Mock(remote::MockConnectionOptions {
+                    id: 42,
+                }),
+            ),
+            paths: paths.clone(),
+            identity_paths: paths,
+            timestamp: Utc::now(),
+        }
+    }
+
     fn recent_workspaces() -> Vec<RecentWorkspace> {
         (0..RECENT_PROJECT_COUNT).map(recent_workspace).collect()
     }
@@ -2801,6 +2828,211 @@ mod tests {
             initial_window_count + 1,
             "open_local_project with create_new_window=true should open a new window"
         );
+    }
+
+    #[gpui::test]
+    async fn test_can_add_folder_to_current_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Local delegate + Local location = can add
+        let local_delegate = {
+            let focus_handle = cx.update(|cx| cx.focus_handle());
+            RecentProjectsDelegate::new(
+                WeakEntity::new_invalid(),
+                false,
+                focus_handle,
+                vec![],
+                vec![],
+                None, // Local
+                ProjectPickerStyle::Modal,
+            )
+        };
+        assert!(local_delegate.can_add_folder_to_current_project(
+            &SerializedWorkspaceLocation::Local
+        ));
+
+        // Local delegate + Remote location = cannot add
+        let remote_location = SerializedWorkspaceLocation::Remote(
+            RemoteConnectionOptions::Mock(
+                remote::MockConnectionOptions { id: 1 }
+            ),
+        );
+        assert!(!local_delegate.can_add_folder_to_current_project(&remote_location));
+
+        // Remote delegate + same Remote location = can add
+        let mock_opts = RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 42 },
+        );
+        let remote_delegate = {
+            let focus_handle = cx.update(|cx| cx.focus_handle());
+            RecentProjectsDelegate::new(
+                WeakEntity::new_invalid(),
+                false,
+                focus_handle,
+                vec![],
+                vec![],
+                Some(mock_opts.clone()), // Remote
+                ProjectPickerStyle::Modal,
+            )
+        };
+        let matching_remote = SerializedWorkspaceLocation::Remote(mock_opts);
+        assert!(remote_delegate.can_add_folder_to_current_project(&matching_remote));
+
+        // Remote delegate + different Remote location = cannot add
+        let different_remote = SerializedWorkspaceLocation::Remote(
+            RemoteConnectionOptions::Mock(
+                remote::MockConnectionOptions { id: 99 },
+            ),
+        );
+        assert!(!remote_delegate.can_add_folder_to_current_project(&different_remote));
+
+        // Remote delegate + Local location = cannot add
+        assert!(!remote_delegate.can_add_folder_to_current_project(
+            &SerializedWorkspaceLocation::Local
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_add_to_workspace_visibility_local_delegate(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Build picker with Local delegate and mixed workspaces
+        let (picker, _cx) = cx.add_window_view(|window, cx| {
+            let mut delegate = RecentProjectsDelegate::new(
+                WeakEntity::new_invalid(),
+                false,
+                cx.focus_handle(),
+                vec![open_folder(0)],
+                vec![],
+                None, // Current workspace is Local
+                ProjectPickerStyle::Modal,
+            );
+            let mut workspaces: Vec<RecentWorkspace> = Vec::new();
+            workspaces.push(recent_workspace(0)); // Local
+            workspaces.push(recent_workspace_remote(0)); // Remote
+            delegate.set_workspaces(workspaces);
+            Picker::list(delegate, window, cx)
+                .list_measure_all()
+                .show_scrollbar(true)
+        });
+
+        // Select the Local recent project entry and verify it can be added
+        picker.update(cx, |picker, _| {
+            // Find the Local workspace entry
+            let local_idx = picker.delegate.filtered_entries.iter()
+                .position(|entry| {
+                    if let ProjectPickerEntry::RecentProject(hit) = entry {
+                        matches!(
+                            picker.delegate.workspaces[hit.candidate_id].location,
+                            SerializedWorkspaceLocation::Local
+                        )
+                    } else {
+                        false
+                    }
+                })
+                .expect("should have a Local recent project entry");
+            let hit = match &picker.delegate.filtered_entries[local_idx] {
+                ProjectPickerEntry::RecentProject(hit) => hit,
+                _ => unreachable!(),
+            };
+            let workspace = &picker.delegate.workspaces[hit.candidate_id];
+            assert!(picker.delegate.can_add_folder_to_current_project(&workspace.location));
+        });
+
+        // Select the Remote recent project entry and verify it CANNOT be added
+        picker.update(cx, |picker, _| {
+            let remote_idx = picker.delegate.filtered_entries.iter()
+                .position(|entry| {
+                    if let ProjectPickerEntry::RecentProject(hit) = entry {
+                        matches!(
+                            picker.delegate.workspaces[hit.candidate_id].location,
+                            SerializedWorkspaceLocation::Remote(_)
+                        )
+                    } else {
+                        false
+                    }
+                })
+                .expect("should have a Remote recent project entry");
+            let hit = match &picker.delegate.filtered_entries[remote_idx] {
+                ProjectPickerEntry::RecentProject(hit) => hit,
+                _ => unreachable!(),
+            };
+            let workspace = &picker.delegate.workspaces[hit.candidate_id];
+            assert!(!picker.delegate.can_add_folder_to_current_project(&workspace.location));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_add_to_workspace_visibility_remote_delegate(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mock_opts = RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 42 },
+        );
+
+        // Build picker with Remote delegate and mixed workspaces
+        let (picker, _cx) = cx.add_window_view(|window, cx| {
+            let mut delegate = RecentProjectsDelegate::new(
+                WeakEntity::new_invalid(),
+                false,
+                cx.focus_handle(),
+                vec![open_folder(0)],
+                vec![],
+                Some(mock_opts.clone()), // Current workspace is Remote
+                ProjectPickerStyle::Modal,
+            );
+            let mut workspaces: Vec<RecentWorkspace> = Vec::new();
+            workspaces.push(recent_workspace(0)); // Local
+            workspaces.push(recent_workspace_remote(0)); // Remote with same MockConnectionOptions
+            delegate.set_workspaces(workspaces);
+            Picker::list(delegate, window, cx)
+                .list_measure_all()
+                .show_scrollbar(true)
+        });
+
+        // Select the Local recent project entry and verify it CANNOT be added
+        picker.update(cx, |picker, _| {
+            let local_idx = picker.delegate.filtered_entries.iter()
+                .position(|entry| {
+                    if let ProjectPickerEntry::RecentProject(hit) = entry {
+                        matches!(
+                            picker.delegate.workspaces[hit.candidate_id].location,
+                            SerializedWorkspaceLocation::Local
+                        )
+                    } else {
+                        false
+                    }
+                })
+                .expect("should have a Local recent project entry");
+            let hit = match &picker.delegate.filtered_entries[local_idx] {
+                ProjectPickerEntry::RecentProject(hit) => hit,
+                _ => unreachable!(),
+            };
+            let workspace = &picker.delegate.workspaces[hit.candidate_id];
+            assert!(!picker.delegate.can_add_folder_to_current_project(&workspace.location));
+        });
+
+        // Select the Remote recent project entry and verify it CAN be added (same connection)
+        picker.update(cx, |picker, _| {
+            let remote_idx = picker.delegate.filtered_entries.iter()
+                .position(|entry| {
+                    if let ProjectPickerEntry::RecentProject(hit) = entry {
+                        matches!(
+                            picker.delegate.workspaces[hit.candidate_id].location,
+                            SerializedWorkspaceLocation::Remote(_)
+                        )
+                    } else {
+                        false
+                    }
+                })
+                .expect("should have a Remote recent project entry");
+            let hit = match &picker.delegate.filtered_entries[remote_idx] {
+                ProjectPickerEntry::RecentProject(hit) => hit,
+                _ => unreachable!(),
+            };
+            let workspace = &picker.delegate.workspaces[hit.candidate_id];
+            assert!(picker.delegate.can_add_folder_to_current_project(&workspace.location));
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
