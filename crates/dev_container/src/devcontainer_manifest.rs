@@ -1052,7 +1052,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
             let project_name = self.project_name().await?;
             self.docker_client
-                .docker_compose_build(&docker_compose_resources.files, &project_name)
+                .docker_compose_build(
+                    &docker_compose_resources.files,
+                    &project_name,
+                    dev_container.run_services.as_ref(),
+                )
                 .await?;
             (
                 self.docker_client
@@ -1145,7 +1149,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
                 let project_name = self.project_name().await?;
                 self.docker_client
-                    .docker_compose_build(&docker_compose_resources.files, &project_name)
+                    .docker_compose_build(
+                        &docker_compose_resources.files,
+                        &project_name,
+                        dev_container.run_services.as_ref(),
+                    )
                     .await?;
 
                 (
@@ -1775,6 +1783,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
+        if let Some(run_services) = self.dev_container().run_services.as_ref() {
+            command.args(run_services);
+        }
 
         let output = self
             .command_runner
@@ -4720,6 +4731,100 @@ ENV DOCKER_BUILDKIT=1
         );
     }
 
+    #[gpui::test]
+    async fn test_spawns_only_requested_compose_services(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+        {
+          "features": {
+            "ghcr.io/devcontainers/features/aws-cli:1": {},
+            "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+          },
+          "name": "Rust and PostgreSQL",
+          "dockerComposeFile": "docker-compose.yml",
+          "service": "app",
+          "runServices": ["app"],
+          "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+          "forwardPorts": [
+            8083,
+            "db:5432",
+            "db:1234",
+          ]
+        }
+        "#;
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                r#"
+version: '3.8'
+
+volumes:
+postgres-data:
+
+services:
+app:
+    build:
+        context: .
+        dockerfile: Dockerfile
+    env_file:
+        - .env
+
+    volumes:
+        - ../..:/workspaces:cached
+    command: sleep infinity
+    network_mode: service:db
+db:
+    image: postgres:14.1
+    restart: unless-stopped
+    volumes:
+        - postgres-data:/var/lib/postgresql/data
+    env_file:
+        - .env
+        "#.trim().to_string(),
+            )
+            .await
+            .unwrap();
+
+        test_dependencies.fs.atomic_write(
+            PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+            r#"
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+&& apt-get -y install clang lld \
+&& apt-get autoremove -y && apt-get clean -y
+        "#.trim().to_string(),
+        )
+        .await
+        .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let docker_commands = test_dependencies.command_runner.commands_by_program("docker");
+        let compose_up = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.first().map(String::as_str) == Some("compose")
+                    && c.args.iter().any(|a| a == "up")
+            })
+            .expect("docker compose up command recorded");
+        assert!(
+            compose_up
+                .args
+                .ends_with(&["up".to_string(), "-d".to_string(), "app".to_string()]),
+            "compose up should target only the requested service, got: {:?}",
+            compose_up.args
+        );
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_podman(cx: &mut TestAppContext) {
@@ -6130,6 +6235,7 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             &self,
             _config_files: &Vec<PathBuf>,
             _project_name: &str,
+            _services: Option<&Vec<String>>,
         ) -> Result<(), DevContainerError> {
             Ok(())
         }
