@@ -17,7 +17,7 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - Subtasks must be concrete, well-defined, and self-contained.
 /// - Delegated subtasks must materially advance the main task.
 /// - Do not duplicate work between your work and delegated subtasks.
-/// - Do not use this tool for tasks you could accomplish directly with one or two tool calls.
+/// - Do not use this tool for tasks you could accomplish directly with one or two tool calls. For example, don't ask the agent to read a single file and return the contents, you can do this yourself.
 /// - When you delegate work, focus on coordinating and synthesizing results instead of duplicating the same work yourself.
 /// - Avoid issuing multiple delegate calls for the same unresolved subproblem unless the new delegated task is genuinely different and necessary.
 /// - Narrow the delegated ask to the concrete output you need next.

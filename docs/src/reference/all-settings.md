@@ -174,6 +174,12 @@ On Linux:
 ls ~/.local/share/zed/extensions/installed
 ```
 
+On Windows:
+
+```pwsh
+Get-ChildItem "$env:LOCALAPPDATA\Zed\extensions\installed" -Name
+```
+
 Define extensions which should be installed (`true`) or never installed (`false`).
 
 ```json [settings]
@@ -3147,7 +3153,7 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 ### Performance Profiler
 
-- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the `zed: open performance profiler` action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
+- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the {#action zed::OpenPerformanceProfiler} action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
 - Setting: `instrumentation.performance_profiler.enabled`
 - Default: `false`
 
@@ -5559,7 +5565,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Settings Profiles
 
-- Description: Configure any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.
+- Description: Configure any number of settings profiles that are temporarily applied when selected from {#action settings_profile_selector::Toggle}.
 - Setting: `profiles`
 - Default: `{}`
 
@@ -5601,7 +5607,7 @@ Example:
 }
 ```
 
-To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for {#action settings_profile_selector::Toggle}.
 
 ## An example configuration:
 

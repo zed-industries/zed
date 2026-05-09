@@ -1298,9 +1298,12 @@ impl NativeAgentConnection {
                                 options,
                                 response,
                                 context: _,
+                                kind,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(tool_call, options, cx)
+                                    thread.request_tool_call_authorization(
+                                        tool_call, options, kind, cx,
+                                    )
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp_thread::RequestPermissionOutcome::Selected(outcome) =
