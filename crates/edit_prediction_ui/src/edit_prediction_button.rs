@@ -601,8 +601,8 @@ impl EditPredictionButton {
                         .toggleable(
                             IconPosition::Start,
                             is_current
-                                && (provider == EditPredictionProvider::Zed
-                                    && !is_zed_provider_disabled),
+                                && !(provider == EditPredictionProvider::Zed
+                                    && is_zed_provider_disabled),
                         )
                         .disabled(
                             provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
