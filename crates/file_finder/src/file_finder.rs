@@ -1886,11 +1886,10 @@ impl PickerDelegate for FileFinderDelegate {
                                     let focus_handle = focus_handle.clone();
 
                                     move |window, cx| {
-                                        let focus_handle = focus_handle.clone();
-
                                         Some(ContextMenu::build(window, cx, {
+                                            let focus_handle = focus_handle.clone();
                                             move |menu, _, _| {
-                                                menu.context(focus_handle.clone())
+                                                menu.context(focus_handle)
                                                     .action(
                                                         "Split Left",
                                                         pane::SplitLeft::default().boxed_clone(),
