@@ -243,6 +243,12 @@ pub struct LanguageMatcher {
     /// `filetype`/`ft` (vim) specified in the modeline.
     #[serde(default)]
     pub modeline_aliases: Vec<String>,
+    /// Alternative names for this language used in Markdown code fence blocks.
+    /// These are matched case-insensitively against the info string of a fenced
+    /// code block (e.g. ` ```protobuf `). Use this to accept aliases that differ
+    /// from the language name and file extensions (e.g. `protobuf` for Proto).
+    #[serde(default)]
+    pub code_fence_block_aliases: Vec<String>,
 }
 
 impl Ord for LanguageMatcher {
@@ -256,6 +262,7 @@ impl Ord for LanguageMatcher {
                     .cmp(&other.first_line_pattern.as_ref().map(Regex::as_str))
             })
             .then_with(|| self.modeline_aliases.cmp(&other.modeline_aliases))
+            .then_with(|| self.code_fence_block_aliases.cmp(&other.code_fence_block_aliases))
     }
 }
 
@@ -273,6 +280,7 @@ impl PartialEq for LanguageMatcher {
             && self.first_line_pattern.as_ref().map(Regex::as_str)
                 == other.first_line_pattern.as_ref().map(Regex::as_str)
             && self.modeline_aliases == other.modeline_aliases
+            && self.code_fence_block_aliases == other.code_fence_block_aliases
     }
 }
 

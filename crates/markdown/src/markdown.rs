@@ -809,7 +809,7 @@ impl Markdown {
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
                     let language = if !name.is_empty() {
-                        registry.language_for_name_or_extension(&name).left_future()
+                        registry.language_for_code_fence_name(&name).left_future()
                     } else if let Some(fallback) = &fallback {
                         registry.language_for_name(fallback.as_ref()).right_future()
                     } else {

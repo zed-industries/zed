@@ -157,6 +157,7 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
                 modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
+                code_fence_block_aliases: vec![],
             },
             brackets: BracketPairConfig {
                 pairs: vec![
