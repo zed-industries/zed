@@ -3,8 +3,8 @@ use crate::{
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RenameTool,
-    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, SystemPromptTemplate, Template,
-    Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool, WebSearchTool, WriteFileTool,
+    SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, UpdatePlanTool, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -825,7 +825,6 @@ impl ToolPermissionContext {
                 || tool_name == WriteFileTool::NAME
                 || tool_name == DeletePathTool::NAME
                 || tool_name == CreateDirectoryTool::NAME
-                || tool_name == SaveFileTool::NAME
             {
                 (
                     extract_path_pattern(value),
@@ -925,6 +924,7 @@ pub struct ToolCallAuthorization {
     pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp_thread::SelectedPermissionOutcome>,
     pub context: Option<ToolPermissionContext>,
+    pub kind: acp_thread::AuthorizationKind,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -984,6 +984,7 @@ pub struct Thread {
     ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    inherits_parent_model_settings: bool,
 }
 
 impl Thread {
@@ -1017,6 +1018,10 @@ impl Thread {
             depth: parent_thread.read(cx).depth() + 1,
         });
         thread.inherit_parent_settings(parent_thread, cx);
+        if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
+            thread.inherits_parent_model_settings = false;
+            thread.apply_model_selection(&subagent_model, cx);
+        }
         thread
     }
 
@@ -1105,6 +1110,7 @@ impl Thread {
             draft_prompt: None,
             ui_scroll_position: None,
             running_subagents: Vec::new(),
+            inherits_parent_model_settings: true,
         }
     }
 
@@ -1119,6 +1125,29 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+    }
+
+    fn apply_model_selection(
+        &mut self,
+        selection: &LanguageModelSelection,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(model) = Self::resolve_model_from_selection(selection, cx) else {
+            log::warn!(
+                "failed to resolve configured subagent model: {}/{}",
+                selection.provider.0,
+                selection.model
+            );
+            return;
+        };
+
+        self.model = Some(model.clone());
+        self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
+        self.thinking_effort = selection.effort.clone();
+        self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.prompt_capabilities_tx
+            .send(Self::prompt_capabilities(self.model.as_deref()))
+            .log_err();
     }
 
     pub fn id(&self) -> &acp::SessionId {
@@ -1338,6 +1367,7 @@ impl Thread {
                 offset_in_item: gpui::px(sp.offset_in_item),
             }),
             running_subagents: Vec::new(),
+            inherits_parent_model_settings: true,
         }
     }
 
@@ -1441,7 +1471,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_model(model.clone(), cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_model(model.clone(), cx);
+                    }
+                })
                 .ok();
         }
 
@@ -1478,7 +1512,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_thinking_enabled(enabled, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_enabled(enabled, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1494,7 +1532,9 @@ impl Thread {
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
-                    thread.set_thinking_effort(effort.clone(), cx)
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_effort(effort.clone(), cx)
+                    }
                 })
                 .ok();
         }
@@ -1510,7 +1550,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_speed(speed, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_speed(speed, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1571,8 +1615,6 @@ impl Thread {
             self.action_log.clone(),
             update_agent_location,
         ));
-        self.add_tool(SaveFileTool::new(self.project.clone()));
-        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
 
@@ -3878,6 +3920,57 @@ impl ToolCallEventStream {
         self.run_authorization_loop(title, options, Some(context), None, cx)
     }
 
+    /// Prompts the user to choose between an explicit set of actions and
+    /// returns the chosen `option_id`.
+    ///
+    /// Unlike [`Self::authorize`] / [`Self::authorize_always_prompt`], this
+    /// does not interpret the user's choice as a permission grant — callers
+    /// are responsible for handling each `option_id` explicitly. Use this
+    /// when a tool needs the user to pick between several side-effecting
+    /// actions (for example, "Save" vs "Discard" for a dirty buffer).
+    pub fn prompt_for_decision(
+        &self,
+        title: Option<String>,
+        message: Option<String>,
+        options: Vec<acp::PermissionOption>,
+        cx: &mut App,
+    ) -> Task<Result<acp::PermissionOptionId>> {
+        let options = acp_thread::PermissionOptions::Flat(options);
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
+        cx.spawn(async move |_cx| {
+            let mut fields = acp::ToolCallUpdateFields::new();
+            if let Some(title) = title {
+                fields = fields.title(title);
+            }
+            if let Some(message) = message {
+                fields = fields.content(vec![acp::ToolCallContent::from(message)]);
+            }
+
+            let (response_tx, response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCallUpdate::new(tool_use_id.to_string(), fields),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::ActionChoice,
+                    },
+                )))
+            {
+                log::error!("Failed to send tool call decision prompt: {error}");
+                return Err(anyhow!("Failed to send tool call decision prompt: {error}"));
+            }
+
+            let outcome = response_rx
+                .await
+                .map_err(|_| anyhow!("authorization channel closed"))?;
+            Ok(outcome.option_id)
+        })
+    }
+
     /// Prompts the user for authorization.
     ///
     /// When `check_settings` is `Some`, this gate is settings-driven: the
@@ -3925,6 +4018,7 @@ impl ToolCallEventStream {
                         options,
                         response: response_tx,
                         context,
+                        kind: acp_thread::AuthorizationKind::PermissionGrant,
                     },
                 )))
             {

@@ -5876,10 +5876,18 @@ impl Workspace {
             // if they are active in another project, follow there.
             if let Some(project_id) = other_project_id {
                 let app_state = self.app_state.clone();
-                crate::join_in_room_project(project_id, remote_participant.user.id, app_state, cx)
-                    .detach_and_prompt_err("Failed to join project", window, cx, |error, _, _| {
-                        Some(format!("{error:#}"))
-                    });
+                crate::join_in_room_project(
+                    project_id,
+                    remote_participant.user.legacy_id,
+                    app_state,
+                    cx,
+                )
+                .detach_and_prompt_err(
+                    "Failed to join project",
+                    window,
+                    cx,
+                    |error, _, _| Some(format!("{error:#}")),
+                );
             }
         }
 

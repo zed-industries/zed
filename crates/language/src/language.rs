@@ -25,7 +25,10 @@ mod toolchain;
 #[cfg(test)]
 pub mod buffer_tests;
 
-pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{
+    AutoIndentMode, EditPredictionPromptFormat, EditPredictionsMode, IndentGuideSettings,
+    ZetaVersion,
+};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};

@@ -444,6 +444,7 @@ fn request_test_tool_authorization(
                         "Allow",
                         acp::PermissionOptionKind::AllowOnce,
                     )]),
+                    acp_thread::AuthorizationKind::PermissionGrant,
                     cx,
                 )
                 .unwrap()

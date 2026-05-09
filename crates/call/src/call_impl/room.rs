@@ -680,7 +680,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(participant.user.id);
+                    .0 = Some(participant.user.legacy_id);
             }
         }
 
@@ -689,7 +689,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(user.id);
+                    .0 = Some(user.legacy_id);
             }
         }
 
@@ -902,7 +902,7 @@ impl Room {
 
                             if let Some(livekit_participants) = &livekit_participants
                                 && let Some(livekit_participant) = livekit_participants
-                                    .get(&ParticipantIdentity(user.id.to_string()))
+                                    .get(&ParticipantIdentity(user.legacy_id.to_string()))
                             {
                                 for publication in
                                     livekit_participant.track_publications().into_values()
@@ -948,7 +948,7 @@ impl Room {
                 if let Some(pending_participants) = pending_participants.log_err() {
                     this.pending_participants = pending_participants;
                     for participant in &this.pending_participants {
-                        this.participant_user_ids.insert(participant.id);
+                        this.participant_user_ids.insert(participant.legacy_id);
                     }
                 }
 
@@ -1153,13 +1153,16 @@ impl Room {
         #[cfg(any(test, feature = "test-support"))]
         {
             for participant in self.remote_participants.values() {
-                assert!(self.participant_user_ids.contains(&participant.user.id));
-                assert_ne!(participant.user.id, self.client.user_id().unwrap());
+                assert!(
+                    self.participant_user_ids
+                        .contains(&participant.user.legacy_id)
+                );
+                assert_ne!(participant.user.legacy_id, self.client.user_id().unwrap());
             }
 
             for participant in &self.pending_participants {
-                assert!(self.participant_user_ids.contains(&participant.id));
-                assert_ne!(participant.id, self.client.user_id().unwrap());
+                assert!(self.participant_user_ids.contains(&participant.legacy_id));
+                assert_ne!(participant.legacy_id, self.client.user_id().unwrap());
             }
 
             assert_eq!(
