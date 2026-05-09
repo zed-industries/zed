@@ -1249,14 +1249,18 @@ impl BufferSearchBar {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.buffer().update(cx, |query_buffer, cx| {
                 let len = query_buffer.len(cx);
-                query_buffer.edit([(MultiBufferOffset(0)..len, search_text)], None, cx);
+                query_buffer.edit([(MultiBufferOffset(0)..len, search_text.clone())], None, cx);
             });
         });
         #[cfg(target_os = "macos")]
-        self.update_find_pasteboard(cx);
+        {
+            self.update_find_pasteboard(cx);
+            if self.dismissed {
+                self.pending_external_query = Some((search_text, self.search_options));
+            }
+        }
         cx.notify();
     }
-
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
             let handle = active_editor.item_focus_handle(cx);
