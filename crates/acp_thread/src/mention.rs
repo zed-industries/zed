@@ -104,15 +104,16 @@ impl MentionUri {
             let (path_input, fragment) = input
                 .split_once('#')
                 .map_or((input, None), |(path, fragment)| (path, Some(fragment)));
+            let path_input = hyperlink_path_to_native(path_input, path_style);
 
             if let Some(fragment) = fragment.and_then(|fragment| parse_line_range(fragment).ok()) {
                 return Ok(MentionUri::Selection {
-                    abs_path: Some(path_input.into()),
+                    abs_path: Some(path_input.as_ref().into()),
                     line_range: fragment,
                 });
             }
 
-            let path_with_position = PathWithPosition::parse_str(path_input);
+            let path_with_position = PathWithPosition::parse_str(path_input.as_ref());
             let abs_path = path_with_position.path;
             if let Some(row) = path_with_position.row {
                 let line = row
@@ -477,6 +478,42 @@ impl fmt::Display for MentionLink<'_> {
     }
 }
 
+fn hyperlink_path_to_native(input: &str, path_style: PathStyle) -> Cow<'_, str> {
+    let decoded = decode(input).unwrap_or(Cow::Borrowed(input));
+    if !path_style.is_windows() {
+        return decoded;
+    }
+
+    let path = decoded.as_ref();
+    let bytes = path.as_bytes();
+    if bytes.len() >= 4
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+        && matches!(bytes[3], b'/' | b'\\')
+    {
+        let drive = char::from(bytes[1]).to_ascii_uppercase();
+        let rest = path[4..].replace('/', "\\");
+        return Cow::Owned(format!("{drive}:\\{rest}"));
+    }
+
+    if bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && matches!(bytes[2], b'/' | b'\\')
+    {
+        let drive = char::from(bytes[1]).to_ascii_uppercase();
+        let rest = path[3..].replace('/', "\\");
+        return Cow::Owned(format!("{drive}:\\{rest}"));
+    }
+
+    if path.contains('/') {
+        Cow::Owned(path.replace('/', "\\"))
+    } else {
+        decoded
+    }
+}
+
 fn default_include_errors() -> bool {
     true
 }
@@ -579,6 +616,89 @@ mod tests {
                 assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
             }
             other => panic!("Expected Selection variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_file_uri_with_spaces() {
+        let parsed =
+            MentionUri::parse("file:///C:/path%20with%20space/file.rs", PathStyle::Windows)
+                .unwrap();
+        match parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path with space\\file.rs"));
+            }
+            other => panic!("Expected File variant, got {other:?}"),
+        }
+        assert_eq!(
+            MentionUri::File {
+                abs_path: PathBuf::from("C:\\path with space\\file.rs")
+            }
+            .to_uri()
+            .to_string(),
+            "file:///C:/path%20with%20space/file.rs"
+        );
+    }
+
+    #[test]
+    fn test_parse_windows_drive_path_with_leading_slash_and_line() {
+        let parsed = MentionUri::parse(
+            "/C:/Projects/Example Workspace/Cargo.toml:2",
+            PathStyle::Windows,
+        )
+        .unwrap();
+        match parsed {
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                line_range,
+            } => {
+                assert_eq!(
+                    abs_path,
+                    PathBuf::from("C:\\Projects\\Example Workspace\\Cargo.toml")
+                );
+                assert_eq!(line_range, 1..=1);
+            }
+            other => panic!("Expected Selection variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_windows_path_with_percent_escaped_spaces_and_line() {
+        let parsed = MentionUri::parse(
+            "C:\\Projects\\Example%20Workspace\\path\\to\\filename.ext:42",
+            PathStyle::Windows,
+        )
+        .unwrap();
+        match parsed {
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                line_range,
+            } => {
+                assert_eq!(
+                    abs_path,
+                    PathBuf::from("C:\\Projects\\Example Workspace\\path\\to\\filename.ext")
+                );
+                assert_eq!(line_range, 41..=41);
+            }
+            other => panic!("Expected Selection variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_windows_compat_path_with_spaces() {
+        let parsed = MentionUri::parse(
+            "/c/Projects/Example Workspace/AGENTS.md",
+            PathStyle::Windows,
+        )
+        .unwrap();
+        match parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(
+                    abs_path,
+                    PathBuf::from("C:\\Projects\\Example Workspace\\AGENTS.md")
+                );
+            }
+            other => panic!("Expected File variant, got {other:?}"),
         }
     }
 
