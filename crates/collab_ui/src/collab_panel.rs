@@ -618,7 +618,7 @@ impl CollabPanel {
                         executor.clone(),
                     ));
                     if !matches.is_empty() {
-                        let user_id = user.id;
+                        let user_id = user.legacy_id;
                         self.entries.push(ListEntry::CallParticipant {
                             user,
                             peer_id: None,
@@ -648,7 +648,7 @@ impl CollabPanel {
                 self.match_candidates
                     .extend(room.remote_participants().values().map(|participant| {
                         StringMatchCandidate::new(
-                            participant.user.id as usize,
+                            participant.user.legacy_id as usize,
                             &participant.user.github_login,
                         )
                     }));
@@ -684,7 +684,7 @@ impl CollabPanel {
                         self.entries.push(ListEntry::ParticipantProject {
                             project_id: project.id,
                             worktree_root_names: project.worktree_root_names.clone(),
-                            host_user_id: participant.user.id,
+                            host_user_id: participant.user.legacy_id,
                             is_last: projects.peek().is_none() && !participant.has_video_tracks(),
                         });
                     }
@@ -1024,7 +1024,9 @@ impl CollabPanel {
                             let contact = &contacts[mat.candidate_id];
                             self.entries.push(ListEntry::Contact {
                                 contact: contact.clone(),
-                                calling: active_call.pending_invites().contains(&contact.user.id),
+                                calling: active_call
+                                    .pending_invites()
+                                    .contains(&contact.user.legacy_id),
                             });
                         }
                     }
@@ -1122,9 +1124,13 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> ListItem {
-        let user_id = user.id;
-        let is_current_user =
-            self.user_store.read(cx).current_user().map(|user| user.id) == Some(user_id);
+        let user_id = user.legacy_id;
+        let is_current_user = self
+            .user_store
+            .read(cx)
+            .current_user()
+            .map(|user| user.legacy_id)
+            == Some(user_id);
         let tooltip = format!("Follow {}", user.github_login);
 
         let is_call_admin = ActiveCall::global(cx).read(cx).room().is_some_and(|room| {
@@ -1650,7 +1656,7 @@ impl CollabPanel {
         let in_room = ActiveCall::global(cx).read(cx).room().is_some();
 
         let context_menu = ContextMenu::build(window, cx, |mut context_menu, _, _| {
-            let user_id = contact.user.id;
+            let user_id = contact.user.legacy_id;
 
             if contact.online && !contact.busy {
                 let label = if in_room {
@@ -1673,7 +1679,7 @@ impl CollabPanel {
                 move |window, cx| {
                     this.update(cx, |this, cx| {
                         this.remove_contact(
-                            contact.user.id,
+                            contact.user.legacy_id,
                             &contact.user.github_login,
                             window,
                             cx,
@@ -1777,7 +1783,7 @@ impl CollabPanel {
                 },
                 ListEntry::Contact { contact, calling } => {
                     if contact.online && !contact.busy && !calling {
-                        self.call(contact.user.id, window, cx);
+                        self.call(contact.user.legacy_id, window, cx);
                     }
                 }
                 ListEntry::ParticipantProject {
@@ -1834,7 +1840,7 @@ impl CollabPanel {
                     }
                 }
                 ListEntry::IncomingRequest(user) => {
-                    self.respond_to_contact_request(user.id, true, window, cx)
+                    self.respond_to_contact_request(user.legacy_id, true, window, cx)
                 }
                 ListEntry::ChannelInvite(channel) => {
                     self.respond_to_channel_invite(channel.id, true, cx)
@@ -2450,7 +2456,7 @@ impl CollabPanel {
     }
 
     fn leave_channel(&self, channel_id: ChannelId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(user_id) = self.user_store.read(cx).current_user().map(|u| u.id) else {
+        let Some(user_id) = self.user_store.read(cx).current_user().map(|u| u.legacy_id) else {
             return;
         };
         let Some(channel) = self.channel_store.read(cx).channel_for_id(channel_id) else {
@@ -2705,7 +2711,7 @@ impl CollabPanel {
                     .into_any_element()
             }
             ListEntry::Contact { contact, calling } => {
-                self.mark_contact_request_accepted_notifications_read(contact.user.id, cx);
+                self.mark_contact_request_accepted_notifications_read(contact.user.legacy_id, cx);
                 self.render_contact(&contact, calling, is_selected, cx)
                     .into_any_element()
             }
@@ -3122,7 +3128,7 @@ impl CollabPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let github_login = user.github_login.clone();
-        let user_id = user.id;
+        let user_id = user.legacy_id;
         let is_response_pending = self.user_store.read(cx).is_contact_request_pending(user);
         let color = if is_response_pending {
             Color::Muted
@@ -3854,7 +3860,7 @@ impl PartialEq for ListEntry {
             }
             ListEntry::CallParticipant { user: user_1, .. } => {
                 if let ListEntry::CallParticipant { user: user_2, .. } = other {
-                    return user_1.id == user_2.id;
+                    return user_1.legacy_id == user_2.legacy_id;
                 }
             }
             ListEntry::ParticipantProject {
@@ -3908,12 +3914,12 @@ impl PartialEq for ListEntry {
             }
             ListEntry::IncomingRequest(user_1) => {
                 if let ListEntry::IncomingRequest(user_2) = other {
-                    return user_1.id == user_2.id;
+                    return user_1.legacy_id == user_2.legacy_id;
                 }
             }
             ListEntry::OutgoingRequest(user_1) => {
                 if let ListEntry::OutgoingRequest(user_2) = other {
-                    return user_1.id == user_2.id;
+                    return user_1.legacy_id == user_2.legacy_id;
                 }
             }
             ListEntry::Contact {
@@ -3923,7 +3929,7 @@ impl PartialEq for ListEntry {
                     contact: contact_2, ..
                 } = other
                 {
-                    return contact_1.user.id == contact_2.user.id;
+                    return contact_1.user.legacy_id == contact_2.user.legacy_id;
                 }
             }
             ListEntry::ChannelEditor { depth } => {

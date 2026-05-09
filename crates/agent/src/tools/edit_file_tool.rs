@@ -23,10 +23,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying edits to an existing file.
 ///
-/// Before using this tool:
-///
-/// 1. Use the `read_file` tool to understand the file's contents and context
-///
+/// Before using this tool, use the `read_file` tool to understand the file's contents and context
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
