@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::SelectionEffects;
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
-    Subscription, Task, TaskExt, TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, size, transparent_black,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, DismissEvent, Entity, EventEmitter, Focusable,
+    PromptLevel, Subscription, Task, TaskExt, TextStyle, Tiling, TitlebarOptions, WindowBounds,
+    WindowHandle, WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{ConfiguredModel, LanguageModelRegistry};
@@ -509,7 +509,14 @@ impl RulesLibrary {
             active_rule_id: None,
             pending_load: Task::ready(()),
             inline_assist_delegate,
-            _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
+            _subscriptions: vec![
+                cx.subscribe_in(&picker, window, Self::handle_picker_event),
+                cx.subscribe_in(
+                    &picker,
+                    window,
+                    |_: &mut Self, _, _: &DismissEvent, window, _| window.remove_window(),
+                ),
+            ],
             picker,
         }
     }
