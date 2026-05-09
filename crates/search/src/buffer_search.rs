@@ -1249,11 +1249,16 @@ impl BufferSearchBar {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.buffer().update(cx, |query_buffer, cx| {
                 let len = query_buffer.len(cx);
-                query_buffer.edit([(MultiBufferOffset(0)..len, search_text)], None, cx);
+                query_buffer.edit([(MultiBufferOffset(0)..len, search_text.clone())], None, cx);
             });
         });
         #[cfg(target_os = "macos")]
-        self.update_find_pasteboard(cx);
+        {
+            self.update_find_pasteboard(cx);
+            if self.dismissed {
+                self.pending_external_query = Some((search_text, self.search_options));
+            }
+        }
         cx.notify();
     }
 
