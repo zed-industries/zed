@@ -10,10 +10,7 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use feature_flags::{
     ExperimentalSystemPromptFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag,
-    UpdatePlanToolFeatureFlag,
-};
-use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
 };
 
 use agent_client_protocol::schema as acp;
