@@ -5682,8 +5682,10 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         );
     });
 
-    // Without any flags, sending a message should produce a completion
-    // request whose tool list excludes both the LSP tools and rename tool.
+    // Without the `lsp-tool` flag, sending a message should produce a
+    // completion request whose tool list excludes the LSP tools.
+    // The rename tool is on its own `rename-tool` flag with
+    // `enabled_for_staff`, so it is already visible in debug builds.
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["hello"], cx)
@@ -5701,8 +5703,8 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         );
     }
     assert!(
-        !tool_names.iter().any(|t| t == RenameTool::NAME),
-        "expected rename tool to be hidden without the rename-tool flag, \
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to be visible (enabled_for_staff in debug builds), \
          but completion tools were: {tool_names:?}"
     );
     // Sanity check: a non-LSP default tool should still be exposed.
@@ -5713,44 +5715,15 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
     model.end_last_completion_stream();
     cx.run_until_parked();
 
-    // Enable only the `rename-tool` flag; rename should appear but other
-    // LSP tools should remain hidden.
-    cx.update(|cx| {
-        cx.update_flags(false, vec!["rename-tool".to_string()]);
-    });
-
-    thread
-        .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["hello again"], cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let completion = model.pending_completions().pop().unwrap();
-    let tool_names = tool_names_for_completion(&completion);
-    assert!(
-        tool_names.iter().any(|t| t == RenameTool::NAME),
-        "expected rename tool to be exposed when rename-tool flag is on, \
-         but completion tools were: {tool_names:?}"
-    );
-    for name in &lsp_tool_names {
-        assert!(
-            !tool_names.iter().any(|t| t == name),
-            "expected LSP tool {name} to still be hidden without lsp-tool flag, \
-             but completion tools were: {tool_names:?}"
-        );
-    }
-    model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    // Enable the `lsp-tool` flag as well; now all LSP tools should appear.
+    // Enable the `lsp-tool` flag and send another message; the LSP tools
+    // should now appear in the completion request.
     cx.update(|cx| {
         cx.update_flags(false, vec!["lsp-tool".to_string()]);
     });
 
     thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["hello once more"], cx)
+            thread.send(UserMessageId::new(), ["hello again"], cx)
         })
         .unwrap();
     cx.run_until_parked();
