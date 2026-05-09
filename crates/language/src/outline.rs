@@ -8,8 +8,10 @@ use std::ops::Range;
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,
     candidates: Vec<StringMatchCandidate>,
-    pub path_candidates: Vec<StringMatchCandidate>,
-    path_candidate_prefixes: Vec<usize>,
+    /// For each item, the byte offset within `candidates[i].string` where the
+    /// item's own leaf text starts. Anything before this offset is ancestor
+    /// path text used purely as match context.
+    leaf_offsets: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -108,9 +110,8 @@ impl<T: ToPoint> OutlineItem<T> {
 
 impl<T> Outline<T> {
     pub fn new(items: Vec<OutlineItem<T>>) -> Self {
-        let mut candidates = Vec::new();
-        let mut path_candidates = Vec::new();
-        let mut path_candidate_prefixes = Vec::new();
+        let mut candidates = Vec::with_capacity(items.len());
+        let mut leaf_offsets = Vec::with_capacity(items.len());
         let mut path_text = String::new();
         let mut path_stack = Vec::new();
 
@@ -122,25 +123,16 @@ impl<T> Outline<T> {
             if !path_text.is_empty() {
                 path_text.push(' ');
             }
-            path_candidate_prefixes.push(path_text.len());
+            leaf_offsets.push(path_text.len());
             path_text.push_str(&item.text);
             path_stack.push(path_text.len());
-
-            let candidate_text = item
-                .name_ranges
-                .iter()
-                .map(|range| &item.text[range.start..range.end])
-                .collect::<String>();
-
-            path_candidates.push(StringMatchCandidate::new(id, &path_text));
-            candidates.push(StringMatchCandidate::new(id, &candidate_text));
+            candidates.push(StringMatchCandidate::new(id, &path_text));
         }
 
         Self {
-            candidates,
-            path_candidates,
-            path_candidate_prefixes,
             items,
+            candidates,
+            leaf_offsets,
         }
     }
 
@@ -149,7 +141,7 @@ impl<T> Outline<T> {
         const SIMILARITY_THRESHOLD: f64 = 0.6;
 
         let (position, similarity) = self
-            .path_candidates
+            .candidates
             .iter()
             .enumerate()
             .map(|(index, candidate)| {
@@ -159,7 +151,7 @@ impl<T> Outline<T> {
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;
 
         if similarity >= SIMILARITY_THRESHOLD {
-            self.path_candidates
+            self.candidates
                 .get(position)
                 .map(|candidate| SymbolPath(candidate.string.clone()))
                 .zip(self.items.get(position))
@@ -168,16 +160,17 @@ impl<T> Outline<T> {
         }
     }
 
-    /// Find all outline symbols that match with the nucleo fuzzy matcher, ordered by score.
+    /// Find all outline symbols that match with the nucleo fuzzy matcher, ordered by tree position.
+    /// Each real match is preceded by synthetic ancestor rows (carrying `f64::NEG_INFINITY` as a
+    /// sentinel score) so the picker can render tree context without those rows competing for
+    /// `max_by(score)` selection.
     pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
         let query = query.trim_start();
-        let is_path_query = query.contains(' ');
+        if query.is_empty() {
+            return Vec::new();
+        }
         let mut matches = fuzzy_nucleo::match_strings_async(
-            if is_path_query {
-                &self.path_candidates
-            } else {
-                &self.candidates
-            },
+            &self.candidates,
             query,
             Case::Smart,
             LengthPenalty::On,
@@ -188,68 +181,71 @@ impl<T> Outline<T> {
         .await;
         matches.sort_unstable_by_key(|m| m.candidate_id);
 
-        let mut tree_matches = Vec::new();
-
-        let mut prev_item_ix = 0;
-        for mut string_match in matches {
-            let outline_match = &self.items[string_match.candidate_id];
-            string_match.string.clone_from(&outline_match.text);
-
-            if is_path_query {
-                let prefix_len = self.path_candidate_prefixes[string_match.candidate_id];
-                string_match
-                    .positions
-                    .retain(|position| *position >= prefix_len);
-                for position in &mut string_match.positions {
-                    *position -= prefix_len;
-                }
-            } else {
-                let mut name_ranges = outline_match.name_ranges.iter();
-                let Some(mut name_range) = name_ranges.next() else {
-                    continue;
-                };
-                let mut preceding_ranges_len = 0;
-                for position in &mut string_match.positions {
-                    while *position >= preceding_ranges_len + name_range.len() {
-                        preceding_ranges_len += name_range.len();
-                        name_range = name_ranges.next().unwrap();
-                    }
-                    *position = name_range.start + (*position - preceding_ranges_len);
-                }
+        // Single-atom queries (no whitespace) require *all* matched chars to
+        // land in the leaf — typing "drop" should only surface leaves that
+        // actually contain "drop", not items whose ancestor path happens to.
+        // Multi-atom queries (whitespace-separated) use the parent for scoping,
+        // so we just require at least one matched char in the leaf so the row
+        // has visible highlights.
+        let single_atom = !query.contains(char::is_whitespace);
+        matches.retain_mut(|string_match| {
+            let leaf_offset = self.leaf_offsets[string_match.candidate_id];
+            let total = string_match.positions.len();
+            string_match
+                .positions
+                .retain(|position| *position >= leaf_offset);
+            let kept = string_match.positions.len();
+            if kept == 0 || (single_atom && kept != total) {
+                return false;
             }
-
-            let insertion_ix = tree_matches.len();
-            let mut cur_depth = outline_match.depth;
-            for (ix, item) in self.items[prev_item_ix..string_match.candidate_id]
-                .iter()
-                .enumerate()
-                .rev()
-            {
-                if cur_depth == 0 {
-                    break;
-                }
-
-                let candidate_index = ix + prev_item_ix;
-                if item.depth == cur_depth - 1 {
-                    tree_matches.insert(
-                        insertion_ix,
-                        StringMatch {
-                            candidate_id: candidate_index,
-                            score: Default::default(),
-                            positions: Default::default(),
-                            string: Default::default(),
-                        },
-                    );
-                    cur_depth -= 1;
-                }
+            for position in &mut string_match.positions {
+                *position -= leaf_offset;
             }
+            string_match
+                .string
+                .clone_from(&self.items[string_match.candidate_id].text);
+            true
+        });
 
-            prev_item_ix = string_match.candidate_id + 1;
-            tree_matches.push(string_match);
-        }
-
-        tree_matches
+        expand_tree(&self.items, matches)
     }
+}
+
+fn expand_tree<T>(
+    items: &[OutlineItem<T>],
+    matches: Vec<StringMatch>,
+) -> Vec<StringMatch> {
+    let mut out = Vec::with_capacity(matches.len());
+    let mut prev_item_ix = 0;
+    for string_match in matches {
+        let outline_match = &items[string_match.candidate_id];
+        let insertion_ix = out.len();
+        let mut cur_depth = outline_match.depth;
+        for (ix, item) in items[prev_item_ix..string_match.candidate_id]
+            .iter()
+            .enumerate()
+            .rev()
+        {
+            if cur_depth == 0 {
+                break;
+            }
+            if item.depth == cur_depth - 1 {
+                out.insert(
+                    insertion_ix,
+                    StringMatch {
+                        candidate_id: ix + prev_item_ix,
+                        score: f64::NEG_INFINITY,
+                        positions: Vec::new(),
+                        string: SharedString::default(),
+                    },
+                );
+                cur_depth -= 1;
+            }
+        }
+        prev_item_ix = string_match.candidate_id + 1;
+        out.push(string_match);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -306,14 +302,19 @@ mod tests {
                 annotation_range: None,
             },
         ]);
+        assert!(
+            outline.search("", cx.executor()).await.is_empty(),
+            "empty queries return no matches; the picker handles 'show all' itself",
+        );
         assert_eq!(
             outline
-                .search(" ", cx.executor())
+                .search("foo", cx.executor())
                 .await
                 .into_iter()
                 .map(|mat| mat.string)
                 .collect::<Vec<SharedString>>(),
-            vec![SharedString::from("class Foo")]
+            vec![SharedString::from("class Foo")],
+            "items still match by their full text even when name_ranges is empty",
         );
     }
 

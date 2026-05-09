@@ -850,20 +850,23 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    // Without space, we only match on names
+    // Single-atom queries (no whitespace): all matched chars must land in the leaf,
+    // so items whose ancestor path coincidentally contains the query chars don't
+    // show up unless the leaf itself matches.
     assert_eq!(
         search(&outline, "oon", cx).await,
         &[
-            ("mod module", vec![]),                    // included as the parent of a match
-            ("enum LoginState", vec![]),               // included as the parent of a match
-            ("LoggingOn", vec![1, 7, 8]),              // matches
-            ("impl Drop for Person", vec![7, 18, 19]), // matches in two disjoint names
+            ("mod module", vec![]),                     // parent context for LoggingOn
+            ("enum LoginState", vec![]),                // parent context for LoggingOn
+            ("LoggingOn", vec![1, 7, 8]),               // all three chars in leaf
+            ("impl Eq for Person", vec![9, 16, 17]),    // o-o-n in "for Person"
+            ("impl Drop for Person", vec![11, 18, 19]), // o-o-n in "for Person"
         ]
     );
 
     assert_eq!(
         search(&outline, "dp p", cx).await,
-        &[("impl Drop for Person", vec![5, 14]), ("fn drop", vec![]),]
+        &[("impl Drop for Person", vec![5, 14])]
     );
     assert_eq!(
         search(&outline, "dpn", cx).await,
@@ -874,7 +877,6 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         &[
             ("impl Eq for Person", vec![0, 1, 2, 3]),
             ("impl Drop for Person", vec![0, 1, 2, 3]),
-            ("fn drop", vec![]),
         ]
     );
 
