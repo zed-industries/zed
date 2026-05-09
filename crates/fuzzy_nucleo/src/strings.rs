@@ -25,7 +25,7 @@ pub struct StringMatchCandidate {
 
 impl StringMatchCandidate {
     pub fn new(id: usize, string: impl ToString) -> Self {
-        Self::from_shared(id, SharedString::new(string.to_string()))
+        Self::from_shared(id, SharedString::from(string.to_string()))
     }
 
     pub fn from_shared(id: usize, string: SharedString) -> Self {

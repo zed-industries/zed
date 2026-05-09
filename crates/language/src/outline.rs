@@ -25,7 +25,7 @@ pub struct OutlineItem<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SymbolPath(pub String);
+pub struct SymbolPath(pub SharedString);
 
 impl<T: ToPoint> OutlineItem<T> {
     /// Converts to an equivalent outline item, but with parameterized over Points.
@@ -161,7 +161,7 @@ impl<T> Outline<T> {
         if similarity >= SIMILARITY_THRESHOLD {
             self.path_candidates
                 .get(position)
-                .map(|candidate| SymbolPath(candidate.string.to_string()))
+                .map(|candidate| SymbolPath(candidate.string.clone()))
                 .zip(self.items.get(position))
         } else {
             None
