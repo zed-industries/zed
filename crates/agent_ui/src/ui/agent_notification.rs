@@ -5,7 +5,6 @@ use gpui::{
 };
 use release_channel::ReleaseChannel;
 use std::rc::Rc;
-use theme;
 use ui::{Render, prelude::*};
 
 pub struct AgentNotification {
@@ -75,9 +74,19 @@ pub enum AgentNotificationEvent {
 
 impl EventEmitter<AgentNotificationEvent> for AgentNotification {}
 
+impl AgentNotification {
+    pub fn accept(&mut self, cx: &mut Context<Self>) {
+        cx.emit(AgentNotificationEvent::Accepted);
+    }
+
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
+        cx.emit(AgentNotificationEvent::Dismissed);
+    }
+}
+
 impl Render for AgentNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         let line_height = window.line_height();
 
         let bg = cx.theme().colors().elevated_surface_background;
@@ -170,18 +179,18 @@ impl Render for AgentNotification {
                     .gap_1()
                     .items_center()
                     .child(
-                        Button::new("open", "View Panel")
+                        Button::new("open", "View")
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
                             .on_click({
-                                cx.listener(move |_this, _event, _, cx| {
-                                    cx.emit(AgentNotificationEvent::Accepted);
+                                cx.listener(move |this, _event, _, cx| {
+                                    this.accept(cx);
                                 })
                             }),
                     )
                     .child(Button::new("dismiss", "Dismiss").full_width().on_click({
-                        cx.listener(move |_, _event, _, cx| {
-                            cx.emit(AgentNotificationEvent::Dismissed);
+                        cx.listener(move |this, _event, _, cx| {
+                            this.dismiss(cx);
                         })
                     })),
             )

@@ -1,3 +1,8 @@
+---
+title: Built-in Terminal - Zed
+description: Zed's integrated terminal with multiple instances, custom shells, and deep editor integration.
+---
+
 # Terminal
 
 Zed includes a built-in terminal emulator that supports multiple terminal instances, custom shells, and deep integration with the editor.
@@ -10,14 +15,14 @@ Zed includes a built-in terminal emulator that supports multiple terminal instan
 | Open new terminal       | `Ctrl+~`        | `Ctrl+~`        |
 | Open terminal in center | Command palette | Command palette |
 
-You can also open a terminal from the command palette with `terminal panel: toggle` or `workspace: new terminal`.
+You can also open a terminal from the command palette with {#action terminal_panel::Toggle} or {#action workspace::NewTerminal}.
 
 ### Terminal Panel vs Center Terminal
 
 Terminals can open in two locations:
 
 - **Terminal Panel** — Docked at the bottom (default), left, or right of the workspace. Toggle with `` Ctrl+` ``.
-- **Center Pane** — Opens as a regular tab alongside your files. Use `workspace: new center terminal` from the command palette.
+- **Center Pane** — Opens as a regular tab alongside your files. Use {#action workspace::NewCenterTerminal} from the command palette.
 
 ## Working with Multiple Terminals
 
@@ -58,12 +63,13 @@ To pass arguments to your shell:
 
 Control where new terminals start:
 
-| Value                                         | Behavior                                                        |
-| --------------------------------------------- | --------------------------------------------------------------- |
-| `"current_project_directory"`                 | Uses the project directory of the currently open file (default) |
-| `"first_project_directory"`                   | Uses the first project in your workspace                        |
-| `"always_home"`                               | Always starts in your home directory                            |
-| `{ "always": { "directory": "~/projects" } }` | Always starts in a specific directory                           |
+| Value                                         | Behavior                                                                                                          |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `"current_file_directory"`                    | Uses the current file's directory, falling back to the project directory, then the first project in the workspace |
+| `"current_project_directory"`                 | Uses the current file's project directory (default)                                                               |
+| `"first_project_directory"`                   | Uses the first project in your workspace                                                                          |
+| `"always_home"`                               | Always starts in your home directory                                                                              |
+| `{ "always": { "directory": "~/projects" } }` | Always starts in a specific directory                                                                             |
 
 ```json [settings]
 {
@@ -338,12 +344,12 @@ The terminal integrates with Zed's [task system](./tasks.md). When you run a tas
 
 ## AI Assistance
 
-Get help with terminal commands using inline assist:
+Get help with terminal commands using the [Inline Assistant](./ai/inline-assistant.md):
 
 - macOS: `Ctrl+Enter`
 - Linux/Windows: `Ctrl+Enter` or `Ctrl+I`
 
-This opens the AI assistant to help explain errors, suggest commands, or troubleshoot issues.
+This opens the Inline Assistant to help explain errors, suggest commands, or troubleshoot issues. AI agents in the [Agent Panel](./ai/agent-panel.md) can also run terminal commands as part of their workflow.
 
 ## Sending Text and Keystrokes
 

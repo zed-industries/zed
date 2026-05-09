@@ -1,5 +1,5 @@
 use editor::{Editor, EditorSettings};
-use gpui::{Action, Context, Window, actions};
+use gpui::{Action, Context, TaskExt, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
@@ -225,45 +225,72 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
-        pane.update(cx, |pane, cx| {
-            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-                search_bar.update(cx, |search_bar, cx| {
-                    if !search_bar.show(window, cx) {
-                        return;
-                    }
 
-                    search_bar.select_query(window, cx);
-                    cx.focus_self(window);
+        let Some(search_bar) = pane
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<BufferSearchBar>()
+        else {
+            return;
+        };
 
-                    search_bar.set_replacement(None, cx);
-                    let mut options = SearchOptions::NONE;
-                    if action.regex {
-                        options |= SearchOptions::REGEX;
-                    }
-                    if action.backwards {
-                        options |= SearchOptions::BACKWARDS;
-                    }
-                    if EditorSettings::get_global(cx).search.case_sensitive {
-                        options |= SearchOptions::CASE_SENSITIVE;
-                    }
-                    search_bar.set_search_options(options, cx);
-                    let prior_mode = if self.temp_mode {
-                        Mode::Insert
-                    } else {
-                        self.mode
-                    };
-
-                    self.search = SearchState {
-                        direction,
-                        count,
-                        prior_selections,
-                        prior_operator: self.operator_stack.last().cloned(),
-                        prior_mode,
-                        helix_select: false,
-                    }
-                });
+        let shown = search_bar.update(cx, |search_bar, cx| {
+            if !search_bar.show(window, cx) {
+                return false;
             }
-        })
+
+            search_bar.select_query(window, cx);
+            cx.focus_self(window);
+
+            search_bar.set_replacement(None, cx);
+            let mut options = SearchOptions::NONE;
+            if action.regex && VimSettings::get_global(cx).use_regex_search {
+                options |= SearchOptions::REGEX;
+            }
+            if action.backwards {
+                options |= SearchOptions::BACKWARDS;
+            }
+            if EditorSettings::get_global(cx).search.case_sensitive {
+                options |= SearchOptions::CASE_SENSITIVE;
+            }
+            search_bar.set_search_options(options, cx);
+            true
+        });
+
+        if !shown {
+            return;
+        }
+
+        let subscription = cx.subscribe_in(&search_bar, window, |vim, _, event, window, cx| {
+            if let buffer_search::Event::Dismissed = event {
+                if !vim.search.prior_selections.is_empty() {
+                    let prior_selections: Vec<_> = vim.search.prior_selections.drain(..).collect();
+                    vim.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges(prior_selections);
+                        });
+                    });
+                }
+            }
+        });
+
+        let prior_mode = if self.temp_mode {
+            Mode::Insert
+        } else {
+            self.mode
+        };
+
+        self.search = SearchState {
+            direction,
+            count,
+            cmd_f_search: false,
+            prior_selections,
+            prior_operator: self.operator_stack.last().cloned(),
+            prior_mode,
+            helix_select: false,
+            _dismiss_subscription: Some(subscription),
+        }
     }
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
@@ -272,6 +299,7 @@ impl Vim {
         let current_mode = self.mode;
         self.search = Default::default();
         self.search.prior_mode = current_mode;
+        self.search.cmd_f_search = true;
         cx.propagate();
     }
 
@@ -406,7 +434,6 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
-        let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity();
 
         let searched = pane.update(cx, |pane, cx| {
@@ -428,10 +455,7 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar
-                    .query_suggestion(window, cx)
-                    .or_else(|| cursor_word)
-                else {
+                let Some(query) = search_bar.query_suggestion(true, window, cx) else {
                     drop(search_bar.search("", None, false, window, cx));
                     return None;
                 };
@@ -529,7 +553,7 @@ impl Vim {
         let replacement = action.replacement.clone();
         let Some(((pane, workspace), editor)) = self
             .pane(window, cx)
-            .zip(self.workspace(window))
+            .zip(self.workspace(window, cx))
             .zip(self.editor())
         else {
             return;
@@ -645,7 +669,9 @@ impl Replacement {
     // convert a vim query into something more usable by zed.
     // we don't attempt to fully convert between the two regex syntaxes,
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
-    // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
+    // convert \0..\9 to $0..$9 in the replacement so that common idioms work,
+    // and escape literal `$` to `$$` in the replacement so vim's literal `$`
+    // is not interpreted as a Rust regex capture-group reference.
     pub(crate) fn parse(mut chars: Peekable<Chars>) -> Option<Replacement> {
         let delimiter = chars
             .next()
@@ -667,6 +693,9 @@ impl Replacement {
             if escaped {
                 escaped = false;
                 if phase == 1 && c.is_ascii_digit() {
+                    buffer.push('$')
+                } else if phase == 1 && c == '$' {
+                    // Second '$' escapes by fallthrough
                     buffer.push('$')
                 // unescape escaped parens
                 } else if phase == 0 && (c == '(' || c == ')') {
@@ -690,6 +719,10 @@ impl Replacement {
                 // escape unescaped parens
                 if phase == 0 && (c == '(' || c == ')') {
                     buffer.push('\\')
+                } else if phase == 1 && c == '$' {
+                    // '$' is not special in the replacement clause,
+                    // so we also escape here.
+                    buffer.push('$')
                 }
                 buffer.push(c)
             }
@@ -732,6 +765,16 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
+
+    #[test]
+    fn test_replacement_parse_escaped_dollar() {
+        let parsed = super::Replacement::parse(r"/\$test/\$rest/g".chars().peekable())
+            .expect("parse should succeed");
+
+        assert_eq!(parsed.search, r"\$test");
+        assert_eq!(parsed.replacement, "$$rest");
+        assert!(parsed.flag_g);
+    }
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
@@ -932,6 +975,45 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_non_vim_search_in_vim_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.cx.set_state("ˇone one one one");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+
+        cx.assert_state("«oneˇ» one one one", Mode::Visual);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.assert_state("one «oneˇ» one one", Mode::Visual);
+        cx.simulate_keystrokes("shift-enter");
+        cx.run_until_parked();
+        cx.assert_state("«oneˇ» one one one", Mode::Visual);
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("«oneˇ» one one one", Mode::Visual);
+    }
+
+    #[gpui::test]
+    async fn test_non_vim_search_in_vim_insert_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇone one one one", Mode::Insert);
+        cx.run_until_parked();
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+
+        cx.assert_state("«oneˇ» one one one", Mode::Insert);
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.assert_state("one «oneˇ» one one", Mode::Insert);
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("one «oneˇ» one one", Mode::Insert);
+    }
+
+    #[gpui::test]
     async fn test_visual_star_hash(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1120,6 +1202,27 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_replace_literal_dollar(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇBase=hello
+            echo $Base"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(
+            ": % s / \\ $ shift-b a s e / \\ $ shift-b a s e shift-n e w / g",
+        )
+        .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "Base=hello
+            ˇecho $BaseNew"
+        });
+    }
+
+    #[gpui::test]
     async fn test_replace_g(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state(indoc! {
@@ -1293,6 +1396,152 @@ mod test {
                 ˇa
                 a
                  "
+        });
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+
+        // Open search
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should return to line 2
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Cursor should be restored to line 2 where it was when search was opened
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor_no_matches(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇapple\nbanana\ncherry\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+
+        // Open search and type query for something that doesn't exist
+        cx.simulate_keystrokes("/ n o n e x i s t e n t");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should still be at original position
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_after_editor_focus_does_not_restore(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+
+        // Open search and type a query that matches line 3
+        cx.simulate_keystrokes("/ a g a i n");
+        cx.run_until_parked();
+
+        // Simulate the editor gaining focus while search is still open
+        // This represents the user clicking in the editor
+        cx.update_editor(|_, window, cx| cx.focus_self(window));
+        cx.run_until_parked();
+
+        // Now dismiss the search bar directly
+        cx.workspace(|workspace, window, cx| {
+            let pane = workspace.active_pane().read(cx);
+            if let Some(search_bar) = pane
+                .toolbar()
+                .read(cx)
+                .item_of_type::<search::BufferSearchBar>()
+            {
+                search_bar.update(cx, |bar, cx| {
+                    bar.dismiss(&search::buffer_search::Dismiss, window, cx)
+                });
+            }
+        });
+        cx.run_until_parked();
+
+        // Cursor should NOT be restored to line 2 (row 1) where search was opened.
+        // Since the user "clicked" in the editor (by focusing it), prior_selections
+        // was cleared, so dismiss should not restore the cursor.
+        // The cursor should be at the match location on line 3 (row 2).
+        cx.assert_state("hello world\nfoo bar\nhello ˇagain\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_vim_search_respects_search_settings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_regex_search = Some(false);
+            });
+        });
+
+        cx.set_state("ˇcontent", Mode::Normal);
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Verify search options are set from settings
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be active")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            assert!(
+                !bar.has_search_option(search::SearchOptions::REGEX),
+                "Vim search open without regex mode"
+            );
+        });
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_regex_search = Some(true);
+            });
+        });
+
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be active")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            assert!(
+                bar.has_search_option(search::SearchOptions::REGEX),
+                "Vim search opens with regex mode"
+            );
         });
     }
 }

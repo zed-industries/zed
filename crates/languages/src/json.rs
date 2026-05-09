@@ -4,10 +4,10 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
+    Buffer, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
@@ -24,6 +24,7 @@ use std::{
     borrow::Cow,
     env::consts,
     ffi::OsString,
+    future::Future,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -44,10 +45,11 @@ pub(crate) struct JsonTaskProvider;
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.as_ref().and_then(|buf| buf.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());
@@ -175,56 +177,64 @@ impl LspInstaller for JsonLspAdapter {
         })
     }
 
-    async fn check_if_version_installed(
+    fn check_if_version_installed(
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path = container_dir.join(SERVER_PATH);
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
+        let version = version.clone();
+        let container_dir = container_dir.clone();
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                Self::PACKAGE_NAME,
-                &server_path,
-                container_dir,
-                VersionStrategy::Latest(version),
-            )
-            .await;
+        async move {
+            let server_path = container_dir.join(SERVER_PATH);
 
-        if should_install_language_server {
-            None
-        } else {
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
+            let should_install_language_server = node
+                .should_install_npm_package(
+                    Self::PACKAGE_NAME,
+                    &server_path,
+                    &container_dir,
+                    VersionStrategy::Latest(&version),
+                )
+                .await;
+
+            if should_install_language_server {
+                None
+            } else {
+                Some(LanguageServerBinary {
+                    path: node.binary_path().await.ok()?,
+                    env: None,
+                    arguments: server_binary_arguments(&server_path),
+                })
+            }
         }
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let server_path = container_dir.join(SERVER_PATH);
-        let latest_version = latest_version.to_string();
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
 
-        self.node
-            .npm_install_packages(
+        async move {
+            let server_path = container_dir.join(SERVER_PATH);
+            let latest_version = latest_version.to_string();
+
+            node.npm_install_packages(
                 &container_dir,
                 &[(Self::PACKAGE_NAME, latest_version.as_str())],
             )
             .await?;
 
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: server_binary_arguments(&server_path),
-        })
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                env: None,
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -245,6 +255,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true
@@ -294,9 +305,16 @@ impl LspAdapter for JsonLspAdapter {
                 }
             })
         });
+
+        if let Some(proxy_settings) = cx.update(|cx| {
+            json_schema_proxy_settings(cx.http_client().proxy().map(ToString::to_string))
+        }) {
+            merge_json_value_into(proxy_settings, &mut config);
+        }
+
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
-                .and_then(|s| s.settings.clone())
+                .and_then(|s| worktree_root(delegate, s.settings.clone()))
         });
 
         if let Some(override_options) = project_options {
@@ -320,6 +338,50 @@ impl LspAdapter for JsonLspAdapter {
     }
 }
 
+fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>) -> Option<Value> {
+    let Some(Value::Object(mut settings_map)) = settings else {
+        return settings;
+    };
+
+    let Some(Value::Object(json_config)) = settings_map.get_mut("json") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    let Some(Value::Array(schemas)) = json_config.get_mut("schemas") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    for schema in schemas.iter_mut() {
+        let Value::Object(schema_map) = schema else {
+            continue;
+        };
+        let Some(Value::String(url)) = schema_map.get_mut("url") else {
+            continue;
+        };
+
+        if !url.starts_with(".") && !url.starts_with("~") {
+            continue;
+        }
+
+        *url = delegate
+            .resolve_relative_path(url.clone().into())
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    Some(Value::Object(settings_map))
+}
+
+fn json_schema_proxy_settings(proxy: Option<String>) -> Option<Value> {
+    proxy.map(|proxy| {
+        json!({
+            "http": {
+                "proxy": proxy,
+            }
+        })
+    })
+}
+
 async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &NodeRuntime,
@@ -338,6 +400,30 @@ async fn get_cached_server_binary(
     })
     .await
     .log_err()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::json_schema_proxy_settings;
+
+    #[test]
+    fn test_json_schema_proxy_settings_includes_proxy() {
+        assert_eq!(
+            json_schema_proxy_settings(Some("http://proxy.example:8080".to_string())),
+            Some(json!({
+                "http": {
+                    "proxy": "http://proxy.example:8080",
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn test_json_schema_proxy_settings_ignores_missing_proxy() {
+        assert_eq!(json_schema_proxy_settings(None), None);
+    }
 }
 
 pub struct NodeVersionAdapter;
@@ -401,51 +487,55 @@ impl LspInstaller for NodeVersionAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let version = &latest_version;
-        let destination_path = container_dir.join(format!(
-            "{}-{}{}",
-            Self::SERVER_NAME,
-            version.name,
-            std::env::consts::EXE_SUFFIX
-        ));
-        let destination_container_path =
-            container_dir.join(format!("{}-{}-tmp", Self::SERVER_NAME, version.name));
-        if fs::metadata(&destination_path).await.is_err() {
-            let mut response = delegate
-                .http_client()
-                .get(&version.url, Default::default(), true)
-                .await
-                .context("downloading release")?;
-            if version.url.ends_with(".zip") {
-                extract_zip(&destination_container_path, response.body_mut()).await?;
-            } else if version.url.ends_with(".tar.gz") {
-                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                let archive = Archive::new(decompressed_bytes);
-                archive.unpack(&destination_container_path).await?;
-            }
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-            fs::copy(
-                destination_container_path.join(format!(
-                    "{}{}",
-                    Self::SERVER_NAME,
-                    std::env::consts::EXE_SUFFIX
-                )),
-                &destination_path,
-            )
-            .await?;
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
+        async move {
+            let version = &latest_version;
+            let destination_path = container_dir.join(format!(
+                "{}-{}{}",
+                Self::SERVER_NAME,
+                version.name,
+                std::env::consts::EXE_SUFFIX
+            ));
+            let destination_container_path =
+                container_dir.join(format!("{}-{}-tmp", Self::SERVER_NAME, version.name));
+            if fs::metadata(&destination_path).await.is_err() {
+                let mut response = delegate
+                    .http_client()
+                    .get(&version.url, Default::default(), true)
+                    .await
+                    .context("downloading release")?;
+                if version.url.ends_with(".zip") {
+                    extract_zip(&destination_container_path, response.body_mut()).await?;
+                } else if version.url.ends_with(".tar.gz") {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_container_path).await?;
+                }
+
+                fs::copy(
+                    destination_container_path.join(format!(
+                        "{}{}",
+                        Self::SERVER_NAME,
+                        std::env::consts::EXE_SUFFIX
+                    )),
+                    &destination_path,
+                )
+                .await?;
+                remove_matching(&container_dir, |entry| entry != destination_path).await;
+            }
+            Ok(LanguageServerBinary {
+                path: destination_path,
+                env: None,
+                arguments: Default::default(),
+            })
         }
-        Ok(LanguageServerBinary {
-            path: destination_path,
-            env: None,
-            arguments: Default::default(),
-        })
     }
 
     async fn cached_server_binary(

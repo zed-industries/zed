@@ -1,4 +1,4 @@
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
@@ -167,6 +167,12 @@ impl Terminal {
         &self.command
     }
 
+    pub fn update_command_label(&self, label: &str, cx: &mut App) {
+        self.command.update(cx, |command, cx| {
+            command.replace(format!("```\n{}\n```", label), cx);
+        });
+    }
+
     pub fn working_dir(&self) -> &Option<PathBuf> {
         &self.working_dir
     }
@@ -227,7 +233,8 @@ pub async fn create_terminal_entity(
                 .map(Shell::Program)
         })
         .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
-    let (task_command, task_args) = task::ShellBuilder::new(&shell)
+    let is_windows = project.read_with(cx, |project, cx| project.path_style(cx).is_windows());
+    let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
         .redirect_stdin_to_dev_null()
         .build(Some(command.clone()), &args);
 

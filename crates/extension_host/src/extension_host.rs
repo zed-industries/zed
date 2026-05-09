@@ -9,18 +9,17 @@ mod extension_store_test;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::ExtensionProvides;
-use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
+use client::{Client, proto, telemetry::Telemetry};
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
 use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
-    ExtensionThemeProxy,
+    ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
-use fs::{Fs, RemoveOptions};
+use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::join_all;
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
@@ -32,8 +31,8 @@ use futures::{
     select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, WeakEntity,
-    actions,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task, TaskExt,
+    UpdateGlobal as _, WeakEntity, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -46,7 +45,7 @@ use release_channel::ReleaseChannel;
 use remote::RemoteClient;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{SemanticTokenRules, Settings, SettingsStore};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
@@ -55,8 +54,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::TaskTemplates;
 use url::Url;
-use util::{ResultExt, paths::RemotePathBuf};
+use util::{ResultExt, paths::RemotePathBuf, rel_path::PathExt};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -77,7 +77,7 @@ const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 ///
 /// These snippets should no longer be downloaded or loaded, because their
 /// functionality has been integrated into the core editor.
-const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright"];
+const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright", "basher"];
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
@@ -726,41 +726,67 @@ impl ExtensionStore {
                 }
             });
 
-            let mut response = http_client
-                .get(url.as_ref(), Default::default(), true)
-                .await
-                .context("downloading extension")?;
+            cx.background_spawn(async move {
+                let mut response = http_client
+                    .get(url.as_ref(), Default::default(), true)
+                    .await
+                    .context("downloading extension")?;
 
-            fs.remove_dir(
-                &extension_dir,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
+                let content_length = response
+                    .headers()
+                    .get(http_client::http::header::CONTENT_LENGTH)
+                    .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+
+                let mut body = BufReader::new(response.body_mut());
+                let mut tar_gz_bytes = Vec::new();
+                body.read_to_end(&mut tar_gz_bytes).await?;
+
+                if let Some(content_length) = content_length {
+                    let actual_len = tar_gz_bytes.len();
+                    if content_length != actual_len {
+                        bail!(
+                            "downloaded extension size {actual_len} \
+                        does not match content length {content_length}"
+                        );
+                    }
+                }
+
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+                let archive = Archive::new(decompressed_bytes);
+
+                let remove_dir = || {
+                    fs.remove_dir(
+                        &extension_dir,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                };
+
+                match tempfile::tempdir_in(paths::temp_dir()).or_else(|_| tempfile::tempdir()) {
+                    Ok(temp_dir) => {
+                        archive.unpack(temp_dir.path()).await?;
+                        remove_dir().await?;
+                        fs.rename(
+                            temp_dir.path(),
+                            &extension_dir,
+                            RenameOptions {
+                                overwrite: true,
+                                ignore_if_exists: true,
+                                create_parents: true,
+                            },
+                        )
+                        .await
+                    }
+                    Err(_) => {
+                        remove_dir().await?;
+                        archive.unpack(extension_dir).await.map_err(Into::into)
+                    }
+                }
+            })
             .await?;
 
-            let content_length = response
-                .headers()
-                .get(http_client::http::header::CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
-
-            let mut body = BufReader::new(response.body_mut());
-            let mut tar_gz_bytes = Vec::new();
-            body.read_to_end(&mut tar_gz_bytes).await?;
-
-            if let Some(content_length) = content_length {
-                let actual_len = tar_gz_bytes.len();
-                if content_length != actual_len {
-                    bail!(concat!(
-                        "downloaded extension size {actual_len} ",
-                        "does not match content length {content_length}"
-                    ));
-                }
-            }
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(extension_dir).await?;
             this.update(cx, |this, cx| this.reload(Some(extension_id.clone()), cx))?
                 .await;
 
@@ -1208,9 +1234,6 @@ impl ExtensionStore {
             for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for command_name in extension.manifest.slash_commands.keys() {
-                self.proxy.unregister_slash_command(command_name.clone());
-            }
         }
 
         self.wasm_extensions
@@ -1219,6 +1242,15 @@ impl ExtensionStore {
         self.proxy.remove_icon_themes(icon_themes_to_remove);
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
+
+        // Remove semantic token rules for languages being unloaded.
+        if !languages_to_remove.is_empty() {
+            SettingsStore::update_global(cx, |store, cx| {
+                for language in &languages_to_remove {
+                    store.remove_language_semantic_token_rules(language.as_ref(), cx);
+                }
+            });
+        }
 
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
@@ -1238,13 +1270,16 @@ impl ExtensionStore {
             }));
             themes_to_add.extend(extension.manifest.themes.iter().map(|theme_path| {
                 let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
+                path.extend([Path::new(extension_id.as_ref()), theme_path.as_std_path()]);
                 path
             }));
             icon_themes_to_add.extend(extension.manifest.icon_themes.iter().map(
                 |icon_theme_path| {
                     let mut path = self.installed_dir.clone();
-                    path.extend([Path::new(extension_id.as_ref()), icon_theme_path.as_path()]);
+                    path.extend([
+                        Path::new(extension_id.as_ref()),
+                        icon_theme_path.as_std_path(),
+                    ]);
 
                     let mut icons_root_path = self.installed_dir.clone();
                     icons_root_path.extend([Path::new(extension_id.as_ref())]);
@@ -1267,23 +1302,33 @@ impl ExtensionStore {
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
             .collect::<Vec<_>>();
+        let mut semantic_token_rules_to_add: Vec<(LanguageName, SemanticTokenRules)> = Vec::new();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
+
+            // Load semantic token rules if present in the language directory.
+            let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
+            if std::fs::exists(&rules_path).is_ok_and(|exists| exists)
+                && let Some(rules) = SemanticTokenRules::load(&rules_path).log_err()
+            {
+                semantic_token_rules_to_add.push((language_name.clone(), rules));
+            }
+
             self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
                 language.hidden,
                 Arc::new(move || {
-                    let config = std::fs::read_to_string(language_path.join("config.toml"))?;
-                    let config: LanguageConfig = ::toml::from_str(&config)?;
+                    let config =
+                        LanguageConfig::load(language_path.join(LanguageConfig::FILE_NAME))?;
                     let queries = load_plugin_queries(&language_path);
                     let context_provider =
-                        std::fs::read_to_string(language_path.join("tasks.json"))
+                        std::fs::read_to_string(language_path.join(TaskTemplates::FILE_NAME))
                             .ok()
                             .and_then(|contents| {
                                 let definitions =
@@ -1300,6 +1345,15 @@ impl ExtensionStore {
                     })
                 }),
             );
+        }
+
+        // Register semantic token rules for newly loaded extension languages.
+        if !semantic_token_rules_to_add.is_empty() {
+            SettingsStore::update_global(cx, |store, cx| {
+                for (language_name, rules) in semantic_token_rules_to_add {
+                    store.set_language_semantic_token_rules(language_name.0.clone(), rules, cx);
+                }
+            });
         }
 
         let fs = self.fs.clone();
@@ -1399,21 +1453,6 @@ impl ExtensionStore {
                                 language.clone(),
                             );
                         }
-                    }
-
-                    for (slash_command_name, slash_command) in &manifest.slash_commands {
-                        this.proxy.register_slash_command(
-                            extension.clone(),
-                            extension::SlashCommand {
-                                name: slash_command_name.to_string(),
-                                description: slash_command.description.to_string(),
-                                // We don't currently expose this as a configurable option, as it currently drives
-                                // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
-                                // defined in extensions, as they are not able to be added to the menu.
-                                tooltip_text: String::new(),
-                                requires_argument: slash_command.requires_argument,
-                            },
-                        );
                     }
 
                     for id in manifest.context_servers.keys() {
@@ -1544,13 +1583,13 @@ impl ExtensionStore {
                 if !fs_metadata.is_dir {
                     continue;
                 }
-                let language_config_path = language_path.join("config.toml");
+                let language_config_path = language_path.join(LanguageConfig::FILE_NAME);
                 let config = fs.load(&language_config_path).await.with_context(|| {
                     format!("loading language config from {language_config_path:?}")
                 })?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.languages.contains(&relative_path) {
                     extension_manifest.languages.push(relative_path.clone());
                 }
@@ -1559,7 +1598,7 @@ impl ExtensionStore {
                     config.name.clone(),
                     ExtensionIndexLanguageEntry {
                         extension: extension_id.clone(),
-                        path: relative_path,
+                        path: relative_path.as_std_path().to_path_buf(),
                         matcher: config.matcher,
                         hidden: config.hidden,
                         grammar: config.grammar,
@@ -1583,7 +1622,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.themes.contains(&relative_path) {
                     extension_manifest.themes.push(relative_path.clone());
                 }
@@ -1593,7 +1632,7 @@ impl ExtensionStore {
                         theme_name.into(),
                         ExtensionIndexThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.clone(),
+                            path: relative_path.as_std_path().to_path_buf(),
                         },
                     );
                 }
@@ -1615,7 +1654,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.icon_themes.contains(&relative_path) {
                     extension_manifest.icon_themes.push(relative_path.clone());
                 }
@@ -1625,7 +1664,7 @@ impl ExtensionStore {
                         icon_theme_name.into(),
                         ExtensionIndexIconThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.clone(),
+                            path: relative_path.as_std_path().to_path_buf(),
                         },
                     );
                 }
@@ -1667,7 +1706,7 @@ impl ExtensionStore {
         cx.background_spawn(async move {
             const EXTENSION_TOML: &str = "extension.toml";
             const EXTENSION_WASM: &str = "extension.wasm";
-            const CONFIG_TOML: &str = "config.toml";
+            const CONFIG_TOML: &str = LanguageConfig::FILE_NAME;
 
             if is_dev {
                 let manifest_toml = toml::to_string(&loaded_extension.manifest)?;
@@ -1711,15 +1750,15 @@ impl ExtensionStore {
             }
 
             for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
-                let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
+                let schema_path = extension::build_debug_adapter_schema_path(adapter_name, meta)?;
 
-                if fs.is_file(&src_dir.join(schema_path)).await {
+                if fs.is_file(&src_dir.join(&schema_path)).await {
                     if let Some(parent) = schema_path.parent() {
                         fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
-                        &src_dir.join(schema_path),
-                        &tmp_dir.join(schema_path),
+                        &src_dir.join(&schema_path),
+                        &tmp_dir.join(&schema_path),
                         fs::CopyOptions::default(),
                     )
                     .await?

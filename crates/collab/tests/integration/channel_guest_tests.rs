@@ -1,6 +1,5 @@
 use crate::TestServer;
 use call::ActiveCall;
-use chrono::Utc;
 use collab::db::ChannelId;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
@@ -34,9 +33,11 @@ async fn test_channel_guests(
     cx_a.executor().run_until_parked();
 
     // Client B joins channel A as a guest
-    cx_b.update(|cx| workspace::join_channel(channel_id, client_b.app_state.clone(), None, cx))
-        .await
-        .unwrap();
+    cx_b.update(|cx| {
+        workspace::join_channel(channel_id, client_b.app_state.clone(), None, None, cx)
+    })
+    .await
+    .unwrap();
 
     // b should be following a in the shared project.
     // B is a guest,
@@ -76,9 +77,11 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
         .await;
 
     let project_a = client_a.build_test_project(cx_a).await;
-    cx_a.update(|cx| workspace::join_channel(channel_id, client_a.app_state.clone(), None, cx))
-        .await
-        .unwrap();
+    cx_a.update(|cx| {
+        workspace::join_channel(channel_id, client_a.app_state.clone(), None, None, cx)
+    })
+    .await
+    .unwrap();
 
     // Client A shares a project in the channel
     active_call_a
@@ -88,9 +91,11 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     cx_a.run_until_parked();
 
     // Client B joins channel A as a guest
-    cx_b.update(|cx| workspace::join_channel(channel_id, client_b.app_state.clone(), None, cx))
-        .await
-        .unwrap();
+    cx_b.update(|cx| {
+        workspace::join_channel(channel_id, client_b.app_state.clone(), None, None, cx)
+    })
+    .await
+    .unwrap();
     cx_a.run_until_parked();
 
     // client B opens 1.txt as a guest
@@ -177,14 +182,6 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
 #[gpui::test]
 async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
-
-    server
-        .app_state
-        .db
-        .update_or_create_user_by_github_account("user_b", 100, None, None, Utc::now(), None)
-        .await
-        .unwrap();
-
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let active_call_a = cx_a.read(ActiveCall::global);
@@ -282,10 +279,17 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     // User B signs the zed CLA.
+    let user_b = server
+        .app_state
+        .user_service
+        .get_user_by_github_login("user_b")
+        .await
+        .unwrap()
+        .expect("user_b not found");
     server
         .app_state
         .db
-        .add_contributor("user_b", 100, None, None, Utc::now(), None)
+        .add_contributor(user_b.id)
         .await
         .unwrap();
 

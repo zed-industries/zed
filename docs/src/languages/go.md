@@ -1,3 +1,8 @@
+---
+title: Go
+description: "Configure Go language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Go
 
 Go support is available natively in Zed.
@@ -41,7 +46,7 @@ If `gopls` is not found you will likely need to add `export PATH="$PATH:$HOME/go
 
 Zed sets the following initialization options for inlay hints:
 
-```json [settings]
+```json
 "hints": {
     "assignVariableTypes": true,
     "compositeLiteralFields": true,
@@ -57,7 +62,7 @@ to make the language server send back inlay hints when Zed has them enabled in t
 
 Use
 
-```json [settings]
+```json
 "lsp": {
     "gopls": {
         "initialization_options": {
@@ -72,6 +77,39 @@ Use
 to override these settings.
 
 See [gopls inlayHints documentation](https://github.com/golang/tools/blob/master/gopls/doc/inlayHints.md) for more information.
+
+## Code Lens
+
+Zed enables the `test` code lens for `gopls` by default. This shows "run test" and "run benchmark" links above `Test` and `Benchmark` functions in `*_test.go` files. To use them, enable the `code_lens` setting:
+
+```json [settings]
+{
+  "code_lens": "on"
+}
+```
+
+You can override the default code lens settings in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "gopls": {
+      "initialization_options": {
+        "codelenses": {
+          "test": true,
+          "generate": true,
+          "regenerate_cgo": true,
+          "tidy": true,
+          "upgrade_dependency": true,
+          "vendor": true
+        }
+      }
+    }
+  }
+}
+```
+
+See [gopls code lenses documentation](https://go.dev/gopls/codelenses) for more information.
 
 ## Debugging
 

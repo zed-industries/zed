@@ -1,5 +1,6 @@
 use crate::db::UserId;
 use chrono::NaiveDateTime;
+use rpc::proto;
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
@@ -19,22 +20,41 @@ pub struct Model {
     pub created_at: NaiveDateTime,
 }
 
+impl From<Model> for crate::entities::User {
+    fn from(user: Model) -> Self {
+        crate::entities::User {
+            id: user.id,
+            github_login: user.github_login,
+            github_user_id: user.github_user_id,
+            name: user.name,
+            admin: user.admin,
+            connected_once: user.connected_once,
+        }
+    }
+}
+
+impl From<Model> for proto::User {
+    fn from(user: Model) -> Self {
+        Self {
+            id: user.id.to_proto(),
+            avatar_url: format!(
+                "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
+                user.github_user_id
+            ),
+            github_login: user.github_login,
+            name: user.name,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::access_token::Entity")]
-    AccessToken,
     #[sea_orm(has_one = "super::room_participant::Entity")]
     RoomParticipant,
     #[sea_orm(has_many = "super::project::Entity")]
     HostedProjects,
     #[sea_orm(has_many = "super::channel_member::Entity")]
     ChannelMemberships,
-}
-
-impl Related<super::access_token::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::AccessToken.def()
-    }
 }
 
 impl Related<super::room_participant::Entity> for Entity {

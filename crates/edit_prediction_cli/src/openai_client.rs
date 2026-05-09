@@ -40,6 +40,7 @@ impl PlainOpenAiClient {
             model: model.to_string(),
             messages,
             stream: false,
+            stream_options: None,
             max_completion_tokens: Some(max_tokens),
             stop: Vec::new(),
             temperature: None,
@@ -194,13 +195,16 @@ impl BatchingOpenAiClient {
         max_tokens: u64,
         messages: Vec<RequestMessage>,
         seed: Option<usize>,
+        cache_only: bool,
     ) -> Result<Option<OpenAiResponse>> {
         let response = self.lookup(model, max_tokens, &messages, seed)?;
         if let Some(response) = response {
             return Ok(Some(response));
         }
 
-        self.mark_for_batch(model, max_tokens, &messages, seed)?;
+        if !cache_only {
+            self.mark_for_batch(model, max_tokens, &messages, seed)?;
+        }
 
         Ok(None)
     }
@@ -208,6 +212,14 @@ impl BatchingOpenAiClient {
     async fn sync_batches(&self) -> Result<()> {
         let _batch_ids = self.upload_pending_requests().await?;
         self.download_finished_batches().await
+    }
+
+    pub fn pending_batch_count(&self) -> Result<usize> {
+        let connection = self.connection.lock().unwrap();
+        let counts: Vec<i32> = connection.select(
+            sql!(SELECT COUNT(*) FROM openai_cache WHERE batch_id IS NOT NULL AND response IS NULL),
+        )?()?;
+        Ok(counts.into_iter().next().unwrap_or(0) as usize)
     }
 
     pub async fn import_batches(&self, batch_ids: &[String]) -> Result<()> {
@@ -473,6 +485,7 @@ impl BatchingOpenAiClient {
                         "assistant" => RequestMessage::Assistant {
                             content: Some(MessageContent::Plain(msg.content)),
                             tool_calls: Vec::new(),
+                            reasoning_content: None,
                         },
                         "system" => RequestMessage::System {
                             content: MessageContent::Plain(msg.content),
@@ -487,6 +500,7 @@ impl BatchingOpenAiClient {
                     model: serializable_request.model,
                     messages,
                     stream: false,
+                    stream_options: None,
                     max_completion_tokens: Some(serializable_request.max_tokens),
                     stop: Vec::new(),
                     temperature: None,
@@ -643,6 +657,7 @@ impl OpenAiClient {
         max_tokens: u64,
         messages: Vec<RequestMessage>,
         seed: Option<usize>,
+        cache_only: bool,
     ) -> Result<Option<OpenAiResponse>> {
         match self {
             OpenAiClient::Plain(plain_client) => plain_client
@@ -651,7 +666,7 @@ impl OpenAiClient {
                 .map(Some),
             OpenAiClient::Batch(batching_client) => {
                 batching_client
-                    .generate(model, max_tokens, messages, seed)
+                    .generate(model, max_tokens, messages, seed, cache_only)
                     .await
             }
             OpenAiClient::Dummy => panic!("Dummy OpenAI client is not expected to be used"),
@@ -662,6 +677,14 @@ impl OpenAiClient {
         match self {
             OpenAiClient::Plain(_) => Ok(()),
             OpenAiClient::Batch(batching_client) => batching_client.sync_batches().await,
+            OpenAiClient::Dummy => panic!("Dummy OpenAI client is not expected to be used"),
+        }
+    }
+
+    pub fn pending_batch_count(&self) -> Result<usize> {
+        match self {
+            OpenAiClient::Plain(_) => Ok(0),
+            OpenAiClient::Batch(batching_client) => batching_client.pending_batch_count(),
             OpenAiClient::Dummy => panic!("Dummy OpenAI client is not expected to be used"),
         }
     }

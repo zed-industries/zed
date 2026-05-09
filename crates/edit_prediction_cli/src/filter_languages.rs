@@ -13,22 +13,29 @@
 //!
 //! Language is detected based on file extension of the `cursor_path` field.
 //! The extension-to-language mapping is built from the embedded language
-//! config files in the `languages` crate.
+//! config files in the `grammars` crate.
 
 use anyhow::{Context as _, Result, bail};
 use clap::Args;
 use collections::HashMap;
-use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-#[derive(RustEmbed)]
-#[folder = "../languages/src/"]
-#[include = "*/config.toml"]
-struct LanguageConfigs;
+#[cfg(not(feature = "dynamic_prompts"))]
+mod language_configs_embedded {
+    use rust_embed::RustEmbed;
+
+    #[derive(RustEmbed)]
+    #[folder = "../grammars/src/"]
+    #[include = "*/config.toml"]
+    pub struct LanguageConfigs;
+}
+
+#[cfg(not(feature = "dynamic_prompts"))]
+use language_configs_embedded::LanguageConfigs;
 
 #[derive(Debug, Deserialize)]
 struct LanguageConfig {
@@ -89,6 +96,7 @@ pub struct FilterLanguagesArgs {
     pub show_top_excluded: Option<usize>,
 }
 
+#[cfg(not(feature = "dynamic_prompts"))]
 fn build_extension_to_language_map() -> HashMap<String, String> {
     let mut map = HashMap::default();
 
@@ -113,6 +121,42 @@ fn build_extension_to_language_map() -> HashMap<String, String> {
     map
 }
 
+#[cfg(feature = "dynamic_prompts")]
+fn build_extension_to_language_map() -> HashMap<String, String> {
+    const LANGUAGES_SRC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../grammars/src");
+
+    let mut map = HashMap::default();
+
+    let languages_dir = Path::new(LANGUAGES_SRC_DIR);
+    let entries = match std::fs::read_dir(languages_dir) {
+        Ok(e) => e,
+        Err(_) => return map,
+    };
+
+    for entry in entries.flatten() {
+        let config_path = entry.path().join("config.toml");
+        if !config_path.exists() {
+            continue;
+        }
+
+        let content_str = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let config: LanguageConfig = match toml::from_str(&content_str) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for suffix in &config.path_suffixes {
+            map.insert(suffix.to_lowercase(), config.name.clone());
+        }
+    }
+
+    map
+}
+
 fn get_all_languages(extension_map: &HashMap<String, String>) -> Vec<(String, Vec<String>)> {
     let mut language_to_extensions: HashMap<String, Vec<String>> = HashMap::default();
 
@@ -124,7 +168,7 @@ fn get_all_languages(extension_map: &HashMap<String, String>) -> Vec<(String, Ve
     }
 
     let mut result: Vec<_> = language_to_extensions.into_iter().collect();
-    result.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    result.sort_by_key(|res| res.0.to_lowercase());
     for (_, extensions) in &mut result {
         extensions.sort();
     }
@@ -336,7 +380,7 @@ pub fn run_filter_languages(
     if let Some(top_n) = args.show_top_excluded {
         if !excluded_extensions.is_empty() {
             let mut sorted: Vec<_> = excluded_extensions.into_iter().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted.sort_by_key(|res| std::cmp::Reverse(res.1));
             eprintln!("\nTop {} excluded extensions:", top_n.min(sorted.len()));
             for (ext, count) in sorted.into_iter().take(top_n) {
                 eprintln!("  {:>6}  .{}", count, ext);
@@ -395,7 +439,7 @@ fn run_stats(input: &Path, extension_map: &HashMap<String, String>) -> Result<()
     }
 
     let mut sorted_counts: Vec<_> = language_counts.into_iter().collect();
-    sorted_counts.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted_counts.sort_by_key(|res| std::cmp::Reverse(res.1));
 
     println!("Language distribution ({} total examples):", total_count);
     println!();
@@ -408,7 +452,7 @@ fn run_stats(input: &Path, extension_map: &HashMap<String, String>) -> Result<()
         println!();
         println!("Unknown extensions:");
         let mut sorted_unknown: Vec<_> = unknown_extensions.into_iter().collect();
-        sorted_unknown.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted_unknown.sort_by_key(|res| std::cmp::Reverse(res.1));
         for (ext, count) in sorted_unknown.iter().take(30) {
             println!("  {:>6}  .{}", count, ext);
         }

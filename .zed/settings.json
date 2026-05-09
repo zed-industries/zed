@@ -38,6 +38,15 @@
       },
     },
   },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "procMacro": {
+          "processes": 4,
+        },
+      },
+    },
+  },
   "file_types": {
     "Dockerfile": ["Dockerfile*[!dockerignore]"],
     "JSONC": ["**/assets/**/*.json", "renovate.json"],
@@ -48,9 +57,7 @@
   "remove_trailing_whitespace_on_save": true,
   "ensure_final_newline_on_save": true,
   "file_scan_exclusions": [
-    "crates/agent/src/edit_agent/evals/fixtures",
-    "crates/eval/worktrees/",
-    "crates/eval/repos/",
+    "crates/agent/src/tools/evals/fixtures",
     "**/.git",
     "**/.svn",
     "**/.hg",

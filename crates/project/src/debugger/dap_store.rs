@@ -30,7 +30,7 @@ use futures::{
     channel::mpsc::{self, UnboundedSender},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
@@ -47,11 +47,11 @@ use std::{
     borrow::Borrow,
     collections::BTreeMap,
     ffi::OsStr,
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, SharedTaskContext, SpawnInTerminal, TaskTemplate};
 use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -265,11 +265,11 @@ impl DapStore {
                     DapBinary::Default => None,
                     DapBinary::Custom(binary) => {
                         let path = PathBuf::from(binary);
-                        Some(worktree.read(cx).resolve_executable_path(path))
+                        Some(worktree.read(cx).resolve_relative_path(path))
                     }
                 });
-                let user_args = dap_settings.map(|s| s.args.clone());
-                let user_env = dap_settings.map(|s| s.env.clone());
+                let user_args = dap_settings.and_then(|s| s.args.clone());
+                let user_env = dap_settings.and_then(|s| s.env.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
 
@@ -323,7 +323,7 @@ impl DapStore {
                     let port_forwarding;
                     let connection;
                     if let Some(c) = binary.connection {
-                        let host = Ipv4Addr::LOCALHOST;
+                        let host = IpAddr::V4(Ipv4Addr::LOCALHOST);
                         let port;
                         if remote.read_with(cx, |remote, _cx| remote.shares_network_interface()) {
                             port = c.port;
@@ -451,7 +451,7 @@ impl DapStore {
         &mut self,
         label: Option<SharedString>,
         adapter: DebugAdapterName,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         parent_session: Option<Entity<Session>>,
         quirks: SessionQuirks,
         cx: &mut Context<Self>,
