@@ -1,7 +1,7 @@
 use crate::{BufferSnapshot, Point, ToPoint, ToTreeSitterPoint};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
-use std::{ops::Range};
+use std::ops::Range;
 
 /// An outline of all the symbols contained in a buffer.
 #[derive(Debug)]
@@ -168,7 +168,7 @@ impl<T> Outline<T> {
         }
     }
 
-    /// Find all outline symbols according to a longest subsequence match with the query, ordered descending by match score.
+    /// Find all outline symbols that match with the nucleo fuzzy matcher, ordered by score.
     pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
         let query = query.trim_start();
         let is_path_query = query.contains(' ');
@@ -183,8 +183,9 @@ impl<T> Outline<T> {
             LengthPenalty::On,
             100,
             &Default::default(),
-            executor
-        ).await;
+            executor,
+        )
+        .await;
         matches.sort_unstable_by_key(|m| m.candidate_id);
 
         let mut tree_matches = Vec::new();
