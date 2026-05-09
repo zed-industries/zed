@@ -3996,15 +3996,46 @@ mod tests {
         ensure_theme_initialized(cx);
 
         let markdown_examples = [
-            "- [x] a\n",
-            "- [x] a\n- [ ] b",
-            "- [x] a\n\n- [ ] b",
-            "- [x] a\n\n- [ ] b\n\n- [ ] c",
-            "- [x] a\n\n\n\n\n\n- [ ] b",
-            "- [x] a\n\n\n<br><br><br>\n\n\n- [ ] b",
+            ("- [x] a\n", vec![r#"checkbox_Name("- [x] a\n")"#]),
+            (
+                "- [x] a\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n- [ ] b\n\n- [ ] c",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n")"#,
+                    r#"checkbox_Name("- [ ] b\n\n")"#,
+                    r#"checkbox_Name("- [ ] c")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n\n\n\n\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n\n\n\n\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
+            (
+                "- [x] a\n\n\n<br><br><br>\n\n\n- [ ] b",
+                vec![
+                    r#"checkbox_Name("- [x] a\n\n\n")"#,
+                    r#"checkbox_Name("- [ ] b")"#,
+                ],
+            ),
         ];
 
-        for markdown in markdown_examples {
+        for (markdown, expected_debug_bounds) in markdown_examples {
             let (_, cx) = cx.add_window_view(|_, cx| {
                 let markdown = cx.new(|cx| {
                     Markdown::new_with_options(
@@ -4021,7 +4052,9 @@ mod tests {
 
             cx.run_until_parked();
 
-            assert!(cx.debug_bounds("checkbox").is_some())
+            for debug_bounds in expected_debug_bounds {
+                assert!(cx.debug_bounds(debug_bounds).is_some())
+            }
         }
     }
 }
