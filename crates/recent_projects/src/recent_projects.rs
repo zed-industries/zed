@@ -78,8 +78,28 @@ struct OpenFolderEntry {
 #[derive(Clone, Debug)]
 enum ProjectPickerEntry {
     Header(SharedString),
-    OpenFolder { index: usize, positions: Vec<usize> },
+    /// A currently open folder from the active workspace's "Current Folders" section.
+    ///
+    /// `index` points into `RecentProjectsDelegate::open_folders`, and `positions` stores the
+    /// fuzzy-match highlight positions for rendering the folder name.
+    OpenFolder {
+        index: usize,
+        positions: Vec<usize>,
+    },
+    /// A project group from the current window's "This Window" section.
+    ///
+    /// These entries come from `RecentProjectsDelegate::window_project_groups`, not from the
+    /// recent-project database. Empty queries list every project group known to the current
+    /// window; non-empty queries list matching project groups. Confirming one activates or loads
+    /// that project group in the current window, while secondary confirm can move local project
+    /// groups to a new window when multiple groups are available.
     ProjectGroup(StringMatch),
+    /// A workspace from the recent-project database's "Recent Projects" section.
+    ///
+    /// The match's `candidate_id` indexes into `RecentProjectsDelegate::workspaces`. Confirming
+    /// one opens that recent workspace in either the current window or a new window, depending on
+    /// whether the picker was invoked for new-window behavior and whether this was a primary or
+    /// secondary confirm.
     RecentProject(StringMatch),
 }
 
@@ -1139,99 +1159,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                 cx.emit(DismissEvent);
             }
             Some(ProjectPickerEntry::RecentProject(selected_match)) => {
-                let Some(workspace) = self.workspace.upgrade() else {
-                    return;
-                };
-                let Some(candidate_workspace) = self.workspaces.get(selected_match.candidate_id)
-                else {
-                    return;
-                };
-
-                let replace_current_window = self.create_new_window == secondary;
-                let candidate_workspace_id = candidate_workspace.workspace_id;
-                let candidate_workspace_location = candidate_workspace.location.clone();
-                let candidate_workspace_paths = candidate_workspace.paths.clone();
-
-                workspace.update(cx, |workspace, cx| {
-                    if workspace.database_id() == Some(candidate_workspace_id) {
-                        return;
-                    }
-                    match candidate_workspace_location {
-                        SerializedWorkspaceLocation::Local => {
-                            let paths = candidate_workspace_paths.paths().to_vec();
-                            if replace_current_window {
-                                if let Some(handle) =
-                                    window.window_handle().downcast::<MultiWorkspace>()
-                                {
-                                    cx.defer(move |cx| {
-                                        if let Some(task) = handle
-                                            .update(cx, |multi_workspace, window, cx| {
-                                                multi_workspace.open_project(
-                                                    paths,
-                                                    OpenMode::Activate,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                            .log_err()
-                                        {
-                                            task.detach_and_log_err(cx);
-                                        }
-                                    });
-                                }
-                                return;
-                            } else {
-                                workspace
-                                    .open_workspace_for_paths(
-                                        OpenMode::NewWindow,
-                                        paths,
-                                        window,
-                                        cx,
-                                    )
-                                    .detach_and_prompt_err(
-                                        "Failed to open project",
-                                        window,
-                                        cx,
-                                        |_, _, _| None,
-                                    );
-                            }
-                        }
-                        SerializedWorkspaceLocation::Remote(mut connection) => {
-                            let app_state = workspace.app_state().clone();
-                            let replace_window = if replace_current_window {
-                                window.window_handle().downcast::<MultiWorkspace>()
-                            } else {
-                                None
-                            };
-                            let open_options = OpenOptions {
-                                requesting_window: replace_window,
-                                ..Default::default()
-                            };
-                            if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
-                                RemoteSettings::get_global(cx)
-                                    .fill_connection_options_from_settings(connection);
-                            };
-                            let paths = candidate_workspace_paths.paths().to_vec();
-                            cx.spawn_in(window, async move |_, cx| {
-                                open_remote_project(
-                                    connection.clone(),
-                                    paths,
-                                    app_state,
-                                    open_options,
-                                    cx,
-                                )
-                                .await
-                            })
-                            .detach_and_prompt_err(
-                                "Failed to open project",
-                                window,
-                                cx,
-                                |_, _, _| None,
-                            );
-                        }
-                    }
-                });
-                cx.emit(DismissEvent);
+                let candidate_id = selected_match.candidate_id;
+                self.open_recent_projects(candidate_id, secondary, window, cx);
             }
             _ => {}
         }
@@ -2077,6 +2006,94 @@ fn open_local_project(
 }
 
 impl RecentProjectsDelegate {
+    fn open_recent_projects(
+        &mut self,
+        candidate_id: usize,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(candidate_workspace) = self.workspaces.get(candidate_id) else {
+            return;
+        };
+
+        let replace_current_window = self.create_new_window == secondary;
+        let candidate_workspace_id = candidate_workspace.workspace_id;
+        let candidate_workspace_location = candidate_workspace.location.clone();
+        let candidate_workspace_paths = candidate_workspace.paths.clone();
+
+        workspace.update(cx, |workspace, cx| {
+            if workspace.database_id() == Some(candidate_workspace_id) {
+                return;
+            }
+            match candidate_workspace_location {
+                SerializedWorkspaceLocation::Local => {
+                    let paths = candidate_workspace_paths.paths().to_vec();
+                    if replace_current_window {
+                        if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
+                            cx.defer(move |cx| {
+                                if let Some(task) = handle
+                                    .update(cx, |multi_workspace, window, cx| {
+                                        multi_workspace.open_project(
+                                            paths,
+                                            OpenMode::Activate,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .log_err()
+                                {
+                                    task.detach_and_log_err(cx);
+                                }
+                            });
+                        }
+                        return;
+                    } else {
+                        workspace
+                            .open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
+                            .detach_and_prompt_err(
+                                "Failed to open project",
+                                window,
+                                cx,
+                                |_, _, _| None,
+                            );
+                    }
+                }
+                SerializedWorkspaceLocation::Remote(mut connection) => {
+                    let app_state = workspace.app_state().clone();
+                    let replace_window = if replace_current_window {
+                        window.window_handle().downcast::<MultiWorkspace>()
+                    } else {
+                        None
+                    };
+                    let open_options = OpenOptions {
+                        requesting_window: replace_window,
+                        ..Default::default()
+                    };
+                    if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
+                        RemoteSettings::get_global(cx)
+                            .fill_connection_options_from_settings(connection);
+                    };
+                    let paths = candidate_workspace_paths.paths().to_vec();
+                    cx.spawn_in(window, async move |_, cx| {
+                        open_remote_project(connection.clone(), paths, app_state, open_options, cx)
+                            .await
+                    })
+                    .detach_and_prompt_err(
+                        "Failed to open project",
+                        window,
+                        cx,
+                        |_, _, _| None,
+                    );
+                }
+            }
+        });
+        cx.emit(DismissEvent);
+    }
+
     fn add_paths_to_project(
         &mut self,
         paths: Vec<PathBuf>,

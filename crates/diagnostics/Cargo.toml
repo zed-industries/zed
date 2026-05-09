@@ -19,6 +19,7 @@ collections.workspace = true
 component.workspace = true
 ctor.workspace = true
 editor.workspace = true
+futures-lite.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 itertools.workspace = true
