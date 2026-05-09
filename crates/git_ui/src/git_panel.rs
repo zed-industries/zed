@@ -3161,11 +3161,29 @@ impl GitPanel {
             ];
 
             cx.spawn_in(window, async move |git_panel, cx| {
-                git_panel.update(cx, |git_panel, cx| {
+                let task = git_panel.update(cx, |git_panel, cx| {
                     git_panel.project.read(cx).git_config(path, args, cx)
-                })
+                })?;
+                let result = task.await;
+
+                match result {
+                    Ok(_) => {
+                        let project =
+                            git_panel.read_with(cx, |git_panel, _| git_panel.project.clone())?;
+                        project.update(cx, |project, cx| {
+                            project.global_git_configuration_updated(cx);
+                        });
+                    }
+                    Err(e) => {
+                        git_panel.update(cx, |git_panel, cx| {
+                            git_panel.show_error_toast("trust directory", e, cx)
+                        })?;
+                    }
+                }
+
+                anyhow::Ok(())
             })
-            .detach();
+            .detach_and_log_err(cx);
         }
     }
 

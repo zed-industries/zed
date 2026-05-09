@@ -6033,6 +6033,12 @@ impl Project {
         self.git_store.read(cx).git_config(path, args, cx)
     }
 
+    pub fn global_git_configuration_updated(&self, cx: &mut Context<Self>) {
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.global_configuration_updated(cx);
+        });
+    }
+
     pub fn buffer_store(&self) -> &Entity<BufferStore> {
         &self.buffer_store
     }

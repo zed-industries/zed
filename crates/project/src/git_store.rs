@@ -542,21 +542,15 @@ impl GitStore {
                 let fs = fs.clone();
 
                 cx.spawn(async move |this, cx| {
+                    if !fs.is_file(&path).await {
+                        return;
+                    }
+
                     let watcher = fs.watch(&path, Duration::from_millis(100));
                     let (mut watcher, _) = watcher.await;
                     while let Some(_) = watcher.next().await {
                         let Ok(_) = this.update(cx, |this, cx| {
-                            for repo in this.repositories.values() {
-                                repo.update(cx, |this, cx| {
-                                    if this.job_sender.is_closed() {
-                                        let (job_sender, state) = (this.refetch_repo_state)(cx);
-                                        this.repository_state = state;
-                                        this.job_sender = job_sender;
-                                        this.schedule_scan(None, cx);
-                                    }
-                                })
-                            }
-                            cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
+                            this.global_configuration_updated(cx);
                         }) else {
                             return;
                         };
@@ -690,6 +684,15 @@ impl GitStore {
 
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
+    }
+
+    pub fn global_configuration_updated(&mut self, cx: &mut Context<Self>) {
+        for repo in self.repositories.values() {
+            repo.update(cx, |repo, cx| {
+                repo.refetch_state_if_closed(cx);
+            });
+        }
+        cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
     }
 
     fn set_active_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
@@ -8189,6 +8192,15 @@ impl Repository {
         }
         self.pending_ops.edit(edits, ());
         ids
+    }
+
+    fn refetch_state_if_closed(&mut self, cx: &mut Context<Self>) {
+        if self.job_sender.is_closed() {
+            let (job_sender, state) = (self.refetch_repo_state)(cx);
+            self.repository_state = state;
+            self.job_sender = job_sender;
+            self.schedule_scan(None, cx);
+        }
     }
 
     pub fn access(&mut self, _cx: &App) -> oneshot::Receiver<GitAccess> {
