@@ -41,14 +41,6 @@ Searches file contents across the project using regular expressions, preferred f
 
 Lists files and directories in a given path, providing an overview of filesystem contents.
 
-### `now`
-
-Returns the current date and time.
-
-### `open`
-
-Opens a file or URL with the default application associated with it on the user's operating system.
-
 ### `read_file`
 
 Reads the content of a specified file in the project, allowing access to file contents.
