@@ -26,10 +26,11 @@ use gpui::{
 use indoc::indoc;
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
-    fake_provider::FakeLanguageModel,
+    LanguageModelId, LanguageModelProviderId, LanguageModelProviderName, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, Role, StopReason,
+    TokenUsage,
+    fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
 use project::{
@@ -40,7 +41,7 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::{LanguageModelProviderSetting, LanguageModelSelection, Settings, SettingsStore};
 use std::{
     path::Path,
     pin::Pin,
@@ -5496,6 +5497,90 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let parent_model = Arc::new(FakeLanguageModel::default());
+    let subagent_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake-corp",
+        "subagent-model",
+        "Subagent Model",
+        true,
+    ));
+
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![subagent_model.clone()]),
+        );
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+        });
+
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.subagent_model = Some(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("fake-corp".to_string()),
+            model: "subagent-model".to_string(),
+            enable_thinking: true,
+            effort: Some("high".to_string()),
+            speed: None,
+        });
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(parent_model.clone()),
+            cx,
+        )
+    });
+
+    let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, cx));
+    subagent_thread.read_with(cx, |subagent_thread, _cx| {
+        assert_eq!(
+            subagent_thread.model().map(|model| model.id()),
+            Some(subagent_model.id())
+        );
+        assert!(subagent_thread.thinking_enabled());
+        assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
+    });
+
+    parent_thread.update(cx, |parent_thread, _cx| {
+        parent_thread.register_running_subagent(subagent_thread.downgrade());
+    });
+    parent_thread.update(cx, |parent_thread, cx| {
+        parent_thread.set_model(parent_model.clone(), cx);
+        parent_thread.set_thinking_enabled(false, cx);
+        parent_thread.set_thinking_effort(None, cx);
+    });
+
+    subagent_thread.read_with(cx, |subagent_thread, _cx| {
+        assert_eq!(
+            subagent_thread.model().map(|model| model.id()),
+            Some(subagent_model.id())
+        );
+        assert!(subagent_thread.thinking_enabled());
+        assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
+    });
+}
+
+#[gpui::test]
 async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -5579,12 +5664,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         GetCodeActionsTool::NAME,
         ApplyCodeActionTool::NAME,
         GoToDefinitionTool::NAME,
-        RenameTool::NAME,
     ];
 
-    // All LSP tools should be registered on the thread regardless of the flag,
-    // since the feature flag now only controls exposure to the model rather
-    // than registration.
+    // All LSP tools and the rename tool should be registered on the thread
+    // regardless of the flag, since the feature flags only control exposure
+    // to the model rather than registration.
     thread.read_with(cx, |thread, _| {
         for name in &lsp_tool_names {
             assert!(
@@ -5592,10 +5676,16 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
                 "expected LSP tool {name} to be registered"
             );
         }
+        assert!(
+            thread.has_registered_tool(RenameTool::NAME),
+            "expected rename tool to be registered"
+        );
     });
 
     // Without the `lsp-tool` flag, sending a message should produce a
     // completion request whose tool list excludes the LSP tools.
+    // The rename tool is on its own `rename-tool` flag with
+    // `enabled_for_staff`, so it is already visible in debug builds.
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["hello"], cx)
@@ -5612,6 +5702,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to be visible (enabled_for_staff in debug builds), \
+         but completion tools were: {tool_names:?}"
+    );
     // Sanity check: a non-LSP default tool should still be exposed.
     assert!(
         tool_names.iter().any(|t| t == ReadFileTool::NAME),
@@ -5642,6 +5737,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to still be exposed, \
+         but completion tools were: {tool_names:?}"
+    );
 }
 
 #[gpui::test]

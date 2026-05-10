@@ -694,6 +694,7 @@ mod tests {
             default_height: px(600.),
             max_content_width: Some(px(850.)),
             default_model: None,
+            subagent_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,

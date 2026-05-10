@@ -592,6 +592,7 @@ impl TestServer {
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                zed_cloud_internal_api_key: "test-internal-api-key".into(),
                 blob_store_url: None,
                 blob_store_region: None,
                 blob_store_access_key: None,
@@ -657,11 +658,9 @@ impl TestClient {
     }
 
     pub fn current_user_id(&self, cx: &TestAppContext) -> UserId {
-        UserId::from_proto(
-            self.app_state
-                .user_store
-                .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
-        )
+        UserId::from_proto(self.app_state.user_store.read_with(cx, |user_store, _| {
+            user_store.current_user().unwrap().legacy_id
+        }))
     }
 
     pub async fn wait_for_current_user(&self, cx: &TestAppContext) {

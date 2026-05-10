@@ -690,7 +690,7 @@ impl TitleBar {
             .user_store
             .read(cx)
             .participant_indices()
-            .get(&host_user.id)?;
+            .get(&host_user.legacy_id)?;
 
         Some(
             Button::new("project_owner_trigger", host_user.github_login.clone())

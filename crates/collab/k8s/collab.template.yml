@@ -92,6 +92,11 @@ spec:
                 secretKeyRef:
                   name: zed-client
                   key: checksum-seed
+            - name: ZED_CLOUD_INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zed-cloud
+                  key: internal-api-key
             - name: LIVEKIT_SERVER
               valueFrom:
                 secretKeyRef:
