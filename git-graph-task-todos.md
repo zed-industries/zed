@@ -32,9 +32,9 @@
 ## Testing
 
 3. **Add Git graph/task integration tests**
-   - Task appears when tagged with `custom-git-command`.
-   - Task does not appear in Git graph when it is not tagged with `custom-git-command`.
-   - Confirm unresolved `custom-git-command` templates stay out of normal task spawn.
+   - Task appears when tagged with `git-command`.
+   - Task does not appear in Git graph when it is not tagged with `git-command`.
+   - Confirm unresolved `git-command` templates stay out of normal task spawn.
    - If Git graph task runs should not appear in normal task spawn history, add coverage for that filtering.
    - Git variables resolve correctly in `label`, `command`, `args`, `cwd`, and `env`.
    - Clicking a menu entry schedules the resolved task and records it in normal task history.
@@ -67,7 +67,7 @@
 ## Docs/schema/autocomplete
 
 7. **Polish docs after behavior settles**
-   - Document `tags: ["custom-git-command"]` as the way to define Git graph context menu tasks.
+   - Document `tags: ["git-command"]` as the way to define Git graph context menu tasks.
    - Mention that unresolved Git graph task templates do not appear in normal task spawn.
    - Document the final decision for whether Git graph task runs appear in normal task history after being run once.
    - Double-check wording of the feature in labels and documentation

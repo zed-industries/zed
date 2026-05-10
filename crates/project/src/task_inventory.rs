@@ -646,6 +646,7 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
+    // TODO: Review
     /// Returns global task templates and task templates for the provided tag /
     /// worktree pair.
     pub fn templates_with_tag(
@@ -661,7 +662,8 @@ impl Inventory {
             .collect()
     }
 
-    /// Returns tasks with the provided tag resolved against the provided task context.
+    // TODO: Review
+    /// Resolves task templates with the provided tag against the provided task context.
     pub fn resolve_tasks_with_tag(
         &self,
         tag: &str,

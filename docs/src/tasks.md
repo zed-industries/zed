@@ -261,7 +261,7 @@ Tasks that define `hooks` are still available from the task modal like any other
 
 ## Custom Git Commands
 
-Tasks can appear in the Git graph commit context menu by adding the `custom-git-command` tag. These tasks are resolved with the selected commit and repository as the task context, and run from the selected repository root by default.
+Tasks can appear in the Git graph commit context menu by adding the `git-command` tag. These tasks are resolved with the selected commit and repository as the task context, and run from the selected repository root by default.
 
 Git graph context menu tasks currently receive only the Git-specific task variables listed below. Other Zed task variables, such as `ZED_FILE`, `ZED_SELECTED_TEXT`, `ZED_WORKTREE_ROOT`, and `ZED_MAIN_GIT_WORKTREE`, are not provided by the Git graph task context unless they have defaults in the task template.
 
@@ -271,13 +271,13 @@ Git graph context menu tasks currently receive only the Git-specific task variab
     "label": "Show $ZED_GIT_SHA_SHORT",
     "command": "git",
     "args": ["show", "$ZED_GIT_SHA"],
-    "tags": ["custom-git-command"]
+    "tags": ["git-command"]
   },
   {
     "label": "Branches containing $ZED_GIT_SHA_SHORT",
     "command": "git",
     "args": ["branch", "-a", "--contains", "$ZED_GIT_SHA"],
-    "tags": ["custom-git-command"]
+    "tags": ["git-command"]
   }
 ]
 ```
