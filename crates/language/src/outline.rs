@@ -220,6 +220,8 @@ impl<T> Outline<T> {
         // Single-atom queries (no whitespace) require *all* matched chars to
         // land in the leaf — typing "drop" should only surface leaves that
         // actually contain "drop", not items whose ancestor path happens to.
+        // We can rely on that behavior because nucleo prefers matches at the
+        // end of the haystack, so the leafiest part of the candidate.
         // Multi-atom queries (whitespace-separated) use the parent for scoping,
         // so we just require at least one matched char in the leaf so the row
         // has visible highlights.
@@ -243,32 +245,34 @@ impl<T> Outline<T> {
             true
         });
 
-        let depths: Vec<usize> = self.items.iter().map(|item| item.depth).collect();
-        expand_tree(&depths, matches)
+        expand_tree(|i| self.items[i].depth, matches)
     }
 }
 
-fn expand_tree(depths: &[usize], matches: Vec<StringMatch>) -> Vec<OutlineSearchEntry> {
+/// Interleaves synthetic [`OutlineSearchEntry::Ancestor`] rows before each match so callers
+/// can render the parent chain as tree context above the match.
+///
+/// `matches` must be sorted ascending by `candidate_id` (which is what [`Outline::search`]
+/// produces). `depth_at` returns the tree depth for the item at a given candidate index.
+/// Ancestors that already appear earlier in the output — either as their own match or as an
+/// ancestor of an earlier match — are not duplicated.
+fn expand_tree(
+    depth_at: impl Fn(usize) -> usize,
+    matches: Vec<StringMatch>,
+) -> Vec<OutlineSearchEntry> {
     let mut out = Vec::with_capacity(matches.len());
     let mut prev_item_ix = 0;
     for string_match in matches {
-        let match_depth = depths[string_match.candidate_id];
         let insertion_ix = out.len();
-        let mut cur_depth = match_depth;
-        for (ix, &depth) in depths[prev_item_ix..string_match.candidate_id]
-            .iter()
-            .enumerate()
-            .rev()
-        {
+        let mut cur_depth = depth_at(string_match.candidate_id);
+        for ix in (prev_item_ix..string_match.candidate_id).rev() {
             if cur_depth == 0 {
                 break;
             }
-            if depth == cur_depth - 1 {
+            if depth_at(ix) == cur_depth - 1 {
                 out.insert(
                     insertion_ix,
-                    OutlineSearchEntry::Ancestor {
-                        candidate_id: ix + prev_item_ix,
-                    },
+                    OutlineSearchEntry::Ancestor { candidate_id: ix },
                 );
                 cur_depth -= 1;
             }
@@ -346,7 +350,7 @@ mod tests {
                 .map(|m| m.string)
                 .collect::<Vec<SharedString>>(),
             vec![SharedString::from("class Foo")],
-            "items still match by their full text even when name_ranges is empty",
+            "'private' (empty name_ranges) is correctly excluded; only the matching 'class Foo' is returned",
         );
     }
 
