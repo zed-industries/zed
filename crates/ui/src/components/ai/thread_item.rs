@@ -1,7 +1,8 @@
 use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
-    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString, pulsating_between,
+    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, MouseDownEvent, SharedString,
+    pulsating_between,
 };
 use itertools::Itertools as _;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -57,6 +58,7 @@ pub struct ThreadItem {
     is_remote: bool,
     archived: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
     base_bg: Option<Hsla>,
@@ -89,6 +91,7 @@ impl ThreadItem {
             is_remote: false,
             archived: false,
             on_click: None,
+            on_secondary_mouse_down: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
             base_bg: None,
@@ -205,6 +208,14 @@ impl ThreadItem {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_secondary_mouse_down(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_secondary_mouse_down = Some(Box::new(handler));
         self
     }
 
@@ -583,6 +594,11 @@ impl RenderOnce for ThreadItem {
                         .into_any_element(),
                     _ => gpui::Empty.into_any_element(),
                 }))
+            })
+            .when_some(self.on_secondary_mouse_down, |this, handler| {
+                this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                    handler(event, window, cx);
+                })
             })
             .when_some(self.on_click, |this, on_click| this.on_click(on_click))
     }

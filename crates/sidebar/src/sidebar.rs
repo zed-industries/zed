@@ -14,7 +14,7 @@ use agent_ui::threads_archive_view::{
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo,
     ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewThread,
-    TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
+    RenameThread, TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
     import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
@@ -25,8 +25,9 @@ use feature_flags::{
 };
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
+    Focusable, KeyContext, ListState, Modifiers, MouseDownEvent, Pixels, Point, Render,
+    SharedString, Task, TaskExt, WeakEntity, Window, WindowHandle, anchored, deferred,
+    linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use menu::{
@@ -601,6 +602,7 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
+    thread_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, gpui::Subscription)>,
     _subscriptions: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
     /// Threads" but if we are showing both the external agents and other
@@ -707,6 +709,7 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
+            thread_context_menu: None,
             _subscriptions: Vec::new(),
             import_banners_use_verbose_labels: None,
         }
@@ -4227,6 +4230,81 @@ impl Sidebar {
         window.focus(&focus, cx);
     }
 
+    fn deploy_thread_context_menu(
+        &mut self,
+        thread: &ThreadEntry,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let weak_self = cx.weak_entity();
+        let metadata = thread.metadata.clone();
+        let thread_workspace = thread.workspace.clone();
+        let session_id_for_archive = thread.metadata.session_id.clone();
+        let can_archive = matches!(
+            thread.status,
+            AgentThreadStatus::Completed | AgentThreadStatus::Error
+        );
+
+        let context_menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+            let rename_workspace = thread_workspace.clone();
+            let rename_metadata = metadata.clone();
+            let rename_weak_self = weak_self.clone();
+
+            menu = menu.entry(
+                "Rename Thread",
+                Some(Box::new(RenameThread)),
+                move |window, cx| {
+                    if let ThreadEntryWorkspace::Open(workspace) = &rename_workspace {
+                        rename_weak_self
+                            .update(cx, |sidebar, cx| {
+                                sidebar.activate_thread_locally(
+                                    &rename_metadata,
+                                    workspace,
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                        workspace.update(cx, |ws, cx| {
+                            if let Some(panel) = ws.panel::<AgentPanel>(cx) {
+                                panel.update(cx, |panel, cx| {
+                                    panel.focus_active_thread_title(window, cx);
+                                });
+                            }
+                        });
+                    }
+                },
+            );
+
+            if can_archive {
+                menu = menu.separator().entry(
+                    "Archive Thread",
+                    Some(Box::new(ArchiveSelectedThread)),
+                    move |window, cx| {
+                        if let Some(ref session_id) = session_id_for_archive {
+                            weak_self
+                                .update(cx, |sidebar, cx| {
+                                    sidebar.archive_thread(session_id, window, cx);
+                                })
+                                .ok();
+                        }
+                    },
+                );
+            }
+
+            menu
+        });
+
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.thread_context_menu.take();
+            cx.notify();
+        });
+        self.thread_context_menu = Some((context_menu, position, subscription));
+    }
+
     fn render_thread(
         &self,
         ix: usize,
@@ -4337,6 +4415,13 @@ impl Sidebar {
                             })
                         }),
                 )
+            })
+            .on_secondary_mouse_down({
+                let thread_entry = thread.clone();
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.deploy_thread_context_menu(&thread_entry, event.position, window, cx);
+                })
             })
             .on_click({
                 cx.listener(move |this, _, window, cx| {
@@ -5487,6 +5572,19 @@ impl Render for Sidebar {
                 })
             })
             .child(self.render_sidebar_bottom_bar(cx))
+            .children(
+                self.thread_context_menu
+                    .as_ref()
+                    .map(|(menu, position, _)| {
+                        deferred(
+                            anchored()
+                                .position(*position)
+                                .anchor(gpui::Anchor::TopLeft)
+                                .child(menu.clone()),
+                        )
+                        .with_priority(3)
+                    }),
+            )
     }
 }
 

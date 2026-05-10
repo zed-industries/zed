@@ -38,8 +38,8 @@ use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadata
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata, ShowThreadMetadata,
-    ToggleNewThreadMenu, ToggleOptionsMenu,
+    RenameThread, ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata,
+    ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
     ui::EndTrialUpsell,
@@ -3292,6 +3292,15 @@ impl AgentPanel {
             .into_any()
     }
 
+    pub fn focus_active_thread_title(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let VisibleSurface::AgentThread(conversation_view) = self.visible_surface() {
+            if let Some(thread_view) = conversation_view.read(cx).root_thread_view() {
+                let title_editor = thread_view.read(cx).title_editor.clone();
+                window.focus(&title_editor.focus_handle(cx), cx);
+            }
+        }
+    }
+
     fn handle_regenerate_thread_title(conversation_view: Entity<ConversationView>, cx: &mut App) {
         conversation_view.update(cx, |conversation_view, cx| {
             if let Some(thread) = conversation_view.as_native_thread(cx) {
@@ -4102,6 +4111,9 @@ impl Render for AgentPanel {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
+            .on_action(cx.listener(|this, _: &RenameThread, window, cx| {
+                this.focus_active_thread_title(window, cx);
+            }))
             .on_action(cx.listener(Self::deploy_rules_library))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_options_menu))
@@ -7750,5 +7762,79 @@ mod tests {
                 "panel should have an active, connected agent thread"
             );
         });
+    }
+
+    // Verify that focus_active_thread_title moves focus to the title editor of the active thread.
+    #[gpui::test]
+    async fn test_focus_active_thread_title_focuses_title_editor(cx: &mut TestAppContext) {
+        let (workspace, panel, mut cx) = setup_workspace_panel(cx).await;
+
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        // Call focus_active_thread_title and check focus within the same update context,
+        // before any subsequent re-renders can steal focus back to the message editor.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.focus_active_thread_title(window, cx);
+
+            let title_editor = panel
+                .active_thread_view(cx)
+                .expect("should have an active thread view")
+                .read(cx)
+                .title_editor
+                .clone();
+            assert!(
+                title_editor.focus_handle(cx).is_focused(window),
+                "title editor should be focused after focus_active_thread_title"
+            );
+        });
+    }
+
+    // Verify that dispatching RenameThread when there is an active thread does not panic,
+    // and that it remains safe to call even when focus is already within the panel.
+    #[gpui::test]
+    async fn test_rename_thread_action_does_not_panic(cx: &mut TestAppContext) {
+        let (workspace, panel, mut cx) = setup_workspace_panel(cx).await;
+
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        // Dispatching should not panic regardless of current focus state.
+        workspace.update_in(&mut cx, |_, window, cx| {
+            window.dispatch_action(Box::new(RenameThread), cx);
+        });
+        cx.run_until_parked();
+
+        // Panel should still have an active thread after the action.
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_thread_view(cx).is_some(),
+                "active thread should still be present after RenameThread"
+            );
+        });
+    }
+
+    // Verify that calling focus_active_thread_title when there is no active thread does not panic.
+    #[gpui::test]
+    async fn test_focus_active_thread_title_is_noop_without_active_thread(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(panel.active_thread_view(cx).is_none());
+        });
+
+        // Should not panic.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.focus_active_thread_title(window, cx);
+        });
+        cx.run_until_parked();
     }
 }

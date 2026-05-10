@@ -189,6 +189,8 @@ actions!(
         ScrollOutputToNextMessage,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
+        /// Renames the title of the currently active thread.
+        RenameThread,
     ]
 );
 
