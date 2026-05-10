@@ -146,25 +146,18 @@ impl Settings for WorkspaceSettings {
     }
 }
 
-/// Resolves the user-configured default folder for "Open a new project" into a
-/// canonicalized, sanitized absolute path. Both the system file dialog and the
-/// in-app keyboard picker consult this single accessor so the override is
-/// determined in exactly one place.
-///
-/// Returns `Task<None>` when the setting is unset, the path does not exist, or
-/// the path does not point at a directory. All filesystem work happens
-/// asynchronously through the supplied [`Fs`] handle.
-pub fn default_open_path(fs: Arc<dyn Fs>, cx: &App) -> Task<Option<PathBuf>> {
+/// Resolves the `default_project_folder` setting to a canonicalized, sanitized
+/// absolute path. Returns `None` synchronously when the setting is unset or
+/// blank so callers can skip spawning a task.
+pub fn default_open_path(fs: Arc<dyn Fs>, cx: &App) -> Option<Task<Option<PathBuf>>> {
     let raw = WorkspaceSettings::get_global(cx)
         .default_project_folder
-        .clone();
-    cx.background_spawn(async move {
-        let raw = raw?;
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        let expanded = PathBuf::from(shellexpand::tilde(trimmed).into_owned());
+        .clone()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    Some(cx.background_spawn(async move {
+        let expanded = PathBuf::from(shellexpand::tilde(raw.trim()).into_owned());
         let canonical = fs
             .canonicalize(&expanded)
             .await
@@ -174,8 +167,8 @@ pub fn default_open_path(fs: Arc<dyn Fs>, cx: &App) -> Task<Option<PathBuf>> {
             log::warn!("default_project_folder {expanded:?} is not a directory; ignoring");
             return None;
         }
-        Some(SanitizedPath::new(&canonical).as_path().to_path_buf())
-    })
+        Some(SanitizedPath::new(&canonical).to_path_buf())
+    }))
 }
 
 #[cfg(test)]
@@ -207,9 +200,14 @@ mod tests {
         fs.insert_tree(path!("/projects"), json!({ "alpha": {} }))
             .await;
 
-        let task = cx.update(|cx| default_open_path(fs.clone(), cx));
+        let task = cx
+            .update(|cx| default_open_path(fs.clone(), cx))
+            .expect("setting is configured");
         let result = task.await;
-        assert_eq!(result.as_deref(), Some(std::path::Path::new(path!("/projects"))));
+        assert_eq!(
+            result.as_deref(),
+            Some(std::path::Path::new(path!("/projects")))
+        );
     }
 
     #[gpui::test]
@@ -218,7 +216,9 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/projects"), json!({})).await;
 
-        let task = cx.update(|cx| default_open_path(fs, cx));
+        let task = cx
+            .update(|cx| default_open_path(fs, cx))
+            .expect("setting is configured");
         assert!(task.await.is_none());
     }
 
@@ -226,13 +226,12 @@ mod tests {
     async fn default_open_path_ignores_file_path(cx: &mut TestAppContext) {
         init_settings(cx, Some(path!("/projects/readme.txt")));
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/projects"),
-            json!({ "readme.txt": "hi" }),
-        )
-        .await;
+        fs.insert_tree(path!("/projects"), json!({ "readme.txt": "hi" }))
+            .await;
 
-        let task = cx.update(|cx| default_open_path(fs, cx));
+        let task = cx
+            .update(|cx| default_open_path(fs, cx))
+            .expect("setting is configured");
         assert!(task.await.is_none());
     }
 
@@ -240,8 +239,14 @@ mod tests {
     async fn default_open_path_returns_none_when_unset(cx: &mut TestAppContext) {
         init_settings(cx, None);
         let fs = FakeFs::new(cx.executor());
-        let task = cx.update(|cx| default_open_path(fs, cx));
-        assert!(task.await.is_none());
+        assert!(cx.update(|cx| default_open_path(fs, cx)).is_none());
+    }
+
+    #[gpui::test]
+    async fn default_open_path_returns_none_when_blank(cx: &mut TestAppContext) {
+        init_settings(cx, Some("   "));
+        let fs = FakeFs::new(cx.executor());
+        assert!(cx.update(|cx| default_open_path(fs, cx)).is_none());
     }
 }
 

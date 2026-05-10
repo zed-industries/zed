@@ -2961,28 +2961,36 @@ impl Workspace {
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         let default_path = lister
             .is_local(cx)
-            .then(|| workspace_settings::default_open_path(self.app_state.fs.clone(), cx));
+            .then(|| workspace_settings::default_open_path(self.app_state.fs.clone(), cx))
+            .flatten();
         let (tx, rx) = oneshot::channel();
-        cx.spawn_in(window, async move |workspace, cx| {
-            let initial_directory = match default_path {
-                Some(task) => task.await,
-                None => None,
-            };
-            workspace
-                .update_in(cx, |workspace, window, cx| {
-                    workspace.dispatch_open_path_prompt(
-                        path_prompt_options,
-                        initial_directory,
-                        lister,
-                        tx,
-                        window,
-                        cx,
-                    );
+        match default_path {
+            Some(task) => cx
+                .spawn_in(window, async move |workspace, cx| {
+                    let initial_directory = task.await;
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.dispatch_open_path_prompt(
+                                path_prompt_options,
+                                initial_directory,
+                                lister,
+                                tx,
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
                 })
-                .ok();
-            anyhow::Ok(())
-        })
-        .detach();
+                .detach(),
+            None => self.dispatch_open_path_prompt(
+                path_prompt_options,
+                None,
+                lister,
+                tx,
+                window,
+                cx,
+            ),
+        }
         rx
     }
 

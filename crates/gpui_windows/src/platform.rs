@@ -1161,22 +1161,18 @@ fn file_open_dialog(
                 &HSTRING::from(SanitizedPath::new(initial_directory).to_string()),
                 None,
             );
-            match path_item.with_context(|| {
-                format!("creating shell item for initial directory {initial_directory:?}")
-            }) {
-                Ok(path_item) => {
-                    folder_dialog
-                        .SetFolder(&path_item)
-                        .with_context(|| {
-                            format!(
-                                "setting dialog folder to initial directory {initial_directory:?}"
-                            )
-                        })
-                        .log_err();
-                }
-                Err(err) => {
-                    log::warn!("{err:?}");
-                }
+            if let Some(path_item) = path_item
+                .with_context(|| {
+                    format!("creating shell item for initial directory {initial_directory:?}")
+                })
+                .log_err()
+            {
+                folder_dialog
+                    .SetFolder(&path_item)
+                    .with_context(|| {
+                        format!("setting dialog folder to initial directory {initial_directory:?}")
+                    })
+                    .log_err();
             }
         }
 
