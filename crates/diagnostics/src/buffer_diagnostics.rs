@@ -13,7 +13,7 @@ use editor::{
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, WeakEntity, Window, actions, div,
+    Task, TaskExt, WeakEntity, Window, actions, div,
 };
 use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{

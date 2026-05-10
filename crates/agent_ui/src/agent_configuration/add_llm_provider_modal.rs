@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
 use gpui::{
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task,
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task, TaskExt,
 };
 use language_model::LanguageModelRegistry;
 use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};

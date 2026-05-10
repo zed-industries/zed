@@ -1221,6 +1221,7 @@
       "shift-insert": "terminal::Paste",
       "ctrl-v": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
+      "ctrl-alt-v": "terminal::PasteText",
       "ctrl-i": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
@@ -1259,6 +1260,13 @@
       "alt-t": "terminal::RerunTask",
       "ctrl-shift-5": "pane::SplitRight",
       "ctrl-shift-.": "agent::AddSelectionToThread",
+    },
+  },
+  {
+    "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-n": "agent::NewThread",
     },
   },
   {
@@ -1478,6 +1486,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch",
+      "ctrl-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
       "ctrl-shift-i": "branch_picker::FilterRemotes",
     },
   },
@@ -1551,6 +1560,20 @@
       "ctrl-shift-r": "notebook::RestartKernel",
       "ctrl-c": "notebook::InterruptKernel",
       "escape": "notebook::EnterCommandMode",
+    },
+  },
+  {
+    "context": "GitGraph",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
     },
   },
 ]

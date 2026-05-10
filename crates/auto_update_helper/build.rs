@@ -1,15 +1,9 @@
 fn main() {
     #[cfg(target_os = "windows")]
     {
-        println!("cargo:rerun-if-changed=manifest.xml");
+        println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
+        println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
 
-        let mut res = winresource::WindowsResource::new();
-        res.set_manifest_file("manifest.xml");
-        res.set_icon("app-icon.ico");
-
-        if let Err(e) = res.compile() {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
+        windows_resources::compile(true).expect("failed to compile Windows resources");
     }
 }
