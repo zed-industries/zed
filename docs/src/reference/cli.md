@@ -160,9 +160,9 @@ The CLI can open `zed://`, `file://`, and `ssh://` URLs:
 zed zed://settings
 zed file:///Users/whatever/.zshrc
 zed ssh://me@example.com/abs/path
+zed ssh://me@example.com:/abs/path
 zed ssh://me@example.com/~/project
-zed ssh://me@example.com:22/~/project
-zed ssh://example.com:~/project
+zed ssh://me@example.com:~/project
 ```
 
 ## Using Zed as Your Default Editor
