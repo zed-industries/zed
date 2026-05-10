@@ -455,6 +455,7 @@ impl CommitModal {
                                         amend: is_amend_pending,
                                         signoff: is_signoff_enabled,
                                         allow_empty: false,
+                                        allow_hooks: ProjectSettings::get_global(cx).git.allow_hooks,
                                     },
                                     window,
                                     cx,

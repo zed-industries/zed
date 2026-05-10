@@ -426,6 +426,7 @@ pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
     pub allow_empty: bool,
+    pub allow_hooks: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -2328,7 +2329,11 @@ impl GitRepository for RealGitRepository {
             cmd.envs(env.iter())
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
-                .arg("--no-verify")
+                .args(if !options.allow_hooks {
+                    vec!["--no-verify"]
+                } else {
+                    vec![]
+                })
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 

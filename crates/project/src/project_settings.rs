@@ -462,6 +462,11 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: String,
+
+    /// Whether to allow git hooks to run when committing.
+    ///
+    /// Default: false
+    pub allow_hooks: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -655,6 +660,7 @@ impl Settings for ProjectSettings {
                 .worktree_directory
                 .clone()
                 .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
+            allow_hooks: git.allow_hooks.unwrap_or(false),
         };
         Self {
             context_servers: project
