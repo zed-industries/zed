@@ -1,4 +1,5 @@
 use gpui::{App, Context, Entity, EventEmitter, SharedString};
+use language::line_diff;
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use text::{Anchor, BufferId, OffsetRangeExt as _};
 
@@ -61,16 +62,41 @@ impl ConflictSetSnapshot {
     pub fn auto_resolution_edits(
         &self,
         buffer: &text::BufferSnapshot,
-    ) -> Vec<(Range<usize>, &'static str)> {
-        self.auto_resolvable(buffer)
-            .flat_map(|(conflict, resolution)| {
-                let kept = match resolution {
-                    AutoResolution::TakeOurs | AutoResolution::Identical => &conflict.ours,
-                    AutoResolution::TakeTheirs => &conflict.theirs,
-                };
-                conflict.resolution_edits(std::slice::from_ref(kept), buffer)
-            })
-            .collect()
+    ) -> Vec<(Range<usize>, String)> {
+        let mut edits = Vec::new();
+        for conflict in self.conflicts.iter() {
+            let Some(segments) = conflict.decompose(buffer) else {
+                continue;
+            };
+            if !segments
+                .iter()
+                .any(|segment| matches!(segment, DecompositionSegment::Resolved(_)))
+            {
+                continue;
+            }
+            let outer = conflict.range.to_offset(buffer);
+            let replacement = render_decomposed_region(
+                &segments,
+                &conflict.ours_branch_name,
+                &conflict.theirs_branch_name,
+            );
+            edits.push((outer, replacement));
+        }
+        edits
+    }
+
+    /// Iterator over every conflict region whose `decompose` produces at least
+    /// one resolved segment, alongside a summary of whether it was fully
+    /// resolved or only partially simplified.
+    pub fn decomposition_summary<'a>(
+        &'a self,
+        buffer: &'a text::BufferSnapshot,
+    ) -> impl Iterator<Item = (&'a ConflictRegion, RegionSummary)> + 'a {
+        self.conflicts.iter().filter_map(move |conflict| {
+            let segments = conflict.decompose(buffer)?;
+            let summary = RegionSummary::from_segments(&segments);
+            summary.is_improvement.then_some((conflict, summary))
+        })
     }
 
     pub fn compare(&self, other: &Self, buffer: &text::BufferSnapshot) -> ConflictSetUpdate {
@@ -131,6 +157,40 @@ pub enum AutoResolution {
     Identical,
 }
 
+/// A single piece of a conflict region after line-level three-way
+/// decomposition: either a span that has been auto-merged, or a smaller
+/// sub-conflict that still needs manual resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecompositionSegment {
+    Resolved(String),
+    Conflict {
+        base: String,
+        ours: String,
+        theirs: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegionSummary {
+    pub is_improvement: bool,
+    pub fully_resolved: bool,
+}
+
+impl RegionSummary {
+    fn from_segments(segments: &[DecompositionSegment]) -> Self {
+        let any_resolved = segments
+            .iter()
+            .any(|s| matches!(s, DecompositionSegment::Resolved(_)));
+        let any_conflict = segments
+            .iter()
+            .any(|s| matches!(s, DecompositionSegment::Conflict { .. }));
+        Self {
+            is_improvement: any_resolved,
+            fully_resolved: !any_conflict,
+        }
+    }
+}
+
 impl ConflictRegion {
     pub fn auto_resolution(&self, buffer: &text::BufferSnapshot) -> Option<AutoResolution> {
         let base_range = self.base.as_ref()?;
@@ -147,6 +207,17 @@ impl ConflictRegion {
         } else {
             None
         }
+    }
+
+    /// Decompose this region into a sequence of resolved and unresolved
+    /// segments by re-diffing `ours` and `theirs` against `base` at line
+    /// granularity. Returns `None` if no diff3 base is present.
+    pub fn decompose(&self, buffer: &text::BufferSnapshot) -> Option<Vec<DecompositionSegment>> {
+        let base_range = self.base.as_ref()?;
+        let base_text = buffer.text_for_range(base_range.clone()).collect::<String>();
+        let ours_text = buffer.text_for_range(self.ours.clone()).collect::<String>();
+        let theirs_text = buffer.text_for_range(self.theirs.clone()).collect::<String>();
+        Some(decompose_three_way(&base_text, &ours_text, &theirs_text))
     }
 
     pub fn resolution_edits(
@@ -331,3 +402,210 @@ impl ConflictSet {
 }
 
 impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
+
+fn split_lines(text: &str) -> Vec<&str> {
+    text.split_inclusive('\n').collect()
+}
+
+/// Walk the line-level diffs of `ours` and `theirs` against `base` to produce
+/// a sequence of decomposition segments. Adjacent or overlapping hunks from
+/// both sides are clustered together: a cluster touched by only one side is
+/// auto-resolved to that side's text, clusters where both sides produce
+/// identical text are auto-resolved, and clusters where the sides diverge are
+/// emitted as smaller sub-conflicts.
+fn decompose_three_way(base: &str, ours: &str, theirs: &str) -> Vec<DecompositionSegment> {
+    let base_lines = split_lines(base);
+    let ours_lines = split_lines(ours);
+    let theirs_lines = split_lines(theirs);
+
+    let ours_hunks = line_diff(base, ours);
+    let theirs_hunks = line_diff(base, theirs);
+
+    let mut segments = Vec::new();
+    let mut o_idx = 0;
+    let mut t_idx = 0;
+    let mut base_cursor: usize = 0;
+
+    loop {
+        let next_o = ours_hunks.get(o_idx).map(|(b, _)| b.start as usize);
+        let next_t = theirs_hunks.get(t_idx).map(|(b, _)| b.start as usize);
+
+        let cluster_start = match (next_o, next_t) {
+            (None, None) => {
+                if base_cursor < base_lines.len() {
+                    let text: String = base_lines[base_cursor..].concat();
+                    if !text.is_empty() {
+                        push_resolved(&mut segments, text);
+                    }
+                }
+                return segments;
+            }
+            (Some(o), None) => o,
+            (None, Some(t)) => t,
+            (Some(o), Some(t)) => o.min(t),
+        };
+
+        if cluster_start > base_cursor {
+            let text: String = base_lines[base_cursor..cluster_start].concat();
+            if !text.is_empty() {
+                push_resolved(&mut segments, text);
+            }
+            base_cursor = cluster_start;
+        }
+
+        let mut cluster_o = Vec::new();
+        let mut cluster_t = Vec::new();
+        let mut cluster_end = base_cursor;
+        loop {
+            let mut grew = false;
+            if let Some((b, _)) = ours_hunks.get(o_idx) {
+                if (b.start as usize) <= cluster_end {
+                    cluster_o.push(o_idx);
+                    cluster_end = cluster_end.max(b.end as usize);
+                    o_idx += 1;
+                    grew = true;
+                }
+            }
+            if let Some((b, _)) = theirs_hunks.get(t_idx) {
+                if (b.start as usize) <= cluster_end {
+                    cluster_t.push(t_idx);
+                    cluster_end = cluster_end.max(b.end as usize);
+                    t_idx += 1;
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+
+        let base_segment: String = base_lines[base_cursor..cluster_end].concat();
+        let ours_segment = compose_replacement(
+            &base_lines,
+            &ours_lines,
+            &ours_hunks,
+            &cluster_o,
+            base_cursor,
+            cluster_end,
+        );
+        let theirs_segment = compose_replacement(
+            &base_lines,
+            &theirs_lines,
+            &theirs_hunks,
+            &cluster_t,
+            base_cursor,
+            cluster_end,
+        );
+
+        let segment = if cluster_o.is_empty() {
+            DecompositionSegment::Resolved(theirs_segment)
+        } else if cluster_t.is_empty() {
+            DecompositionSegment::Resolved(ours_segment)
+        } else if ours_segment == theirs_segment {
+            DecompositionSegment::Resolved(ours_segment)
+        } else {
+            DecompositionSegment::Conflict {
+                base: base_segment,
+                ours: ours_segment,
+                theirs: theirs_segment,
+            }
+        };
+        push_segment(&mut segments, segment);
+        base_cursor = cluster_end;
+    }
+}
+
+fn push_resolved(segments: &mut Vec<DecompositionSegment>, text: String) {
+    if let Some(DecompositionSegment::Resolved(prev)) = segments.last_mut() {
+        prev.push_str(&text);
+    } else {
+        segments.push(DecompositionSegment::Resolved(text));
+    }
+}
+
+fn push_segment(segments: &mut Vec<DecompositionSegment>, segment: DecompositionSegment) {
+    match segment {
+        DecompositionSegment::Resolved(text) => push_resolved(segments, text),
+        other => segments.push(other),
+    }
+}
+
+fn compose_replacement(
+    base_lines: &[&str],
+    side_lines: &[&str],
+    hunks: &[(Range<u32>, Range<u32>)],
+    cluster_hunk_indices: &[usize],
+    cluster_start: usize,
+    cluster_end: usize,
+) -> String {
+    let mut result = String::new();
+    let mut cursor = cluster_start;
+    for &i in cluster_hunk_indices {
+        let (base_range, side_range) = &hunks[i];
+        let base_start = base_range.start as usize;
+        let base_end = base_range.end as usize;
+        if base_start > cursor {
+            for line in &base_lines[cursor..base_start] {
+                result.push_str(line);
+            }
+        }
+        for line in &side_lines[side_range.start as usize..side_range.end as usize] {
+            result.push_str(line);
+        }
+        cursor = base_end;
+    }
+    if cursor < cluster_end {
+        for line in &base_lines[cursor..cluster_end] {
+            result.push_str(line);
+        }
+    }
+    result
+}
+
+/// Render the decomposed region back into source: resolved segments are
+/// emitted verbatim, sub-conflicts are wrapped in `<<<<<<< / ||||||| /
+/// ======= / >>>>>>> ` markers so the result is still a parseable diff3
+/// conflict region (with smaller markers) that Auto-Resolve can be re-run
+/// against later if needed.
+pub(crate) fn render_decomposed_region(
+    segments: &[DecompositionSegment],
+    ours_branch: &str,
+    theirs_branch: &str,
+) -> String {
+    let mut result = String::new();
+    for segment in segments {
+        match segment {
+            DecompositionSegment::Resolved(text) => {
+                result.push_str(text);
+                ensure_trailing_newline(&mut result);
+            }
+            DecompositionSegment::Conflict {
+                base,
+                ours,
+                theirs,
+            } => {
+                result.push_str("<<<<<<< ");
+                result.push_str(ours_branch);
+                result.push('\n');
+                result.push_str(ours);
+                ensure_trailing_newline(&mut result);
+                result.push_str("||||||| base\n");
+                result.push_str(base);
+                ensure_trailing_newline(&mut result);
+                result.push_str("=======\n");
+                result.push_str(theirs);
+                ensure_trailing_newline(&mut result);
+                result.push_str(">>>>>>> ");
+                result.push_str(theirs_branch);
+                result.push('\n');
+            }
+        }
+    }
+    result
+}
+
+fn ensure_trailing_newline(text: &mut String) {
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+}

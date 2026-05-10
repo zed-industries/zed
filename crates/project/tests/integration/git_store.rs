@@ -504,6 +504,221 @@ mod conflict_set_tests {
         );
     }
 
+    #[test]
+    fn test_decompose_partial_only_ours() {
+        // Region surrounds 3 base lines. Only the middle line is changed on
+        // ours; theirs leaves the whole region equal to base. Decomposition
+        // should fold the entire region away.
+        let test_content = r#"
+            <<<<<<< HEAD
+            keep
+            CHANGED
+            also keep
+            ||||||| base
+            keep
+            old
+            also keep
+            =======
+            keep
+            old
+            also keep
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        assert!(
+            segments
+                .iter()
+                .all(|s| matches!(s, DecompositionSegment::Resolved(_))),
+            "fully resolvable but got {segments:?}"
+        );
+        let merged = match &segments[0] {
+            DecompositionSegment::Resolved(text) => text.clone(),
+            _ => unreachable!(),
+        };
+        assert_eq!(merged, "keep\nCHANGED\nalso keep\n");
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+    }
+
+    #[test]
+    fn test_decompose_interleaved_resolvable_subhunks() {
+        // Both sides touch the region, but in disjoint lines: ours changes
+        // line 1, theirs changes line 3. Decomposition merges both.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-line-1
+            shared
+            base-line-3
+            ||||||| base
+            base-line-1
+            shared
+            base-line-3
+            =======
+            base-line-1
+            shared
+            theirs-line-3
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        // Region-level check returns None: neither side matches base, and they
+        // are not identical to each other.
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None
+        );
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        assert!(
+            segments
+                .iter()
+                .all(|s| matches!(s, DecompositionSegment::Resolved(_))),
+            "interleaved disjoint changes should fully resolve, got {segments:?}"
+        );
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("ours-line-1\nshared\ntheirs-line-3"));
+    }
+
+    #[test]
+    fn test_decompose_leaves_smaller_subconflict() {
+        // The region contains both an auto-resolvable sub-hunk (line 1, only
+        // ours changed) and a genuine sub-conflict (line 3, both sides
+        // disagree). Decomposition should resolve line 1 and emit a smaller
+        // diff3 marker block for line 3.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-only
+            shared
+            ours-line-3
+            ||||||| base
+            base-line-1
+            shared
+            base-line-3
+            =======
+            base-line-1
+            shared
+            theirs-line-3
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert!(matches!(&segments[0], DecompositionSegment::Resolved(_)));
+        assert!(matches!(&segments[1], DecompositionSegment::Conflict { .. }));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(
+            parsed_after.conflicts.len(),
+            1,
+            "one smaller sub-conflict should remain"
+        );
+        let remaining = &parsed_after.conflicts[0];
+        assert!(remaining.base.is_some(), "smaller sub-conflict keeps base");
+
+        let text = buffer.snapshot().text();
+        assert!(text.contains("ours-only\nshared"));
+        assert!(text.contains("ours-line-3"));
+        assert!(text.contains("theirs-line-3"));
+        assert!(text.contains("base-line-3"));
+    }
+
+    #[test]
+    fn test_decompose_insertion_conflict() {
+        // Both sides insert a different line at the same base position.
+        // Decomposition must emit a sub-conflict for the insertion (with
+        // empty base) and leave the surrounding context as resolved.
+        let test_content = r#"
+            <<<<<<< HEAD
+            keep
+            ours-inserted
+            tail
+            ||||||| base
+            keep
+            tail
+            =======
+            keep
+            theirs-inserted
+            tail
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        let conflicts = segments
+            .iter()
+            .filter(|s| matches!(s, DecompositionSegment::Conflict { .. }))
+            .count();
+        assert_eq!(conflicts, 1, "exactly one sub-conflict for the insertion");
+        match segments
+            .iter()
+            .find(|s| matches!(s, DecompositionSegment::Conflict { .. }))
+            .unwrap()
+        {
+            DecompositionSegment::Conflict {
+                base,
+                ours,
+                theirs,
+            } => {
+                assert_eq!(base, "");
+                assert_eq!(ours, "ours-inserted\n");
+                assert_eq!(theirs, "theirs-inserted\n");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_decompose_no_base_returns_none() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert!(conflict_snapshot.conflicts[0].decompose(&snapshot).is_none());
+    }
+
     #[gpui::test]
     async fn test_conflict_updates(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         zlog::init_test();

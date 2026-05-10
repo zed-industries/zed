@@ -46,7 +46,11 @@ struct BufferConflicts {
 
 #[derive(Debug, Clone, Copy)]
 enum BannerState {
-    Resolvable { resolvable: usize, total: usize },
+    Resolvable {
+        fully_resolvable: usize,
+        partially_resolvable: usize,
+        total: usize,
+    },
     NoneResolvable,
     NoBase,
 }
@@ -514,11 +518,22 @@ fn banner_state_for(
     if !any_with_base {
         return Some(BannerState::NoBase);
     }
-    let resolvable = conflict_snapshot.auto_resolvable(buffer_snapshot).count();
-    if resolvable == 0 {
+    let (mut fully_resolvable, mut partially_resolvable) = (0, 0);
+    for (_conflict, summary) in conflict_snapshot.decomposition_summary(buffer_snapshot) {
+        if summary.fully_resolved {
+            fully_resolvable += 1;
+        } else {
+            partially_resolvable += 1;
+        }
+    }
+    if fully_resolvable == 0 && partially_resolvable == 0 {
         return Some(BannerState::NoneResolvable);
     }
-    Some(BannerState::Resolvable { resolvable, total })
+    Some(BannerState::Resolvable {
+        fully_resolvable,
+        partially_resolvable,
+        total,
+    })
 }
 
 fn render_auto_resolve_banner(
@@ -528,15 +543,27 @@ fn render_auto_resolve_banner(
     cx: &mut BlockContext,
 ) -> AnyElement {
     let label: SharedString = match state {
-        BannerState::Resolvable { resolvable, total } => {
-            let remaining = total.saturating_sub(resolvable);
-            format!(
-                "Auto-Resolve — {} non-conflicting change{} • {} will remain",
-                resolvable,
-                if resolvable == 1 { "" } else { "s" },
-                remaining,
-            )
-            .into()
+        BannerState::Resolvable {
+            fully_resolvable,
+            partially_resolvable,
+            total,
+        } => {
+            let remaining = total.saturating_sub(fully_resolvable);
+            if partially_resolvable == 0 {
+                format!(
+                    "Auto-Resolve — {} non-conflicting change{} • {} will remain",
+                    fully_resolvable,
+                    if fully_resolvable == 1 { "" } else { "s" },
+                    remaining,
+                )
+                .into()
+            } else {
+                format!(
+                    "Auto-Resolve — {} fully + {} partially • {} will remain",
+                    fully_resolvable, partially_resolvable, remaining,
+                )
+                .into()
+            }
         }
         BannerState::NoneResolvable => {
             "Auto-Resolve — no non-conflicting changes detected".into()
@@ -608,30 +635,43 @@ pub(crate) fn auto_resolve_buffer(
     let conflict_snapshot = conflict_set.read(cx).snapshot();
     let total = conflict_snapshot.conflicts.len();
 
-    let edits = {
+    let (edits, fully, partial) = {
         let buffer_snapshot = buffer.read(cx).snapshot();
-        conflict_snapshot.auto_resolution_edits(&buffer_snapshot)
+        let edits = conflict_snapshot.auto_resolution_edits(&buffer_snapshot);
+        let (mut fully, mut partial) = (0, 0);
+        for (_conflict, summary) in conflict_snapshot.decomposition_summary(&buffer_snapshot) {
+            if summary.fully_resolved {
+                fully += 1;
+            } else {
+                partial += 1;
+            }
+        }
+        (edits, fully, partial)
     };
     if edits.is_empty() {
         return;
     }
-    let resolved = conflict_snapshot
-        .auto_resolvable(&buffer.read(cx).snapshot())
-        .count();
-    let remaining = total.saturating_sub(resolved);
+    let remaining = total.saturating_sub(fully);
 
     buffer.update(cx, |buffer, cx| {
         buffer.edit(edits, None, cx);
     });
 
     if let Some(workspace) = editor.read(cx).workspace() {
-        let message = format!(
-            "Auto-resolved {} of {} conflict{}; {} remain",
-            resolved,
-            total,
-            if total == 1 { "" } else { "s" },
-            remaining,
-        );
+        let message = if partial == 0 {
+            format!(
+                "Auto-resolved {} of {} conflict{}; {} remain",
+                fully,
+                total,
+                if total == 1 { "" } else { "s" },
+                remaining,
+            )
+        } else {
+            format!(
+                "Auto-resolved {} fully, simplified {} more; {} remain",
+                fully, partial, remaining,
+            )
+        };
         workspace.update(cx, |workspace, cx| {
             workspace.show_toast(
                 workspace::Toast::new(NotificationId::unique::<AutoResolveToast>(), message),
