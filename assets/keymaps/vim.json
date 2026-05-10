@@ -928,6 +928,23 @@
     },
   },
   {
+    "context": "(vim_mode == helix_normal || vim_mode == helix_select) && !menu",
+    "unbind": {
+      "$": "vim::EndOfLine",
+      "_": "vim::StartOfLineDownward",
+      "shift-v": "vim::ToggleVisualLine",
+      "shift-d": "vim::DeleteToEndOfLine",
+      "ctrl-r": "vim::Redo",
+      "g t": "vim::GoToTab",
+    },
+  },
+  {
+    "context": "(vim_mode == helix_normal || vim_mode == helix_select) && !menu",
+    "unbind": {
+      "ctrl-r": "projects::OpenRecent",
+    },
+  },
+  {
     "context": "!Editor && !Terminal",
     "bindings": {
       ":": "command_palette::Toggle",
