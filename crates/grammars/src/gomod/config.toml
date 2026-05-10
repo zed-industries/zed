@@ -1,5 +1,6 @@
 name = "Go Mod"
 code_fence_block_name = "go.mod"
+code_fence_block_aliases = ["go.mod"]
 grammar = "gomod"
 path_suffixes = ["mod"]
 line_comments = ["// "]
