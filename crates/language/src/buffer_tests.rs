@@ -959,6 +959,35 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_outline_selection_range_for_multiline_c_signature(cx: &mut gpui::TestAppContext) {
+    let text = indoc! {"
+        void
+        evdev_post_scroll(struct evdev_device *device,
+                  usec_t time,
+                  enum libinput_pointer_axis_source source,
+                  const struct normalized_coords *delta)
+        {
+            return;
+        }
+    "};
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(c_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
+
+    let item = outline
+        .items
+        .iter()
+        .find(|item| item.text.contains("evdev_post_scroll"))
+        .unwrap()
+        .to_point(&snapshot);
+
+    assert_eq!(item.source_range_for_text.start, Point::new(0, 0));
+    assert_eq!(item.selection_range.start, Point::new(1, 0));
+    assert_eq!(item.text, "void evdev_post_scroll( )");
+}
+
+#[gpui::test]
 fn test_outline_annotations(cx: &mut App) {
     // Add this new test case
     let text = r#"
@@ -4028,6 +4057,20 @@ fn javascript_lang() -> Language {
         "#,
     )
     .unwrap()
+}
+
+fn c_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../grammars/src/c/outline.scm"))
+        .unwrap(),
+    )
 }
 
 pub fn markdown_inline_lang() -> Language {
