@@ -7,7 +7,7 @@ use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
-use gpui::{HighlightStyle, PathPromptOptions, StyledText, Task};
+use gpui::{HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
 use settings::Settings;
@@ -194,11 +194,22 @@ impl OpenPathPrompt {
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
     ) {
-        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, options, window, cx| {
-            let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, options, false, None, tx, window, cx);
-            rx
-        }));
+        workspace.set_prompt_for_open_path(Box::new(
+            |workspace, lister, initial_directory, window, cx| {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                Self::prompt_for_open_path(
+                    workspace,
+                    lister,
+                    initial_directory,
+                    false,
+                    None,
+                    tx,
+                    window,
+                    cx,
+                );
+                rx
+            },
+        ));
     }
 
     pub fn register_new_path(
@@ -218,7 +229,7 @@ impl OpenPathPrompt {
     fn prompt_for_open_path(
         workspace: &mut Workspace,
         lister: DirectoryLister,
-        options: PathPromptOptions,
+        initial_directory: Option<PathBuf>,
         creating_path: bool,
         suggested_name: Option<String>,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
@@ -229,13 +240,7 @@ impl OpenPathPrompt {
             let delegate =
                 OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
-            let mut query = options
-                .initial_directory
-                .map(|initial_directory| {
-                    initial_directory.to_string_lossy().into_owned()
-                        + lister.path_style(cx).primary_separator()
-                })
-                .unwrap_or_else(|| lister.default_query(cx));
+            let mut query = lister.default_query(initial_directory.as_deref(), cx);
             if let Some(suggested_name) = suggested_name {
                 query.push_str(&suggested_name);
             }
@@ -255,13 +260,7 @@ impl OpenPathPrompt {
         Self::prompt_for_open_path(
             workspace,
             lister,
-            PathPromptOptions {
-                files: false,
-                directories: false,
-                multiple: false,
-                initial_directory: None,
-                prompt: None,
-            },
+            None,
             true,
             suggested_name,
             tx,

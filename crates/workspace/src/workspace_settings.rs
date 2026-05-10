@@ -1,9 +1,12 @@
-use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
+use std::{num::NonZeroUsize, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::DockPosition;
+use anyhow::Context as _;
 use collections::HashMap;
+use fs::Fs;
+use gpui::{App, AppContext as _, Task};
 use serde::Deserialize;
-use util::paths::expand_tilde;
+use util::{ResultExt as _, paths::SanitizedPath};
 pub use settings::{
     ActionName, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
@@ -25,7 +28,7 @@ pub struct WorkspaceSettings {
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
-    pub default_project_folder: Option<PathBuf>,
+    pub default_project_folder: Option<String>,
     pub use_system_prompts: bool,
     pub command_aliases: HashMap<String, ActionName>,
     pub max_tabs: Option<NonZeroUsize>,
@@ -106,10 +109,7 @@ impl Settings for WorkspaceSettings {
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),
             use_system_path_prompts: workspace.use_system_path_prompts.unwrap(),
-            default_project_folder: workspace
-                .default_project_folder
-                .as_deref()
-                .and_then(validate_default_project_folder),
+            default_project_folder: workspace.default_project_folder.clone(),
             use_system_prompts: workspace.use_system_prompts.unwrap(),
             command_aliases: workspace.command_aliases.clone(),
             max_tabs: workspace.max_tabs,
@@ -146,38 +146,102 @@ impl Settings for WorkspaceSettings {
     }
 }
 
-fn validate_default_project_folder(path: &str) -> Option<PathBuf> {
-    let expanded = expand_tilde(path);
-    if !expanded.is_dir() {
-        log::warn!("default_project_folder {path:?} is not an existing directory; ignoring");
-        return None;
-    }
-    Some(expanded)
+/// Resolves the user-configured default folder for "Open a new project" into a
+/// canonicalized, sanitized absolute path. Both the system file dialog and the
+/// in-app keyboard picker consult this single accessor so the override is
+/// determined in exactly one place.
+///
+/// Returns `Task<None>` when the setting is unset, the path does not exist, or
+/// the path does not point at a directory. All filesystem work happens
+/// asynchronously through the supplied [`Fs`] handle.
+pub fn default_open_path(fs: Arc<dyn Fs>, cx: &App) -> Task<Option<PathBuf>> {
+    let raw = WorkspaceSettings::get_global(cx)
+        .default_project_folder
+        .clone();
+    cx.background_spawn(async move {
+        let raw = raw?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let expanded = PathBuf::from(shellexpand::tilde(trimmed).into_owned());
+        let canonical = fs
+            .canonicalize(&expanded)
+            .await
+            .with_context(|| format!("canonicalizing default_project_folder {expanded:?}"))
+            .log_err()?;
+        if !fs.is_dir(&canonical).await {
+            log::warn!("default_project_folder {expanded:?} is not a directory; ignoring");
+            return None;
+        }
+        Some(SanitizedPath::new(&canonical).as_path().to_path_buf())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
+    use gpui::{BorrowAppContext as _, TestAppContext};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
 
-    #[test]
-    fn validate_default_project_folder_accepts_existing_directory() {
-        let dir = tempfile::tempdir().expect("tempdir should be created");
-        let path = dir.path().to_string_lossy().into_owned();
-        assert_eq!(validate_default_project_folder(&path).as_deref(), Some(dir.path()));
+    fn init_settings(cx: &mut TestAppContext, default_project_folder: Option<&str>) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.workspace.default_project_folder =
+                        default_project_folder.map(|s| s.to_string());
+                });
+            });
+        });
     }
 
-    #[test]
-    fn validate_default_project_folder_rejects_nonexistent_directory() {
-        let dir = tempfile::tempdir().expect("tempdir should be created");
-        let missing = dir.path().join("does-not-exist");
-        assert!(validate_default_project_folder(missing.to_string_lossy().as_ref()).is_none());
+    #[gpui::test]
+    async fn default_open_path_returns_canonical_directory(cx: &mut TestAppContext) {
+        init_settings(cx, Some(path!("/projects")));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/projects"), json!({ "alpha": {} }))
+            .await;
+
+        let task = cx.update(|cx| default_open_path(fs.clone(), cx));
+        let result = task.await;
+        assert_eq!(result.as_deref(), Some(std::path::Path::new(path!("/projects"))));
     }
 
-    #[test]
-    fn expand_tilde_uses_home_directory() {
-        let home = util::paths::home_dir().clone();
-        assert_eq!(expand_tilde("~"), home);
-        assert_eq!(expand_tilde("~/programs"), home.join("programs"));
+    #[gpui::test]
+    async fn default_open_path_ignores_missing_path(cx: &mut TestAppContext) {
+        init_settings(cx, Some(path!("/does-not-exist")));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/projects"), json!({})).await;
+
+        let task = cx.update(|cx| default_open_path(fs, cx));
+        assert!(task.await.is_none());
+    }
+
+    #[gpui::test]
+    async fn default_open_path_ignores_file_path(cx: &mut TestAppContext) {
+        init_settings(cx, Some(path!("/projects/readme.txt")));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/projects"),
+            json!({ "readme.txt": "hi" }),
+        )
+        .await;
+
+        let task = cx.update(|cx| default_open_path(fs, cx));
+        assert!(task.await.is_none());
+    }
+
+    #[gpui::test]
+    async fn default_open_path_returns_none_when_unset(cx: &mut TestAppContext) {
+        init_settings(cx, None);
+        let fs = FakeFs::new(cx.executor());
+        let task = cx.update(|cx| default_open_path(fs, cx));
+        assert!(task.await.is_none());
     }
 }
 

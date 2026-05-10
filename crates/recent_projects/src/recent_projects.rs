@@ -287,7 +287,6 @@ pub fn init(cx: &mut App) {
                     files: true,
                     directories: true,
                     multiple: false,
-                    initial_directory: None,
                     prompt: None,
                 },
                 DirectoryLister::Local(
@@ -2718,7 +2717,7 @@ mod tests {
 
         // Set up the prompt mock to return the new project path.
         workspace.update(cx, |workspace, _cx| {
-            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _, _| {
                 let (tx, rx) = futures::channel::oneshot::channel();
                 tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
                     .ok();
@@ -2794,7 +2793,7 @@ mod tests {
 
         // Set up the prompt mock to return the new project path.
         workspace.update(cx, |workspace, _cx| {
-            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _, _| {
                 let (tx, rx) = futures::channel::oneshot::channel();
                 tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
                     .ok();

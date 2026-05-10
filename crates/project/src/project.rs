@@ -980,17 +980,21 @@ impl DirectoryLister {
         }
     }
 
-    pub fn default_query(&self, cx: &mut App) -> String {
+    pub fn default_query(&self, override_path: Option<&Path>, cx: &mut App) -> String {
         let project = match self {
             DirectoryLister::Project(project) => project,
             DirectoryLister::Local(project, _) => project,
         }
         .read(cx);
         let path_style = project.path_style(cx);
-        project
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
+        override_path
+            .map(|path| path.to_string_lossy().into_owned())
+            .or_else(|| {
+                project
+                    .visible_worktrees(cx)
+                    .next()
+                    .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
+            })
             .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
             .map(|mut s| {
                 s.push_str(path_style.primary_separator());

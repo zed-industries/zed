@@ -21939,6 +21939,7 @@ dependencies = [
  "serde_json",
  "session",
  "settings",
+ "shellexpand",
  "smallvec",
  "sqlez",
  "strum 0.27.2",
