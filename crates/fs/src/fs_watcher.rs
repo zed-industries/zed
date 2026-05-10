@@ -18,6 +18,15 @@ pub enum WatcherMode {
     Poll,
 }
 
+impl WatcherMode {
+    fn is_recursive(self) -> bool {
+        match self {
+            WatcherMode::Native => cfg!(any(target_os = "windows", target_os = "macos")),
+            WatcherMode::Poll => false,
+        }
+    }
+}
+
 pub struct FsWatcher {
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
@@ -61,7 +70,7 @@ impl Watcher for FsWatcher {
         let tx = self.tx.clone();
         let pending_path_events = self.pending_path_events.clone();
 
-        if (self.mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
+        if self.mode.is_recursive()
             && let Some((watched_path, _)) = self
                 .registrations
                 .lock()
@@ -337,7 +346,7 @@ impl GlobalWatcher {
                     .lock()
                     .as_mut()
                     .expect("poll watcher initialized")
-                    .watch(path, notify::RecursiveMode::Recursive)?;
+                    .watch(path, notify::RecursiveMode::NonRecursive)?;
             }
         }
 
@@ -390,7 +399,7 @@ fn path_already_covered(
     path_registrations: &HashMap<Arc<std::path::Path>, u32>,
     mode: WatcherMode,
 ) -> bool {
-    (mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
+    mode.is_recursive()
         && path_registrations
             .keys()
             .any(|existing| path.starts_with(existing.as_ref()) && path != existing.as_ref())
