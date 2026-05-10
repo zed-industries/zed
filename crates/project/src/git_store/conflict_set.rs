@@ -49,6 +49,30 @@ impl ConflictSetSnapshot {
         &self.conflicts[start_ix..end_ix]
     }
 
+    pub fn auto_resolvable<'a>(
+        &'a self,
+        buffer: &'a text::BufferSnapshot,
+    ) -> impl Iterator<Item = (&'a ConflictRegion, AutoResolution)> + 'a {
+        self.conflicts
+            .iter()
+            .filter_map(move |conflict| conflict.auto_resolution(buffer).map(|r| (conflict, r)))
+    }
+
+    pub fn auto_resolution_edits(
+        &self,
+        buffer: &text::BufferSnapshot,
+    ) -> Vec<(Range<usize>, &'static str)> {
+        self.auto_resolvable(buffer)
+            .flat_map(|(conflict, resolution)| {
+                let kept = match resolution {
+                    AutoResolution::TakeOurs | AutoResolution::Identical => &conflict.ours,
+                    AutoResolution::TakeTheirs => &conflict.theirs,
+                };
+                conflict.resolution_edits(std::slice::from_ref(kept), buffer)
+            })
+            .collect()
+    }
+
     pub fn compare(&self, other: &Self, buffer: &text::BufferSnapshot) -> ConflictSetUpdate {
         let common_prefix_len = self
             .conflicts
@@ -100,31 +124,64 @@ pub struct ConflictRegion {
     pub base: Option<Range<Anchor>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoResolution {
+    TakeOurs,
+    TakeTheirs,
+    Identical,
+}
+
 impl ConflictRegion {
+    pub fn auto_resolution(&self, buffer: &text::BufferSnapshot) -> Option<AutoResolution> {
+        let base_range = self.base.as_ref()?;
+        let base_text = buffer.text_for_range(base_range.clone()).collect::<String>();
+        let ours_text = buffer.text_for_range(self.ours.clone()).collect::<String>();
+        let theirs_text = buffer.text_for_range(self.theirs.clone()).collect::<String>();
+
+        if ours_text == theirs_text {
+            Some(AutoResolution::Identical)
+        } else if ours_text == base_text {
+            Some(AutoResolution::TakeTheirs)
+        } else if theirs_text == base_text {
+            Some(AutoResolution::TakeOurs)
+        } else {
+            None
+        }
+    }
+
+    pub fn resolution_edits(
+        &self,
+        kept_ranges: &[Range<Anchor>],
+        buffer: &text::BufferSnapshot,
+    ) -> Vec<(Range<usize>, &'static str)> {
+        let mut deletions = Vec::new();
+        let outer_range = self.range.to_offset(buffer);
+        let mut offset = outer_range.start;
+        for kept_range in kept_ranges {
+            let kept_range = kept_range.to_offset(buffer);
+            if kept_range.start > offset {
+                deletions.push((offset..kept_range.start, ""));
+            }
+            offset = kept_range.end;
+        }
+        if outer_range.end > offset {
+            deletions.push((offset..outer_range.end, ""));
+        }
+        deletions
+    }
+
     pub fn resolve(
         &self,
         buffer: Entity<language::Buffer>,
         ranges: &[Range<Anchor>],
         cx: &mut App,
     ) {
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let mut deletions = Vec::new();
-        let empty = "";
-        let outer_range = self.range.to_offset(&buffer_snapshot);
-        let mut offset = outer_range.start;
-        for kept_range in ranges {
-            let kept_range = kept_range.to_offset(&buffer_snapshot);
-            if kept_range.start > offset {
-                deletions.push((offset..kept_range.start, empty));
-            }
-            offset = kept_range.end;
-        }
-        if outer_range.end > offset {
-            deletions.push((offset..outer_range.end, empty));
-        }
-
+        let edits = {
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            self.resolution_edits(ranges, &buffer_snapshot)
+        };
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(deletions, None, cx);
+            buffer.edit(edits, None, cx);
         });
     }
 }

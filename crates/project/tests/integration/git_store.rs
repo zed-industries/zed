@@ -268,6 +268,242 @@ mod conflict_set_tests {
         );
     }
 
+    #[test]
+    fn test_auto_resolution_take_ours() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            modified
+            ||||||| base
+            original
+            =======
+            original
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            Some(AutoResolution::TakeOurs)
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_take_theirs() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            original
+            ||||||| base
+            original
+            =======
+            modified
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            Some(AutoResolution::TakeTheirs)
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_identical() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            same edit
+            ||||||| base
+            original
+            =======
+            same edit
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            Some(AutoResolution::Identical)
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_genuine_conflict() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours edit
+            ||||||| base
+            original
+            =======
+            theirs edit
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None
+        );
+    }
+
+    #[test]
+    fn test_auto_resolution_no_base() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None
+        );
+    }
+
+    #[test]
+    fn test_auto_resolve_applies_edits_in_one_transaction() {
+        // 3 conflicts: 1 take-ours, 1 take-theirs, 1 genuine.
+        // After auto-resolve, only the genuine conflict remains.
+        // A single undo restores all 3.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-only
+            ||||||| base
+            base
+            =======
+            base
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            base
+            ||||||| base
+            base
+            =======
+            theirs-only
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            ours
+            ||||||| base
+            original
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let initial_conflicts = ConflictSet::parse(&snapshot);
+        assert_eq!(initial_conflicts.conflicts.len(), 3);
+
+        let edits = initial_conflicts.auto_resolution_edits(&snapshot);
+        assert!(!edits.is_empty());
+        buffer.edit(edits);
+
+        let after_conflicts = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(
+            after_conflicts.conflicts.len(),
+            1,
+            "only the genuine conflict should remain"
+        );
+
+        buffer
+            .undo()
+            .expect("auto-resolve should produce an undoable transaction");
+
+        let restored_conflicts = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(
+            restored_conflicts.conflicts.len(),
+            3,
+            "single undo should restore all 3 conflicts"
+        );
+    }
+
+    #[test]
+    fn test_auto_resolvable_mixed() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours-only
+            ||||||| base
+            base
+            =======
+            base
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            base
+            ||||||| base
+            base
+            =======
+            theirs-only
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            same
+            ||||||| base
+            original
+            =======
+            same
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            ours
+            ||||||| base
+            original
+            =======
+            theirs
+            >>>>>>> branch
+
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 5);
+
+        let resolved: Vec<AutoResolution> = conflict_snapshot
+            .auto_resolvable(&snapshot)
+            .map(|(_, resolution)| resolution)
+            .collect();
+        assert_eq!(
+            resolved,
+            vec![
+                AutoResolution::TakeOurs,
+                AutoResolution::TakeTheirs,
+                AutoResolution::Identical,
+            ]
+        );
+    }
+
     #[gpui::test]
     async fn test_conflict_updates(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         zlog::init_test();
