@@ -564,6 +564,12 @@ pub enum CustomAgentServerSettings {
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Registry {
+        /// Optional override of the registry agent ID. Defaults to the
+        /// settings key. Allows multiple instances of the same registry
+        /// agent under different display names with isolated env.
+        ///
+        /// Default: None
+        agent_id: Option<String>,
         /// Additional environment variables to pass to the agent.
         ///
         /// Default: {}

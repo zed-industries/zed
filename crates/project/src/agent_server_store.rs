@@ -524,15 +524,24 @@ impl AgentServerStore {
                         ),
                     );
                 }
-                CustomAgentServerSettings::Registry { env, .. } => {
-                    let Some(agent) = registry_agents_by_id.get(name) else {
+                CustomAgentServerSettings::Registry { env, agent_id, .. } => {
+                    let lookup_key = agent_id.as_deref().unwrap_or(name);
+                    let Some(agent) = registry_agents_by_id.get(lookup_key) else {
                         if registry_store.is_some() {
-                            log::debug!("Registry agent '{}' not found in ACP registry", name);
+                            log::debug!(
+                                "Registry agent '{}' not found in ACP registry",
+                                lookup_key
+                            );
                         }
                         continue;
                     };
 
                     let agent_name = AgentId(name.clone().into());
+                    let display_name = if agent_id.is_some() {
+                        SharedString::from(name.clone())
+                    } else {
+                        agent.metadata().name.clone()
+                    };
                     match agent {
                         RegistryAgent::Binary(agent) => {
                             if !agent.supports_current_platform {
@@ -560,7 +569,7 @@ impl AgentServerStore {
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
                                     agent.metadata.icon_path.clone(),
-                                    Some(agent.metadata.name.clone()),
+                                    Some(display_name),
                                 ),
                             );
                         }
@@ -583,7 +592,7 @@ impl AgentServerStore {
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
                                     agent.metadata.icon_path.clone(),
-                                    Some(agent.metadata.name.clone()),
+                                    Some(display_name),
                                 ),
                             );
                         }
@@ -1754,6 +1763,11 @@ pub enum CustomAgentServerSettings {
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
     Registry {
+        /// Optional override of the registry agent ID. Defaults to the
+        /// settings key.
+        ///
+        /// Default: None
+        agent_id: Option<String>,
         /// Additional environment variables to pass to the agent.
         ///
         /// Default: {}
@@ -1905,6 +1919,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 favorite_config_option_values,
             },
             settings::CustomAgentServerSettings::Registry {
+                agent_id,
                 env,
                 default_mode,
                 default_model,
@@ -1912,6 +1927,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 favorite_models,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Registry {
+                agent_id,
                 env,
                 default_mode,
                 default_model,
@@ -1989,6 +2005,7 @@ mod tests {
                             (
                                 name.to_string(),
                                 settings::CustomAgentServerSettings::Registry {
+                                    agent_id: None,
                                     env: HashMap::default(),
                                     default_mode: None,
                                     default_model: None,
@@ -2287,6 +2304,75 @@ mod tests {
                     .take_new_version_available_tx()
                     .is_some(),
                 "agent-b tx should have been transferred"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_registry_agent_id_alias_creates_distinct_instance(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let _registry = init_registry(cx, vec![make_npx_agent("claude-acp", "1.0.0")]);
+
+        cx.update(|cx| {
+            let mut work_env = HashMap::default();
+            work_env.insert(
+                "CLAUDE_CONFIG_DIR".to_string(),
+                "/tmp/claude-work".to_string(),
+            );
+            let mut entries = HashMap::default();
+            entries.insert(
+                "claude-acp".to_string(),
+                settings::CustomAgentServerSettings::Registry {
+                    agent_id: None,
+                    env: HashMap::default(),
+                    default_mode: None,
+                    default_model: None,
+                    favorite_models: Vec::new(),
+                    default_config_options: HashMap::default(),
+                    favorite_config_option_values: HashMap::default(),
+                }
+                .into(),
+            );
+            entries.insert(
+                "Claude Code (Work)".to_string(),
+                settings::CustomAgentServerSettings::Registry {
+                    agent_id: Some("claude-acp".to_string()),
+                    env: work_env,
+                    default_mode: None,
+                    default_model: None,
+                    favorite_models: Vec::new(),
+                    default_config_options: HashMap::default(),
+                    favorite_config_option_values: HashMap::default(),
+                }
+                .into(),
+            );
+            AllAgentServersSettings::override_global(AllAgentServersSettings(entries), cx);
+        });
+
+        let store = create_agent_server_store(cx);
+
+        store.read_with(cx, |store, _| {
+            let canonical = store
+                .external_agents
+                .get(&AgentId::new("claude-acp"))
+                .expect("canonical entry should be registered");
+            let aliased = store
+                .external_agents
+                .get(&AgentId::new("Claude Code (Work)"))
+                .expect("aliased entry should be registered");
+
+            assert!(matches!(canonical.source, ExternalAgentSource::Registry));
+            assert!(matches!(aliased.source, ExternalAgentSource::Registry));
+
+            assert_eq!(
+                canonical.display_name.as_deref(),
+                Some("claude-acp"),
+                "canonical entry should use the registry metadata name"
+            );
+            assert_eq!(
+                aliased.display_name.as_deref(),
+                Some("Claude Code (Work)"),
+                "aliased entry should use the settings key as its display name"
             );
         });
     }
