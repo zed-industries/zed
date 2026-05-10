@@ -3971,7 +3971,7 @@ Positive integer values
 
 ## Default Project Folder
 
-- Description: The default folder opened first when using "Open a new project". Use an absolute path or a home-relative path (e.g. `~/projects`). Set to `null` to use the platform default.
+- Description: The default folder shown when opening a new project. Accepts absolute or home-relative paths. Leave unset to use the platform default.
 - Setting: `default_project_folder`
 - Default: `null`
 
