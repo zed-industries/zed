@@ -329,6 +329,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
@@ -501,6 +502,7 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
@@ -535,6 +537,16 @@ impl Markdown {
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
         self.code_block_scroll_handles
             .retain(|id, _| ids.contains(id));
+    }
+
+    pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
+        self.mermaid_showing_code.contains(&source_offset)
+    }
+
+    pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
+        if !self.mermaid_showing_code.remove(&source_offset) {
+            self.mermaid_showing_code.insert(source_offset);
+        }
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -885,8 +897,11 @@ impl Markdown {
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
                     this.mermaid_state.update(&parsed_markdown, cx);
+                    this.mermaid_showing_code
+                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
                 } else {
                     this.mermaid_state.clear();
+                    this.mermaid_showing_code.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1767,12 +1782,19 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
+                                let showing_code = self
+                                    .markdown
+                                    .read(cx)
+                                    .is_mermaid_showing_code(range.start);
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(
                                         mermaid_diagram,
                                         &mermaid_state,
                                         &self.style,
+                                        self.markdown.clone(),
+                                        range.start,
+                                        showing_code,
                                     ),
                                 );
                                 rendered_mermaid_block = true;

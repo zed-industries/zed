@@ -153,6 +153,19 @@ In Markdown, hash marks signify headings. For example:
 </bad_example_do_not_do_this>
 This example is unacceptable because the path is in the wrong place. The path must be directly after the opening backticks.
 
+### Mermaid Diagrams
+
+To include a mermaid diagram that will be rendered visually, use a `.mermaid` extension in the path:
+
+```/dev/null/diagram.mermaid
+graph TD
+    A[Start] --> B[End]
+```
+
+The diagram will be rendered as an image by default, with "Preview" and "Code" tabs so the user can toggle between the rendered diagram and the source code. 
+
+The rendered view may be narrow, so do not try to generate very wide diagrams.
+
 {{#if (gt (len available_tools) 0)}}
 ## Fixing Diagnostics
 

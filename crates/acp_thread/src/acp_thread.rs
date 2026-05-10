@@ -14,7 +14,7 @@ use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Ta
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
 use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
@@ -731,8 +731,18 @@ impl ContentBlock {
         cx: &mut App,
     ) -> ContentBlock {
         ContentBlock::Markdown {
-            markdown: cx
-                .new(|cx| Markdown::new(content.into(), Some(language_registry.clone()), None, cx)),
+            markdown: cx.new(|cx| {
+                Markdown::new_with_options(
+                    content.into(),
+                    Some(language_registry.clone()),
+                    None,
+                    MarkdownOptions {
+                        render_mermaid_diagrams: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            }),
         }
     }
 
