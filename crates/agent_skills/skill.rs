@@ -148,66 +148,69 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
         anyhow::bail!("SKILL.md must start with YAML frontmatter (---)");
     }
 
-    let after_opening_dashes = &content[3..];
-    let after_opening_whitespace = after_opening_dashes.trim_start_matches([' ', '\t', '\r']);
-    let frontmatter_region = after_opening_whitespace
-        .strip_prefix("\r\n")
-        .or_else(|| after_opening_whitespace.strip_prefix('\n'))
-        .unwrap_or(after_opening_whitespace);
-
-    // The closing `---` must be alone on its own line: the three dashes must be
-    // followed by end-of-input or a line terminator (`\n` or `\r\n`). Iterate
-    // through candidates so that occurrences like `---trailing` or `----` are
-    // skipped in favor of a later valid closer.
-    let mut found = None;
-
-    // Handle the empty-frontmatter case where the closing `---` sits on the
-    // line immediately after the opener. `match_indices("\n---")` below would
-    // miss this because the `---` is at offset 0 of `frontmatter_region` and
-    // therefore not preceded by a newline within the region itself.
-    if frontmatter_region.starts_with("---") {
-        let after_dashes = &frontmatter_region[3..];
-        if after_dashes.is_empty() {
-            found = Some((0usize, 3usize));
-        } else if after_dashes.starts_with("\r\n") {
-            found = Some((0usize, 5usize));
-        } else if after_dashes.starts_with('\n') {
-            found = Some((0usize, 4usize));
-        }
-    }
-
-    for (idx, _) in frontmatter_region.match_indices("\n---") {
-        if found.is_some() {
-            break;
-        }
-        let after_dashes = idx + 4;
-        let rest = &frontmatter_region[after_dashes..];
-        let valid_terminator =
-            rest.is_empty() || rest.starts_with('\n') || rest.starts_with("\r\n");
-        if !valid_terminator {
+    // Find every candidate closing `---` line: a line consisting EXACTLY of
+    // `---` (followed by `\n`, `\r\n`, or EOF) at column 0, excluding the
+    // opening line itself. The opener occupies bytes 0..(first line ending),
+    // and our scan starts after each `\n`, so the opener is naturally skipped.
+    //
+    // For each candidate we record the byte position right after its line
+    // ending; that's both where the YAML stream slice ends and where the body
+    // begins.
+    let bytes = content.as_bytes();
+    let mut candidates: Vec<usize> = Vec::new();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'\n' {
             continue;
         }
-        let is_crlf = idx > 0 && frontmatter_region.as_bytes()[idx - 1] == b'\r';
-        if is_crlf {
-            // Delimiter is `\r\n---` (5 bytes), starting one byte before `idx`.
-            found = Some((idx - 1, 5));
-        } else {
-            // Delimiter is `\n---` (4 bytes), starting at `idx`.
-            found = Some((idx, 4));
+        let line_start = i + 1;
+        if line_start + 3 > bytes.len() {
+            continue;
         }
-        break;
+        if &bytes[line_start..line_start + 3] != b"---" {
+            continue;
+        }
+        let after_dashes = line_start + 3;
+        let end = if after_dashes == bytes.len() {
+            after_dashes
+        } else if bytes[after_dashes] == b'\n' {
+            after_dashes + 1
+        } else if after_dashes + 1 < bytes.len()
+            && bytes[after_dashes] == b'\r'
+            && bytes[after_dashes + 1] == b'\n'
+        {
+            after_dashes + 2
+        } else {
+            // Line is something like `---trailing` or `----`; not a candidate.
+            continue;
+        };
+        candidates.push(end);
     }
-    let Some((end_idx, delimiter_len)) = found else {
+
+    if candidates.is_empty() {
         anyhow::bail!("SKILL.md missing closing frontmatter delimiter (---)");
-    };
+    }
 
-    let frontmatter_yaml = &frontmatter_region[..end_idx];
-    let body = &frontmatter_region[end_idx + delimiter_len..];
+    // Try each candidate in order: slice content up through the candidate's
+    // terminator and ask `serde_yaml_ng` to parse it as a YAML stream. If the
+    // first document deserializes into `SkillMetadata`, that candidate is the
+    // real closer. Otherwise an earlier candidate may have cut the YAML in the
+    // middle of a scalar / quoted string; try the next one.
+    let mut last_error: Option<anyhow::Error> = None;
+    for end in candidates {
+        let prefix = &content[..end];
+        let mut docs = serde_yaml_ng::Deserializer::from_str(prefix);
+        let Some(first_doc) = docs.next() else {
+            continue;
+        };
+        match SkillMetadata::deserialize(first_doc) {
+            Ok(metadata) => return Ok((metadata, &content[end..])),
+            Err(e) => last_error = Some(anyhow::Error::new(e)),
+        }
+    }
 
-    let metadata: SkillMetadata =
-        serde_yaml_ng::from_str(frontmatter_yaml).context("Invalid YAML frontmatter")?;
-
-    Ok((metadata, body))
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("could not parse YAML frontmatter"))
+        .context("Invalid YAML frontmatter"))
 }
 
 fn validate_name(name: &str) -> Result<()> {
