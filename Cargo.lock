@@ -7421,6 +7421,7 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.4",
+ "regex",
  "remote",
  "remote_connection",
  "schemars 1.0.4",

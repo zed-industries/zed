@@ -49,6 +49,7 @@ project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 rand.workspace = true
+regex.workspace = true
 remote_connection.workspace = true
 remote.workspace = true
 schemars.workspace = true

@@ -716,6 +716,35 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 72
     pub commit_title_max_length: Option<usize>,
+
+    /// Regex patterns that Auto-Resolve will use to settle sub-conflicts
+    /// whose ours and theirs sides both consist of a single line matching the
+    /// pattern. Useful for version strings, build numbers, dates, and similar
+    /// values that aren't really conflicts even when both branches touch them.
+    ///
+    /// Default: []
+    pub auto_resolve_patterns: Option<Vec<AutoResolvePatternContent>>,
+}
+
+/// A single Auto-Resolve regex pattern with a preferred side.
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
+pub struct AutoResolvePatternContent {
+    /// Regex pattern used to match a single line on each side. Both sides
+    /// must match for the rule to fire.
+    pub pattern: Option<String>,
+    /// Which side to keep when both match.
+    pub take: Option<AutoResolveTake>,
+}
+
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoResolveTake {
+    #[default]
+    Ours,
+    Theirs,
 }
 
 #[derive(

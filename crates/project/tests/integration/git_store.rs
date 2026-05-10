@@ -419,7 +419,7 @@ mod conflict_set_tests {
         let initial_conflicts = ConflictSet::parse(&snapshot);
         assert_eq!(initial_conflicts.conflicts.len(), 3);
 
-        let edits = initial_conflicts.auto_resolution_edits(&snapshot);
+        let edits = initial_conflicts.auto_resolution_edits(&snapshot, &[]);
         assert!(!edits.is_empty());
         buffer.edit(edits);
 
@@ -531,7 +531,7 @@ mod conflict_set_tests {
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 1);
 
-        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
         assert!(
             segments
                 .iter()
@@ -544,7 +544,7 @@ mod conflict_set_tests {
         };
         assert_eq!(merged, "keep\nCHANGED\nalso keep\n");
 
-        let edits = conflict_snapshot.auto_resolution_edits(&snapshot);
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[]);
         buffer.edit(edits);
         let parsed_after = ConflictSet::parse(&buffer.snapshot());
         assert_eq!(parsed_after.conflicts.len(), 0);
@@ -583,7 +583,7 @@ mod conflict_set_tests {
             None
         );
 
-        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
         assert!(
             segments
                 .iter()
@@ -591,7 +591,7 @@ mod conflict_set_tests {
             "interleaved disjoint changes should fully resolve, got {segments:?}"
         );
 
-        let edits = conflict_snapshot.auto_resolution_edits(&snapshot);
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[]);
         buffer.edit(edits);
         let parsed_after = ConflictSet::parse(&buffer.snapshot());
         assert_eq!(parsed_after.conflicts.len(), 0);
@@ -628,12 +628,12 @@ mod conflict_set_tests {
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 1);
 
-        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
         assert_eq!(segments.len(), 2);
         assert!(matches!(&segments[0], DecompositionSegment::Resolved(_)));
         assert!(matches!(&segments[1], DecompositionSegment::Conflict { .. }));
 
-        let edits = conflict_snapshot.auto_resolution_edits(&snapshot);
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[]);
         buffer.edit(edits);
         let parsed_after = ConflictSet::parse(&buffer.snapshot());
         assert_eq!(
@@ -677,7 +677,7 @@ mod conflict_set_tests {
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 1);
 
-        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot).unwrap();
+        let segments = conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).unwrap();
         let conflicts = segments
             .iter()
             .filter(|s| matches!(s, DecompositionSegment::Conflict { .. }))
@@ -716,7 +716,97 @@ mod conflict_set_tests {
         let snapshot = buffer.snapshot();
         let conflict_snapshot = ConflictSet::parse(&snapshot);
         assert_eq!(conflict_snapshot.conflicts.len(), 1);
-        assert!(conflict_snapshot.conflicts[0].decompose(&snapshot).is_none());
+        assert!(conflict_snapshot.conflicts[0].decompose(&snapshot, &[]).is_none());
+    }
+
+    #[test]
+    fn test_decompose_regex_pattern_resolves_version_string() {
+        // Both sides bump a version-like line, which is a genuine line-level
+        // conflict at the diff level. With a matching regex pattern + take
+        // = theirs, decomposition should pick theirs and resolve fully.
+        let test_content = r#"
+            <<<<<<< HEAD
+            version = "1.2.3"
+            ||||||| base
+            version = "1.0.0"
+            =======
+            version = "1.5.0"
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+        assert_eq!(
+            conflict_snapshot.conflicts[0].auto_resolution(&snapshot),
+            None,
+            "without patterns this is a real conflict"
+        );
+
+        let patterns = vec![AutoResolvePattern {
+            regex: regex::Regex::new(r#"^version = ".*"$"#).unwrap(),
+            take: AutoResolveTakeSide::Theirs,
+        }];
+
+        let segments = conflict_snapshot.conflicts[0]
+            .decompose(&snapshot, &patterns)
+            .unwrap();
+        assert_eq!(segments.len(), 1);
+        assert!(matches!(
+            &segments[0],
+            DecompositionSegment::Resolved(text) if text == "version = \"1.5.0\"\n"
+        ));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &patterns);
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+    }
+
+    #[test]
+    fn test_decompose_regex_pattern_skips_multiline_subconflict() {
+        // Regex auto-merge intentionally fires only when both sides are
+        // exactly one line, so multi-line conflicts are never silently
+        // picked by a too-broad pattern.
+        let test_content = r#"
+            <<<<<<< HEAD
+            version = "1.2.3"
+            extra = ours
+            ||||||| base
+            version = "1.0.0"
+            extra = base
+            =======
+            version = "1.5.0"
+            extra = theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let patterns = vec![AutoResolvePattern {
+            regex: regex::Regex::new(r#"^version = ".*"$"#).unwrap(),
+            take: AutoResolveTakeSide::Theirs,
+        }];
+
+        let segments = conflict_snapshot.conflicts[0]
+            .decompose(&snapshot, &patterns)
+            .unwrap();
+        // Both sides also disagree on `extra`, so that line stays as a
+        // sub-conflict even though the version line cluster is multi-line and
+        // would not match the regex on its own.
+        let any_conflict = segments
+            .iter()
+            .any(|s| matches!(s, DecompositionSegment::Conflict { .. }));
+        assert!(
+            any_conflict,
+            "multi-line cluster should not be regex-resolved: {segments:?}"
+        );
     }
 
     #[gpui::test]

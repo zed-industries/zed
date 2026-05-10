@@ -261,20 +261,40 @@ A single undo reverts the entire batch.
 
 #### What Auto-Resolve handles
 
-For each conflict region, Auto-Resolve compares all three sides — yours, theirs, and the merge base — using strict equality:
+For each conflict region, Auto-Resolve re-diffs the two sides against the merge base at line granularity and decides per cluster:
 
-- If only your side changed (theirs equals base), your change is kept
-- If only the incoming side changed (yours equals base), the incoming change is kept
-- If both sides made the identical change, that change is kept
-- Otherwise the region is left untouched for manual resolution
+- If only your side touched a cluster of lines, your change is kept
+- If only the incoming side touched it, the incoming change is kept
+- If both sides made the identical change to the same cluster, that change is kept
+- Otherwise the cluster is emitted as a smaller `<<<<<<< / ||||||| / ======= / >>>>>>>` block, leaving only the genuinely conflicting lines for manual resolution
+
+This means a single conflict region with disjoint edits on each side (your branch touched line 1, the incoming branch touched line 8) gets fully cleaned up, and a region that mixes resolvable and unresolvable edits keeps just the parts that need attention.
 
 #### Banner states
 
 The banner is shown whenever conflicts exist in the file. Its state depends on whether anything is auto-resolvable:
 
 - **Auto-Resolve — N non-conflicting changes • K will remain** — at least one region can be resolved automatically; click to apply
+- **Auto-Resolve — N fully + M partially • K will remain** — some regions resolve fully, others will be simplified into smaller sub-conflicts
 - **Auto-Resolve — no non-conflicting changes detected** — every conflict has changes on both sides, so manual resolution is required for all of them
 - **Auto-Resolve — requires diff3 conflict markers** — the markers don't include the merge base; enable `merge.conflictStyle = zdiff3` and re-run the merge to populate them
+
+#### Auto-Resolve regex patterns
+
+For lines that always change together but never really conflict — version numbers in `Cargo.toml`, build dates, lockfile hashes — you can teach Auto-Resolve to pick a side automatically:
+
+```json
+{
+  "git_panel": {
+    "auto_resolve_patterns": [
+      { "pattern": "^version = \".*\"$", "take": "theirs" },
+      { "pattern": "^\\s*\"buildNumber\":", "take": "theirs" }
+    ]
+  }
+}
+```
+
+A rule fires only when, after line-level decomposition, both sides of a sub-conflict consist of exactly one line and both lines match the same pattern. The `take` field selects `"ours"` or `"theirs"`. Multi-line sub-conflicts are intentionally left alone so a too-broad pattern can't silently discard real changes.
 
 ## Stashing
 

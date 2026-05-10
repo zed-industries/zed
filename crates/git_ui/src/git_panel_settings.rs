@@ -2,7 +2,7 @@ use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{RegisterSetting, Settings, StatusStyle};
+use settings::{AutoResolveTake, RegisterSetting, Settings, StatusStyle};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -31,6 +31,13 @@ pub struct GitPanelSettings {
     pub show_count_badge: bool,
     pub starts_open: bool,
     pub commit_title_max_length: usize,
+    pub auto_resolve_patterns: Vec<AutoResolvePatternSetting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoResolvePatternSetting {
+    pub pattern: String,
+    pub take: AutoResolveTake,
 }
 
 #[derive(Default)]
@@ -78,6 +85,17 @@ impl Settings for GitPanelSettings {
             show_count_badge: git_panel.show_count_badge.unwrap(),
             starts_open: git_panel.starts_open.unwrap(),
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
+            auto_resolve_patterns: git_panel
+                .auto_resolve_patterns
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|raw| {
+                    Some(AutoResolvePatternSetting {
+                        pattern: raw.pattern?,
+                        take: raw.take.unwrap_or(AutoResolveTake::Ours),
+                    })
+                })
+                .collect(),
         }
     }
 }

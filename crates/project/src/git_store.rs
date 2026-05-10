@@ -19,8 +19,8 @@ use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{
-    AutoResolution, ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
-    DecompositionSegment, RegionSummary,
+    AutoResolution, AutoResolvePattern, AutoResolveTakeSide, ConflictRegion, ConflictSet,
+    ConflictSetSnapshot, ConflictSetUpdate, DecompositionSegment, RegionSummary,
 };
 use fs::{Fs, RemoveOptions};
 use futures::{

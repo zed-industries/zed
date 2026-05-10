@@ -1,7 +1,24 @@
 use gpui::{App, Context, Entity, EventEmitter, SharedString};
 use language::line_diff;
+use regex::Regex;
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use text::{Anchor, BufferId, OffsetRangeExt as _};
+
+/// A compiled Auto-Resolve regex pattern. Built by callers from user settings
+/// and passed into [`ConflictSetSnapshot::auto_resolution_edits`] /
+/// [`ConflictRegion::decompose`] so the decomposition algorithm can collapse
+/// sub-conflicts whose both sides match the same pattern.
+#[derive(Debug, Clone)]
+pub struct AutoResolvePattern {
+    pub regex: Regex,
+    pub take: AutoResolveTakeSide,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoResolveTakeSide {
+    Ours,
+    Theirs,
+}
 
 pub struct ConflictSet {
     pub has_conflict: bool,
@@ -62,10 +79,11 @@ impl ConflictSetSnapshot {
     pub fn auto_resolution_edits(
         &self,
         buffer: &text::BufferSnapshot,
+        patterns: &[AutoResolvePattern],
     ) -> Vec<(Range<usize>, String)> {
         let mut edits = Vec::new();
         for conflict in self.conflicts.iter() {
-            let Some(segments) = conflict.decompose(buffer) else {
+            let Some(segments) = conflict.decompose(buffer, patterns) else {
                 continue;
             };
             if !segments
@@ -91,9 +109,10 @@ impl ConflictSetSnapshot {
     pub fn decomposition_summary<'a>(
         &'a self,
         buffer: &'a text::BufferSnapshot,
+        patterns: &'a [AutoResolvePattern],
     ) -> impl Iterator<Item = (&'a ConflictRegion, RegionSummary)> + 'a {
         self.conflicts.iter().filter_map(move |conflict| {
-            let segments = conflict.decompose(buffer)?;
+            let segments = conflict.decompose(buffer, patterns)?;
             let summary = RegionSummary::from_segments(&segments);
             summary.is_improvement.then_some((conflict, summary))
         })
@@ -211,13 +230,24 @@ impl ConflictRegion {
 
     /// Decompose this region into a sequence of resolved and unresolved
     /// segments by re-diffing `ours` and `theirs` against `base` at line
-    /// granularity. Returns `None` if no diff3 base is present.
-    pub fn decompose(&self, buffer: &text::BufferSnapshot) -> Option<Vec<DecompositionSegment>> {
+    /// granularity. `patterns` are applied to remaining single-line
+    /// sub-conflicts so user-configured regex rules (e.g. version strings)
+    /// can collapse them too. Returns `None` if no diff3 base is present.
+    pub fn decompose(
+        &self,
+        buffer: &text::BufferSnapshot,
+        patterns: &[AutoResolvePattern],
+    ) -> Option<Vec<DecompositionSegment>> {
         let base_range = self.base.as_ref()?;
         let base_text = buffer.text_for_range(base_range.clone()).collect::<String>();
         let ours_text = buffer.text_for_range(self.ours.clone()).collect::<String>();
         let theirs_text = buffer.text_for_range(self.theirs.clone()).collect::<String>();
-        Some(decompose_three_way(&base_text, &ours_text, &theirs_text))
+        Some(decompose_three_way(
+            &base_text,
+            &ours_text,
+            &theirs_text,
+            patterns,
+        ))
     }
 
     pub fn resolution_edits(
@@ -413,7 +443,12 @@ fn split_lines(text: &str) -> Vec<&str> {
 /// auto-resolved to that side's text, clusters where both sides produce
 /// identical text are auto-resolved, and clusters where the sides diverge are
 /// emitted as smaller sub-conflicts.
-fn decompose_three_way(base: &str, ours: &str, theirs: &str) -> Vec<DecompositionSegment> {
+fn decompose_three_way(
+    base: &str,
+    ours: &str,
+    theirs: &str,
+    patterns: &[AutoResolvePattern],
+) -> Vec<DecompositionSegment> {
     let base_lines = split_lines(base);
     let ours_lines = split_lines(ours);
     let theirs_lines = split_lines(theirs);
@@ -503,6 +538,12 @@ fn decompose_three_way(base: &str, ours: &str, theirs: &str) -> Vec<Decompositio
             DecompositionSegment::Resolved(ours_segment)
         } else if ours_segment == theirs_segment {
             DecompositionSegment::Resolved(ours_segment)
+        } else if let Some(side) = pattern_match_resolution(&ours_segment, &theirs_segment, patterns)
+        {
+            match side {
+                AutoResolveTakeSide::Ours => DecompositionSegment::Resolved(ours_segment),
+                AutoResolveTakeSide::Theirs => DecompositionSegment::Resolved(theirs_segment),
+            }
         } else {
             DecompositionSegment::Conflict {
                 base: base_segment,
@@ -607,5 +648,35 @@ pub(crate) fn render_decomposed_region(
 fn ensure_trailing_newline(text: &mut String) {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
+    }
+}
+
+/// Apply Auto-Resolve regex patterns to a single sub-conflict. The rule fires
+/// only when both sides are exactly one line and both lines match the same
+/// pattern, so multi-line edits are never silently picked one way or another.
+fn pattern_match_resolution(
+    ours: &str,
+    theirs: &str,
+    patterns: &[AutoResolvePattern],
+) -> Option<AutoResolveTakeSide> {
+    if patterns.is_empty() {
+        return None;
+    }
+    let ours_line = single_line(ours)?;
+    let theirs_line = single_line(theirs)?;
+    for pattern in patterns {
+        if pattern.regex.is_match(ours_line) && pattern.regex.is_match(theirs_line) {
+            return Some(pattern.take);
+        }
+    }
+    None
+}
+
+fn single_line(text: &str) -> Option<&str> {
+    let trimmed = text.strip_suffix('\n').unwrap_or(text);
+    if trimmed.is_empty() || trimmed.contains('\n') {
+        None
+    } else {
+        Some(trimmed)
     }
 }

@@ -12,10 +12,12 @@ use gpui::{
 use language::{Anchor, Buffer, BufferId, BufferSnapshot};
 use project::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, Project, ProjectItem as _,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    git_store::{AutoResolvePattern, AutoResolveTakeSide, GitStore, GitStoreEvent, RepositoryEvent},
 };
-use settings::Settings;
+use settings::{AutoResolveTake, Settings};
 use std::{ops::Range, sync::Arc};
+
+use crate::git_panel_settings::GitPanelSettings;
 use ui::{ButtonLike, Divider, Tooltip, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
 use workspace::{
@@ -286,7 +288,8 @@ fn update_auto_resolve_banner(
         return;
     };
     let buffer_snapshot = buffer_entity.read(cx).snapshot();
-    let Some(state) = banner_state_for(conflict_snapshot, &buffer_snapshot) else {
+    let patterns = compile_auto_resolve_patterns(cx);
+    let Some(state) = banner_state_for(conflict_snapshot, &buffer_snapshot, &patterns) else {
         return;
     };
 
@@ -503,9 +506,25 @@ fn render_conflict_buttons(
         .into_any()
 }
 
+fn compile_auto_resolve_patterns(cx: &App) -> Vec<AutoResolvePattern> {
+    GitPanelSettings::get_global(cx)
+        .auto_resolve_patterns
+        .iter()
+        .filter_map(|raw| {
+            let regex = regex::Regex::new(&raw.pattern).log_err()?;
+            let take = match raw.take {
+                AutoResolveTake::Ours => AutoResolveTakeSide::Ours,
+                AutoResolveTake::Theirs => AutoResolveTakeSide::Theirs,
+            };
+            Some(AutoResolvePattern { regex, take })
+        })
+        .collect()
+}
+
 fn banner_state_for(
     conflict_snapshot: &ConflictSetSnapshot,
     buffer_snapshot: &BufferSnapshot,
+    patterns: &[AutoResolvePattern],
 ) -> Option<BannerState> {
     let total = conflict_snapshot.conflicts.len();
     if total == 0 {
@@ -519,7 +538,7 @@ fn banner_state_for(
         return Some(BannerState::NoBase);
     }
     let (mut fully_resolvable, mut partially_resolvable) = (0, 0);
-    for (_conflict, summary) in conflict_snapshot.decomposition_summary(buffer_snapshot) {
+    for (_conflict, summary) in conflict_snapshot.decomposition_summary(buffer_snapshot, patterns) {
         if summary.fully_resolved {
             fully_resolvable += 1;
         } else {
@@ -635,11 +654,14 @@ pub(crate) fn auto_resolve_buffer(
     let conflict_snapshot = conflict_set.read(cx).snapshot();
     let total = conflict_snapshot.conflicts.len();
 
+    let patterns = compile_auto_resolve_patterns(cx);
     let (edits, fully, partial) = {
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let edits = conflict_snapshot.auto_resolution_edits(&buffer_snapshot);
+        let edits = conflict_snapshot.auto_resolution_edits(&buffer_snapshot, &patterns);
         let (mut fully, mut partial) = (0, 0);
-        for (_conflict, summary) in conflict_snapshot.decomposition_summary(&buffer_snapshot) {
+        for (_conflict, summary) in
+            conflict_snapshot.decomposition_summary(&buffer_snapshot, &patterns)
+        {
             if summary.fully_resolved {
                 fully += 1;
             } else {

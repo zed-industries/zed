@@ -47,8 +47,8 @@ use crate::{
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
-    AutoResolution, ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
-    DecompositionSegment, RegionSummary,
+    AutoResolution, AutoResolvePattern, AutoResolveTakeSide, ConflictRegion, ConflictSet,
+    ConflictSetSnapshot, ConflictSetUpdate, DecompositionSegment, RegionSummary,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     linked_worktree_short_name, repo_identity_path, worktrees_directory_for_repo,
 };
