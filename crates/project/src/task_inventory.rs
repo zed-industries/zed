@@ -662,7 +662,7 @@ impl Inventory {
     }
 
     /// Returns tasks with the provided tag resolved against the provided task context.
-    pub fn resolved_tasks_with_tag(
+    pub fn resolve_tasks_with_tag(
         &self,
         tag: &str,
         worktree: Option<WorktreeId>,

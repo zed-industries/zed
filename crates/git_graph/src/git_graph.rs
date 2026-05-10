@@ -2105,7 +2105,7 @@ impl GitGraph {
             return Vec::new();
         };
 
-        task_inventory.read(cx).resolved_tasks_with_tag(
+        task_inventory.read(cx).resolve_tasks_with_tag(
             GIT_COMMAND_TASK_TAG,
             worktree_id,
             task_context,
