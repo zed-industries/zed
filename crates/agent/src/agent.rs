@@ -55,7 +55,7 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 use util::ResultExt;
@@ -366,34 +366,67 @@ impl NativeAgent {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) {
-        // The skills watcher uses [`fs::watch_optional_dir`] which:
-        // - Returns immediately if `~/.agents` doesn't exist at startup
-        //   (the user must create it and restart Zed for live reload).
-        // - Watches `~/.agents` until `~/.agents/skills` appears, then
-        //   transitions to watching `~/.agents/skills` directly.
-        // - Handles Linux's non-recursive inotify by registering a
-        //   watch per nested skill subdirectory.
-        let (mut events, _watcher) = fs::watch_optional_dir(
-            cx.background_executor(),
-            fs,
-            global_skills_dir(),
-            std::time::Duration::from_millis(500),
-        );
+        let skills_dir = global_skills_dir();
 
-        while let Some(_event) = events.next().await {
-            // Any movement under the skills directory — appearance,
-            // changes, or disappearance — invalidates the cached
-            // project context. The refresh path is debounced and re-
-            // scans the skills directory itself, so we don't need to
-            // distinguish event variants here.
-            let updated = this.update(cx, |this, _cx| {
-                for state in this.projects.values_mut() {
-                    state.project_context_needs_refresh.send(()).ok();
-                }
-            });
-            if updated.is_err() {
+        loop {
+            // Watch the deepest existing ancestor of the skills dir. This lets
+            // us react to the creation of `~/.agents/` or `~/.agents/skills/`
+            // without requiring a Zed restart.
+            //
+            // Note: when we transition from watching an ancestor to watching
+            // the skills dir directly, we may miss events that happen during
+            // the transition. File watchers are inherently best-effort, so we
+            // accept this limitation.
+            let Some(watch_target) = deepest_existing_ancestor(&skills_dir, fs.as_ref()).await
+            else {
+                // We couldn't even find the filesystem root. Bail.
                 return;
+            };
+
+            let watching_skills_dir = watch_target == skills_dir;
+
+            let (mut events, _watcher) = fs
+                .watch(&watch_target, std::time::Duration::from_millis(500))
+                .await;
+
+            while let Some(changed_paths) = events.next().await {
+                if changed_paths.is_empty() {
+                    continue;
+                }
+
+                if watching_skills_dir {
+                    let Ok(()) = this.update(cx, |this, _cx| {
+                        for state in this.projects.values_mut() {
+                            state.project_context_needs_refresh.send(()).ok();
+                        }
+                    }) else {
+                        return;
+                    };
+                    continue;
+                }
+
+                // We're watching an ancestor. If the skills dir has appeared,
+                // trigger a refresh and break out so the outer loop switches
+                // to watching it directly.
+                if fs.is_dir(&skills_dir).await {
+                    let Ok(()) = this.update(cx, |this, _cx| {
+                        for state in this.projects.values_mut() {
+                            state.project_context_needs_refresh.send(()).ok();
+                        }
+                    }) else {
+                        return;
+                    };
+                    break;
+                }
             }
+
+            // Guard against tight loops if `fs.watch` immediately closes its
+            // stream (e.g. when the watched directory is rapidly
+            // created/destroyed): without a delay before rebinding, we'd spin
+            // as fast as the executor will let us.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(250))
+                .await;
         }
     }
 
@@ -1575,6 +1608,19 @@ impl NativeAgent {
             .await
         })
     }
+}
+
+/// Walk up `path` looking for the deepest existing directory. Returns `path`
+/// itself if it's already a directory, or the closest ancestor that is.
+async fn deepest_existing_ancestor(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    let mut current: Option<&Path> = Some(path);
+    while let Some(candidate) = current {
+        if fs.is_dir(candidate).await {
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 /// Wrapper struct that implements the AgentConnection trait
@@ -3135,14 +3181,9 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
-        // Pre-create the parent of `skills_dir` (i.e. `~/.agents`) but not
-        // `skills_dir` itself. The watcher attaches to the parent and
-        // reacts when `skills_dir` is created later. We do NOT support
-        // discovery when the parent is also missing; that case requires
-        // restarting Zed and is covered by the `prompt_store`-style
-        // `fs::watch_optional_dir` contract.
-        let parent_dir = skills_dir.parent().expect("skills dir must have a parent");
-        fs.create_dir(parent_dir).await.unwrap();
+        // Intentionally do NOT pre-create `skills_dir`. The watcher should
+        // attach to the deepest existing ancestor and react when the
+        // directory is created later.
 
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
@@ -3175,7 +3216,7 @@ mod internal_tests {
         });
 
         // Create the global skills directory and a skill within it. The
-        // parent-directory watcher should pick this up without a restart.
+        // ancestor watcher should pick this up without a restart.
         let new_skill_dir = skills_dir.join("late-skill");
         fs.create_dir(&new_skill_dir).await.unwrap();
         fs.insert_file(
@@ -3213,11 +3254,8 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
-        // No skills directory exists at startup, but its parent does; the
-        // parent watcher should pick up the SKILL.md when the skills dir
-        // is created later.
-        let parent_dir = skills_dir.parent().expect("skills dir must have a parent");
-        fs.create_dir(parent_dir).await.unwrap();
+        // No skills directory exists at startup; the watcher should
+        // create one and pick up SKILL.md when it's added later.
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
