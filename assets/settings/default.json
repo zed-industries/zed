@@ -1094,6 +1094,12 @@
         // },
       },
     },
+    // Default response to permission requests from external ACP agents
+    // (e.g. Claude Agent, Codex, Gemini CLI). One of "prompt" (default),
+    // "allow_once", "allow_always". When set to allow_*, Zed answers the
+    // request automatically when the agent offers the matching option,
+    // and otherwise falls back to the UI prompt.
+    "external_acp_permission_default": "prompt",
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": false,
     // When enabled, show voting thumbs for feedback on agent edits.

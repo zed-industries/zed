@@ -272,7 +272,7 @@ When you start an external agent thread, Zed sends:
 **Not forwarded:**
 
 - [Profiles](./agent-panel.md#profiles) — profiles only apply to Zed's first-party agent
-- [Tool permissions](./tool-permissions.md) settings — external agents request permissions at runtime via UI prompts
+- [Tool permissions](./tool-permissions.md) settings — external agents request permissions at runtime via UI prompts (auto-resolution available via [`agent.external_acp_permission_default`](./tool-permissions.md#external-acp-agent-permissions))
 - Rules files — Zed's [rules system](./rules.md) only applies to Zed's first-party agent (external agents read their own rules files directly)
 
 ### What External Agents Read Directly {#native-config}

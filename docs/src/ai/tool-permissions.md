@@ -187,6 +187,30 @@ Selecting "Always for <tool>" sets `tools.<tool>.default` to allow or deny.
 When a pattern can be safely extracted, selecting "Always for <pattern>" adds an `always_allow` or `always_deny` rule for that input.
 MCP tools only support the tool-level option.
 
+## External ACP Agent Permissions {#external-acp-agent-permissions}
+
+External agents (Claude Agent, Codex, Gemini CLI, etc.) request permissions at runtime via UI prompts; the `tool_permissions` setting above only applies to Zed's first-party agent.
+
+To answer those requests automatically, set `agent.external_acp_permission_default`:
+
+```json [settings]
+{
+  "agent": {
+    "external_acp_permission_default": "allow_once"
+  }
+}
+```
+
+| Value           | Behavior                                                           |
+| --------------- | ------------------------------------------------------------------ |
+| `prompt`        | Always show the UI prompt (default).                               |
+| `allow_once`    | Auto-respond with `allow_once` when the agent offers it.           |
+| `allow_always`  | Auto-respond with `allow_always` when the agent offers it.         |
+
+If the agent doesn't offer the requested option, Zed falls back to the UI prompt.
+
+> **Warning:** This bypasses UI confirmation for external agent tools. Use only in trusted workspaces.
+
 ## Examples
 
 ### Terminal: Auto-Approve Build Commands

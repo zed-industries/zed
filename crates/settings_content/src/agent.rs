@@ -211,6 +211,11 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+    /// Default response for `session/request_permission` calls from external
+    /// ACP agents. When set to a value other than `prompt`, Zed answers the
+    /// request automatically when the agent offers the matching option, and
+    /// otherwise falls back to the UI prompt.
+    pub external_acp_permission_default: Option<ExternalAcpPermissionDefault>,
 }
 
 impl AgentSettingsContent {
@@ -682,6 +687,21 @@ pub enum ToolPermissionMode {
     /// Always prompt for confirmation (default behavior).
     #[default]
     Confirm,
+}
+
+/// Default response for `session/request_permission` from external ACP agents.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalAcpPermissionDefault {
+    /// Always show the UI prompt.
+    #[default]
+    Prompt,
+    /// Auto-respond with `allow_once` when the agent offers it.
+    AllowOnce,
+    /// Auto-respond with `allow_always` when the agent offers it.
+    AllowAlways,
 }
 
 impl std::fmt::Display for ToolPermissionMode {

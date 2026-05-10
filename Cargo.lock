@@ -278,6 +278,7 @@ dependencies = [
  "acp_thread",
  "action_log",
  "agent-client-protocol",
+ "agent_settings",
  "anyhow",
  "async-channel 2.5.0",
  "chrono",

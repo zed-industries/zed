@@ -7,6 +7,7 @@ use agent_client_protocol::schema::{self as acp, ErrorCode};
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder, SentRequest,
 };
+use agent_settings::AgentSettings;
 use anyhow::anyhow;
 use async_channel;
 use collections::HashMap;
@@ -19,6 +20,7 @@ use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
+use settings::{ExternalAcpPermissionDefault, Settings as _};
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
@@ -3351,6 +3353,28 @@ fn handle_request_permission(
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
+
+    let auto_kind = cx.update(|cx| {
+        match AgentSettings::get_global(cx).external_acp_permission_default {
+            ExternalAcpPermissionDefault::Prompt => None,
+            ExternalAcpPermissionDefault::AllowOnce => Some(acp::PermissionOptionKind::AllowOnce),
+            ExternalAcpPermissionDefault::AllowAlways => {
+                Some(acp::PermissionOptionKind::AllowAlways)
+            }
+        }
+    });
+
+    if let Some(kind) = auto_kind
+        && let Some(option) = args.options.iter().find(|o| o.kind == kind)
+    {
+        let outcome = acp::RequestPermissionOutcome::Selected(
+            acp::SelectedPermissionOutcome::new(option.option_id.clone()),
+        );
+        responder
+            .respond(acp::RequestPermissionResponse::new(outcome))
+            .log_err();
+        return;
+    }
 
     cx.spawn(async move |cx| {
         let result: Result<_, acp::Error> = async {
