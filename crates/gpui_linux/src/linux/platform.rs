@@ -329,10 +329,18 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.prompt_for_paths_in_directory(options, None)
+    }
+
+    fn prompt_for_paths_in_directory(
+        &self,
+        options: PathPromptOptions,
+        initial_directory: Option<PathBuf>,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
 
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let _ = (done_tx.send(Ok(None)), options);
+        let _ = (done_tx.send(Ok(None)), options, initial_directory);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let identifier = self.inner.window_identifier();
@@ -354,7 +362,7 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
                     .multiple(options.multiple)
                     .directory(options.directories);
 
-                let builder = if let Some(initial_directory) = options.initial_directory {
+                let builder = if let Some(initial_directory) = initial_directory {
                     match builder.current_folder(initial_directory) {
                         Ok(builder) => builder,
                         Err(error) => {

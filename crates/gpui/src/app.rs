@@ -1346,6 +1346,20 @@ impl App {
         self.platform.prompt_for_paths(options)
     }
 
+    /// Displays a platform modal for selecting paths, opening at `initial_directory` when provided.
+    ///
+    /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
+    /// If cancelled, a `None` will be relayed instead.
+    /// May return an error on Linux if the file picker couldn't be opened.
+    pub fn prompt_for_paths_in_directory(
+        &self,
+        options: PathPromptOptions,
+        initial_directory: Option<PathBuf>,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.platform
+            .prompt_for_paths_in_directory(options, initial_directory)
+    }
+
     /// Displays a platform modal for selecting a new path where a file can be saved.
     ///
     /// The provided directory will be used to set the initial location.

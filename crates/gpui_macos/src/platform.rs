@@ -725,6 +725,14 @@ impl Platform for MacPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.prompt_for_paths_in_directory(options, None)
+    }
+
+    fn prompt_for_paths_in_directory(
+        &self,
+        options: PathPromptOptions,
+        initial_directory: Option<PathBuf>,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
@@ -734,7 +742,7 @@ impl Platform for MacPlatform {
                     panel.setCanChooseFiles_(options.files.to_objc());
                     panel.setAllowsMultipleSelection_(options.multiple.to_objc());
 
-                    if let Some(initial_directory) = options.initial_directory {
+                    if let Some(initial_directory) = initial_directory {
                         let path = ns_string(initial_directory.to_string_lossy().as_ref());
                         let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
                         panel.setDirectoryURL(url);

@@ -171,6 +171,13 @@ pub trait Platform: 'static {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
+    fn prompt_for_paths_in_directory(
+        &self,
+        options: PathPromptOptions,
+        _initial_directory: Option<PathBuf>,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.prompt_for_paths(options)
+    }
     fn prompt_for_new_path(
         &self,
         directory: &Path,
@@ -1670,8 +1677,6 @@ pub struct PathPromptOptions {
     pub directories: bool,
     /// Should the prompt allow multiple files to be selected?
     pub multiple: bool,
-    /// The initial directory shown by the prompt, when supported.
-    pub initial_directory: Option<PathBuf>,
     /// The prompt to show to a user when selecting a path
     pub prompt: Option<SharedString>,
 }

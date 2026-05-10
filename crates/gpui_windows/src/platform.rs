@@ -559,11 +559,19 @@ impl Platform for WindowsPlatform {
         &self,
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.prompt_for_paths_in_directory(options, None)
+    }
+
+    fn prompt_for_paths_in_directory(
+        &self,
+        options: PathPromptOptions,
+        initial_directory: Option<PathBuf>,
+    ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
         let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_open_dialog(options, window));
+                let _ = tx.send(file_open_dialog(options, initial_directory, window));
             })
             .detach();
 
@@ -1131,6 +1139,7 @@ fn open_target_in_explorer(target: &Path) -> Result<()> {
 
 fn file_open_dialog(
     options: PathPromptOptions,
+    initial_directory: Option<PathBuf>,
     window: Option<HWND>,
 ) -> Result<Option<Vec<PathBuf>>> {
     let folder_dialog: IFileOpenDialog =
@@ -1147,19 +1156,28 @@ fn file_open_dialog(
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
 
-        if let Some(initial_directory) = options.initial_directory.as_ref()
-            && !initial_directory.to_string_lossy().is_empty()
-            && let Some(full_path) = initial_directory
-                .canonicalize()
-                .context("failed to canonicalize initial directory")
-                .log_err()
-        {
-            let path_item: IShellItem =
-                SHCreateItemFromParsingName(&HSTRING::from(SanitizedPath::new(&full_path).to_string()), None)?;
-            folder_dialog
-                .SetFolder(&path_item)
-                .context("failed to set dialog folder")
-                .log_err();
+        if let Some(initial_directory) = initial_directory.as_ref() {
+            let path_item: windows::core::Result<IShellItem> = SHCreateItemFromParsingName(
+                &HSTRING::from(SanitizedPath::new(initial_directory).to_string()),
+                None,
+            );
+            match path_item.with_context(|| {
+                format!("creating shell item for initial directory {initial_directory:?}")
+            }) {
+                Ok(path_item) => {
+                    folder_dialog
+                        .SetFolder(&path_item)
+                        .with_context(|| {
+                            format!(
+                                "setting dialog folder to initial directory {initial_directory:?}"
+                            )
+                        })
+                        .log_err();
+                }
+                Err(err) => {
+                    log::warn!("{err:?}");
+                }
+            }
         }
 
         if let Some(prompt) = options.prompt {
