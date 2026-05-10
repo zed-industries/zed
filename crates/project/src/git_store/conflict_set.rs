@@ -80,9 +80,17 @@ impl ConflictSetSnapshot {
         &self,
         buffer: &text::BufferSnapshot,
         patterns: &[AutoResolvePattern],
+        structural: Option<&super::structural_merge::LanguageMergeContext>,
     ) -> Vec<(Range<usize>, String)> {
         let mut edits = Vec::new();
         for conflict in self.conflicts.iter() {
+            if let Some(structural) = structural
+                && let Some(replacement) = structural.try_merge_region(conflict)
+            {
+                let outer = conflict.range.to_offset(buffer);
+                edits.push((outer, replacement));
+                continue;
+            }
             let Some(segments) = conflict.decompose(buffer, patterns) else {
                 continue;
             };
@@ -103,15 +111,26 @@ impl ConflictSetSnapshot {
         edits
     }
 
-    /// Iterator over every conflict region whose `decompose` produces at least
-    /// one resolved segment, alongside a summary of whether it was fully
-    /// resolved or only partially simplified.
+    /// Iterator over every conflict region that Auto-Resolve will change,
+    /// alongside whether the change leaves any markers in place.
     pub fn decomposition_summary<'a>(
         &'a self,
         buffer: &'a text::BufferSnapshot,
         patterns: &'a [AutoResolvePattern],
+        structural: Option<&'a super::structural_merge::LanguageMergeContext>,
     ) -> impl Iterator<Item = (&'a ConflictRegion, RegionSummary)> + 'a {
         self.conflicts.iter().filter_map(move |conflict| {
+            if let Some(structural) = structural
+                && structural.try_merge_region(conflict).is_some()
+            {
+                return Some((
+                    conflict,
+                    RegionSummary {
+                        is_improvement: true,
+                        fully_resolved: true,
+                    },
+                ));
+            }
             let segments = conflict.decompose(buffer, patterns)?;
             let summary = RegionSummary::from_segments(&segments);
             summary.is_improvement.then_some((conflict, summary))

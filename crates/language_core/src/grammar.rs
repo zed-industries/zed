@@ -41,7 +41,16 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
+    pub merges_config: Option<MergesConfig>,
     pub highlight_map: Mutex<HighlightMap>,
+}
+
+/// Configuration loaded from `merges.scm`. Each capture tags a node whose
+/// direct children form a mergeable container (set, ordered list, ...) for
+/// Auto-Resolve's structural merge pass.
+pub struct MergesConfig {
+    pub query: Query,
+    pub set_capture_ix: Option<u32>,
 }
 
 pub struct HighlightsConfig {
@@ -261,6 +270,7 @@ impl Grammar {
             runnable_config: None,
             error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
             debug_variables_config: None,
+            merges_config: None,
             ts_language,
             highlight_map: Default::default(),
         }
@@ -351,6 +361,36 @@ impl Grammar {
                 .with_debug_variables_query(query.as_ref(), name)
                 .context("Error loading debug variables query")?;
         }
+        if let Some(query) = queries.merges {
+            self = self
+                .with_merges_query(query.as_ref(), name)
+                .context("Error loading merges query")?;
+        }
+        Ok(self)
+    }
+
+    pub fn with_merges_query(
+        mut self,
+        source: &str,
+        language_name: &LanguageName,
+    ) -> Result<Self> {
+        let query = Query::new(&self.ts_language, source)?;
+        let set_capture_ix = query
+            .capture_names()
+            .iter()
+            .position(|name| *name == "merge.set")
+            .map(|ix| ix as u32);
+        if set_capture_ix.is_none() {
+            log::warn!(
+                "{} merges query has no @merge.set capture; ignoring",
+                language_name
+            );
+            return Ok(self);
+        }
+        self.merges_config = Some(MergesConfig {
+            query,
+            set_capture_ix,
+        });
         Ok(self)
     }
 

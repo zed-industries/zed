@@ -13504,6 +13504,7 @@ dependencies = [
  "text",
  "toml 0.8.23",
  "tracing",
+ "tree-sitter",
  "unindent",
  "url",
  "util",

@@ -3,6 +3,7 @@ mod conflict_set;
 pub mod git_traversal;
 pub mod job_debug_queue;
 pub mod pending_op;
+mod structural_merge;
 
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
@@ -22,6 +23,7 @@ pub use conflict_set::{
     AutoResolution, AutoResolvePattern, AutoResolveTakeSide, ConflictRegion, ConflictSet,
     ConflictSetSnapshot, ConflictSetUpdate, DecompositionSegment, RegionSummary,
 };
+pub use structural_merge::LanguageMergeContext;
 use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, SinkExt, Stream, StreamExt,

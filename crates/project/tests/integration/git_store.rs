@@ -419,7 +419,7 @@ mod conflict_set_tests {
         let initial_conflicts = ConflictSet::parse(&snapshot);
         assert_eq!(initial_conflicts.conflicts.len(), 3);
 
-        let edits = initial_conflicts.auto_resolution_edits(&snapshot, &[]);
+        let edits = initial_conflicts.auto_resolution_edits(&snapshot, &[], None);
         assert!(!edits.is_empty());
         buffer.edit(edits);
 
@@ -544,7 +544,7 @@ mod conflict_set_tests {
         };
         assert_eq!(merged, "keep\nCHANGED\nalso keep\n");
 
-        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[]);
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], None);
         buffer.edit(edits);
         let parsed_after = ConflictSet::parse(&buffer.snapshot());
         assert_eq!(parsed_after.conflicts.len(), 0);
@@ -591,7 +591,7 @@ mod conflict_set_tests {
             "interleaved disjoint changes should fully resolve, got {segments:?}"
         );
 
-        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[]);
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], None);
         buffer.edit(edits);
         let parsed_after = ConflictSet::parse(&buffer.snapshot());
         assert_eq!(parsed_after.conflicts.len(), 0);
@@ -633,7 +633,7 @@ mod conflict_set_tests {
         assert!(matches!(&segments[0], DecompositionSegment::Resolved(_)));
         assert!(matches!(&segments[1], DecompositionSegment::Conflict { .. }));
 
-        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[]);
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], None);
         buffer.edit(edits);
         let parsed_after = ConflictSet::parse(&buffer.snapshot());
         assert_eq!(
@@ -759,7 +759,7 @@ mod conflict_set_tests {
             DecompositionSegment::Resolved(text) if text == "version = \"1.5.0\"\n"
         ));
 
-        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &patterns);
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &patterns, None);
         buffer.edit(edits);
         let parsed_after = ConflictSet::parse(&buffer.snapshot());
         assert_eq!(parsed_after.conflicts.len(), 0);
@@ -806,6 +806,140 @@ mod conflict_set_tests {
         assert!(
             any_conflict,
             "multi-line cluster should not be regex-resolved: {segments:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_disjoint_rust_imports() {
+        // ours adds `use bar;`, theirs adds `use baz;`. Same enclosing
+        // source_file (@merge.set). Pure additions, disjoint keys → merged.
+        let test_content = r#"
+            use foo;
+            <<<<<<< HEAD
+            use bar;
+            ||||||| base
+            =======
+            use baz;
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .expect("disjoint additions should merge");
+        assert!(replacement.contains("use bar;"));
+        assert!(replacement.contains("use baz;"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let parsed_after = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(parsed_after.conflicts.len(), 0);
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("use foo;"));
+        assert!(final_text.contains("use bar;"));
+        assert!(final_text.contains("use baz;"));
+    }
+
+    #[test]
+    fn test_structural_merge_defers_when_same_import_added_differently() {
+        // Both sides add a `use bar` line but with different aliases. Same
+        // key would be `use bar...;` but the trimmed text differs, so they
+        // count as two distinct additions whose keys are disjoint — v1
+        // happily merges both. (Future: an @merge.item_key could detect that
+        // these are the same logical item.)
+        let test_content = r#"
+            use foo;
+            <<<<<<< HEAD
+            use bar as alpha;
+            ||||||| base
+            =======
+            use bar as beta;
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .expect("both additions are disjoint by trimmed text");
+        assert!(replacement.contains("use bar as alpha;"));
+        assert!(replacement.contains("use bar as beta;"));
+    }
+
+    #[test]
+    fn test_structural_merge_defers_on_deletion() {
+        // Base has `use bar;`. ours keeps it and adds `use baz;`. theirs
+        // removes `use bar;` entirely. Conservative v1 refuses to merge
+        // because one side removed a base item.
+        let test_content = r#"
+            use foo;
+            <<<<<<< HEAD
+            use bar;
+            use baz;
+            ||||||| base
+            use bar;
+            =======
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        assert!(
+            context
+                .try_merge_region(&conflict_snapshot.conflicts[0])
+                .is_none(),
+            "deletion on one side must defer to manual resolution"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_no_grammar_returns_none() {
+        // A buffer without a language has no grammar; build should return None.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ours
+            ||||||| base
+            base
+            =======
+            theirs
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+
+        // Plain text buffer has no grammar; markdown does but has no merges.scm.
+        let language = language::markdown_lang();
+        assert!(
+            LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts).is_none(),
+            "markdown has no merges.scm so structural merge is unavailable"
         );
     }
 

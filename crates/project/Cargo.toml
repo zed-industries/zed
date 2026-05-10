@@ -93,6 +93,7 @@ tempfile.workspace = true
 terminal.workspace = true
 text.workspace = true
 toml.workspace = true
+tree-sitter.workspace = true
 url.workspace = true
 percent-encoding.workspace = true
 util.workspace = true

@@ -279,6 +279,21 @@ The banner is shown whenever conflicts exist in the file. Its state depends on w
 - **Auto-Resolve — no non-conflicting changes detected** — every conflict has changes on both sides, so manual resolution is required for all of them
 - **Auto-Resolve — requires diff3 conflict markers** — the markers don't include the merge base; enable `merge.conflictStyle = zdiff3` and re-run the merge to populate them
 
+#### Language-aware structural merge
+
+For supported languages, Auto-Resolve also runs a **structural pass** before line-level decomposition. It re-parses the file with the language's tree-sitter grammar and checks whether the conflict sits inside a container declared as "mergeable" by the language (e.g., a Rust `source_file`, a TypeScript `class_body`). When both sides add disjoint children to the same container — the canonical case being two branches that each added a different `use` / `import` statement — Auto-Resolve combines them automatically rather than leaving conflict markers.
+
+The structural pass is conservative on purpose: it fires only when neither side removed a base child and the new children from each side don't share text. Anything else falls back to line-level decomposition.
+
+Out of the box, Rust and TypeScript ship structural-merge rules. To add a language, drop a `merges.scm` query file next to its `highlights.scm`:
+
+```scheme
+; The direct children of these nodes are mergeable as an unordered set:
+; if ours and theirs each add disjoint children, Auto-Resolve combines them.
+(source_file) @merge.set
+(declaration_list) @merge.set
+```
+
 #### Auto-Resolve regex patterns
 
 For lines that always change together but never really conflict — version numbers in `Cargo.toml`, build dates, lockfile hashes — you can teach Auto-Resolve to pick a side automatically:

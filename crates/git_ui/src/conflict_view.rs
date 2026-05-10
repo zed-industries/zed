@@ -12,7 +12,10 @@ use gpui::{
 use language::{Anchor, Buffer, BufferId, BufferSnapshot};
 use project::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, Project, ProjectItem as _,
-    git_store::{AutoResolvePattern, AutoResolveTakeSide, GitStore, GitStoreEvent, RepositoryEvent},
+    git_store::{
+        AutoResolvePattern, AutoResolveTakeSide, GitStore, GitStoreEvent, LanguageMergeContext,
+        RepositoryEvent,
+    },
 };
 use settings::{AutoResolveTake, Settings};
 use std::{ops::Range, sync::Arc};
@@ -289,7 +292,16 @@ fn update_auto_resolve_banner(
     };
     let buffer_snapshot = buffer_entity.read(cx).snapshot();
     let patterns = compile_auto_resolve_patterns(cx);
-    let Some(state) = banner_state_for(conflict_snapshot, &buffer_snapshot, &patterns) else {
+    let language = buffer_entity.read(cx).language().cloned();
+    let structural = language.and_then(|language| {
+        LanguageMergeContext::build(&buffer_snapshot, language, &conflict_snapshot.conflicts)
+    });
+    let Some(state) = banner_state_for(
+        conflict_snapshot,
+        &buffer_snapshot,
+        &patterns,
+        structural.as_ref(),
+    ) else {
         return;
     };
 
@@ -525,6 +537,7 @@ fn banner_state_for(
     conflict_snapshot: &ConflictSetSnapshot,
     buffer_snapshot: &BufferSnapshot,
     patterns: &[AutoResolvePattern],
+    structural: Option<&LanguageMergeContext>,
 ) -> Option<BannerState> {
     let total = conflict_snapshot.conflicts.len();
     if total == 0 {
@@ -538,7 +551,9 @@ fn banner_state_for(
         return Some(BannerState::NoBase);
     }
     let (mut fully_resolvable, mut partially_resolvable) = (0, 0);
-    for (_conflict, summary) in conflict_snapshot.decomposition_summary(buffer_snapshot, patterns) {
+    for (_conflict, summary) in
+        conflict_snapshot.decomposition_summary(buffer_snapshot, patterns, structural)
+    {
         if summary.fully_resolved {
             fully_resolvable += 1;
         } else {
@@ -655,13 +670,23 @@ pub(crate) fn auto_resolve_buffer(
     let total = conflict_snapshot.conflicts.len();
 
     let patterns = compile_auto_resolve_patterns(cx);
+    let language = buffer.read(cx).language().cloned();
     let (edits, fully, partial) = {
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let edits = conflict_snapshot.auto_resolution_edits(&buffer_snapshot, &patterns);
+        let structural = language.clone().and_then(|language| {
+            LanguageMergeContext::build(&buffer_snapshot, language, &conflict_snapshot.conflicts)
+        });
+        let edits = conflict_snapshot.auto_resolution_edits(
+            &buffer_snapshot,
+            &patterns,
+            structural.as_ref(),
+        );
         let (mut fully, mut partial) = (0, 0);
-        for (_conflict, summary) in
-            conflict_snapshot.decomposition_summary(&buffer_snapshot, &patterns)
-        {
+        for (_conflict, summary) in conflict_snapshot.decomposition_summary(
+            &buffer_snapshot,
+            &patterns,
+            structural.as_ref(),
+        ) {
             if summary.fully_resolved {
                 fully += 1;
             } else {
