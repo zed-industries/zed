@@ -395,6 +395,7 @@ impl Model {
             | Self::MimoV2_5Pro
             | Self::Glm5
             | Self::Glm5_1
+            | Self::BigPickle
             | Self::Ring2_6_1TFree => true,
 
             Self::Custom {
