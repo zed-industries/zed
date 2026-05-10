@@ -33,7 +33,6 @@ use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
 };
-
 use smallvec::{SmallVec, smallvec};
 use std::{
     cell::Cell,
@@ -2039,6 +2038,7 @@ impl GitGraph {
             .read(cx)
             .work_directory_abs_path
             .to_path_buf();
+
         let repository_name = repository_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -2089,11 +2089,11 @@ impl GitGraph {
         task_context: &TaskContext,
         cx: &App,
     ) -> Vec<(TaskSourceKind, ResolvedTask)> {
-        let worktree_id = self.worktree_id_for_repository(cx);
-
         let Some(workspace) = self.workspace.upgrade() else {
             return Vec::new();
         };
+
+        let worktree_id = self.worktree_id_for_repository(cx);
 
         let project = workspace.read(cx).project().clone();
 
@@ -4012,13 +4012,14 @@ mod tests {
     use git::repository::InitialGraphCommitData;
     use gpui::{TestAppContext, UpdateGlobal};
     use project::git_store::{GitStoreEvent, RepositoryEvent};
-    use project::{Project, task_store::TaskSettingsLocation};
+    use project::{Project, TaskSourceKind, task_store::TaskSettingsLocation};
     use rand::prelude::*;
     use serde_json::json;
-    use settings::{SettingsStore, ThemeSettingsContent};
+    use settings::{SettingsLocation, SettingsStore, ThemeSettingsContent};
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
+    use util::rel_path::rel_path;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
