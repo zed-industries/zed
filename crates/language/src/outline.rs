@@ -29,6 +29,39 @@ pub struct OutlineItem<T> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolPath(pub SharedString);
 
+/// Result of [`Outline::search`]. Real fuzzy matches are `Match`; `Ancestor`
+/// rows are synthetic entries pointing at parent items, included so callers
+/// can render tree context above each match without those rows competing for
+/// auto-selection.
+#[derive(Clone, Debug)]
+pub enum OutlineSearchEntry {
+    Match(StringMatch),
+    Ancestor { candidate_id: usize },
+}
+
+impl OutlineSearchEntry {
+    pub fn candidate_id(&self) -> usize {
+        match self {
+            Self::Match(m) => m.candidate_id,
+            Self::Ancestor { candidate_id } => *candidate_id,
+        }
+    }
+
+    pub fn as_match(&self) -> Option<&StringMatch> {
+        match self {
+            Self::Match(m) => Some(m),
+            Self::Ancestor { .. } => None,
+        }
+    }
+
+    pub fn into_match(self) -> Option<StringMatch> {
+        match self {
+            Self::Match(m) => Some(m),
+            Self::Ancestor { .. } => None,
+        }
+    }
+}
+
 impl<T: ToPoint> OutlineItem<T> {
     /// Converts to an equivalent outline item, but with parameterized over Points.
     pub fn to_point(&self, buffer: &BufferSnapshot) -> OutlineItem<Point> {
@@ -161,10 +194,13 @@ impl<T> Outline<T> {
     }
 
     /// Find all outline symbols that match with the nucleo fuzzy matcher, ordered by tree position.
-    /// Each real match is preceded by synthetic ancestor rows (carrying `f64::NEG_INFINITY` as a
-    /// sentinel score) so the picker can render tree context without those rows competing for
-    /// `max_by(score)` selection.
-    pub async fn search(&self, query: &str, executor: BackgroundExecutor) -> Vec<StringMatch> {
+    /// Each real match is preceded by [`OutlineSearchEntry::Ancestor`] rows carrying parent
+    /// `candidate_id`s, so callers can render tree context above the match.
+    pub async fn search(
+        &self,
+        query: &str,
+        executor: BackgroundExecutor,
+    ) -> Vec<OutlineSearchEntry> {
         let query = query.trim_start();
         if query.is_empty() {
             return Vec::new();
@@ -207,21 +243,19 @@ impl<T> Outline<T> {
             true
         });
 
-        expand_tree(&self.items, matches)
+        let depths: Vec<usize> = self.items.iter().map(|item| item.depth).collect();
+        expand_tree(&depths, matches)
     }
 }
 
-fn expand_tree<T>(
-    items: &[OutlineItem<T>],
-    matches: Vec<StringMatch>,
-) -> Vec<StringMatch> {
+fn expand_tree(depths: &[usize], matches: Vec<StringMatch>) -> Vec<OutlineSearchEntry> {
     let mut out = Vec::with_capacity(matches.len());
     let mut prev_item_ix = 0;
     for string_match in matches {
-        let outline_match = &items[string_match.candidate_id];
+        let match_depth = depths[string_match.candidate_id];
         let insertion_ix = out.len();
-        let mut cur_depth = outline_match.depth;
-        for (ix, item) in items[prev_item_ix..string_match.candidate_id]
+        let mut cur_depth = match_depth;
+        for (ix, &depth) in depths[prev_item_ix..string_match.candidate_id]
             .iter()
             .enumerate()
             .rev()
@@ -229,21 +263,18 @@ fn expand_tree<T>(
             if cur_depth == 0 {
                 break;
             }
-            if item.depth == cur_depth - 1 {
+            if depth == cur_depth - 1 {
                 out.insert(
                     insertion_ix,
-                    StringMatch {
+                    OutlineSearchEntry::Ancestor {
                         candidate_id: ix + prev_item_ix,
-                        score: f64::NEG_INFINITY,
-                        positions: Vec::new(),
-                        string: SharedString::default(),
                     },
                 );
                 cur_depth -= 1;
             }
         }
         prev_item_ix = string_match.candidate_id + 1;
-        out.push(string_match);
+        out.push(OutlineSearchEntry::Match(string_match));
     }
     out
 }
@@ -311,7 +342,8 @@ mod tests {
                 .search("foo", cx.executor())
                 .await
                 .into_iter()
-                .map(|mat| mat.string)
+                .filter_map(OutlineSearchEntry::into_match)
+                .map(|m| m.string)
                 .collect::<Vec<SharedString>>(),
             vec![SharedString::from("class Foo")],
             "items still match by their full text even when name_ranges is empty",

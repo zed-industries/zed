@@ -890,12 +890,16 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         query: &'a str,
         cx: &'a gpui::TestAppContext,
     ) -> Vec<(&'a str, Vec<usize>)> {
-        let matches = cx
+        let entries = cx
             .update(|cx| outline.search(query, cx.background_executor().clone()))
             .await;
-        matches
+        entries
             .into_iter()
-            .map(|mat| (outline.items[mat.candidate_id].text.as_str(), mat.positions))
+            .map(|entry| {
+                let candidate_id = entry.candidate_id();
+                let positions = entry.into_match().map(|m| m.positions).unwrap_or_default();
+                (outline.items[candidate_id].text.as_str(), positions)
+            })
             .collect::<Vec<_>>()
     }
 }

@@ -10,7 +10,7 @@ use gpui::{
     ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
     rems,
 };
-use language::{Outline, OutlineItem};
+use language::{Outline, OutlineItem, OutlineSearchEntry};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -192,7 +192,7 @@ struct OutlineViewDelegate {
     outline: Arc<Outline<Anchor>>,
     selected_match_index: usize,
     prev_scroll_position: Option<Point<ScrollOffset>>,
-    matches: Vec<StringMatch>,
+    matches: Vec<OutlineSearchEntry>,
 }
 
 enum OutlineRowHighlights {}
@@ -239,7 +239,7 @@ impl OutlineViewDelegate {
         self.selected_match_index = ix;
 
         if navigate {
-            let outline_item = &self.outline.items[selected_match.candidate_id];
+            let outline_item = &self.outline.items[selected_match.candidate_id()];
 
             self.active_editor.update(cx, |active_editor, cx| {
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
@@ -304,11 +304,13 @@ impl PickerDelegate for OutlineViewDelegate {
                     .items
                     .iter()
                     .enumerate()
-                    .map(|(index, _)| StringMatch {
-                        candidate_id: index,
-                        score: Default::default(),
-                        positions: Default::default(),
-                        string: Default::default(),
+                    .map(|(index, _)| {
+                        OutlineSearchEntry::Match(StringMatch {
+                            candidate_id: index,
+                            score: Default::default(),
+                            positions: Default::default(),
+                            string: Default::default(),
+                        })
                     })
                     .collect()
             } else {
@@ -333,8 +335,8 @@ impl PickerDelegate for OutlineViewDelegate {
                         .matches
                         .iter()
                         .enumerate()
-                        .filter_map(|(ix, m)| {
-                            let item = &this.delegate.outline.items[m.candidate_id];
+                        .filter_map(|(ix, entry)| {
+                            let item = &this.delegate.outline.items[entry.candidate_id()];
                             let range = item.range.to_offset(&buffer);
                             range.contains(&cursor_offset).then_some((ix, item.depth))
                         })
@@ -346,9 +348,10 @@ impl PickerDelegate for OutlineViewDelegate {
                         .matches
                         .iter()
                         .enumerate()
+                        .filter_map(|(ix, entry)| entry.as_match().map(|m| (ix, m.score)))
                         .max_by(|(ix_a, a), (ix_b, b)| {
-                            OrderedFloat(a.score)
-                                .cmp(&OrderedFloat(b.score))
+                            OrderedFloat(*a)
+                                .cmp(&OrderedFloat(*b))
                                 .then(ix_b.cmp(ix_a))
                         })
                         .map(|(ix, _)| ix)
@@ -403,8 +406,9 @@ impl PickerDelegate for OutlineViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = self.matches.get(ix)?;
-        let outline_item = self.outline.items.get(mat.candidate_id)?;
+        let entry = self.matches.get(ix)?;
+        let outline_item = self.outline.items.get(entry.candidate_id())?;
+        let ranges = entry.as_match().into_iter().flat_map(|m| m.ranges());
 
         Some(
             ListItem::new(ix)
@@ -415,7 +419,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     div()
                         .text_ui(cx)
                         .pl(rems(outline_item.depth as f32))
-                        .child(render_item(outline_item, mat.ranges(), cx)),
+                        .child(render_item(outline_item, ranges, cx)),
                 ),
         )
     }
@@ -664,7 +668,7 @@ mod tests {
             .update(cx, |outline_view, cx| {
                 let delegate = &outline_view.delegate;
                 let selected_candidate_id =
-                    delegate.matches[delegate.selected_match_index].candidate_id;
+                    delegate.matches[delegate.selected_match_index].candidate_id();
                 let (buffer, cursor_offset) = delegate.active_editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let cursor_offset = editor
@@ -704,7 +708,7 @@ mod tests {
         cx.run_until_parked();
         let selected_candidate_id = outline_view.read_with(cx, |outline_view, _| {
             let delegate = &outline_view.delegate;
-            delegate.matches[delegate.selected_match_index].candidate_id
+            delegate.matches[delegate.selected_match_index].candidate_id()
         });
         assert_eq!(
             selected_candidate_id, 0,
@@ -848,11 +852,12 @@ mod tests {
                 let scored_ids = delegate
                     .matches
                     .iter()
+                    .filter_map(|entry| entry.as_match())
                     .filter(|m| m.score > 0.0)
                     .map(|m| m.candidate_id)
                     .collect::<Vec<_>>();
                 (
-                    selected_match.candidate_id,
+                    selected_match.candidate_id(),
                     *scored_ids.first().unwrap(),
                     *scored_ids.last().unwrap(),
                     scored_ids.len(),
@@ -941,7 +946,7 @@ mod tests {
                 .delegate
                 .matches
                 .iter()
-                .map(|hit| items[hit.candidate_id].text.clone())
+                .map(|hit| items[hit.candidate_id()].text.clone())
                 .collect::<Vec<_>>()
         })
     }
