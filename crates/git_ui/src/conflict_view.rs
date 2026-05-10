@@ -9,16 +9,18 @@ use gpui::{
     App, ClickEvent, Context, Empty, Entity, InteractiveElement as _, ParentElement as _,
     Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId};
+use language::{Anchor, Buffer, BufferId, BufferSnapshot};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, Project, ProjectItem as _,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, Tooltip, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
-use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
+use workspace::{
+    HideStatusItem, StatusItemView, Workspace, item::ItemHandle, notifications::NotificationId,
+};
 use zed_actions::agent::{
     ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
 };
@@ -37,9 +39,19 @@ impl ConflictAddon {
 
 struct BufferConflicts {
     block_ids: Vec<(Range<Anchor>, CustomBlockId)>,
+    banner_block_id: Option<CustomBlockId>,
     conflict_set: Entity<ConflictSet>,
     _subscription: Subscription,
 }
+
+#[derive(Debug, Clone, Copy)]
+enum BannerState {
+    Resolvable { resolvable: usize, total: usize },
+    NoneResolvable,
+    NoBase,
+}
+
+struct AutoResolveToast;
 
 impl editor::Addon for ConflictAddon {
     fn to_any(&self) -> &dyn std::any::Any {
@@ -100,6 +112,7 @@ fn buffer_ranges_updated(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut C
             let subscription = cx.subscribe(&conflict_set, conflicts_updated);
             BufferConflicts {
                 block_ids: Vec::new(),
+                banner_block_id: None,
                 conflict_set,
                 _subscription: subscription,
             }
@@ -239,6 +252,81 @@ fn conflicts_updated(
                 .map(|conflict| conflict.range.clone())
                 .zip(new_block_ids),
         );
+    }
+
+    update_auto_resolve_banner(editor, buffer_id, &conflict_set, &snapshot, cx);
+}
+
+fn update_auto_resolve_banner(
+    editor: &mut Editor,
+    buffer_id: BufferId,
+    conflict_snapshot: &ConflictSetSnapshot,
+    multibuffer_snapshot: &editor::MultiBufferSnapshot,
+    cx: &mut Context<Editor>,
+) {
+    let existing_banner = editor
+        .addon_mut::<ConflictAddon>()
+        .unwrap()
+        .buffers
+        .get_mut(&buffer_id)
+        .and_then(|bc| bc.banner_block_id.take());
+    if let Some(block_id) = existing_banner {
+        editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+    }
+
+    if conflict_snapshot.conflicts.is_empty() {
+        return;
+    }
+
+    let Some(buffer_entity) = editor.buffer().read(cx).buffer(buffer_id) else {
+        return;
+    };
+    let buffer_snapshot = buffer_entity.read(cx).snapshot();
+    let Some(state) = banner_state_for(conflict_snapshot, &buffer_snapshot) else {
+        return;
+    };
+
+    // Anchor at the buffer's first position so the banner is the first thing
+    // the user sees when opening a conflicted file, decoupled from any single
+    // conflict region. In multibuffer views (e.g. project diff) the buffer's
+    // first position may sit before the first excerpt, in which case we fall
+    // back to the first conflict's start so the banner is at least visible
+    // somewhere within the multibuffer.
+    let buffer_start = buffer_snapshot.anchor_before(0);
+    let anchor = multibuffer_snapshot
+        .anchor_in_excerpt(buffer_start)
+        .or_else(|| {
+            conflict_snapshot
+                .conflicts
+                .first()
+                .and_then(|conflict| multibuffer_snapshot.anchor_in_excerpt(conflict.range.start))
+        });
+    let Some(anchor) = anchor else {
+        return;
+    };
+
+    let editor_handle = cx.weak_entity();
+    let buffer_handle = buffer_entity.downgrade();
+
+    let block = BlockProperties {
+        placement: BlockPlacement::Above(anchor),
+        height: Some(1),
+        style: BlockStyle::Sticky,
+        render: Arc::new(move |cx| {
+            render_auto_resolve_banner(state, buffer_handle.clone(), editor_handle.clone(), cx)
+        }),
+        priority: 0,
+    };
+
+    let new_block_ids = editor.insert_blocks(vec![block], None, cx);
+    if let Some(banner_id) = new_block_ids.into_iter().next()
+        && let Some(buffer_conflicts) = editor
+            .addon_mut::<ConflictAddon>()
+            .unwrap()
+            .buffers
+            .get_mut(&buffer_id)
+    {
+        buffer_conflicts.banner_block_id = Some(banner_id);
     }
 }
 
@@ -409,6 +497,179 @@ fn render_conflict_buttons(
             )
         })
         .into_any()
+}
+
+fn banner_state_for(
+    conflict_snapshot: &ConflictSetSnapshot,
+    buffer_snapshot: &BufferSnapshot,
+) -> Option<BannerState> {
+    let total = conflict_snapshot.conflicts.len();
+    if total == 0 {
+        return None;
+    }
+    let any_with_base = conflict_snapshot
+        .conflicts
+        .iter()
+        .any(|conflict| conflict.base.is_some());
+    if !any_with_base {
+        return Some(BannerState::NoBase);
+    }
+    let resolvable = conflict_snapshot.auto_resolvable(buffer_snapshot).count();
+    if resolvable == 0 {
+        return Some(BannerState::NoneResolvable);
+    }
+    Some(BannerState::Resolvable { resolvable, total })
+}
+
+fn render_auto_resolve_banner(
+    state: BannerState,
+    buffer: WeakEntity<Buffer>,
+    editor: WeakEntity<Editor>,
+    cx: &mut BlockContext,
+) -> AnyElement {
+    let label: SharedString = match state {
+        BannerState::Resolvable { resolvable, total } => {
+            let remaining = total.saturating_sub(resolvable);
+            format!(
+                "Auto-Resolve — {} non-conflicting change{} • {} will remain",
+                resolvable,
+                if resolvable == 1 { "" } else { "s" },
+                remaining,
+            )
+            .into()
+        }
+        BannerState::NoneResolvable => {
+            "Auto-Resolve — no non-conflicting changes detected".into()
+        }
+        BannerState::NoBase => {
+            "Auto-Resolve — requires diff3 conflict markers (run `git config merge.conflictStyle zdiff3`)"
+                .into()
+        }
+    };
+
+    let tooltip_text: Option<SharedString> = match state {
+        BannerState::Resolvable { .. } => None,
+        BannerState::NoneResolvable => {
+            Some("All conflicts have changes on both sides; manual resolution required.".into())
+        }
+        BannerState::NoBase => Some(
+            "Run `git config merge.conflictStyle zdiff3` in your terminal to enable diff3 markers for future merges."
+                .into(),
+        ),
+    };
+
+    let enabled = matches!(state, BannerState::Resolvable { .. });
+    let mut button = Button::new("auto-resolve", label)
+        .label_size(LabelSize::Small)
+        .disabled(!enabled);
+
+    if enabled {
+        button = button.on_click(move |_, window, cx| {
+            auto_resolve_buffer(buffer.clone(), editor.clone(), window, cx);
+        });
+    }
+
+    if let Some(tooltip_text) = tooltip_text {
+        button = button.tooltip(move |_, cx| Tooltip::simple(tooltip_text.clone(), cx));
+    }
+
+    h_flex()
+        .id(cx.block_id)
+        .h(cx.line_height)
+        .ml(cx.margins.gutter.width)
+        .gap_1()
+        .bg(cx.theme().colors().editor_background)
+        .child(button)
+        .into_any()
+}
+
+pub(crate) fn auto_resolve_buffer(
+    buffer: WeakEntity<Buffer>,
+    editor: WeakEntity<Editor>,
+    _window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(buffer) = buffer.upgrade() else {
+        return;
+    };
+    let Some(editor) = editor.upgrade() else {
+        return;
+    };
+
+    let buffer_id = buffer.read(cx).remote_id();
+    let conflict_set = editor
+        .read(cx)
+        .addon::<ConflictAddon>()
+        .and_then(|addon| addon.conflict_set(buffer_id));
+    let Some(conflict_set) = conflict_set else {
+        return;
+    };
+
+    let conflict_snapshot = conflict_set.read(cx).snapshot();
+    let total = conflict_snapshot.conflicts.len();
+
+    let edits = {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        conflict_snapshot.auto_resolution_edits(&buffer_snapshot)
+    };
+    if edits.is_empty() {
+        return;
+    }
+    let resolved = conflict_snapshot
+        .auto_resolvable(&buffer.read(cx).snapshot())
+        .count();
+    let remaining = total.saturating_sub(resolved);
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(edits, None, cx);
+    });
+
+    if let Some(workspace) = editor.read(cx).workspace() {
+        let message = format!(
+            "Auto-resolved {} of {} conflict{}; {} remain",
+            resolved,
+            total,
+            if total == 1 { "" } else { "s" },
+            remaining,
+        );
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                workspace::Toast::new(NotificationId::unique::<AutoResolveToast>(), message),
+                cx,
+            );
+        });
+    }
+}
+
+pub(crate) fn auto_resolve_in_editor(
+    editor: Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let buffer_ids: Vec<BufferId> = editor
+        .read(cx)
+        .addon::<ConflictAddon>()
+        .map(|addon| addon.buffers.keys().copied().collect())
+        .unwrap_or_default();
+
+    let multibuffer = editor.read(cx).buffer().clone();
+    for buffer_id in buffer_ids {
+        let Some(buffer) = multibuffer.read(cx).buffer(buffer_id) else {
+            continue;
+        };
+        auto_resolve_buffer(buffer.downgrade(), editor.downgrade(), window, cx);
+    }
+}
+
+pub(crate) fn auto_resolve_in_project(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let editors: Vec<Entity<Editor>> = workspace.items_of_type::<Editor>(cx).collect();
+    for editor in editors {
+        auto_resolve_in_editor(editor, window, cx);
+    }
 }
 
 fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
