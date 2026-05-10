@@ -2730,6 +2730,7 @@ impl TerminalHandle for AcpTerminalHandle {
 fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadError>) {
     let mut kept = Vec::new();
     let mut errors = Vec::new();
+    let mut dropped: Vec<&Skill> = Vec::new();
     let mut total_size = 0usize;
     let mut budget_exceeded = false;
 
@@ -2749,17 +2750,42 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
             // rather than dependent on which skills happen to be small
             // enough to fit in the remaining space.
             budget_exceeded = true;
-            errors.push(SkillLoadError {
-                path: skill.skill_file_path.clone(),
-                message: format!(
-                    "Skill '{}' ({:.1}KB description) dropped from catalog: previous skills used {:.1}KB of the {}KB budget",
+            dropped.push(skill);
+        }
+    }
+
+    if !dropped.is_empty() {
+        let budget_kb = MAX_SKILL_DESCRIPTIONS_SIZE / 1024;
+        let first = dropped[0];
+        let message = if dropped.len() == 1 {
+            let entry_size = first.name.len() + first.description.len();
+            format!(
+                "Skill '{}' ({:.1}KB description) was dropped from the catalog because the previous skills already used the entire {}KB description budget.",
+                first.name,
+                entry_size as f64 / 1024.0,
+                budget_kb,
+            )
+        } else {
+            let mut message = format!(
+                "{} skills were dropped from the catalog because they exceeded the {}KB description budget:",
+                dropped.len(),
+                budget_kb,
+            );
+            for skill in &dropped {
+                let entry_size = skill.name.len() + skill.description.len();
+                message.push('\n');
+                message.push_str(&format!(
+                    "- {} ({:.1}KB description)",
                     skill.name,
                     entry_size as f64 / 1024.0,
-                    total_size as f64 / 1024.0,
-                    MAX_SKILL_DESCRIPTIONS_SIZE / 1024,
-                ),
-            });
-        }
+                ));
+            }
+            message
+        };
+        errors.push(SkillLoadError {
+            path: first.skill_file_path.clone(),
+            message,
+        });
     }
 
     (kept, errors)
@@ -2930,9 +2956,9 @@ mod internal_tests {
             skills.len(),
         );
         assert_eq!(
-            kept.len() + errors.len(),
-            skills.len(),
-            "every skill should either be kept or surface as an error",
+            errors.len(),
+            1,
+            "all dropped skills should be consolidated into a single error, got {errors:?}",
         );
 
         let kept_size: usize = kept
@@ -2944,29 +2970,32 @@ mod internal_tests {
             "kept skills must fit in the budget (got {kept_size} bytes)",
         );
 
-        for (i, error) in errors.iter().enumerate() {
-            let original_index = kept.len() + i;
-            assert_eq!(
-                error.path, skills[original_index].skill_file_path,
-                "error path should match the dropped skill",
-            );
-            let name = &skills[original_index].name;
+        let error = &errors[0];
+        assert!(
+            error.message.contains("50KB") && error.message.contains("budget"),
+            "error message {:?} should describe the budget",
+            error.message,
+        );
+        assert_eq!(
+            error.path,
+            skills[kept.len()].skill_file_path,
+            "error path should match the first dropped skill",
+        );
+
+        for dropped_skill in &skills[kept.len()..total] {
+            let name = &dropped_skill.name;
             assert!(
                 error.message.contains(name.as_str()),
                 "error message {:?} should mention the dropped skill name {name:?}",
                 error.message,
             );
+            let bullet_line = format!("- {name}");
             assert!(
-                error.message.contains("50KB") && error.message.contains("budget"),
-                "error message {:?} should describe the budget",
-                error.message,
-            );
-            let dropped_skill = &skills[original_index];
-            let entry_size = dropped_skill.name.len() + dropped_skill.description.len();
-            let entry_size_kb = format!("{:.1}KB", entry_size as f64 / 1024.0);
-            assert!(
-                error.message.contains(&entry_size_kb),
-                "error message {:?} should mention the dropped skill's size ({entry_size_kb})",
+                error
+                    .message
+                    .lines()
+                    .any(|line| line.starts_with(&bullet_line)),
+                "error message {:?} should contain a bullet line starting with {bullet_line:?}",
                 error.message,
             );
         }
@@ -3026,13 +3055,24 @@ mod internal_tests {
         let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(kept_names, vec![first.name.as_str()]);
 
-        let error_paths: Vec<&Path> = errors.iter().map(|e| e.path.as_path()).collect();
-        assert_eq!(
-            error_paths,
-            vec![
-                second.skill_file_path.as_path(),
-                third.skill_file_path.as_path(),
-            ],
+        assert_eq!(errors.len(), 1, "expected a single consolidated error");
+        assert_eq!(errors[0].path, second.skill_file_path);
+        assert!(
+            errors[0].message.contains(second.name.as_str()),
+            "error message {:?} should mention {:?}",
+            errors[0].message,
+            second.name,
+        );
+        assert!(
+            errors[0].message.contains(third.name.as_str()),
+            "error message {:?} should mention {:?}",
+            errors[0].message,
+            third.name,
+        );
+        assert!(
+            errors[0].message.contains("- "),
+            "error message {:?} should use bullet form when multiple skills are dropped",
+            errors[0].message,
         );
     }
 
