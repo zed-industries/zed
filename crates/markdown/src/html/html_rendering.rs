@@ -1,6 +1,8 @@
 use std::ops::Range;
 
-use gpui::{App, FontStyle, FontWeight, StrikethroughStyle, TextStyleRefinement, UnderlineStyle};
+use gpui::{
+    App, FontStyle, FontWeight, StrikethroughStyle, TextAlign, TextStyleRefinement, UnderlineStyle,
+};
 use pulldown_cmark::Alignment;
 use ui::prelude::*;
 
@@ -115,7 +117,12 @@ impl MarkdownElement {
                 self.render_html_list(list, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::BlockQuote(block_quote) => {
-                self.push_markdown_block_quote(builder, &block_quote.source_range, markdown_end);
+                self.push_markdown_block_quote(
+                    builder,
+                    None,
+                    &block_quote.source_range,
+                    markdown_end,
+                );
                 self.render_html_elements(
                     &block_quote.children,
                     source_allocator,
@@ -240,14 +247,24 @@ impl MarkdownElement {
                 }
 
                 let max_span = max_column_count.saturating_sub(column_index);
+                let text_align = match cell.alignment {
+                    Alignment::Left => TextAlign::Left,
+                    Alignment::Center => TextAlign::Center,
+                    Alignment::Right => TextAlign::Right,
+                    _ => self.style.base_text_style.text_align,
+                };
+
                 let mut cell_div = div()
                     .col_span(cell.col_span.min(max_span) as u16)
                     .row_span(cell.row_span.min(total_rows - row_index) as u16)
+                    .flex()
+                    .flex_col()
                     .when(column_index > 0, |this| this.border_l_1())
                     .when(row_index > 0, |this| this.border_t_1())
                     .border_color(cx.theme().colors().border)
                     .px_2()
                     .py_1()
+                    .h_full()
                     .when(cell.is_header, |this| {
                         this.bg(cx.theme().colors().title_bar_background)
                     })
@@ -261,7 +278,22 @@ impl MarkdownElement {
                     _ => cell_div,
                 };
 
+                builder.push_text_style(TextStyleRefinement {
+                    text_align: Some(text_align),
+                    ..Default::default()
+                });
                 builder.push_div(cell_div, &table.source_range, markdown_end);
+                builder.push_div(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .w_full()
+                        .justify_center()
+                        .text_align(text_align),
+                    &table.source_range,
+                    markdown_end,
+                );
                 self.render_html_paragraph(
                     &cell.children,
                     source_allocator,
@@ -270,6 +302,8 @@ impl MarkdownElement {
                     markdown_end,
                 );
                 builder.pop_div();
+                builder.pop_div();
+                builder.pop_text_style();
 
                 for row_offset in 0..cell.row_span {
                     for column_offset in 0..cell.col_span {

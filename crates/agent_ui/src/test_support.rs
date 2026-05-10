@@ -1,15 +1,40 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::{Entity, Task, TestAppContext, VisualTestContext};
 use project::AgentId;
 use project::Project;
 use settings::SettingsStore;
 use std::any::Any;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::AgentPanel;
 use crate::agent_panel;
+
+thread_local! {
+    static STUB_AGENT_CONNECTION: RefCell<Option<StubAgentConnection>> = const { RefCell::new(None) };
+}
+
+/// Registers a `StubAgentConnection` that will be used by `Agent::Stub`.
+///
+/// Returns the same connection so callers can hold onto it and control
+/// the stub's behavior (e.g. `connection.set_next_prompt_updates(...)`).
+pub fn set_stub_agent_connection(connection: StubAgentConnection) -> StubAgentConnection {
+    STUB_AGENT_CONNECTION.with(|cell| {
+        *cell.borrow_mut() = Some(connection.clone());
+    });
+    connection
+}
+
+/// Returns the shared `StubAgentConnection` used by `Agent::Stub`,
+/// creating a default one if none was registered.
+pub fn stub_agent_connection() -> StubAgentConnection {
+    STUB_AGENT_CONNECTION.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        borrow.get_or_insert_with(StubAgentConnection::new).clone()
+    })
+}
 
 pub struct StubAgentServer<C> {
     connection: C,

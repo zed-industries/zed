@@ -32,8 +32,6 @@ use thiserror::Error;
 
 pub use crate::models::*;
 
-pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
-
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
@@ -58,18 +56,16 @@ pub async fn stream_completion(
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         Some(Thinking::Adaptive { effort: _ }) => {
-            let thinking_config =
-                HashMap::from([("type".to_string(), Document::String("adaptive".to_string()))]);
+            let thinking_config = HashMap::from([
+                ("type".to_string(), Document::String("adaptive".to_string())),
+                (
+                    "display".to_string(),
+                    Document::String("summarized".to_string()),
+                ),
+            ]);
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         _ => {}
-    }
-
-    if request.allow_extended_context {
-        additional_fields.insert(
-            "anthropic_beta".to_string(),
-            Document::Array(vec![Document::String(CONTEXT_1M_BETA_HEADER.to_string())]),
-        );
     }
 
     if !additional_fields.is_empty() {
@@ -206,7 +202,6 @@ pub struct Request {
     pub temperature: Option<f32>,
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
-    pub allow_extended_context: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

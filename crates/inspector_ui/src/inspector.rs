@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
+use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, TaskExt, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*, utils::platform_title_bar_height};
 use util::{ResultExt as _, command::new_command};

@@ -3,21 +3,22 @@ use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -28,6 +29,8 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
+#[cfg(feature = "input-latency-histogram")]
+use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -57,7 +60,10 @@ use uuid::Uuid;
 
 mod prompts;
 
-use crate::util::atomic_incr_if_not_zero;
+use crate::util::{
+    atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
+    round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
+};
 pub use prompts::*;
 
 /// Default window size used when no explicit size is provided.
@@ -105,6 +111,7 @@ struct WindowInvalidatorInner {
     pub dirty: bool,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
+    pub update_count: usize,
 }
 
 #[derive(Clone)]
@@ -119,12 +126,14 @@ impl WindowInvalidator {
                 dirty: true,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
+                update_count: 0,
             })),
         }
     }
 
     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
         let mut inner = self.inner.borrow_mut();
+        inner.update_count += 1;
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             inner.dirty = true;
@@ -140,11 +149,19 @@ impl WindowInvalidator {
     }
 
     pub fn set_dirty(&self, dirty: bool) {
-        self.inner.borrow_mut().dirty = dirty
+        let mut inner = self.inner.borrow_mut();
+        inner.dirty = dirty;
+        if dirty {
+            inner.update_count += 1;
+        }
     }
 
     pub fn set_phase(&self, phase: DrawPhase) {
         self.inner.borrow_mut().draw_phase = phase
+    }
+
+    pub fn update_count(&self) -> usize {
+        self.inner.borrow().update_count
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -559,6 +576,17 @@ pub enum WindowControlArea {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
+#[cfg(feature = "test-support")]
+impl HitboxId {
+    /// A placeholder HitboxId exclusively for integration testing API's that
+    /// need a hitbox but where the value of the hitbox does not matter. The
+    /// alternative is to make the Hitbox optional but that complicates the
+    /// implementation.
+    pub const fn placeholder() -> Self {
+        Self(0)
+    }
+}
+
 impl HitboxId {
     /// Checks if the hitbox with this ID is currently hovered. Returns `false` during keyboard
     /// input modality so that keyboard navigation suppresses hover highlights. Except when handling
@@ -574,6 +602,22 @@ impl HitboxId {
         if window.last_input_was_keyboard() {
             return false;
         }
+        self.hit_test(window)
+    }
+
+    /// Checks if the hitbox with this ID is currently hovered, regardless of the last
+    /// input modality used.
+    ///
+    /// See [`HitboxId::is_hovered`] for more details.
+    pub(crate) fn is_hovered_ignoring_last_input(self, window: &Window) -> bool {
+        // If this hitbox has captured the pointer, it's always considered hovered
+        if window.captured_hitbox == Some(self) {
+            return true;
+        }
+        self.hit_test(window)
+    }
+
+    fn hit_test(self, window: &Window) -> bool {
         let hit_test = &window.mouse_hit_test;
         for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
             if self == *id {
@@ -850,9 +894,11 @@ impl Frame {
             .rev()
             .fold_while(None, |style, request| match request.hitbox_id {
                 None => Done(Some(request.style)),
-                Some(hitbox_id) => Continue(
-                    style.or_else(|| hitbox_id.is_hovered(window).then_some(request.style)),
-                ),
+                Some(hitbox_id) => Continue(style.or_else(|| {
+                    hitbox_id
+                        .is_hovered_ignoring_last_input(window)
+                        .then_some(request.style)
+                })),
             })
             .into_inner()
     }
@@ -958,6 +1004,8 @@ pub struct Window {
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+    #[cfg(feature = "input-latency-histogram")]
+    input_latency_tracker: InputLatencyTracker,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1023,6 +1071,88 @@ impl InputRateTracker {
     fn prune_old_timestamps(&mut self, now: Instant) {
         self.timestamps
             .retain(|&t| now.duration_since(t) <= self.window);
+    }
+}
+
+/// A point-in-time snapshot of the input-latency histograms for a window,
+/// suitable for external formatting.
+#[cfg(feature = "input-latency-histogram")]
+pub struct InputLatencySnapshot {
+    /// Histogram of input-to-frame latency samples, in nanoseconds.
+    pub latency_histogram: Histogram<u64>,
+    /// Histogram of input events coalesced per rendered frame.
+    pub events_per_frame_histogram: Histogram<u64>,
+    /// Count of input events that arrived mid-draw and were excluded from
+    /// latency recording.
+    pub mid_draw_events_dropped: u64,
+}
+
+/// Records the time between when the first input event in a frame is dispatched
+/// and when the resulting frame is presented, capturing worst-case latency when
+/// multiple events are coalesced into a single frame.
+#[cfg(feature = "input-latency-histogram")]
+struct InputLatencyTracker {
+    /// Timestamp of the first unrendered input event in the current frame;
+    /// cleared when a frame is presented.
+    first_input_at: Option<Instant>,
+    /// Count of input events received since the last frame was presented.
+    pending_input_count: u64,
+    /// Histogram of input-to-frame latency samples, in nanoseconds.
+    latency_histogram: Histogram<u64>,
+    /// Histogram of input events coalesced per rendered frame.
+    events_per_frame_histogram: Histogram<u64>,
+    /// Count of input events that arrived mid-draw and were excluded from
+    /// latency recording because their effects won't appear until the next frame.
+    mid_draw_events_dropped: u64,
+}
+
+#[cfg(feature = "input-latency-histogram")]
+impl InputLatencyTracker {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            first_input_at: None,
+            pending_input_count: 0,
+            latency_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create input latency histogram: {e}"))?,
+            events_per_frame_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create events per frame histogram: {e}"))?,
+            mid_draw_events_dropped: 0,
+        })
+    }
+
+    /// Record that an input event was dispatched at the given time.
+    /// Only the first event's timestamp per frame is retained (worst-case latency).
+    fn record_input(&mut self, dispatch_time: Instant) {
+        self.first_input_at.get_or_insert(dispatch_time);
+        self.pending_input_count += 1;
+    }
+
+    /// Record that an input event arrived during a draw phase and was excluded
+    /// from latency tracking.
+    fn record_mid_draw_input(&mut self) {
+        self.mid_draw_events_dropped += 1;
+    }
+
+    /// Record that a frame was presented, flushing pending latency and coalescing samples.
+    fn record_frame_presented(&mut self) {
+        if let Some(first_input_at) = self.first_input_at.take() {
+            let latency_nanos = first_input_at.elapsed().as_nanos() as u64;
+            self.latency_histogram.record(latency_nanos).ok();
+        }
+        if self.pending_input_count > 0 {
+            self.events_per_frame_histogram
+                .record(self.pending_input_count)
+                .ok();
+            self.pending_input_count = 0;
+        }
+    }
+
+    fn snapshot(&self) -> InputLatencySnapshot {
+        InputLatencySnapshot {
+            latency_histogram: self.latency_histogram.clone(),
+            events_per_frame_histogram: self.events_per_frame_histogram.clone(),
+            mid_draw_events_dropped: self.mid_draw_events_dropped,
+        }
     }
 }
 
@@ -1133,6 +1263,11 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            #[cfg_attr(
+                not(any(target_os = "linux", target_os = "freebsd")),
+                allow(unused_variables)
+            )]
+            icon,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
         } = options;
@@ -1151,6 +1286,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                icon,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
             },
@@ -1266,6 +1402,11 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                if request_frame_options.force_render {
+                                    // Bypass cached view reuse so we don't replay stale
+                                    // atlas tile references after a GPU device recovery.
+                                    window.refresh();
+                                }
                                 let arena_clear_needed = window.draw(cx);
                                 window.present();
                                 arena_clear_needed.clear();
@@ -1476,6 +1617,8 @@ impl Window {
             hovered,
             needs_present,
             input_rate_tracker,
+            #[cfg(feature = "input-latency-histogram")]
+            input_latency_tracker: InputLatencyTracker::new()?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -1511,7 +1654,7 @@ pub struct DispatchEventResult {
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
 /// rendered. Currently, only rectangular content masks are supported, but we give the mask its own type
 /// to leave room to support more complex shapes in the future.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
@@ -2098,6 +2241,12 @@ impl Window {
         self.platform_window.set_edited(edited);
     }
 
+    /// Set the path of the file this window represents.
+    /// On macOS, this sets the window's accessibility document property (AXDocument).
+    pub fn set_document_path(&self, path: Option<&std::path::Path>) {
+        self.platform_window.set_document_path(path);
+    }
+
     /// Determine the display on which the window is visible.
     pub fn display(&self, cx: &App) -> Option<Rc<dyn PlatformDisplay>> {
         cx.platform
@@ -2185,6 +2334,76 @@ impl Window {
     /// The line height associated with the current text style.
     pub fn line_height(&self) -> Pixels {
         self.text_style().line_height_in_pixels(self.rem_size())
+    }
+
+    /// Rounds a logical value to the nearest device pixel.
+    #[inline]
+    pub fn pixel_snap(&self, value: Pixels) -> Pixels {
+        px(round_to_device_pixel(value.0, self.scale_factor()) / self.scale_factor())
+    }
+
+    /// f64 variant of [`Self::pixel_snap`].
+    #[inline]
+    pub fn pixel_snap_f64(&self, value: f64) -> f64 {
+        let scale_factor = f64::from(self.scale_factor());
+        round_half_toward_zero_f64(value * scale_factor) / scale_factor
+    }
+
+    /// Snaps a bounds' origin and size to the nearest device pixel.
+    #[inline]
+    pub fn pixel_snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        bounds.map(|c| self.pixel_snap(c))
+    }
+
+    /// Snaps a point's coordinates to the nearest device pixel.
+    #[inline]
+    pub fn pixel_snap_point(&self, position: Point<Pixels>) -> Point<Pixels> {
+        position.map(|c| self.pixel_snap(c))
+    }
+
+    #[inline]
+    fn snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let left = round_to_device_pixel(bounds.left().0, scale_factor);
+        let top = round_to_device_pixel(bounds.top().0, scale_factor);
+        let right = round_to_device_pixel(bounds.right().0, scale_factor).max(left);
+        let bottom = round_to_device_pixel(bounds.bottom().0, scale_factor).max(top);
+        Bounds::from_corners(
+            point(ScaledPixels(left), ScaledPixels(top)),
+            point(ScaledPixels(right), ScaledPixels(bottom)),
+        )
+    }
+
+    /// Rounds half-to-zero but clamps any non-zero input up to 1 dp so thin strokes do not disappear.
+    #[inline]
+    fn snap_stroke(&self, value: Pixels) -> ScaledPixels {
+        ScaledPixels(round_stroke_to_device_pixel(value.0, self.scale_factor()))
+    }
+
+    #[inline]
+    fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
+        edges.map(|e| self.snap_stroke(*e))
+    }
+
+    /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.
+    #[inline]
+    fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let left = floor_to_device_pixel(bounds.left().0, scale_factor);
+        let top = floor_to_device_pixel(bounds.top().0, scale_factor);
+        let right = ceil_to_device_pixel(bounds.right().0, scale_factor).max(left);
+        let bottom = ceil_to_device_pixel(bounds.bottom().0, scale_factor).max(top);
+        Bounds::from_corners(
+            point(ScaledPixels(left), ScaledPixels(top)),
+            point(ScaledPixels(right), ScaledPixels(bottom)),
+        )
+    }
+
+    #[inline]
+    fn snapped_content_mask(&self) -> ContentMask<ScaledPixels> {
+        ContentMask {
+            bounds: self.cover_bounds(self.content_mask().bounds),
+        }
     }
 
     /// Call to prevent the default action of an event. Currently only used to prevent
@@ -2361,10 +2580,18 @@ impl Window {
     }
 
     #[profiling::function]
-    fn present(&self) {
+    fn present(&mut self) {
         self.platform_window.draw(&self.rendered_frame.scene);
+        #[cfg(feature = "input-latency-histogram")]
+        self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
+    }
+
+    /// Returns a snapshot of the current input-latency histograms.
+    #[cfg(feature = "input-latency-histogram")]
+    pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
+        self.input_latency_tracker.snapshot()
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
@@ -2589,7 +2816,7 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let paint_start = self.paint_index();
-            let content_mask = deferred_draw.content_mask.clone();
+            let content_mask = deferred_draw.content_mask;
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
@@ -2666,7 +2893,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
-                    content_mask: deferred_draw.content_mask.clone(),
+                    content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
@@ -2730,9 +2957,6 @@ impl Window {
     /// Push a text style onto the stack, and call a function with that style active.
     /// Use [`Window::text_style`] to get the current, combined text style. This method
     /// should only be called as part of element drawing.
-    // This function is called in a highly recursive manner in editor
-    // prepainting, make sure its inlined to reduce the stack burden
-    #[inline]
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -3186,13 +3410,12 @@ impl Window {
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
         if !clipped_bounds.is_empty() {
             self.next_frame
                 .scene
-                .push_layer(clipped_bounds.scale(scale_factor));
+                .push_layer(self.cover_bounds(clipped_bounds));
         }
 
         let result = f(self);
@@ -3216,15 +3439,15 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let content_mask = self.content_mask();
+        let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: shadow_bounds.scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
+                bounds: self.cover_bounds(shadow_bounds),
+                content_mask,
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
             });
@@ -3243,17 +3466,17 @@ impl Window {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
-        let content_mask = self.content_mask();
         let opacity = self.element_opacity();
+        let snapped_bounds = self.snap_bounds(quad.bounds);
+        let snapped_border_widths = self.snap_border_widths(quad.border_widths);
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            bounds: quad.bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
+            bounds: snapped_bounds,
+            content_mask: self.snapped_content_mask(),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii: quad.corner_radii.scale(scale_factor),
-            border_widths: quad.border_widths.scale(scale_factor),
+            corner_radii: quad.corner_radii.scale(self.scale_factor()),
+            border_widths: snapped_border_widths,
             border_style: quad.border_style,
         });
     }
@@ -3287,25 +3510,25 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
+        let thickness = self.snap_stroke(style.thickness);
         let height = if style.wavy {
-            style.thickness * 3.
+            ScaledPixels(thickness.0 * 3.)
         } else {
-            style.thickness
+            thickness
         };
         let bounds = Bounds {
-            origin,
-            size: size(width, height),
+            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
+            size: size(self.snap_stroke(width), height),
         };
-        let content_mask = self.content_mask();
         let element_opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
-            bounds: bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
+            bounds,
+            content_mask: self.snapped_content_mask(),
             color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness: style.thickness.scale(scale_factor),
+            thickness,
             wavy: if style.wavy { 1 } else { 0 },
         });
     }
@@ -3324,18 +3547,17 @@ impl Window {
         let scale_factor = self.scale_factor();
         let height = style.thickness;
         let bounds = Bounds {
-            origin,
-            size: size(width, height),
+            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
+            size: size(self.snap_stroke(width), self.snap_stroke(height)),
         };
-        let content_mask = self.content_mask();
         let opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
-            bounds: bounds.scale(scale_factor),
-            content_mask: content_mask.scale(scale_factor),
-            thickness: style.thickness.scale(scale_factor),
+            bounds,
+            content_mask: self.snapped_content_mask(),
+            thickness: self.snap_stroke(style.thickness),
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: 0,
         });
@@ -3363,11 +3585,19 @@ impl Window {
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
 
-        let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
-        };
+        let quantized_origin = Point::new(
+            round_half_toward_zero(glyph_origin.x.0 * SUBPIXEL_VARIANTS_X as f32)
+                / SUBPIXEL_VARIANTS_X as f32,
+            round_half_toward_zero(glyph_origin.y.0 * SUBPIXEL_VARIANTS_Y as f32)
+                / SUBPIXEL_VARIANTS_Y as f32,
+        );
+        let subpixel_variant = Point::new(
+            (quantized_origin.x.fract() * SUBPIXEL_VARIANTS_X as f32) as u8,
+            (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
+        );
+        let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
         let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
+        let dilation = self.text_system().glyph_dilation_for_color(color);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -3376,6 +3606,7 @@ impl Window {
             scale_factor,
             is_emoji: false,
             subpixel_rendering,
+            dilation,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -3388,10 +3619,10 @@ impl Window {
                 })?
                 .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(scale_factor);
+            let content_mask = self.snapped_content_mask();
 
             if subpixel_rendering {
                 self.next_frame.scene.insert_primitive(SubpixelSprite {
@@ -3414,100 +3645,6 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             }
-        }
-        Ok(())
-    }
-
-    /// Paints a monochrome glyph with pre-computed raster bounds.
-    ///
-    /// This is faster than `paint_glyph` because it skips the per-glyph cache lookup.
-    /// Use `ShapedLine::compute_glyph_raster_data` to batch-compute raster bounds during prepaint.
-    pub fn paint_glyph_with_raster_bounds(
-        &mut self,
-        origin: Point<Pixels>,
-        _font_id: FontId,
-        _glyph_id: GlyphId,
-        _font_size: Pixels,
-        color: Hsla,
-        raster_bounds: Bounds<DevicePixels>,
-        params: &RenderGlyphParams,
-    ) -> Result<()> {
-        self.invalidator.debug_assert_paint();
-
-        let element_opacity = self.element_opacity();
-        let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
-
-        if !raster_bounds.is_zero() {
-            let tile = self
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    let (size, bytes) = self.text_system().rasterize_glyph(params)?;
-                    Ok(Some((size, Cow::Owned(bytes))))
-                })?
-                .expect("Callback above only errors or returns Some");
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.content_mask().scale(scale_factor);
-            self.next_frame.scene.insert_primitive(MonochromeSprite {
-                order: 0,
-                pad: 0,
-                bounds,
-                content_mask,
-                color: color.opacity(element_opacity),
-                tile,
-                transformation: TransformationMatrix::unit(),
-            });
-        }
-        Ok(())
-    }
-
-    /// Paints an emoji glyph with pre-computed raster bounds.
-    ///
-    /// This is faster than `paint_emoji` because it skips the per-glyph cache lookup.
-    /// Use `ShapedLine::compute_glyph_raster_data` to batch-compute raster bounds during prepaint.
-    pub fn paint_emoji_with_raster_bounds(
-        &mut self,
-        origin: Point<Pixels>,
-        _font_id: FontId,
-        _glyph_id: GlyphId,
-        _font_size: Pixels,
-        raster_bounds: Bounds<DevicePixels>,
-        params: &RenderGlyphParams,
-    ) -> Result<()> {
-        self.invalidator.debug_assert_paint();
-
-        let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
-
-        if !raster_bounds.is_zero() {
-            let tile = self
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    let (size, bytes) = self.text_system().rasterize_glyph(params)?;
-                    Ok(Some((size, Cow::Owned(bytes))))
-                })?
-                .expect("Callback above only errors or returns Some");
-
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.content_mask().scale(scale_factor);
-            let opacity = self.element_opacity();
-
-            self.next_frame.scene.insert_primitive(PolychromeSprite {
-                order: 0,
-                pad: 0,
-                grayscale: false,
-                bounds,
-                corner_radii: Default::default(),
-                content_mask,
-                tile,
-                opacity,
-            });
         }
         Ok(())
     }
@@ -3550,15 +3687,16 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
+        let integer_origin = glyph_origin.map(|c| ScaledPixels(round_half_toward_zero(c.0)));
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
             font_size,
-            // We don't render emojis with subpixel variants.
             subpixel_variant: Default::default(),
             scale_factor,
             is_emoji: true,
             subpixel_rendering: false,
+            dilation: 0,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -3572,10 +3710,10 @@ impl Window {
                 .expect("Callback above only errors or returns Some");
 
             let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(scale_factor);
+            let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
@@ -3607,9 +3745,8 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let scale_factor = self.scale_factor();
+        let bounds = self.snap_bounds(bounds);
 
-        let bounds = bounds.scale(scale_factor);
         let params = RenderSvgParams {
             path,
             size: bounds.size.map(|pixels| {
@@ -3629,7 +3766,7 @@ impl Window {
         else {
             return Ok(());
         };
-        let content_mask = self.content_mask().scale(scale_factor);
+        let content_mask = self.snapped_content_mask();
         let svg_bounds = Bounds {
             origin: bounds.center()
                 - Point::new(
@@ -3641,13 +3778,14 @@ impl Window {
                 .size
                 .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
         };
+        let final_bounds = svg_bounds
+            .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
+            .map_size(|size| size.ceil());
 
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
-            bounds: svg_bounds
-                .map_origin(|origin| origin.round())
-                .map_size(|size| size.ceil()),
+            bounds: final_bounds,
             content_mask,
             color: color.opacity(element_opacity),
             tile,
@@ -3671,8 +3809,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
+        let bounds = self.snap_bounds(bounds);
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -3690,17 +3827,15 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
-        let content_mask = self.content_mask().scale(scale_factor);
-        let corner_radii = corner_radii.scale(scale_factor);
+        let content_mask = self.snapped_content_mask();
+        let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
             grayscale,
-            bounds: bounds
-                .map_origin(|origin| origin.floor())
-                .map_size(|size| size.ceil()),
+            bounds,
             content_mask,
             corner_radii,
             tile,
@@ -3718,9 +3853,8 @@ impl Window {
 
         self.invalidator.debug_assert_paint();
 
-        let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
-        let content_mask = self.content_mask().scale(scale_factor);
+        let bounds = self.snap_bounds(bounds);
+        let content_mask = self.snapped_content_mask();
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,
@@ -3825,7 +3959,8 @@ impl Window {
             .unwrap()
             .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
-        bounds.origin += self.element_offset();
+        let snapped_offset = self.pixel_snap_point(self.element_offset());
+        bounds.origin += snapped_offset;
         bounds
     }
 
@@ -4113,6 +4248,9 @@ impl Window {
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        #[cfg(feature = "input-latency-histogram")]
+        let dispatch_time = Instant::now();
+        let update_count_before = self.invalidator.update_count();
         // Track input modality for focus-visible styling and hover suppression.
         // Hover is suppressed during keyboard modality so that keyboard navigation
         // doesn't show hover highlights on the item under the mouse cursor.
@@ -4222,8 +4360,14 @@ impl Window {
             self.dispatch_key_event(any_key_event, cx);
         }
 
-        if self.invalidator.is_dirty() {
+        if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
+            #[cfg(feature = "input-latency-histogram")]
+            if self.invalidator.not_drawing() {
+                self.input_latency_tracker.record_input(dispatch_time);
+            } else {
+                self.input_latency_tracker.record_mid_draw_input();
+            }
         }
 
         DispatchEventResult {
@@ -4331,6 +4475,14 @@ impl Window {
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.pending_modifier.saw_keystroke = true;
             keystroke = Some(key_down_event.keystroke.clone());
+            if key_down_event.keystroke.key_char.is_some()
+                && matches!(
+                    cx.cursor_hide_mode,
+                    CursorHideMode::OnTyping | CursorHideMode::OnTypingAndAction
+                )
+            {
+                cx.platform.hide_cursor_until_mouse_moves();
+            }
         }
 
         let Some(keystroke) = keystroke else {
@@ -4592,6 +4744,22 @@ impl Window {
     }
 
     fn dispatch_action_on_node(
+        &mut self,
+        node_id: DispatchNodeId,
+        action: &dyn Action,
+        cx: &mut App,
+    ) {
+        self.dispatch_action_on_node_inner(node_id, action, cx);
+
+        if !cx.propagate_event
+            && cx.cursor_hide_mode == CursorHideMode::OnTypingAndAction
+            && self.last_input_was_keyboard()
+        {
+            cx.platform.hide_cursor_until_mouse_moves();
+        }
+    }
+
+    fn dispatch_action_on_node_inner(
         &mut self,
         node_id: DispatchNodeId,
         action: &dyn Action,
@@ -5596,7 +5764,7 @@ impl From<Arc<std::path::Path>> for ElementId {
 
 impl From<&'static str> for ElementId {
     fn from(name: &'static str) -> Self {
-        ElementId::Name(name.into())
+        ElementId::Name(SharedString::new_static(name))
     }
 }
 
@@ -5608,13 +5776,13 @@ impl<'a> From<&'a FocusHandle> for ElementId {
 
 impl From<(&'static str, EntityId)> for ElementId {
     fn from((name, id): (&'static str, EntityId)) -> Self {
-        ElementId::NamedInteger(name.into(), id.as_u64())
+        ElementId::NamedInteger(SharedString::new_static(name), id.as_u64())
     }
 }
 
 impl From<(&'static str, usize)> for ElementId {
     fn from((name, id): (&'static str, usize)) -> Self {
-        ElementId::NamedInteger(name.into(), id as u64)
+        ElementId::NamedInteger(SharedString::new_static(name), id as u64)
     }
 }
 
@@ -5626,7 +5794,7 @@ impl From<(SharedString, usize)> for ElementId {
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
-        ElementId::NamedInteger(name.into(), id)
+        ElementId::NamedInteger(SharedString::new_static(name), id)
     }
 }
 
@@ -5638,7 +5806,7 @@ impl From<Uuid> for ElementId {
 
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
-        ElementId::NamedInteger(name.into(), id.into())
+        ElementId::NamedInteger(SharedString::new_static(name), u64::from(id))
     }
 }
 

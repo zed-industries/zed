@@ -16,8 +16,8 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, Subscription, Task, WeakEntity,
+    Action, Anchor, AnyView, App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable,
+    ScrollHandle, Subscription, Task, TaskExt, WeakEntity,
 };
 use itertools::Itertools;
 use language::LanguageRegistry;
@@ -26,7 +26,7 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{
     agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
@@ -463,7 +463,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -562,7 +562,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -705,7 +705,7 @@ impl AgentConfiguration {
                     .icon_size(IconSize::Small),
                 Tooltip::text("Configure MCP Server"),
             )
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
             .menu({
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
@@ -1059,7 +1059,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -1135,10 +1135,13 @@ impl AgentConfiguration {
             id: agent_server_name.clone(),
         };
 
-        let connection_status = self
-            .agent_connection_store
-            .read(cx)
-            .connection_status(&agent, cx);
+        let (connection_status, running_version) = {
+            let connection_store = self.agent_connection_store.read(cx);
+            (
+                connection_store.connection_status(&agent, cx),
+                connection_store.agent_version(&agent, cx),
+            )
+        };
 
         let restart_button = matches!(
             connection_status,
@@ -1252,6 +1255,7 @@ impl AgentConfiguration {
 
         AiSettingItem::new(id, display_name, status, source_kind)
             .icon(icon)
+            .when_some(running_version, |this, version| this.detail_label(version))
             .when_some(restart_button, |this, button| this.action(button))
             .when_some(uninstall_button, |this, button| this.action(button))
     }
@@ -1330,40 +1334,44 @@ fn show_unable_to_uninstall_extension_with_context_server(
         move |this, _cx| {
             let workspace_handle = workspace_handle.clone();
 
-            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
-                .dismiss_button(true)
-                .action("Uninstall", move |_, _cx| {
-                    if let Some((extension_id, _)) =
-                        resolve_extension_for_context_server(&context_server_id, _cx)
-                    {
-                        ExtensionStore::global(_cx).update(_cx, |store, cx| {
-                            store
-                                .uninstall_extension(extension_id, cx)
-                                .detach_and_log_err(cx);
-                        });
+            this.icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .dismiss_button(true)
+            .action("Uninstall", move |_, _cx| {
+                if let Some((extension_id, _)) =
+                    resolve_extension_for_context_server(&context_server_id, _cx)
+                {
+                    ExtensionStore::global(_cx).update(_cx, |store, cx| {
+                        store
+                            .uninstall_extension(extension_id, cx)
+                            .detach_and_log_err(cx);
+                    });
 
-                        workspace_handle
-                            .update(_cx, |workspace, cx| {
-                                let fs = workspace.app_state().fs.clone();
-                                cx.spawn({
-                                    let context_server_id = context_server_id.clone();
-                                    async move |_workspace_handle, cx| {
-                                        cx.update(|cx| {
-                                            update_settings_file(fs, cx, move |settings, _| {
-                                                settings
-                                                    .project
-                                                    .context_servers
-                                                    .remove(&context_server_id.0);
-                                            });
+                    workspace_handle
+                        .update(_cx, |workspace, cx| {
+                            let fs = workspace.app_state().fs.clone();
+                            cx.spawn({
+                                let context_server_id = context_server_id.clone();
+                                async move |_workspace_handle, cx| {
+                                    cx.update(|cx| {
+                                        update_settings_file(fs, cx, move |settings, _| {
+                                            settings
+                                                .project
+                                                .context_servers
+                                                .remove(&context_server_id.0);
                                         });
-                                        anyhow::Ok(())
-                                    }
-                                })
-                                .detach_and_log_err(cx);
+                                    });
+                                    anyhow::Ok(())
+                                }
                             })
-                            .log_err();
-                    }
-                })
+                            .detach_and_log_err(cx);
+                        })
+                        .log_err();
+                }
+            })
         },
     );
 

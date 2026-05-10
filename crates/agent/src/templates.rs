@@ -39,10 +39,29 @@ pub struct SystemPromptTemplate<'a> {
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
     pub model_name: Option<String>,
+    pub date: String,
 }
 
 impl Template for SystemPromptTemplate<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
+}
+
+impl SystemPromptTemplate<'_> {
+    const EXPERIMENTAL_TEMPLATE_NAME: &'static str = "experimental_system_prompt.hbs";
+
+    pub fn render_with_prompt_variant(
+        &self,
+        templates: &Templates,
+        use_experimental_prompt: bool,
+    ) -> Result<String> {
+        let template_name = if use_experimental_prompt {
+            Self::EXPERIMENTAL_TEMPLATE_NAME
+        } else {
+            <Self as Template>::TEMPLATE_NAME
+        };
+
+        Ok(templates.0.render(template_name, self)?)
+    }
 }
 
 /// Handlebars helper for checking if an item is in a list
@@ -81,11 +100,31 @@ mod tests {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
+        assert!(rendered.contains("You are a highly skilled software engineer"));
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(!rendered.contains("## Planning"));
+        assert!(rendered.contains("test-model"));
+    }
+
+    #[test]
+    fn test_experimental_system_prompt_template() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+        };
+        let templates = Templates::new();
+        let rendered = template
+            .render_with_prompt_variant(&templates, true)
+            .unwrap();
+        assert!(rendered.contains("You are the Zed coding agent"));
+        assert!(rendered.contains("Today's Date: 2026-01-01"));
         assert!(rendered.contains("test-model"));
     }
 }

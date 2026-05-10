@@ -8,7 +8,7 @@ use cloud_llm_client::EditPredictionRejectReason;
 use credentials_provider::CredentialsProvider;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Context, Entity, Global, SharedString, Task,
+    App, AppContext as _, Context, Entity, Global, SharedString, Task, TaskExt,
     http_client::{self, AsyncBody, HttpClient, Method, StatusCode},
 };
 use language::{ToOffset, ToPoint as _};
@@ -109,7 +109,6 @@ impl Mercury {
                     - excerpt_offset_range.start,
                 cursor_path: full_path.clone(),
                 cursor_excerpt,
-                experiment: None,
                 excerpt_start_row: Some(excerpt_point_range.start.row),
                 excerpt_ranges,
                 syntax_ranges: Some(syntax_ranges),

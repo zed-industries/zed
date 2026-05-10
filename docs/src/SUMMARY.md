@@ -15,17 +15,15 @@
   - [Tools](./ai/tools.md)
   - [Tool Permissions](./ai/tool-permissions.md)
   - [External Agents](./ai/external-agents.md)
+- [Parallel Agents](./ai/parallel-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Rules](./ai/rules.md)
 - [Model Context Protocol](./ai/mcp.md)
 - [Configuration](./ai/configuration.md)
-  - [LLM Providers](./ai/llm-providers.md)
   - [Agent Settings](./ai/agent-settings.md)
-- [Subscription](./ai/subscription.md)
-  - [Models](./ai/models.md)
-  - [Plans and Usage](./ai/plans-and-usage.md)
-  - [Billing](./ai/billing.md)
+- [Models](./ai/models.md)
+- [Providers](./ai/llm-providers.md)
 
 # Working with Code
 
@@ -37,6 +35,7 @@
 - [Finding & Navigating](./finding-navigating.md)
   - [Command Palette](./command-palette.md)
   - [Outline Panel](./outline-panel.md)
+  - [Project Panel](./project-panel.md)
   - [Tab Switcher](./tab-switcher.md)
 - [Running & Testing](./running-testing.md)
   - [Terminal](./terminal.md)
@@ -57,6 +56,29 @@
 - [Overview](./remote-development.md)
 - [Environment Variables](./environment.md)
 - [Dev Containers](./dev-containers.md)
+
+# Account & Billing
+
+- [Authenticate](./authentication.md)
+- [Plans & Pricing](./ai/plans-and-usage.md)
+- [Billing](./ai/billing.md)
+
+# Zed Business
+
+- [Overview](./business/overview.md)
+- [Organizations](./business/organizations.md)
+- [Roles & Permissions](./roles.md)
+- [Admin Controls](./business/admin-controls.md)
+- [Business Support](./business/business-support.md)
+
+# Privacy & Security
+
+- [Overview](./ai/privacy-and-security.md)
+  - [Worktree Trust](./worktree-trust.md)
+  - [AI Improvement](./ai/ai-improvement.md)
+- [Privacy for Business](./business/privacy.md)
+- [Telemetry](./telemetry.md)
+- [SOC2](./soc2.md)
 
 # Platform Support
 
@@ -137,6 +159,7 @@
 - [Scheme](./languages/scheme.md)
 - [Shell Script](./languages/sh.md)
 - [SQL](./languages/sql.md)
+- [Standard ML](./languages/sml.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [Tailwind CSS](./languages/tailwindcss.md)
@@ -178,15 +201,6 @@
 - [All Settings](./reference/all-settings.md)
 - [All Actions](./all-actions.md)
 - [CLI Reference](./reference/cli.md)
-
-# Account & Privacy
-
-- [Authenticate](./authentication.md)
-- [Roles](./roles.md)
-- [Privacy and Security](./ai/privacy-and-security.md)
-  - [Worktree Trust](./worktree-trust.md)
-  - [AI Improvement](./ai/ai-improvement.md)
-- [Telemetry](./telemetry.md)
 
 # Developing Zed
 

@@ -1,5 +1,5 @@
 use gh_workflow::{
-    Concurrency, Container, Event, Expression, Input, Job, Level, Permissions, Port, PullRequest,
+    Container, Event, Expression, Input, Job, Level, MergeGroup, Permissions, Port, PullRequest,
     Push, Run, Step, Strategy, Use, UsesJob, Workflow,
 };
 use indexmap::IndexMap;
@@ -15,6 +15,7 @@ use crate::tasks::workflows::{
 };
 
 use super::{
+    deploy_docs,
     runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
@@ -48,26 +49,55 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
-        should_run_tests.guard(clippy(Platform::Windows, None)),
-        should_run_tests.guard(clippy(Platform::Linux, None)),
-        should_run_tests.guard(clippy(Platform::Mac, None)),
-        should_run_tests.guard(clippy(Platform::Mac, Some(Arch::X86_64))),
-        should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
-        should_run_tests.guard(run_platform_tests(Platform::Mac)),
-        should_run_tests.guard(doctests()),
-        should_run_tests.guard(check_workspace_binaries()),
-        should_run_tests.guard(build_visual_tests_binary()),
-        should_run_tests.guard(check_wasm()),
-        should_run_tests.guard(check_dependencies()), // could be more specific here?
-        should_check_docs.guard(check_docs()),
-        should_check_licences.guard(check_licenses()),
-        should_check_scripts.guard(check_scripts()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Windows, None)),
+        should_run_tests
+            .and_always()
+            .then(clippy(Platform::Linux, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, Some(Arch::X86_64))),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Windows)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Linux)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Mac)),
+        should_run_tests.and_not_in_merge_queue().then(doctests()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_workspace_binaries()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(build_visual_tests_binary()),
+        should_run_tests.and_not_in_merge_queue().then(check_wasm()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_dependencies()), // could be more specific here?
+        should_check_docs
+            .and_not_in_merge_queue()
+            .then(deploy_docs::check_docs()),
+        should_check_licences
+            .and_not_in_merge_queue()
+            .then(check_licenses()),
+        should_check_scripts.and_always().then(check_scripts()),
     ];
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
-    jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
+    // TODO: For merge queues, this should fail in the merge queue context
+    jobs.push(
+        should_run_tests
+            .and_always()
+            .then(check_postgres_and_protobuf_migrations()),
+    ); // could be more specific here?
 
     named::workflow()
         .add_event(
@@ -77,16 +107,10 @@ pub(crate) fn run_tests() -> Workflow {
                         .add_branch("main")
                         .add_branch("v[0-9]+.[0-9]+.x"),
                 )
-                .pull_request(PullRequest::default().add_branch("**")),
+                .pull_request(PullRequest::default().add_branch("**"))
+                .merge_group(MergeGroup::default()),
         )
-        .concurrency(
-            Concurrency::default()
-                .group(concat!(
-                    "${{ github.workflow }}-${{ github.ref_name }}-",
-                    "${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
-                ))
-                .cancel_in_progress(true),
-        )
+        .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
@@ -407,12 +431,7 @@ fn check_style() -> NamedJob {
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_machete() -> Step<Use> {
-        named::uses(
-            "taiki-e",
-            "install-action",
-            "02cc5f8ca9f2301050c0c099055816a41ee05507",
-        )
-        .add_with(("tool", "cargo-machete@0.7.0"))
+        steps::taiki_install_action("cargo-machete@0.7.0")
     }
 
     fn run_cargo_machete() -> Step<Run> {
@@ -454,13 +473,14 @@ fn check_wasm() -> NamedJob {
 
     fn cargo_check_wasm() -> Step<Run> {
         named::bash(concat!(
-            "cargo +nightly -Zbuild-std=std,panic_abort ",
+            "cargo -Zbuild-std=std,panic_abort ",
             "check --target wasm32-unknown-unknown -p gpui_platform",
         ))
         .add_env((
             "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
             "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
         ))
+        .add_env(("RUSTC_BOOTSTRAP", "1"))
     }
 
     named::job(
@@ -694,54 +714,6 @@ fn check_licenses() -> NamedJob {
     )
 }
 
-fn check_docs() -> NamedJob {
-    fn lychee_link_check(dir: &str) -> Step<Use> {
-        named::uses(
-            "lycheeverse",
-            "lychee-action",
-            "82202e5e9c2f4ef1a55a3d02563e1cb6041e5332",
-        ) // v2.4.1
-        .add_with(("args", format!("--no-progress --exclude '^http' '{dir}'")))
-        .add_with(("fail", true))
-        .add_with(("jobSummary", false))
-    }
-
-    fn install_mdbook() -> Step<Use> {
-        named::uses(
-            "peaceiris",
-            "actions-mdbook",
-            "ee69d230fe19748b7abf22df32acaa93833fad08", // v2
-        )
-        .with(("mdbook-version", "0.4.37"))
-    }
-
-    fn build_docs() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            mkdir -p target/deploy
-            mdbook build ./docs --dest-dir=../target/deploy/docs/
-        "#})
-    }
-
-    named::job(use_clang(
-        release_job(&[])
-            .runs_on(runners::LINUX_LARGE)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(Platform::Linux))
-            // todo(ci): un-inline build_docs/action.yml here
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(
-                lychee_link_check("./docs/src/**/*"), // check markdown links
-            )
-            .map(steps::install_linux_dependencies)
-            .add_step(steps::script("./script/generate-action-metadata"))
-            .add_step(install_mdbook())
-            .add_step(build_docs())
-            .add_step(
-                lychee_link_check("target/deploy/docs"), // check links in generated html
-            ),
-    ))
-}
-
 pub(crate) fn check_scripts() -> NamedJob {
     fn download_actionlint() -> Step<Run> {
         named::bash(
@@ -773,7 +745,7 @@ pub(crate) fn check_scripts() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))

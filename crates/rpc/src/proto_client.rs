@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use collections::HashMap;
 use futures::{
-    Future, FutureExt as _,
+    Future, FutureExt as _, Stream, StreamExt as _,
     channel::oneshot,
     future::{BoxFuture, LocalBoxFuture},
+    stream::BoxStream,
 };
 use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, BackgroundExecutor, Entity, FutureExt as _};
 use parking_lot::Mutex;
@@ -60,6 +61,20 @@ pub trait ProtoClient: Send + Sync {
         envelope: Envelope,
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<Envelope>>;
+
+    fn request_stream(
+        &self,
+        envelope: Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<Envelope>>>> {
+        async move {
+            anyhow::bail!(
+                "stream requests are not supported for {request_type}: {:?}",
+                envelope.payload
+            )
+        }
+        .boxed()
+    }
 
     fn send(&self, envelope: Envelope, message_type: &'static str) -> Result<()>;
 
@@ -220,6 +235,23 @@ impl AnyProtoClient {
         async move {
             T::Response::from_envelope(response.await?)
                 .context("received response of the wrong type")
+        }
+    }
+
+    pub fn request_stream<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<BoxStream<'static, Result<T::Response>>>> + use<T> {
+        let envelope = request.into_envelope(0, None, None);
+        let response_stream = self.0.client.request_stream(envelope, T::NAME);
+        async move {
+            Ok(response_stream
+                .await?
+                .map(|response| {
+                    T::Response::from_envelope(response?)
+                        .context("received response of the wrong type")
+                })
+                .boxed())
         }
     }
 
@@ -475,6 +507,68 @@ impl AnyProtoClient {
                             }
                         })
                         .boxed_local()
+                }),
+            );
+    }
+
+    pub fn add_entity_stream_request_handler<M, E, H, F, S>(&self, handler: H)
+    where
+        M: EnvelopedMessage + RequestMessage + EntityMessage,
+        E: 'static,
+        H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncApp) -> F,
+        F: 'static + Future<Output = Result<S>>,
+        S: 'static + Stream<Item = Result<M::Response>>,
+    {
+        let message_type_id = TypeId::of::<M>();
+        let entity_type_id = TypeId::of::<E>();
+        let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
+            (envelope as &dyn Any)
+                .downcast_ref::<TypedEnvelope<M>>()
+                .unwrap()
+                .payload
+                .remote_entity_id()
+        };
+        self.0
+            .client
+            .message_handler_set()
+            .lock()
+            .add_entity_message_handler(
+                message_type_id,
+                entity_type_id,
+                entity_id_extractor,
+                Arc::new(move |entity, envelope, client, cx| {
+                    let entity = entity.downcast::<E>().unwrap();
+                    let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                    let request_id = envelope.message_id();
+                    let stream = handler(entity, *envelope, cx);
+                    async move {
+                        // An Error response is itself a terminal stream frame on
+                        // both transports (Peer and ChannelClient), so we don't
+                        // need to follow it with an EndStream.
+                        match stream.await {
+                            Ok(stream) => {
+                                futures::pin_mut!(stream);
+                                while let Some(result) = stream.next().await {
+                                    match result {
+                                        Ok(response) => {
+                                            client.send_response(request_id, response)?
+                                        }
+                                        Err(error) => {
+                                            client.send_response(request_id, error.to_proto())?;
+                                            return Err(error);
+                                        }
+                                    }
+                                }
+                                client.send_response(request_id, proto::EndStream {})?;
+                                Ok(())
+                            }
+                            Err(error) => {
+                                client.send_response(request_id, error.to_proto())?;
+                                Err(error)
+                            }
+                        }
+                    }
+                    .boxed_local()
                 }),
             );
     }

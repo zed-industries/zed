@@ -1,0 +1,70 @@
+# Assign Contributor Issue — auto-assign labeled contributor issues
+#
+# When an issue has both a `.contrib/good *` label and an `area:` label,
+# finds the least-busy contributor interested in that area (via Tally form
+# responses), assigns the issue, updates the project board, and notifies
+# the contributor on Slack.
+#
+# Errors and "no candidates" conditions are reported to the Slack activity
+# channel.
+
+name: Assign Contributor Issue
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to test against"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assign-contributor-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: true
+
+jobs:
+  assign-contributor:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.repository == 'zed-industries/zed' &&
+      github.event.issue.state == 'open' &&
+      (startsWith(github.event.label.name, '.contrib/good ') || startsWith(github.event.label.name, 'area:')))
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    timeout-minutes: 5
+
+    steps:
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          sparse-checkout: script/github-assign-contributor-issue.py
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Assign contributor
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
+          TALLY_FORM_ID: ${{ vars.TALLY_CONTRIBUTOR_FORM_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_CONTRIBUTOR_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+        run: python script/github-assign-contributor-issue.py "$ISSUE_NUMBER"

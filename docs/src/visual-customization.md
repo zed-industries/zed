@@ -118,7 +118,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
+    "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
@@ -183,8 +183,8 @@ TBD: Centered layout related settings
   // Highlight the current line in the editor: none, gutter, line, all
   "current_line_highlight": "all",
 
-  // When does the mouse cursor hide: never, on_typing, on_typing_and_movement
-  "hide_mouse": "on_typing_and_movement",
+  // When does the mouse cursor hide: never, on_typing, on_typing_and_action
+  "hide_mouse": "on_typing_and_action",
 
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,

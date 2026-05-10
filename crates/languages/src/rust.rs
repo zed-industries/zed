@@ -9,6 +9,7 @@ use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+use project::lsp_store::lsp_ext_command;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -18,6 +19,7 @@ use smallvec::SmallVec;
 use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
+use std::future::Future;
 use std::ops::Range;
 use std::{
     borrow::Cow,
@@ -608,20 +610,60 @@ impl LspAdapter for RustLspAdapter {
             .lsp
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
-        if enable_lsp_tasks {
-            let experimental = json!({
-                "runnables": {
-                    "kinds": [ "cargo", "shell" ],
-                },
-            });
-            if let Some(original_experimental) = &mut original.capabilities.experimental {
-                merge_json_value_into(experimental, original_experimental);
-            } else {
-                original.capabilities.experimental = Some(experimental);
+
+        let mut experimental = json!({
+            "commands": {
+                "commands": [
+                    "rust-analyzer.showReferences",
+                    "rust-analyzer.gotoLocation",
+                    "rust-analyzer.triggerParameterHints",
+                    "rust-analyzer.rename",
+                ]
             }
+        });
+
+        if enable_lsp_tasks {
+            merge_json_value_into(
+                json!({
+                    "runnables": {
+                        "kinds": [ "cargo", "shell" ],
+                    },
+                    "commands": {
+                        "commands": [
+                            "rust-analyzer.runSingle",
+                        ]
+                    }
+                }),
+                &mut experimental,
+            );
+        }
+
+        if let Some(original_experimental) = &mut original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
         }
 
         Ok(original)
+    }
+
+    fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        match command_name {
+            "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
+            "rust-analyzer.runSingle" => {
+                let first_arg = arguments.first()?;
+                let runnable =
+                    serde_json::from_value::<lsp_ext_command::Runnable>(first_arg.clone()).ok()?;
+                let template =
+                    lsp_ext_command::runnable_to_task_template(runnable.label, runnable.args);
+                Some(ClientCommand::ScheduleTask(template))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -688,87 +730,93 @@ impl LspInstaller for RustLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = version;
-        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
-        };
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+        async move {
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = version;
+            let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
+            let server_path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+                AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+            };
 
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: Default::default(),
-        })
+            let binary = LanguageServerBinary {
+                path: server_path.clone(),
+                env: None,
+                arguments: Default::default(),
+            };
+
+            let metadata_path = destination_path.with_extension("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+            make_file_executable(&server_path).await?;
+            remove_matching(&container_dir, |path| path != destination_path).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(LanguageServerBinary {
+                path: server_path,
+                env: None,
+                arguments: Default::default(),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -857,7 +905,7 @@ impl ContextProvider for RustContextProvider {
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(path, project_env.as_ref()).await
+                    target_info_from_abs_path(path, project_env.as_ref()).await?
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -1123,24 +1171,31 @@ struct TargetInfo {
 async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<(Option<TargetInfo>, Arc<Path>)> {
+) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
     let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
     let output = command
-        .current_dir(abs_path.parent()?)
+        .current_dir(
+            abs_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?,
+        )
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version")
         .arg("1")
         .output()
-        .await
-        .log_err()?
-        .stdout;
+        .await?;
 
-    let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
-    target_info_from_metadata(metadata, abs_path)
+    if !output.status.success() {
+        let stderr_msg = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Cargo metadata failed\n {stderr_msg}");
+    }
+
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
+    Ok(target_info_from_metadata(metadata, abs_path))
 }
 
 fn target_info_from_metadata(
@@ -2049,6 +2104,21 @@ mod tests {
 
             assert_eq!(target_info_from_metadata(metadata, absolute_path), expected);
         }
+    }
+
+    #[test]
+    fn target_info_from_abs_path_failed() {
+        let project_root = tempfile::tempdir().unwrap();
+        let cargo_toml_path = project_root.path().join("Cargo.toml");
+        let src_dir = project_root.path().join("src");
+        let main_rs_path = src_dir.join("main.rs");
+
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(&cargo_toml_path, "invalid_toml = {[[{").unwrap();
+        std::fs::write(&main_rs_path, "// rust").unwrap();
+
+        let e = smol::block_on(target_info_from_abs_path(&main_rs_path, None)).unwrap_err();
+        assert!(e.to_string().contains("Cargo metadata failed"));
     }
 
     #[test]

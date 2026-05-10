@@ -294,7 +294,7 @@ impl Element for Img {
                 })
             });
 
-            let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
+            let mut frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
@@ -312,8 +312,11 @@ impl Element for Img {
                         cx,
                     ) {
                         Some(Ok(data)) => {
+                            let frame_count = data.frame_count();
+                            let max_frame_index = frame_count.saturating_sub(1);
+
                             if let Some(state) = &mut state {
-                                let frame_count = data.frame_count();
+                                state.frame_index = state.frame_index.min(max_frame_index);
                                 if frame_count > 1 {
                                     if window.is_window_active() {
                                         let current_time = Instant::now();
@@ -334,8 +337,11 @@ impl Element for Img {
                                     } else {
                                         state.last_frame_time = None;
                                     }
+                                } else {
+                                    state.last_frame_time = None;
                                 }
                                 state.started_loading = None;
+                                frame_index = state.frame_index;
                             }
 
                             let image_size = data.render_size(frame_index);
@@ -473,6 +479,9 @@ impl Element for Img {
                     window,
                     cx,
                 ) {
+                    if data.frame_count() == 0 {
+                        return;
+                    }
                     let new_bounds = self
                         .style
                         .object_fit
@@ -650,12 +659,26 @@ impl Asset for ImageAssetLoader {
                         let mut frames = SmallVec::new();
 
                         for frame in decoder.into_frames() {
-                            let mut frame = frame?;
-                            // Convert from RGBA to BGRA.
-                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
+                            match frame {
+                                Ok(mut frame) => {
+                                    // Convert from RGBA to BGRA.
+                                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                        pixel.swap(0, 2);
+                                    }
+                                    frames.push(frame);
+                                }
+                                Err(err) => {
+                                    log::debug!(
+                                        "Skipping GIF frame in {source:?} due to decode error: {err}"
+                                    );
+                                }
                             }
-                            frames.push(frame);
+                        }
+
+                        if frames.is_empty() {
+                            return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                "GIF could not be decoded: all frames failed ({source:?})"
+                            ))));
                         }
 
                         frames
@@ -668,12 +691,26 @@ impl Asset for ImageAssetLoader {
                             let mut frames = SmallVec::new();
 
                             for frame in decoder.into_frames() {
-                                let mut frame = frame?;
-                                // Convert from RGBA to BGRA.
-                                for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                    pixel.swap(0, 2);
+                                match frame {
+                                    Ok(mut frame) => {
+                                        // Convert from RGBA to BGRA.
+                                        for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                            pixel.swap(0, 2);
+                                        }
+                                        frames.push(frame);
+                                    }
+                                    Err(err) => {
+                                        log::debug!(
+                                            "Skipping WebP frame in {source:?} due to decode error: {err}"
+                                        );
+                                    }
                                 }
-                                frames.push(frame);
+                            }
+
+                            if frames.is_empty() {
+                                return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                    "WebP could not be decoded: all frames failed ({source:?})"
+                                ))));
                             }
 
                             frames
@@ -762,5 +799,65 @@ impl From<usvg::Error> for ImageCacheError {
 impl From<image::ImageError> for ImageCacheError {
     fn from(value: image::ImageError) -> Self {
         Self::Image(Arc::new(value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ParentElement as _, TestAppContext, canvas, div, point, px, size};
+    use image::{Frame, ImageBuffer, Rgba};
+
+    const TEST_IMG_ID: &str = "test-img";
+
+    fn test_image(frame_count: usize) -> Arc<RenderImage> {
+        let frame = Frame::new(ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0])));
+        Arc::new(RenderImage::new(SmallVec::from_iter(
+            (0..frame_count).map(|_| frame.clone()),
+        )))
+    }
+
+    /// Overwrites the cached `frame_index` of the sibling `img` during paint.
+    fn seed_frame_index(frame_index: usize) -> impl IntoElement {
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                window.with_global_id(TEST_IMG_ID.into(), |id, window| {
+                    window.with_element_state::<ImgState, _>(id, |state, _| {
+                        let mut state = state.expect("img state should be initialized");
+                        state.frame_index = frame_index;
+                        ((), state)
+                    });
+                });
+            },
+        )
+    }
+
+    #[gpui::test]
+    fn zero_frame_image_does_not_panic_on_paint(cx: &mut TestAppContext) {
+        cx.add_empty_window()
+            .draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+                img(ImageSource::Render(test_image(0))).into_any_element()
+            });
+    }
+
+    #[gpui::test]
+    fn stale_frame_index_is_clamped_when_image_changes(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+
+        // Assert that a cached frame_index from a previous multi-frame image
+        // does not cause an out-of-bounds panic when the image is replaced
+        // with one that has fewer frames.
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            div()
+                .child(img(ImageSource::Render(test_image(5))).id(TEST_IMG_ID))
+                .child(seed_frame_index(4))
+                .into_any_element()
+        });
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(test_image(1)))
+                .id(TEST_IMG_ID)
+                .into_any_element()
+        });
     }
 }

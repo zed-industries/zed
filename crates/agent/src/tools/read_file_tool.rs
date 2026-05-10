@@ -1,5 +1,5 @@
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp, ToolCallUpdateFields};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -184,6 +184,13 @@ impl AgentTool for ReadFileTool {
                 anyhow::Ok(())
             }).map_err(tool_content_err)?;
 
+            if fs.is_dir(&abs_path).await {
+                return Err(tool_content_err(format!(
+                    "{} is a directory, not a file. Use the list_directory tool to explore directory contents.",
+                    &input.path
+                )));
+            }
+
             if let Some(canonical_target) = &symlink_canonical_target {
                 let authorize = cx.update(|cx| {
                     authorize_symlink_access(
@@ -200,7 +207,7 @@ impl AgentTool for ReadFileTool {
             let file_path = input.path.clone();
 
             cx.update(|_cx| {
-                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().locations(vec![
                     acp::ToolCallLocation::new(&abs_path)
                         .line(input.start_line.map(|line| line.saturating_sub(1))),
                 ]));
@@ -228,7 +235,7 @@ impl AgentTool for ReadFileTool {
                     .context("processing image")
                     .map_err(tool_content_err)?;
 
-                event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                     acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
                         acp::ImageContent::new(language_model_image.source.clone(), "image/png"),
                     ))),
@@ -333,7 +340,7 @@ impl AgentTool for ReadFileTool {
                         text,
                     }
                     .to_string();
-                    event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(markdown)),
                     ]));
                 }
@@ -347,7 +354,6 @@ impl AgentTool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use project::{FakeFs, Project};
@@ -356,6 +362,39 @@ mod test {
     use std::path::PathBuf;
     use std::sync::Arc;
     use util::path;
+
+    #[gpui::test]
+    async fn test_read_directory_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "some_dir": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, _) = ToolCallEventStream::test();
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/some_dir".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await;
+        assert_eq!(
+            error_text(result.unwrap_err()),
+            "root/some_dir is a directory, not a file. Use the list_directory tool to explore directory contents."
+        );
+    }
 
     #[gpui::test]
     async fn test_read_nonexistent_file(cx: &mut TestAppContext) {

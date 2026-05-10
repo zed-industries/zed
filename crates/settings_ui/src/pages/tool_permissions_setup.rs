@@ -33,6 +33,12 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the file path being edited.",
     },
     ToolInfo {
+        id: "write_file",
+        name: "Write File",
+        description: "File creation and overwrite operations",
+        regex_explanation: "Patterns are matched against the file path being written.",
+    },
+    ToolInfo {
         id: "delete_path",
         name: "Delete Path",
         description: "File and directory deletion",
@@ -57,12 +63,6 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the directory path being created.",
     },
     ToolInfo {
-        id: "save_file",
-        name: "Save File",
-        description: "File saving operations",
-        regex_explanation: "Patterns are matched against the file path being saved.",
-    },
-    ToolInfo {
         id: "fetch",
         name: "Fetch",
         description: "HTTP requests to URLs",
@@ -73,12 +73,6 @@ const TOOLS: &[ToolInfo] = &[
         name: "Web Search",
         description: "Web search queries",
         regex_explanation: "Patterns are matched against the search query.",
-    },
-    ToolInfo {
-        id: "restore_file_from_disk",
-        name: "Restore File from Disk",
-        description: "Discards unsaved changes by reloading from disk",
-        regex_explanation: "Patterns are matched against the file path being restored.",
     },
 ];
 
@@ -303,14 +297,13 @@ fn get_tool_render_fn(
     match tool_id {
         "terminal" => render_terminal_tool_config,
         "edit_file" => render_edit_file_tool_config,
+        "write_file" => render_write_file_tool_config,
         "delete_path" => render_delete_path_tool_config,
         "copy_path" => render_copy_path_tool_config,
         "move_path" => render_move_path_tool_config,
         "create_directory" => render_create_directory_tool_config,
-        "save_file" => render_save_file_tool_config,
         "fetch" => render_fetch_tool_config,
         "search_web" => render_web_search_tool_config,
-        "restore_file_from_disk" => render_restore_file_from_disk_tool_config,
         _ => render_terminal_tool_config, // fallback
     }
 }
@@ -1112,7 +1105,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1171,7 +1164,7 @@ fn render_default_mode_section(
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1383,17 +1376,13 @@ macro_rules! tool_config_page_fn {
 
 tool_config_page_fn!(render_terminal_tool_config, "terminal");
 tool_config_page_fn!(render_edit_file_tool_config, "edit_file");
+tool_config_page_fn!(render_write_file_tool_config, "write_file");
 tool_config_page_fn!(render_delete_path_tool_config, "delete_path");
 tool_config_page_fn!(render_copy_path_tool_config, "copy_path");
 tool_config_page_fn!(render_move_path_tool_config, "move_path");
 tool_config_page_fn!(render_create_directory_tool_config, "create_directory");
-tool_config_page_fn!(render_save_file_tool_config, "save_file");
 tool_config_page_fn!(render_fetch_tool_config, "fetch");
 tool_config_page_fn!(render_web_search_tool_config, "search_web");
-tool_config_page_fn!(
-    render_restore_file_from_disk_tool_config,
-    "restore_file_from_disk"
-);
 
 #[cfg(test)]
 mod tests {
@@ -1407,13 +1396,17 @@ mod tests {
         //   2. Add it to this list with a comment explaining why it's excluded.
         const EXCLUDED_TOOLS: &[&str] = &[
             // Read-only / low-risk tools that don't call decide_permission_from_settings
+            "apply_code_action",
             "diagnostics",
             "find_path",
+            "find_references",
+            "get_code_actions",
+            "go_to_definition",
             "grep",
             "list_directory",
-            "now",
             "open",
             "read_file",
+            "rename_symbol",
             "thinking",
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.

@@ -1229,6 +1229,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
