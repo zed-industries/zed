@@ -138,6 +138,11 @@
   //  3. Do not restore previous workspaces
   //         "restore_on_startup": "none",
   "restore_on_startup": "last_session",
+  // Launchpad related settings
+  "launchpad": {
+    // Whether to show the launchpad when starting Zed.
+    "enabled": true,
+  },
   // The default behavior when opening paths from the CLI without
   // an explicit `-e` (existing window) or `-n` (new window) flag.
   //

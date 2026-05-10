@@ -20,6 +20,7 @@ pub struct WorkspaceSettings {
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
     pub restore_on_startup: settings::RestoreOnStartupBehavior,
+    pub show_launchpad: bool,
     pub cli_default_open_behavior: settings::CliDefaultOpenBehavior,
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
@@ -100,6 +101,10 @@ impl Settings for WorkspaceSettings {
             show_call_status_icon: workspace.show_call_status_icon.unwrap(),
             autosave: workspace.autosave.unwrap(),
             restore_on_startup: workspace.restore_on_startup.unwrap(),
+            show_launchpad: workspace
+                .launchpad
+                .and_then(|launchpad| launchpad.enabled)
+                .unwrap_or(true),
             cli_default_open_behavior: workspace.cli_default_open_behavior.unwrap(),
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),

@@ -49,6 +49,8 @@ pub struct WorkspaceSettingsContent {
     /// Values: empty_tab, last_workspace, last_session, launchpad
     /// Default: last_session
     pub restore_on_startup: Option<RestoreOnStartupBehavior>,
+    /// Launchpad related settings.
+    pub launchpad: Option<LaunchpadSettings>,
     /// The default behavior when opening paths from the CLI without
     /// an explicit `-e` or `-n` flag.
     ///
@@ -1019,6 +1021,15 @@ impl DocumentSymbols {
     pub fn lsp_enabled(&self) -> bool {
         self == &Self::On
     }
+}
+
+#[with_fallible_options]
+#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct LaunchpadSettings {
+    /// Whether to show the launchpad when starting Zed.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
 }
 
 #[with_fallible_options]
