@@ -436,25 +436,37 @@ impl NativeAgent {
             .await;
 
         // Linux's inotify backend is non-recursive, so a watch on
-        // `skills_dir` only fires for direct children. Pre-register
-        // watches for every existing nested subdirectory so changes to
-        // skill files inside skill subdirectories are observed.
-        // No-ops on macOS/Windows where the OS-level watch is already
-        // recursive (see `fs::add_descendant_dir_watches`).
-        fs::add_descendant_dir_watches(fs.as_ref(), watcher.as_ref(), &skills_dir).await;
+        // `skills_dir` only fires for direct children. Skill discovery
+        // is intentionally one level deep (`<skills_dir>/<skill>/SKILL.md`),
+        // so we only register watches on each immediate child directory
+        // and deliberately do NOT recurse: a stray `node_modules`,
+        // `target`, or `.git` inside a skill folder would otherwise
+        // register watches for tens of thousands of subdirectories.
+        // These per-child adds are cheap no-ops on macOS/Windows where
+        // the OS-level watch is already recursive.
+        if let Ok(mut entries) = fs.read_dir(&skills_dir).await {
+            while let Some(entry) = entries.next().await {
+                let Ok(path) = entry else { continue };
+                if let Ok(Some(metadata)) = fs.metadata(&path).await
+                    && metadata.is_dir
+                {
+                    watcher.add(&path).ok();
+                }
+            }
+        }
 
         while let Some(events) = events.next().await {
-            // For directory creations under `skills_dir`, register
-            // additional watches so the Linux-non-recursive case picks
-            // up further nested changes.
+            // When a new immediate child directory of `skills_dir` is
+            // created, add a single watch for it so changes to its
+            // `SKILL.md` are observed on Linux. We intentionally do not
+            // recurse into the new directory — skill discovery is only
+            // one level deep.
             for event in &events {
                 if event.kind == Some(fs::PathEventKind::Created)
-                    && event.path.starts_with(&skills_dir)
-                    && event.path != skills_dir
+                    && event.path.parent() == Some(skills_dir.as_path())
                     && fs.is_dir(&event.path).await
                 {
-                    fs::add_descendant_dir_watches(fs.as_ref(), watcher.as_ref(), &event.path)
-                        .await;
+                    watcher.add(&event.path).ok();
                 }
             }
 

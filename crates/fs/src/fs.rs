@@ -3383,31 +3383,6 @@ pub async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<
     Ok(items)
 }
 
-/// Recursively registers watches for every directory at and beneath
-/// `root` on the given watcher. Used by callers that need recursive
-/// watch coverage on Linux, where the inotify backend is non-recursive
-/// (see `fs_watcher::FsWatcher::watch`); a single `fs.watch(root, ..)`
-/// only fires events for direct children of `root`.
-///
-/// On macOS and Windows the OS-level watch is already recursive and
-/// `FsWatcher::add` deduplicates paths covered by an existing
-/// registration, so the per-subdirectory adds are cheap no-ops there.
-///
-/// Errors traversing the tree or registering a watch are swallowed: a
-/// missed watch surfaces as a missed event, which callers that re-scan
-/// on demand already tolerate. (Logging happens at trace level inside
-/// the watcher implementation.)
-pub async fn add_descendant_dir_watches(fs: &dyn Fs, watcher: &dyn Watcher, root: &Path) {
-    let Ok(items) = read_dir_items(fs, root).await else {
-        return;
-    };
-    for (path, is_dir) in items {
-        if is_dir {
-            watcher.add(&path).ok();
-        }
-    }
-}
-
 fn read_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
