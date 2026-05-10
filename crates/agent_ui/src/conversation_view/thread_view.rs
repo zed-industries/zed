@@ -658,6 +658,24 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The three skill-watcher trigger points all live here:
+        // - `Focus` fires when the user clicks into the input box.
+        // - `SlashAutocompleteOpened` fires when the completion
+        //   provider is asked for slash commands.
+        // - `Send` fires when the user submits the conversation.
+        // All three triggers are idempotent; firing the same one
+        // repeatedly is a no-op once a scan or watch is active.
+        if matches!(
+            event,
+            MessageEditorEvent::Focus
+                | MessageEditorEvent::SlashAutocompleteOpened
+                | MessageEditorEvent::Send
+        ) {
+            if let Some(connection) = self.as_native_connection(cx) {
+                connection.ensure_skills_scan_started(cx);
+            }
+        }
+
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
@@ -666,6 +684,7 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             MessageEditorEvent::LostFocus => {}
+            MessageEditorEvent::SlashAutocompleteOpened => {}
             MessageEditorEvent::InputAttempted { .. } => {}
         }
     }
@@ -804,6 +823,8 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
+            }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
@@ -8742,13 +8763,10 @@ impl ThreadView {
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Dismiss"))
-                            .on_click(cx.listener({
-                                let target = target.clone();
-                                move |this, _, _, cx| {
-                                    this.skill_loading_errors.retain(|e| *e != target);
-                                    this.dismissed_skill_loading_errors.insert(target.clone());
-                                    cx.notify();
-                                }
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.skill_loading_errors.retain(|e| *e != target);
+                                this.dismissed_skill_loading_errors.insert(target.clone());
+                                cx.notify();
                             })),
                     )
             })

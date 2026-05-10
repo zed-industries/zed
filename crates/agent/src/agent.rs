@@ -55,7 +55,7 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 use util::ResultExt;
@@ -289,9 +289,29 @@ pub struct NativeAgent {
     prompt_store: Option<Entity<PromptStore>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
-    /// Watches the global skills directory and refreshes every project's
-    /// context when SKILL.md files there change.
-    _watch_global_skills: Task<()>,
+    /// Tracks the lifecycle of global skills directory observation. We
+    /// don't eagerly watch (or even check for) `~/.agents/skills/` at
+    /// startup; users who never engage with the agent panel pay zero
+    /// filesystem cost. The watch is kicked off lazily by
+    /// [`Self::ensure_skills_scan_started`], which is called from the
+    /// three agent-panel interaction points: input box focus, slash
+    /// autocomplete, and conversation submit.
+    skills_state: SkillsState,
+}
+
+#[derive(Default)]
+enum SkillsState {
+    /// No scan or watch is active. A user-interaction trigger will kick
+    /// off a fresh scan.
+    #[default]
+    Idle,
+    /// A one-shot scan task is in flight. It checks whether
+    /// `~/.agents/skills/` exists; if so, transitions to `Watching`,
+    /// otherwise back to `Idle`.
+    Scanning,
+    /// A watch task is observing `~/.agents/skills/`. It transitions
+    /// back to `Idle` if the watched directory itself is removed.
+    Watching,
 }
 
 impl gpui::EventEmitter<SkillLoadingErrorsUpdated> for NativeAgent {}
@@ -334,18 +354,6 @@ impl NativeAgent {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
             }
 
-            // Only watch the global skills directory when the user has the
-            // "skills" feature flag. Without the flag this resolves to a no-op
-            // task so the field is always populated.
-            let watch_global_skills = if cx.has_flag::<SkillsFeatureFlag>() {
-                cx.spawn({
-                    let fs = fs.clone();
-                    async move |this, cx| Self::watch_global_skills_directory(this, fs, cx).await
-                })
-            } else {
-                Task::ready(())
-            };
-
             Self {
                 sessions: HashMap::default(),
                 pending_sessions: HashMap::default(),
@@ -356,77 +364,118 @@ impl NativeAgent {
                 prompt_store,
                 fs,
                 _subscriptions: subscriptions,
-                _watch_global_skills: watch_global_skills,
+                skills_state: SkillsState::default(),
             }
         })
     }
 
-    async fn watch_global_skills_directory(
+    /// Kicks off a one-time scan of the global skills directory if one
+    /// isn't already in progress and a watch isn't already active.
+    ///
+    /// Idempotent and cheap: returns immediately if the user lacks the
+    /// skills feature flag, or if a scan or watch is already running.
+    /// The expected callers are user-interaction events from the agent
+    /// panel (input focus, slash autocomplete, conversation submit);
+    /// firing this from any of them is equivalent and safe to repeat.
+    ///
+    /// The scan itself runs detached on the foreground executor. If
+    /// `~/.agents/skills/` exists it transitions state to
+    /// [`SkillsState::Watching`] and starts a recursive watch;
+    /// otherwise it transitions back to [`SkillsState::Idle`] so the
+    /// next trigger retries (covering the case where the user creates
+    /// the directory after the first scan).
+    pub fn ensure_skills_scan_started(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<SkillsFeatureFlag>() {
+            return;
+        }
+        if !matches!(self.skills_state, SkillsState::Idle) {
+            return;
+        }
+        self.skills_state = SkillsState::Scanning;
+        let fs = self.fs.clone();
+        cx.spawn(async move |this, cx| Self::run_skills_scan(this, fs, cx).await)
+            .detach();
+    }
+
+    async fn run_skills_scan(this: WeakEntity<Self>, fs: Arc<dyn Fs>, cx: &mut AsyncApp) {
+        let skills_dir = global_skills_dir();
+        if !fs.is_dir(&skills_dir).await {
+            // Skills directory doesn't exist; revert state so the next
+            // user trigger retries.
+            let _ = this.update(cx, |this, _cx| {
+                this.skills_state = SkillsState::Idle;
+            });
+            return;
+        }
+
+        // Skills directory exists. Start a watch and trigger a refresh
+        // of every project's context so the freshly-discovered skills
+        // get loaded.
+        let _ = this.update(cx, |this, cx| {
+            cx.spawn({
+                let fs = fs.clone();
+                let skills_dir = skills_dir.clone();
+                async move |this, cx| Self::run_skills_watch(this, fs, skills_dir, cx).await
+            })
+            .detach();
+            this.skills_state = SkillsState::Watching;
+            for state in this.projects.values_mut() {
+                state.project_context_needs_refresh.send(()).ok();
+            }
+        });
+    }
+
+    async fn run_skills_watch(
         this: WeakEntity<Self>,
         fs: Arc<dyn Fs>,
+        skills_dir: PathBuf,
         cx: &mut AsyncApp,
     ) {
-        let skills_dir = global_skills_dir();
+        let (mut events, watcher) = fs
+            .watch(&skills_dir, std::time::Duration::from_millis(500))
+            .await;
 
-        loop {
-            // Watch the deepest existing ancestor of the skills dir. This lets
-            // us react to the creation of `~/.agents/` or `~/.agents/skills/`
-            // without requiring a Zed restart.
-            //
-            // Note: when we transition from watching an ancestor to watching
-            // the skills dir directly, we may miss events that happen during
-            // the transition. File watchers are inherently best-effort, so we
-            // accept this limitation.
-            let Some(watch_target) = deepest_existing_ancestor(&skills_dir, fs.as_ref()).await
-            else {
-                // We couldn't even find the filesystem root. Bail.
-                return;
-            };
+        // Linux's inotify backend is non-recursive, so a watch on
+        // `skills_dir` only fires for direct children. Pre-register
+        // watches for every existing nested subdirectory so changes to
+        // skill files inside skill subdirectories are observed.
+        // No-ops on macOS/Windows where the OS-level watch is already
+        // recursive (see `fs::add_descendant_dir_watches`).
+        fs::add_descendant_dir_watches(fs.as_ref(), watcher.as_ref(), &skills_dir).await;
 
-            let watching_skills_dir = watch_target == skills_dir;
-
-            let (mut events, _watcher) = fs
-                .watch(&watch_target, std::time::Duration::from_millis(500))
-                .await;
-
-            while let Some(changed_paths) = events.next().await {
-                if changed_paths.is_empty() {
-                    continue;
-                }
-
-                if watching_skills_dir {
-                    let Ok(()) = this.update(cx, |this, _cx| {
-                        for state in this.projects.values_mut() {
-                            state.project_context_needs_refresh.send(()).ok();
-                        }
-                    }) else {
-                        return;
-                    };
-                    continue;
-                }
-
-                // We're watching an ancestor. If the skills dir has appeared,
-                // trigger a refresh and break out so the outer loop switches
-                // to watching it directly.
-                if fs.is_dir(&skills_dir).await {
-                    let Ok(()) = this.update(cx, |this, _cx| {
-                        for state in this.projects.values_mut() {
-                            state.project_context_needs_refresh.send(()).ok();
-                        }
-                    }) else {
-                        return;
-                    };
-                    break;
+        while let Some(events) = events.next().await {
+            // For directory creations under `skills_dir`, register
+            // additional watches so the Linux-non-recursive case picks
+            // up further nested changes.
+            for event in &events {
+                if event.kind == Some(fs::PathEventKind::Created)
+                    && event.path.starts_with(&skills_dir)
+                    && event.path != skills_dir
+                    && fs.is_dir(&event.path).await
+                {
+                    fs::add_descendant_dir_watches(fs.as_ref(), watcher.as_ref(), &event.path)
+                        .await;
                 }
             }
 
-            // Guard against tight loops if `fs.watch` immediately closes its
-            // stream (e.g. when the watched directory is rapidly
-            // created/destroyed): without a delay before rebinding, we'd spin
-            // as fast as the executor will let us.
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(250))
-                .await;
+            let watched_root_removed = events.iter().any(|event| {
+                event.path == skills_dir && event.kind == Some(fs::PathEventKind::Removed)
+            });
+
+            let updated = this.update(cx, |this, _cx| {
+                for state in this.projects.values_mut() {
+                    state.project_context_needs_refresh.send(()).ok();
+                }
+                if watched_root_removed {
+                    // Drop back to Idle so the next user trigger
+                    // retries the scan; the next trigger will rediscover
+                    // the directory if the user has recreated it.
+                    this.skills_state = SkillsState::Idle;
+                }
+            });
+            if updated.is_err() || watched_root_removed {
+                return;
+            }
         }
     }
 
@@ -1610,19 +1659,6 @@ impl NativeAgent {
     }
 }
 
-/// Walk up `path` looking for the deepest existing directory. Returns `path`
-/// itself if it's already a directory, or the closest ancestor that is.
-async fn deepest_existing_ancestor(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
-    let mut current: Option<&Path> = Some(path);
-    while let Some(candidate) = current {
-        if fs.is_dir(candidate).await {
-            return Some(candidate.to_path_buf());
-        }
-        current = candidate.parent();
-    }
-    None
-}
-
 /// Wrapper struct that implements the AgentConnection trait
 #[derive(Clone)]
 pub struct NativeAgentConnection(pub Entity<NativeAgent>);
@@ -1634,6 +1670,16 @@ impl NativeAgentConnection {
             .sessions
             .get(session_id)
             .map(|session| session.thread.clone())
+    }
+
+    /// Forwards to [`NativeAgent::ensure_skills_scan_started`]. The
+    /// agent panel calls this from its three user-interaction trigger
+    /// points (input box focus, slash-autocomplete invocation, and
+    /// conversation submit) so that the skills directory is observed
+    /// only when the user is actually engaging with the panel.
+    pub fn ensure_skills_scan_started(&self, cx: &mut App) {
+        self.0
+            .update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
     }
 
     pub fn load_thread(
@@ -3131,6 +3177,13 @@ mod internal_tests {
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
 
+        // Simulate the user-interaction trigger that the agent panel
+        // fires (input focus, slash autocomplete, or submit). In tests
+        // we call it directly because there's no panel.
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
         let connection = NativeAgentConnection(agent.clone());
         let _acp_thread = cx
             .update(|cx| {
@@ -3181,7 +3234,9 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
-        // Intentionally do NOT pre-create `skills_dir`. The watcher should
+        // Intentionally do NOT pre-create `skills_dir`. The first scan
+        // trigger should find no directory and leave the watch state
+        // idle; a later trigger after the directory is created should
         // attach to the deepest existing ancestor and react when the
         // directory is created later.
 
@@ -3189,6 +3244,11 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        // First scan trigger: nothing on disk yet, state stays idle.
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
 
         let connection = NativeAgentConnection(agent.clone());
         let _acp_thread = cx
@@ -3215,8 +3275,7 @@ mod internal_tests {
             );
         });
 
-        // Create the global skills directory and a skill within it. The
-        // ancestor watcher should pick this up without a restart.
+        // Create the global skills directory and a skill within it.
         let new_skill_dir = skills_dir.join("late-skill");
         fs.create_dir(&new_skill_dir).await.unwrap();
         fs.insert_file(
@@ -3224,6 +3283,14 @@ mod internal_tests {
             b"---\nname: late-skill\ndescription: Created after startup\n---\n\nbody".to_vec(),
         )
         .await;
+
+        // Fire the trigger again, simulating the user interacting with
+        // the agent panel after creating the skills directory. The
+        // second scan should find the directory and start the watch,
+        // which refreshes project context.
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
         cx.executor()
             .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
@@ -3260,6 +3327,11 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent =
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        // First scan trigger: nothing on disk yet.
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
 
         let connection = NativeAgentConnection(agent.clone());
         let _acp_thread = cx
@@ -3312,6 +3384,12 @@ mod internal_tests {
             b"---\nname: my-skill\ndescription: Created after session\n---\n\nbody".to_vec(),
         )
         .await;
+
+        // Second scan trigger: now the directory exists, so the scan
+        // starts the watch and refreshes project context.
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
         cx.executor()
             .advance_clock(PROJECT_CONTEXT_REFRESH_DEBOUNCE);
         cx.run_until_parked();
