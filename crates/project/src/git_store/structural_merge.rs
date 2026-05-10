@@ -7,19 +7,20 @@ use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator as _, Tree
 
 /// Result of building three reconstructed views of a buffer (base / ours /
 /// theirs) and parsing each with the buffer's language. The context can be
-/// queried per [`ConflictRegion`] to ask "is this region a pure addition to a
-/// mergeable container?" and, if so, get back the substitution text.
+/// queried per [`ConflictRegion`] to ask "is this region a structurally safe
+/// merge?" and, if so, get back the substitution text.
 pub struct LanguageMergeContext {
-    base_source: String,
-    ours_source: String,
-    theirs_source: String,
-    base_tree: Tree,
-    ours_tree: Tree,
-    theirs_tree: Tree,
-    base_merge_nodes: HashSet<usize>,
-    ours_merge_nodes: HashSet<usize>,
-    theirs_merge_nodes: HashSet<usize>,
+    base: SideContext,
+    ours: SideContext,
+    theirs: SideContext,
     region_offsets: HashMap<Anchor, RegionOffsets>,
+}
+
+struct SideContext {
+    source: String,
+    tree: Tree,
+    merge_set_nodes: HashSet<usize>,
+    item_keys: HashMap<usize, String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -33,9 +34,9 @@ struct RegionOffsets {
 }
 
 impl LanguageMergeContext {
-    /// Builds the three reconstructed sources and parses each, or returns
-    /// `None` if the language has no grammar or `merges.scm` registered, or
-    /// if any side fails to parse, or if there are no conflict regions.
+    /// Build three reconstructed sources and parse each, or return `None` if
+    /// the language has no grammar or no `merges.scm` registered, no conflict
+    /// regions, or any parse fails.
     pub fn build(
         buffer: &text::BufferSnapshot,
         language: Arc<Language>,
@@ -46,6 +47,8 @@ impl LanguageMergeContext {
         }
         let grammar = language.grammar()?.clone();
         let merges_config = grammar.merges_config.as_ref()?;
+        let set_capture_ix = merges_config.set_capture_ix?;
+        let key_capture_ix = merges_config.key_capture_ix;
 
         let buffer_len = buffer.len();
         let mut base_source = String::with_capacity(buffer_len);
@@ -98,44 +101,41 @@ impl LanguageMergeContext {
         let mut parser = Parser::new();
         parser.set_language(ts_language).ok()?;
 
-        let base_tree = parser.parse(&base_source, None)?;
-        let ours_tree = parser.parse(&ours_source, None)?;
-        let theirs_tree = parser.parse(&theirs_source, None)?;
-
-        let set_capture_ix = merges_config.set_capture_ix?;
-        let base_merge_nodes = collect_merge_node_ids(&merges_config.query, &base_tree, set_capture_ix);
-        let ours_merge_nodes = collect_merge_node_ids(&merges_config.query, &ours_tree, set_capture_ix);
-        let theirs_merge_nodes =
-            collect_merge_node_ids(&merges_config.query, &theirs_tree, set_capture_ix);
+        let base = build_side(&mut parser, base_source, &merges_config.query, set_capture_ix, key_capture_ix)?;
+        let ours = build_side(&mut parser, ours_source, &merges_config.query, set_capture_ix, key_capture_ix)?;
+        let theirs =
+            build_side(&mut parser, theirs_source, &merges_config.query, set_capture_ix, key_capture_ix)?;
 
         Some(Self {
-            base_source,
-            ours_source,
-            theirs_source,
-            base_tree,
-            ours_tree,
-            theirs_tree,
-            base_merge_nodes,
-            ours_merge_nodes,
-            theirs_merge_nodes,
+            base,
+            ours,
+            theirs,
             region_offsets,
         })
     }
 
     /// Try to structurally merge `region`. Returns the substitution text for
-    /// the entire conflict region (including markers) when both sides are
-    /// pure additions to the same mergeable container with disjoint new
-    /// children. `None` means defer to line-level decomposition.
+    /// the entire conflict region when v2 case analysis (modifications,
+    /// deletions, and additions of keyed items) can resolve every difference;
+    /// `None` means defer to line-level decomposition.
     pub fn try_merge_region(&self, region: &ConflictRegion) -> Option<String> {
         let offsets = *self.region_offsets.get(&region.range.start)?;
 
-        let base_node =
-            enclosing_merge_node(&self.base_tree, &self.base_merge_nodes, offsets.base, offsets.base_len)?;
-        let ours_node =
-            enclosing_merge_node(&self.ours_tree, &self.ours_merge_nodes, offsets.ours, offsets.ours_len)?;
+        let base_node = enclosing_merge_node(
+            &self.base.tree,
+            &self.base.merge_set_nodes,
+            offsets.base,
+            offsets.base_len,
+        )?;
+        let ours_node = enclosing_merge_node(
+            &self.ours.tree,
+            &self.ours.merge_set_nodes,
+            offsets.ours,
+            offsets.ours_len,
+        )?;
         let theirs_node = enclosing_merge_node(
-            &self.theirs_tree,
-            &self.theirs_merge_nodes,
+            &self.theirs.tree,
+            &self.theirs.merge_set_nodes,
             offsets.theirs,
             offsets.theirs_len,
         )?;
@@ -148,67 +148,232 @@ impl LanguageMergeContext {
 
         let base_items = in_region_children(
             base_node,
-            &self.base_source,
+            &self.base.source,
+            &self.base.item_keys,
             offsets.base..offsets.base + offsets.base_len,
         )?;
         let ours_items = in_region_children(
             ours_node,
-            &self.ours_source,
+            &self.ours.source,
+            &self.ours.item_keys,
             offsets.ours..offsets.ours + offsets.ours_len,
         )?;
         let theirs_items = in_region_children(
             theirs_node,
-            &self.theirs_source,
+            &self.theirs.source,
+            &self.theirs.item_keys,
             offsets.theirs..offsets.theirs + offsets.theirs_len,
         )?;
 
-        let base_keys = multiset(base_items.iter().map(|item| item.key.clone()));
-        let ours_keys = multiset(ours_items.iter().map(|item| item.key.clone()));
-        let theirs_keys = multiset(theirs_items.iter().map(|item| item.key.clone()));
+        let base_by_key = items_by_key(&base_items)?;
+        let theirs_by_key = items_by_key(&theirs_items)?;
+        // Bail if ours has duplicate keys; we don't need a map lookup beyond that.
+        let _ = items_by_key(&ours_items)?;
 
-        if !is_subset(&base_keys, &ours_keys) || !is_subset(&base_keys, &theirs_keys) {
-            return None;
-        }
-        let ours_added = subtract(&ours_keys, &base_keys);
-        let theirs_added = subtract(&theirs_keys, &base_keys);
-        if !is_disjoint(&ours_added, &theirs_added) {
-            return None;
-        }
-        if ours_added.is_empty() && theirs_added.is_empty() {
-            return None;
+        let mut output = String::new();
+        let mut handled: HashSet<&str> = HashSet::default();
+        let mut any_change = false;
+
+        for ours_item in &ours_items {
+            let key = ours_item.key.as_str();
+            handled.insert(key);
+            let base_item = base_by_key.get(key).copied();
+            let theirs_item = theirs_by_key.get(key).copied();
+
+            let text = match (base_item, theirs_item) {
+                (None, None) => {
+                    any_change = true;
+                    Some(ours_item.text(&self.ours.source))
+                }
+                (None, Some(t)) => {
+                    if t.normalized_text(&self.theirs.source)
+                        == ours_item.normalized_text(&self.ours.source)
+                    {
+                        any_change = true;
+                        Some(ours_item.text(&self.ours.source))
+                    } else {
+                        return None;
+                    }
+                }
+                (Some(b), Some(t)) => {
+                    let ours_changed = b.normalized_text(&self.base.source)
+                        != ours_item.normalized_text(&self.ours.source);
+                    let theirs_changed = b.normalized_text(&self.base.source)
+                        != t.normalized_text(&self.theirs.source);
+                    match (ours_changed, theirs_changed) {
+                        (false, false) => Some(ours_item.text(&self.ours.source)),
+                        (true, false) => {
+                            any_change = true;
+                            Some(ours_item.text(&self.ours.source))
+                        }
+                        (false, true) => {
+                            any_change = true;
+                            Some(t.text(&self.theirs.source))
+                        }
+                        (true, true) => {
+                            if ours_item.normalized_text(&self.ours.source)
+                                == t.normalized_text(&self.theirs.source)
+                            {
+                                Some(ours_item.text(&self.ours.source))
+                            } else {
+                                return None;
+                            }
+                        }
+                    }
+                }
+                (Some(b), None) => {
+                    if b.normalized_text(&self.base.source)
+                        == ours_item.normalized_text(&self.ours.source)
+                    {
+                        any_change = true;
+                        None
+                    } else {
+                        return None;
+                    }
+                }
+            };
+
+            if let Some(text) = text {
+                push_with_newline(&mut output, text);
+            }
         }
 
-        let ours_region_text = &self.ours_source[offsets.ours..offsets.ours + offsets.ours_len];
-        let mut substitution = ours_region_text.to_string();
-        if !substitution.is_empty() && !substitution.ends_with('\n') {
-            substitution.push('\n');
-        }
-        for item in theirs_items.iter() {
-            if theirs_added.contains_key(&item.key) && !ours_added.contains_key(&item.key) {
-                let item_text = &self.theirs_source[item.start..item.end];
-                substitution.push_str(item_text);
-                if !substitution.ends_with('\n') {
-                    substitution.push('\n');
+        for theirs_item in &theirs_items {
+            let key = theirs_item.key.as_str();
+            if handled.contains(key) {
+                continue;
+            }
+            handled.insert(key);
+            let base_item = base_by_key.get(key).copied();
+            match base_item {
+                None => {
+                    any_change = true;
+                    push_with_newline(&mut output, theirs_item.text(&self.theirs.source));
+                }
+                Some(b) => {
+                    if b.normalized_text(&self.base.source)
+                        == theirs_item.normalized_text(&self.theirs.source)
+                    {
+                        any_change = true;
+                    } else {
+                        return None;
+                    }
                 }
             }
         }
-        Some(substitution)
+
+        for base_item in &base_items {
+            let key = base_item.key.as_str();
+            if handled.contains(key) {
+                continue;
+            }
+            any_change = true;
+        }
+
+        if !any_change {
+            return None;
+        }
+        Some(output)
     }
 }
 
+fn build_side(
+    parser: &mut Parser,
+    source: String,
+    query: &Query,
+    set_capture_ix: u32,
+    key_capture_ix: Option<u32>,
+) -> Option<SideContext> {
+    let tree = parser.parse(&source, None)?;
+    let (merge_set_nodes, item_keys) = collect_set_and_keys(
+        query,
+        &tree,
+        &source,
+        set_capture_ix,
+        key_capture_ix,
+    );
+    Some(SideContext {
+        source,
+        tree,
+        merge_set_nodes,
+        item_keys,
+    })
+}
+
+fn collect_set_and_keys(
+    query: &Query,
+    tree: &Tree,
+    source: &str,
+    set_capture_ix: u32,
+    key_capture_ix: Option<u32>,
+) -> (HashSet<usize>, HashMap<usize, String>) {
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), EmptyTextProvider);
+    let mut set_nodes: HashSet<usize> = HashSet::default();
+    let mut key_node_records: Vec<(Node, String)> = Vec::new();
+    while let Some(m) = matches.next() {
+        for capture in m.captures {
+            if capture.index == set_capture_ix {
+                set_nodes.insert(capture.node.id());
+            } else if Some(capture.index) == key_capture_ix {
+                let text = source[capture.node.start_byte()..capture.node.end_byte()]
+                    .trim()
+                    .to_string();
+                key_node_records.push((capture.node, text));
+            }
+        }
+    }
+    let mut item_keys: HashMap<usize, String> = HashMap::default();
+    for (key_node, key_text) in key_node_records {
+        let mut current = key_node;
+        while let Some(parent) = current.parent() {
+            if set_nodes.contains(&parent.id()) {
+                item_keys.entry(current.id()).or_insert(key_text);
+                break;
+            }
+            current = parent;
+        }
+    }
+    (set_nodes, item_keys)
+}
+
+#[derive(Debug, Clone)]
 struct InRegionItem {
     key: String,
     start: usize,
     end: usize,
+    node_start: usize,
+    node_end: usize,
+}
+
+impl InRegionItem {
+    fn text<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.start..self.end]
+    }
+
+    fn normalized_text<'a>(&self, source: &'a str) -> &'a str {
+        source[self.node_start..self.node_end].trim_end()
+    }
+}
+
+fn items_by_key(items: &[InRegionItem]) -> Option<HashMap<&str, &InRegionItem>> {
+    let mut map: HashMap<&str, &InRegionItem> = HashMap::default();
+    for item in items {
+        if map.insert(item.key.as_str(), item).is_some() {
+            // Two items with the same key in the same container — ambiguous.
+            return None;
+        }
+    }
+    Some(map)
 }
 
 fn in_region_children(
     container: Node<'_>,
     source: &str,
+    item_keys: &HashMap<usize, String>,
     region: std::ops::Range<usize>,
 ) -> Option<Vec<InRegionItem>> {
     let mut cursor = container.walk();
-    let mut items = Vec::new();
     let children: Vec<Node> = container.named_children(&mut cursor).collect();
     let next_sibling_starts: Vec<usize> = children
         .iter()
@@ -220,13 +385,10 @@ fn in_region_children(
                 .unwrap_or_else(|| container.end_byte())
         })
         .collect();
+    let mut items = Vec::new();
     for (child, next_start) in children.iter().zip(next_sibling_starts.iter()) {
         let child_start = child.start_byte();
         let child_end = child.end_byte();
-        // A child counts as "in region" only if its entire byte range sits
-        // inside the conflict region. Children straddling the boundary mean
-        // the markers split a syntactic item; we conservatively refuse to
-        // structurally merge in that case.
         if child_end <= region.start || child_start >= region.end {
             continue;
         }
@@ -234,8 +396,10 @@ fn in_region_children(
             return None;
         }
         let extended_end = (*next_start).min(region.end);
-        let text = &source[child_start..extended_end];
-        let key = text.trim().to_string();
+        let key = match item_keys.get(&child.id()) {
+            Some(k) => k.clone(),
+            None => source[child_start..child_end].trim().to_string(),
+        };
         if key.is_empty() {
             continue;
         }
@@ -243,6 +407,8 @@ fn in_region_children(
             key,
             start: child_start,
             end: extended_end,
+            node_start: child_start,
+            node_end: child_end,
         });
     }
     Some(items)
@@ -266,18 +432,11 @@ fn enclosing_merge_node<'tree>(
     }
 }
 
-fn collect_merge_node_ids(query: &Query, tree: &Tree, capture_ix: u32) -> HashSet<usize> {
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), EmptyTextProvider);
-    let mut ids = HashSet::default();
-    while let Some(m) = matches.next() {
-        for capture in m.captures {
-            if capture.index == capture_ix {
-                ids.insert(capture.node.id());
-            }
-        }
+fn push_with_newline(buffer: &mut String, text: &str) {
+    buffer.push_str(text);
+    if !buffer.is_empty() && !buffer.ends_with('\n') {
+        buffer.push('\n');
     }
-    ids
 }
 
 struct EmptyTextProvider;
@@ -286,36 +445,4 @@ impl<'a> tree_sitter::TextProvider<&'a [u8]> for EmptyTextProvider {
     fn text(&mut self, _node: Node) -> Self::I {
         std::iter::empty()
     }
-}
-
-fn multiset(keys: impl Iterator<Item = String>) -> HashMap<String, usize> {
-    let mut out: HashMap<String, usize> = HashMap::default();
-    for key in keys {
-        *out.entry(key).or_default() += 1;
-    }
-    out
-}
-
-fn is_subset(small: &HashMap<String, usize>, big: &HashMap<String, usize>) -> bool {
-    small
-        .iter()
-        .all(|(key, count)| big.get(key).copied().unwrap_or(0) >= *count)
-}
-
-fn subtract(
-    big: &HashMap<String, usize>,
-    small: &HashMap<String, usize>,
-) -> HashMap<String, usize> {
-    let mut out: HashMap<String, usize> = HashMap::default();
-    for (key, count) in big {
-        let remaining = count.saturating_sub(small.get(key).copied().unwrap_or(0));
-        if remaining > 0 {
-            out.insert(key.clone(), remaining);
-        }
-    }
-    out
-}
-
-fn is_disjoint(a: &HashMap<String, usize>, b: &HashMap<String, usize>) -> bool {
-    !a.keys().any(|key| b.contains_key(key))
 }

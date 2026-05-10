@@ -884,10 +884,10 @@ mod conflict_set_tests {
     }
 
     #[test]
-    fn test_structural_merge_defers_on_deletion() {
+    fn test_structural_merge_unilateral_deletion_is_taken() {
         // Base has `use bar;`. ours keeps it and adds `use baz;`. theirs
-        // removes `use bar;` entirely. Conservative v1 refuses to merge
-        // because one side removed a base item.
+        // removes `use bar;` entirely. v2 takes the deletion because ours
+        // did not modify the deleted item.
         let test_content = r#"
             use foo;
             <<<<<<< HEAD
@@ -896,6 +896,48 @@ mod conflict_set_tests {
             ||||||| base
             use bar;
             =======
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .expect("v2 should accept unilateral deletion");
+        assert!(!replacement.contains("use bar;"));
+        assert!(replacement.contains("use baz;"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(!final_text.contains("use bar;"));
+        assert!(final_text.contains("use baz;"));
+        assert!(final_text.contains("use foo;"));
+    }
+
+    #[test]
+    fn test_structural_merge_defers_on_delete_modify_conflict() {
+        // Both sides touch the same base item by key: ours removes `fn foo`
+        // entirely while theirs modifies its body. The key links the two
+        // sides' versions, so v2 sees a delete-vs-modify and defers.
+        let test_content = r#"
+            <<<<<<< HEAD
+            ||||||| base
+            fn foo() {
+                let x = 0;
+            }
+            =======
+            fn foo() {
+                let x = 2;
+            }
             >>>>>>> branch
         "#
         .unindent();
@@ -913,8 +955,127 @@ mod conflict_set_tests {
             context
                 .try_merge_region(&conflict_snapshot.conflicts[0])
                 .is_none(),
-            "deletion on one side must defer to manual resolution"
+            "delete-vs-modify with overlapping keys must defer"
         );
+    }
+
+    #[test]
+    fn test_structural_merge_same_function_modified_one_side() {
+        // Both sides touch the body of the same function `foo`. Base + ours
+        // share text; theirs modified it. v2 keys the function by name and
+        // takes theirs's version.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn foo() {
+                let x = 1;
+            }
+            ||||||| base
+            fn foo() {
+                let x = 1;
+            }
+            =======
+            fn foo() {
+                let x = 2;
+            }
+            >>>>>>> branch
+
+            fn bar() {}
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .expect("ours unchanged + theirs modified should take theirs");
+        assert!(replacement.contains("let x = 2;"));
+        assert!(!replacement.contains("let x = 1;"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("let x = 2;"));
+        assert!(!final_text.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn test_structural_merge_defers_when_same_function_modified_both_sides() {
+        // Both sides modify `fn foo`. Different bodies → real conflict.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn foo() {
+                let x = 1;
+            }
+            ||||||| base
+            fn foo() {
+                let x = 0;
+            }
+            =======
+            fn foo() {
+                let x = 2;
+            }
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        assert!(
+            context
+                .try_merge_region(&conflict_snapshot.conflicts[0])
+                .is_none(),
+            "same key modified differently on both sides must defer"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_both_sides_remove_same_item_takes_deletion() {
+        // Both sides agree to remove `fn old`. v2 takes the unanimous deletion.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn keeper() {}
+            ||||||| base
+            fn keeper() {}
+            fn old() {}
+            =======
+            fn keeper() {}
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let replacement = context
+            .try_merge_region(&conflict_snapshot.conflicts[0])
+            .expect("unanimous deletion should resolve");
+        assert!(replacement.contains("fn keeper()"));
+        assert!(!replacement.contains("fn old()"));
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(!final_text.contains("fn old()"));
     }
 
     #[test]

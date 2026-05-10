@@ -47,10 +47,13 @@ pub struct Grammar {
 
 /// Configuration loaded from `merges.scm`. Each capture tags a node whose
 /// direct children form a mergeable container (set, ordered list, ...) for
-/// Auto-Resolve's structural merge pass.
+/// Auto-Resolve's structural merge pass, or — via `@merge.key` — identifies
+/// the part of an item that should be used as its identity key when
+/// detecting "same item, modified on both sides".
 pub struct MergesConfig {
     pub query: Query,
     pub set_capture_ix: Option<u32>,
+    pub key_capture_ix: Option<u32>,
 }
 
 pub struct HighlightsConfig {
@@ -375,11 +378,15 @@ impl Grammar {
         language_name: &LanguageName,
     ) -> Result<Self> {
         let query = Query::new(&self.ts_language, source)?;
-        let set_capture_ix = query
-            .capture_names()
-            .iter()
-            .position(|name| *name == "merge.set")
-            .map(|ix| ix as u32);
+        let capture_index = |name: &str| {
+            query
+                .capture_names()
+                .iter()
+                .position(|n| *n == name)
+                .map(|ix| ix as u32)
+        };
+        let set_capture_ix = capture_index("merge.set");
+        let key_capture_ix = capture_index("merge.key");
         if set_capture_ix.is_none() {
             log::warn!(
                 "{} merges query has no @merge.set capture; ignoring",
@@ -390,6 +397,7 @@ impl Grammar {
         self.merges_config = Some(MergesConfig {
             query,
             set_capture_ix,
+            key_capture_ix,
         });
         Ok(self)
     }

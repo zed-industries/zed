@@ -3,6 +3,11 @@
 ; @merge.set marks a node whose direct children form an unordered set: when
 ; both sides of a merge conflict add disjoint children to the same node, the
 ; additions can be combined automatically.
+;
+; @merge.key is an optional sub-capture inside an item: its text is used as
+; the item's identity. Two items with the same key but different text are
+; treated as "the same item, modified on both sides" — handled if exactly one
+; side modified it, deferred to manual resolution otherwise.
 
 (source_file) @merge.set
 
@@ -11,3 +16,25 @@
 (field_declaration_list) @merge.set
 
 (enum_variant_list) @merge.set
+
+(function_item name: (identifier) @merge.key)
+
+(function_signature_item name: (identifier) @merge.key)
+
+(struct_item name: (type_identifier) @merge.key)
+
+(enum_item name: (type_identifier) @merge.key)
+
+(trait_item name: (type_identifier) @merge.key)
+
+(const_item name: (identifier) @merge.key)
+
+(static_item name: (identifier) @merge.key)
+
+(mod_item name: (identifier) @merge.key)
+
+(type_item name: (type_identifier) @merge.key)
+
+(field_declaration name: (field_identifier) @merge.key)
+
+(enum_variant name: (identifier) @merge.key)

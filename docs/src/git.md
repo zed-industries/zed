@@ -281,17 +281,33 @@ The banner is shown whenever conflicts exist in the file. Its state depends on w
 
 #### Language-aware structural merge
 
-For supported languages, Auto-Resolve also runs a **structural pass** before line-level decomposition. It re-parses the file with the language's tree-sitter grammar and checks whether the conflict sits inside a container declared as "mergeable" by the language (e.g., a Rust `source_file`, a TypeScript `class_body`). When both sides add disjoint children to the same container — the canonical case being two branches that each added a different `use` / `import` statement — Auto-Resolve combines them automatically rather than leaving conflict markers.
+For supported languages, Auto-Resolve also runs a **structural pass** before line-level decomposition. It re-parses the file with the language's tree-sitter grammar and checks whether the conflict sits inside a container declared as "mergeable" by the language (e.g., a Rust `source_file`, a TypeScript `class_body`).
 
-The structural pass is conservative on purpose: it fires only when neither side removed a base child and the new children from each side don't share text. Anything else falls back to line-level decomposition.
+For each container, items are compared by an identity key. If a language declares an `@merge.key` capture for an item kind, that capture's text is the key — so two branches that touch the same function `foo` are recognized as modifying the same item rather than as two separate additions. Without a key, the full trimmed text of the item is used.
 
-Out of the box, Rust and TypeScript ship structural-merge rules. To add a language, drop a `merges.scm` query file next to its `highlights.scm`:
+Auto-Resolve takes the following per-item decisions:
+
+- Same item, only one side changed it → take the change
+- Same item, both sides changed it identically → take the change
+- Same item, both sides changed it differently → defer
+- Both sides removed the same item → take the deletion
+- One side removed an item the other was modifying → defer
+- Both sides added an item with the same key → defer if texts differ, otherwise emit once
+- One side only added or removed → combine
+
+Anything ambiguous falls back to line-level decomposition.
+
+Out of the box, Rust and TypeScript ship structural-merge rules covering source files, class/interface bodies, struct/enum fields, and named functions/types. To add a language, drop a `merges.scm` query file next to its `highlights.scm`:
 
 ```scheme
-; The direct children of these nodes are mergeable as an unordered set:
-; if ours and theirs each add disjoint children, Auto-Resolve combines them.
+; The direct children of these nodes are mergeable as an unordered set.
 (source_file) @merge.set
 (declaration_list) @merge.set
+
+; Identify items by name so a same-name function modified on both sides is
+; treated as one item rather than two separate additions.
+(function_item name: (identifier) @merge.key)
+(struct_item name: (type_identifier) @merge.key)
 ```
 
 #### Auto-Resolve regex patterns
