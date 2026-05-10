@@ -26,7 +26,7 @@ use settings::{Settings as _, SettingsStore};
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
-    DisableAiSettings, Project,
+    DisableAiSettings, Project, keychain_refs,
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
@@ -194,11 +194,33 @@ impl ContextServerConfiguration {
             } => Some(ContextServerConfiguration::Custom { command, remote }),
             ContextServerSettings::Extension {
                 enabled: _,
-                settings,
+                mut settings,
                 remote,
             } => {
                 let descriptor =
                     cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
+
+                let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+                if let Err(err) =
+                    keychain_refs::resolve_keychain_refs(&mut settings, &credentials_provider, cx)
+                        .await
+                {
+                    if let Some(missing) = err.downcast_ref::<keychain_refs::MissingKeychainEntry>()
+                    {
+                        log::warn!(
+                            "context server {id} references missing keychain entry `{}`. \
+                             Provision it (macOS) with: \
+                             security add-generic-password -s '{}' -a 'zed' -w <secret>",
+                            missing.name,
+                            missing.url,
+                        );
+                    } else {
+                        log::error!(
+                            "context server {id} failed to resolve keychain references: {err:#}"
+                        );
+                    }
+                    return None;
+                }
 
                 let command_future = descriptor.command(worktree_store, cx);
                 let timeout_future = cx.background_executor().timer(EXTENSION_COMMAND_TIMEOUT);

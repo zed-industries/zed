@@ -69,6 +69,39 @@ From there, you can add it through the modal that appears when you click the "Ad
 
 > Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
 
+### Keychain references for secrets
+
+For extension-managed servers, any string value inside `settings` can be replaced with a one-key object of the form `{ "$keychain": "<name>" }`. Zed resolves these against the system keychain at startup using the same backend as Anthropic / OpenAI / etc. provider keys, so the cleartext token never lives in `settings.json`:
+
+```json [settings]
+{
+  "context_servers": {
+    "mcp-server-github": {
+      "settings": {
+        "github_personal_access_token": { "$keychain": "github_pat" }
+      }
+    }
+  }
+}
+```
+
+The keychain entry is stored under the URL `zed://context_servers/<name>`. Provision it once before starting the server:
+
+```sh
+# macOS
+security add-generic-password -s 'zed://context_servers/github_pat' \
+                              -a 'zed' -w '<token>'
+
+# Linux (libsecret)
+secret-tool store --label='Zed: github_pat' \
+                  service 'zed://context_servers' account 'github_pat'
+
+# Windows
+cmdkey /generic:zed://context_servers/github_pat /user:zed /pass:<token>
+```
+
+If a referenced entry is missing, the server stays stopped and Zed logs a warning naming both the entry and the exact `security add-generic-password` invocation that would create it. Existing cleartext values keep working unchanged — the resolver only triggers on objects whose sole key is `$keychain` and whose value is a string. Objects with any extra keys are passed through untouched, so user data that happens to contain a `$keychain` field is never accidentally consumed.
+
 ## Using MCP Servers
 
 ### Configuration Check
