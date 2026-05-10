@@ -407,6 +407,51 @@ async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
     assert_eq!(collect_match_candidates(&picker, cx), vec![".hidden"]);
 }
 
+#[gpui::test]
+async fn test_default_query_uses_override_path(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({ "alpha": {} }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let lister = project::DirectoryLister::Project(project);
+    let override_path = std::path::PathBuf::from(path!("/elsewhere"));
+
+    let query = cx.update(|cx| lister.default_query(Some(&override_path), cx));
+    let expected = format!("{}{}", path!("/elsewhere"), path_separator());
+    assert_eq!(query, expected);
+}
+
+#[gpui::test]
+async fn test_default_query_falls_back_when_override_missing(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({ "alpha": {} }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let lister = project::DirectoryLister::Project(project);
+
+    let query = cx.update(|cx| lister.default_query(None, cx));
+    let expected = format!("{}{}", path!("/root"), path_separator());
+    assert_eq!(query, expected);
+}
+
+#[cfg(not(windows))]
+fn path_separator() -> &'static str {
+    "/"
+}
+
+#[cfg(windows)]
+fn path_separator() -> &'static str {
+    "\\"
+}
+
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
@@ -441,7 +486,7 @@ fn build_open_path_prompt(
                 let picker = Picker::uniform_list(delegate, window, cx)
                     .width(rems(34.))
                     .modal(false);
-                let query = lister.default_query(cx);
+                let query = lister.default_query(None, cx);
                 picker.set_query(&query, window, cx);
                 picker
             })
