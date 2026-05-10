@@ -1909,7 +1909,6 @@ impl GitStore {
         &self.repositories
     }
 
-    // TODO: Review
     pub fn worktree_ids_for_repository(
         &self,
         repository_id: RepositoryId,

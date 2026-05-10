@@ -2064,7 +2064,6 @@ impl GitGraph {
         })
     }
 
-    // TODO: REVIEW
     fn worktree_id_for_repository(&self, cx: &App) -> Option<WorktreeId> {
         let mut worktree_ids = self
             .git_store
