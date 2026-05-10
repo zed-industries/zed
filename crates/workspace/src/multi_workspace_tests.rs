@@ -507,6 +507,94 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
 }
 
 #[gpui::test]
+async fn test_activate_project_group_reuses_last_active_linked_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        path!("/the-project"),
+        json!({
+            ".git": "gitdir: ./.bare\n",
+            ".bare": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a"
+                    }
+                }
+            },
+            "feature-a": {
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "file.txt": ""
+            },
+            "file.txt": ""
+        }),
+    )
+    .await;
+
+    fs.insert_tree(path!("/other-project"), json!({ "file.txt": "" }))
+        .await;
+
+    let project_main = Project::test(fs.clone(), [path!("/the-project").as_ref()], cx).await;
+    project_main
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let project_linked =
+        Project::test(fs.clone(), [path!("/the-project/feature-a").as_ref()], cx).await;
+    project_linked
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let project_other = Project::test(fs, [path!("/other-project").as_ref()], cx).await;
+
+    let project_key = project_main.read_with(cx, |project, cx| project.project_group_key(cx));
+    assert_eq!(
+        project_linked.read_with(cx, |project, cx| project.project_group_key(cx)),
+        project_key
+    );
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_main, window, cx));
+    multi_workspace.update(cx, |multi_workspace, cx| {
+        multi_workspace.open_sidebar(cx);
+    });
+
+    cx.run_until_parked();
+
+    let main_workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    let linked_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(project_linked, window, cx)
+    });
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(project_other, window, cx);
+    });
+
+    let activated_workspace = multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate_project_group(&project_key, None, window, cx)
+        })
+        .await
+        .expect("activating a project group should succeed");
+
+    assert_eq!(activated_workspace, linked_workspace);
+    assert_ne!(activated_workspace, main_workspace);
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert_eq!(multi_workspace.workspace(), &linked_workspace);
+        assert_eq!(
+            PathList::new(&multi_workspace.workspace().read(cx).root_paths(cx)),
+            PathList::new(&[path!("/the-project/feature-a")])
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sidebar_open(
     cx: &mut TestAppContext,
 ) {

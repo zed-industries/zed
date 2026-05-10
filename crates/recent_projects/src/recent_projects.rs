@@ -1135,20 +1135,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                 }
 
                 let key = key.clone();
-                let path_list = key.path_list().clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace.find_or_create_local_workspace(
-                                    path_list,
-                                    Some(key.clone()),
-                                    &[],
-                                    None,
-                                    OpenMode::Activate,
-                                    window,
-                                    cx,
-                                )
+                                multi_workspace.activate_project_group(&key, None, window, cx)
                             })
                             .log_err()
                         {

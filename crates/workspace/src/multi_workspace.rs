@@ -1088,6 +1088,33 @@ impl MultiWorkspace {
         self.workspace_for_paths_excluding(path_list, host, &[], cx)
     }
 
+    pub fn activate_project_group(
+        &mut self,
+        key: &ProjectGroupKey,
+        source_workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
+        if let Some(workspace) = self.last_active_workspace_for_group(key, cx).or_else(|| {
+            self.workspaces_for_project_group(key, cx)
+                .and_then(|workspaces| workspaces.first().cloned())
+        }) {
+            self.activate(workspace.clone(), source_workspace, window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
+        self.find_or_create_local_workspace_with_source_workspace(
+            key.path_list().clone(),
+            Some(key.clone()),
+            &[],
+            None,
+            OpenMode::Activate,
+            source_workspace,
+            window,
+            cx,
+        )
+    }
+
     fn workspace_for_paths_excluding(
         &self,
         path_list: &PathList,
