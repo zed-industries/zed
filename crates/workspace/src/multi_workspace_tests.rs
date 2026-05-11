@@ -272,7 +272,11 @@ async fn test_open_paths_does_not_merge_into_partially_overlapping_workspace(
     cx.run_until_parked();
 
     let ab_window = cx
-        .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+        .update(|cx| {
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 1, "expected exactly one window after opening AB");
+            windows[0].downcast::<MultiWorkspace>()
+        })
         .unwrap();
     let ab_workspace = ab_window
         .read_with(cx, |mw, _| mw.workspace().clone())
@@ -354,9 +358,12 @@ async fn test_open_paths_still_reuses_window_when_file_is_inside_existing_worktr
     .unwrap();
     cx.run_until_parked();
 
-    let initial_window_count = cx.update(|cx| cx.windows().len());
     let ab_window = cx
-        .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+        .update(|cx| {
+            let windows = cx.windows();
+            assert_eq!(windows.len(), 1, "expected exactly one window after opening AB");
+            windows[0].downcast::<MultiWorkspace>()
+        })
         .unwrap();
     let ab_workspace_id = ab_window
         .read_with(cx, |mw, _| mw.workspace().entity_id())
@@ -379,7 +386,7 @@ async fn test_open_paths_still_reuses_window_when_file_is_inside_existing_worktr
 
     let final_window_count = cx.update(|cx| cx.windows().len());
     assert_eq!(
-        final_window_count, initial_window_count,
+        final_window_count, 1,
         "opening a file inside an open worktree must not spawn a new window",
     );
     let active_workspace_id = ab_window
