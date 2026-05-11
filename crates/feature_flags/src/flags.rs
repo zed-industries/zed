@@ -147,7 +147,7 @@ impl FeatureFlag for SkillsFeatureFlag {
     type Value = PresenceFlag;
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
 register_feature_flag!(SkillsFeatureFlag);
