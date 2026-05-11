@@ -2007,7 +2007,13 @@ impl AgentPanel {
                     theme_settings::adjust_agent_buffer_font_size(cx, |size| size + delta);
                 }
             }
-            WhichFontSize::None => {}
+            WhichFontSize::None => {
+                // The agent panel does not own this font size (e.g. when a
+                // terminal is the visible surface). Let the action bubble up
+                // to the workspace handler so the global buffer font size is
+                // adjusted instead.
+                cx.propagate();
+            }
         }
     }
 
@@ -2017,14 +2023,23 @@ impl AgentPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if action.persist {
-            update_settings_file(self.fs.clone(), cx, move |settings, _| {
-                settings.theme.agent_ui_font_size = None;
-                settings.theme.agent_buffer_font_size = None;
-            });
-        } else {
-            theme_settings::reset_agent_ui_font_size(cx);
-            theme_settings::reset_agent_buffer_font_size(cx);
+        match self.visible_font_size() {
+            WhichFontSize::AgentFont => {
+                if action.persist {
+                    update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                        settings.theme.agent_ui_font_size = None;
+                        settings.theme.agent_buffer_font_size = None;
+                    });
+                } else {
+                    theme_settings::reset_agent_ui_font_size(cx);
+                    theme_settings::reset_agent_buffer_font_size(cx);
+                }
+            }
+            WhichFontSize::None => {
+                // Let the workspace handler reset the global buffer font size
+                // that the terminal uses.
+                cx.propagate();
+            }
         }
     }
 
