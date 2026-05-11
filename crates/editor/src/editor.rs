@@ -7857,9 +7857,19 @@ impl Editor {
                             }
 
                             for prefix in language_scope.unordered_list() {
-                                if line_text_after_indent.starts_with(prefix.as_ref()) {
-                                    let candidate_len = prefix.len();
+                                let prefix = prefix.as_ref();
 
+                                let trimmed = prefix.trim_end();
+
+                                let candidate_len = if line_text_after_indent.starts_with(prefix) {
+                                    Some(prefix.len())
+                                } else if line_text_after_indent == trimmed {
+                                    Some(trimmed.len())
+                                } else {
+                                    None
+                                };
+
+                                if let Some(candidate_len) = candidate_len {
                                     if longest_prefix_len.map_or(true, |len| candidate_len > len) {
                                         longest_prefix_len = Some(candidate_len);
                                     }
