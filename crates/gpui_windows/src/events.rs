@@ -143,9 +143,9 @@ impl WindowsWindowInner {
             // monitor is invalid, we do nothing.
             if !monitor.is_invalid() && self.state.display.get().handle != monitor {
                 // we will get the same monitor if we only have one
-                self.state
-                    .display
-                    .set(WindowsDisplay::new_with_handle(monitor).log_err()?);
+                self.state.display.set(WindowsDisplay::new(
+                    WindowsDisplay::display_id_for_monitor(monitor),
+                )?);
             }
         }
         if let Some(mut callback) = self.state.callbacks.moved.take() {
@@ -853,7 +853,7 @@ impl WindowsWindowInner {
             log::error!("No monitor detected!");
             return None;
         }
-        let new_display = WindowsDisplay::new_with_handle(new_monitor).log_err()?;
+        let new_display = WindowsDisplay::new(WindowsDisplay::display_id_for_monitor(new_monitor))?;
         self.state.display.set(new_display);
         Some(0)
     }
@@ -1174,6 +1174,11 @@ impl WindowsWindowInner {
         {
             panic!("Device lost: {err}");
         }
+        // Make sure the first `draw_window` after recovery (whether it comes
+        // from the forced WM_GPUI_FORCE_UPDATE_WINDOW or a stray WM_PAINT in
+        // between) is treated as a forced render so it both clears
+        // `skip_draws` and bypasses the view cache.
+        self.state.force_render_after_recovery.set(true);
         Some(0)
     }
 
@@ -1198,6 +1203,7 @@ impl WindowsWindowInner {
             }
         }
 
+        let force_render = force_render || self.state.force_render_after_recovery.take();
         if force_render {
             // Re-enable drawing after a device loss recovery. The forced render
             // will rebuild the scene with fresh atlas textures.

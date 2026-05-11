@@ -26,7 +26,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, FutureExt, Global, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, Task, TaskExt, WeakEntity,
 };
 use parking_lot::Mutex;
 

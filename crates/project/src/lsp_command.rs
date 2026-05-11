@@ -14,7 +14,7 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashMap;
 use futures::future;
-use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
+use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,

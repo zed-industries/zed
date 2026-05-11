@@ -281,7 +281,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     // User B signs the zed CLA.
     let user_b = server
         .app_state
-        .db
+        .user_service
         .get_user_by_github_login("user_b")
         .await
         .unwrap()

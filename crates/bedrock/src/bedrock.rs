@@ -3,13 +3,13 @@ mod models;
 use anyhow::{Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::types::InferenceConfiguration;
 pub use aws_sdk_bedrockruntime::types::{
     AnyToolChoice as BedrockAnyToolChoice, AutoToolChoice as BedrockAutoToolChoice,
     ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
     ToolConfiguration as BedrockToolConfig, ToolInputSchema as BedrockToolInputSchema,
     ToolSpecification as BedrockToolSpec,
 };
+use aws_sdk_bedrockruntime::types::{GuardrailStreamConfiguration, InferenceConfiguration};
 pub use aws_smithy_types::Blob as BedrockBlob;
 use aws_smithy_types::{Document, Number as AwsNumber};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
@@ -31,8 +31,6 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 pub use crate::models::*;
-
-pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
 
 pub async fn stream_completion(
     client: bedrock::Client,
@@ -70,13 +68,6 @@ pub async fn stream_completion(
         _ => {}
     }
 
-    if request.allow_extended_context {
-        additional_fields.insert(
-            "anthropic_beta".to_string(),
-            Document::Array(vec![Document::String(CONTEXT_1M_BETA_HEADER.to_string())]),
-        );
-    }
-
     if !additional_fields.is_empty() {
         response = response.additional_model_request_fields(Document::Object(additional_fields));
     }
@@ -97,6 +88,17 @@ pub async fn stream_completion(
         if !system.is_empty() {
             response = response.system(BedrockSystemContentBlock::Text(system));
         }
+    }
+
+    if let Some(guardrail_id) = &request.guardrail_identifier {
+        let version = request.guardrail_version.as_deref().unwrap_or("DRAFT");
+
+        response = response.guardrail_config(
+            GuardrailStreamConfiguration::builder()
+                .guardrail_identifier(guardrail_id)
+                .guardrail_version(version)
+                .build(),
+        );
     }
 
     let output = response.send().await.map_err(|err| match err {
@@ -211,7 +213,8 @@ pub struct Request {
     pub temperature: Option<f32>,
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
-    pub allow_extended_context: bool,
+    pub guardrail_identifier: Option<String>,
+    pub guardrail_version: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

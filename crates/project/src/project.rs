@@ -86,7 +86,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
-    Task, WeakEntity, Window,
+    Task, TaskExt, WeakEntity, Window,
 };
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
@@ -2264,14 +2264,7 @@ impl Project {
 
     #[inline]
     pub fn supports_terminal(&self, _cx: &App) -> bool {
-        if self.is_local() {
-            return true;
-        }
-        if self.is_via_remote_server() {
-            return true;
-        }
-
-        false
+        self.is_local() || self.is_via_remote_server()
     }
 
     #[inline]

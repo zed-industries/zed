@@ -41,21 +41,9 @@ Searches file contents across the project using regular expressions, preferred f
 
 Lists files and directories in a given path, providing an overview of filesystem contents.
 
-### `now`
-
-Returns the current date and time.
-
-### `open`
-
-Opens a file or URL with the default application associated with it on the user's operating system.
-
 ### `read_file`
 
 Reads the content of a specified file in the project, allowing access to file contents.
-
-### `thinking`
-
-Allows the Agent to work through problems, brainstorm ideas, or plan without executing actions, useful for complex problem-solving.
 
 ### `search_web`
 
@@ -89,13 +77,9 @@ Edits files by replacing specific text with new content.
 
 Moves or renames a file or directory in the project, performing a rename if only the filename differs.
 
-### `restore_file_from_disk`
+### `write_file`
 
-Discards unsaved changes in open buffers by reloading file contents from disk. Useful for resetting files to their on-disk state before retrying an edit.
-
-### `save_file`
-
-Saves files that have unsaved changes. Used when files need to be saved before further edits can be made.
+Creates a new file or overwrites an existing file with completely new contents.
 
 ### `terminal`
 

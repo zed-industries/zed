@@ -3,7 +3,8 @@ use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, globa
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
-    PREDICT_EDITS_MODE_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
+    PREDICT_EDITS_MODE_HEADER_NAME, PREDICT_EDITS_REQUEST_ID_HEADER_NAME,
+    PREDICT_EDITS_TRIGGER_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
     PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
@@ -24,6 +25,7 @@ use futures::{
     select_biased,
 };
 use gpui::BackgroundExecutor;
+use gpui::TaskExt;
 use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
@@ -32,16 +34,16 @@ use gpui::{
 };
 use heapless::Vec as ArrayVec;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPredictionsMode, EditPreview, File, OffsetRangeExt, Point,
-    TextBufferSnapshot, ToOffset, ToPoint, language_settings::all_language_settings,
+    Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, EditPredictionsMode, EditPreview,
+    File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset, ToPoint,
+    language_settings::all_language_settings,
 };
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{
-    EditPredictionDataCollectionChoice, EditPredictionPromptFormat, EditPredictionProvider,
-    Settings as _, update_settings_file,
+    EditPredictionDataCollectionChoice, EditPredictionProvider, Settings as _, update_settings_file,
 };
 use std::collections::{VecDeque, hash_map};
 use std::env;
@@ -2599,7 +2601,8 @@ impl EditPredictionStore {
             .http_client()
             .build_zed_llm_url("/predict_edits/v3", &[])?;
 
-        let request = PredictEditsV3Request { input, trigger };
+        let request = PredictEditsV3Request { input };
+        let request_id = uuid::Uuid::new_v4().to_string();
 
         let json_bytes = serde_json::to_vec(&request)?;
         let compressed = zstd::encode_all(&json_bytes[..], 3)?;
@@ -2609,7 +2612,9 @@ impl EditPredictionStore {
                 let builder = builder
                     .uri(url.as_ref())
                     .header("Content-Encoding", "zstd")
-                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref());
+                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref())
+                    .header(PREDICT_EDITS_REQUEST_ID_HEADER_NAME, request_id.as_str())
+                    .header(PREDICT_EDITS_TRIGGER_HEADER_NAME, trigger.as_ref());
                 let builder = if let Some(preferred_experiment) = preferred_experiment.as_deref() {
                     builder.header(PREFERRED_EXPERIMENT_HEADER_NAME, preferred_experiment)
                 } else {

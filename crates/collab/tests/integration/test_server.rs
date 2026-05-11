@@ -7,9 +7,10 @@ use client::{
     proto::PeerId,
 };
 use clock::FakeSystemClock;
+use collab::services::{FakeUserService, NewUserParams};
 use collab::{
     AppState, Config,
-    db::{NewUserParams, UserId},
+    db::UserId,
     executor::Executor,
     rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
 };
@@ -179,14 +180,19 @@ impl TestServer {
 
         let clock = Arc::new(FakeSystemClock::new());
 
-        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
+        let user_id = if let Ok(Some(user)) = self
+            .app_state
+            .user_service
+            .get_user_by_github_login(name)
+            .await
         {
             user.id
         } else {
             let github_user_id = self.next_github_user_id;
             self.next_github_user_id += 1;
             self.app_state
-                .db
+                .user_service
+                .as_fake()
                 .create_user(
                     &format!("{name}@example.com"),
                     None,
@@ -197,8 +203,6 @@ impl TestServer {
                     },
                 )
                 .await
-                .expect("creating user failed")
-                .user_id
         };
 
         let http = FakeHttpClient::create({
@@ -244,7 +248,7 @@ impl TestServer {
         let client_name = name.to_string();
         let client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
-        let db = self.app_state.db.clone();
+        let user_service = self.app_state.user_service.clone();
         let connection_killers = self.connection_killers.clone();
         let forbid_connections = self.forbid_connections.clone();
 
@@ -268,7 +272,7 @@ impl TestServer {
                 );
 
                 let server = server.clone();
-                let db = db.clone();
+                let user_service = user_service.clone();
                 let connection_killers = connection_killers.clone();
                 let forbid_connections = forbid_connections.clone();
                 let client_name = client_name.clone();
@@ -281,7 +285,8 @@ impl TestServer {
                         let (client_conn, server_conn, killed) =
                             Connection::in_memory(cx.background_executor().clone());
                         let (connection_id_tx, connection_id_rx) = oneshot::channel();
-                        let user = db
+                        let user = user_service
+                            .as_fake()
                             .get_user_by_id(user_id)
                             .await
                             .map_err(|e| {
@@ -294,7 +299,7 @@ impl TestServer {
                         cx.background_spawn(server.handle_connection(
                             server_conn,
                             client_name,
-                            Principal::User(user.into()),
+                            Principal::User(user),
                             ZedVersion(semver::Version::new(1, 0, 0)),
                             Some("test".to_string()),
                             None,
@@ -576,17 +581,18 @@ impl TestServer {
             blob_store_client: None,
             executor,
             kinesis_client: None,
+            user_service: FakeUserService::new(test_db.db().clone()),
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
                 database_max_connections: 0,
-                api_token: "".into(),
                 livekit_server: None,
                 livekit_key: None,
                 livekit_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
+                zed_cloud_internal_api_key: "test-internal-api-key".into(),
                 blob_store_url: None,
                 blob_store_region: None,
                 blob_store_access_key: None,
@@ -652,11 +658,9 @@ impl TestClient {
     }
 
     pub fn current_user_id(&self, cx: &TestAppContext) -> UserId {
-        UserId::from_proto(
-            self.app_state
-                .user_store
-                .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
-        )
+        UserId::from_proto(self.app_state.user_store.read_with(cx, |user_store, _| {
+            user_store.current_user().unwrap().legacy_id
+        }))
     }
 
     pub async fn wait_for_current_user(&self, cx: &TestAppContext) {
