@@ -324,7 +324,7 @@ async fn resolve_pasted_context_items(
 
     for entry in entries {
         match entry {
-            ClipboardEntry::String(_) => {}
+            ClipboardEntry::String(_) | ClipboardEntry::Html(_) => {}
             ClipboardEntry::Image(image) => {
                 if supports_images {
                     items.push(ResolvedPastedContextItem::Image(
