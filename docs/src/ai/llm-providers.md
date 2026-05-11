@@ -181,11 +181,6 @@ You can add custom models to the Anthropic provider by adding the following to y
           "display_name": "Sonnet 2024-June",
           "max_tokens": 128000,
           "max_output_tokens": 2560,
-          "cache_configuration": {
-            "max_cache_anchors": 10,
-            "min_total_token": 10000,
-            "should_speculate": false
-          },
           "tool_override": "some-model-that-supports-toolcalling"
         }
       ]

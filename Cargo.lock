@@ -183,7 +183,6 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
- "open",
  "parking_lot",
  "paths",
  "pretty_assertions",
