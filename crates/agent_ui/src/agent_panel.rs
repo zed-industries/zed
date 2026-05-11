@@ -3767,9 +3767,10 @@ impl AgentPanel {
                         })
                         .item(
                             ContextMenuEntry::new("Zed Agent")
-                                .when(is_agent_selected(Agent::NativeAgent), |this| {
-                                    this.action(Box::new(NewThread))
-                                })
+                                .when(
+                                    !showing_terminal && is_agent_selected(Agent::NativeAgent),
+                                    |this| this.action(Box::new(NewThread)),
+                                )
                                 .icon(IconName::ZedAgent)
                                 .icon_color(Color::Muted)
                                 .handler({
@@ -3873,9 +3874,10 @@ impl AgentPanel {
 
                                 entry = entry
                                     .when(
-                                        is_agent_selected(Agent::Custom {
-                                            id: item.id.clone(),
-                                        }),
+                                        !showing_terminal
+                                            && is_agent_selected(Agent::Custom {
+                                                id: item.id.clone(),
+                                            }),
                                         |this| this.action(Box::new(NewThread)),
                                     )
                                     .icon_color(Color::Muted)
