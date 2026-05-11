@@ -82,7 +82,7 @@ pub async fn open_test_workspace(
     cx: &mut VisualTestAppContext,
 ) -> Result<WindowHandle<workspace::Workspace>> {
     let window_size = size(px(1280.0), px(800.0));
-
+    assert_neq!(window_size.width, px(0.));
     let project = cx.update(|cx| {
         project::Project::local(
             app_state.client.clone(),
