@@ -213,6 +213,7 @@ pub fn into_open_ai_response(
     ResponseRequest {
         model: model_id.into(),
         input: input_items,
+        store: false,
         stream,
         temperature,
         top_p: None,
@@ -1078,6 +1079,7 @@ mod tests {
                     "output": "Sunny"
                 }
             ],
+            "store": false,
             "stream": true,
             "max_output_tokens": 2048,
             "parallel_tool_calls": true,
