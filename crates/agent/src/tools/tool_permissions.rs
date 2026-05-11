@@ -3,18 +3,20 @@ use crate::{
     decide_permission_for_path,
 };
 use agent_client_protocol::schema as acp;
+use agent_skills::is_agents_skills_path;
 use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
 use project::{Project, ProjectPath};
 use settings::Settings;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use util::paths::component_matches_ignore_ascii_case;
 
 pub enum SensitiveSettingsKind {
     Local,
     Global,
+    AgentSkills,
 }
 
 /// Result of resolving a path within the project with symlink safety checks.
@@ -96,29 +98,52 @@ async fn canonicalize_with_ancestors(path: &Path, fs: &dyn Fs) -> Option<PathBuf
     }
 }
 
+/// Returns the canonicalized global agent skills directory
+/// (`~/.agents/skills`).
+///
+/// Recomputed on every call rather than cached: the underlying
+/// `canonicalize_with_ancestors` is a few `stat` syscalls (which the OS
+/// page cache already handles), and a process-wide cache would either go
+/// stale if the user moved `~/.agents/skills`, or pollute across tests
+/// using different `FakeFs` instances.
+async fn canonical_global_skills_dir(fs: &dyn Fs) -> Option<PathBuf> {
+    canonicalize_with_ancestors(&agent_skills::global_skills_dir(), fs).await
+}
+
 fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[PathBuf]) -> bool {
     canonical_worktree_roots
         .iter()
         .any(|root| canonical_path.starts_with(root))
 }
 
-/// Returns the kind of sensitive settings location this path targets, if any:
-/// either inside a `.zed/` local-settings directory or inside the global config dir.
+/// Returns the kind of sensitive settings or agent skills location this path targets, if any:
+/// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
+/// the global config dir.
 pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
     if path.components().any(|component| {
-        component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+        component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
     }) {
         return Some(SensitiveSettingsKind::Local);
     }
 
+    if is_agents_skills_path(path) {
+        return Some(SensitiveSettingsKind::AgentSkills);
+    }
+
     if let Some(canonical_path) = canonicalize_with_ancestors(path, fs).await {
-        let config_dir = fs
-            .canonicalize(paths::config_dir())
-            .await
-            .unwrap_or_else(|_| paths::config_dir().to_path_buf());
-        if canonical_path.starts_with(&config_dir) {
-            return Some(SensitiveSettingsKind::Global);
+        if let Some(canonical_skills_dir) = canonical_global_skills_dir(fs).await {
+            if canonical_path.starts_with(&canonical_skills_dir) {
+                return Some(SensitiveSettingsKind::AgentSkills);
+            }
+        }
+
+        if let Some(canonical_config_dir) =
+            canonicalize_with_ancestors(paths::config_dir(), fs).await
+        {
+            if canonical_path.starts_with(&canonical_config_dir) {
+                return Some(SensitiveSettingsKind::Global);
+            }
         }
     }
 
@@ -269,6 +294,9 @@ pub fn authorize_with_sensitive_settings(
         Some(SensitiveSettingsKind::Global) => {
             event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
         }
+        Some(SensitiveSettingsKind::AgentSkills) => {
+            event_stream.authorize_always_prompt(format!("{title} (agent skills)"), context, cx)
+        }
         None => event_stream.authorize(title, context, cx),
     }
 }
@@ -405,7 +433,7 @@ pub fn authorize_file_edit(
     // so we can handle this common case without spawning.
     let local_settings_folder = paths::local_settings_folder_name();
     let is_local_settings = path.components().any(|component| {
-        component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+        component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
     });
 
     cx.spawn(async move |cx| {
@@ -500,6 +528,20 @@ pub fn authorize_file_edit(
                         vec![path_owned.to_string_lossy().to_string()],
                     );
                     event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
+                });
+                return authorize.await;
+            }
+            Some(SensitiveSettingsKind::AgentSkills) => {
+                let authorize = cx.update(|cx| {
+                    let context = ToolPermissionContext::new(
+                        &tool_name,
+                        vec![path_owned.to_string_lossy().to_string()],
+                    );
+                    event_stream.authorize_always_prompt(
+                        format!("{title} (agent skills)"),
+                        context,
+                        cx,
+                    )
                 });
                 return authorize.await;
             }

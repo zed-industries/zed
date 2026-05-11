@@ -1169,6 +1169,40 @@ mod tests {
             event.tool_call.fields.title,
             Some("Edit `/etc/hosts`".into())
         );
+
+        // 5.5: .agents/skills is a sensitive path — still prompts. The
+        // sensitive-path classifier runs regardless of the default mode, so
+        // it doesn't matter that we're now in Confirm mode — we're checking
+        // that the path is recognized and gets the "(agent skills)" tag.
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from("root/.agents/skills/my-skill/SKILL.md"),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("Edit `root/.agents/skills/my-skill/SKILL.md` (agent skills)".into())
+        );
+
+        // 5.6: The global .agents/skills directory is sensitive — still prompts
+        let global_skill_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| edit_tool.authorize(&global_skill_path, &stream_tx, cx));
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)"))
+        );
     }
 
     #[gpui::test]

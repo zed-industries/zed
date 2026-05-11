@@ -151,6 +151,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "async-channel 2.5.0",
  "async-io",
@@ -334,6 +335,14 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "util",
+]
+
+[[package]]
+name = "agent_skills"
+version = "0.1.0"
+dependencies = [
+ "paths",
  "util",
 ]
 

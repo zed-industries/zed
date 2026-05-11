@@ -1,0 +1,16 @@
+[package]
+name = "agent_skills"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "agent_skills.rs"
+
+[dependencies]
+paths.workspace = true
+util.workspace = true
