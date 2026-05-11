@@ -140,6 +140,7 @@ pub struct LocalWorktree {
     settings: WorktreeSettings,
     share_private_files: bool,
     scanning_enabled: bool,
+    force_defer_watch: bool,
 }
 
 pub struct PathPrefixScanRequest {
@@ -504,6 +505,7 @@ impl Worktree {
                 visible,
                 settings,
                 scanning_enabled,
+                force_defer_watch: false,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -1151,6 +1153,7 @@ impl LocalWorktree {
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
         let scanning_enabled = self.scanning_enabled;
+        let force_defer_watch = self.force_defer_watch;
         let track_git_repositories = self.visible;
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
@@ -1158,7 +1161,10 @@ impl LocalWorktree {
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
-                let (events, watcher) = if scanning_enabled {
+                let defer_watch =
+                    force_defer_watch || (scanning_enabled && fs::requires_poll_watcher(&abs_path));
+
+                let (events, watcher) = if scanning_enabled && !defer_watch {
                     fs.watch(&abs_path, FS_WATCH_LATENCY).await
                 } else {
                     (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
@@ -1192,11 +1198,10 @@ impl LocalWorktree {
                     watcher,
                     track_git_repositories,
                     is_single_file,
+                    defer_watch,
                 };
 
-                scanner
-                    .run(Box::pin(events.map(|events| events.into_iter().collect())))
-                    .await;
+                scanner.run(events).await;
             }
         });
         let scan_state_updater = cx.spawn(async move |this, cx| {
@@ -2053,6 +2058,12 @@ impl LocalWorktree {
         self.snapshot.update_abs_path(new_path, root_name);
         self.restart_background_scanners(cx);
     }
+    #[cfg(feature = "test-support")]
+    pub fn set_defer_watch(&mut self, defer: bool, cx: &mut Context<Worktree>) {
+        self.force_defer_watch = defer;
+        self.restart_background_scanners(cx);
+    }
+
     #[cfg(feature = "test-support")]
     pub fn repositories(&self) -> Vec<Arc<Path>> {
         self.git_repositories
@@ -3946,6 +3957,7 @@ struct BackgroundScanner {
     /// Whether this is a single-file worktree (root is a file, not a directory).
     /// Used to determine if we should give up after repeated canonicalization failures.
     is_single_file: bool,
+    defer_watch: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -4086,6 +4098,37 @@ impl BackgroundScanner {
         }
 
         self.send_status_update(false, SmallVec::new(), &[]).await;
+
+        if self.defer_watch {
+            let (events, watcher) = self
+                .fs
+                .watch(root_abs_path.as_path(), FS_WATCH_LATENCY)
+                .await;
+            self.watcher = watcher;
+            fs_events_rx = Box::pin(events.map(|events| events.into_iter().collect()));
+
+            let state = self.state.lock().await;
+            for target in state.symlink_paths_by_target.keys() {
+                if !target.starts_with(root_abs_path.as_path()) {
+                    self.watcher.add(target).log_err();
+                }
+            }
+            for repo in state.snapshot.git_repositories.values() {
+                if !repo
+                    .common_dir_abs_path
+                    .starts_with(root_abs_path.as_path())
+                {
+                    self.watcher.add(&repo.common_dir_abs_path).log_err();
+                }
+                if !repo
+                    .repository_dir_abs_path
+                    .starts_with(root_abs_path.as_path())
+                {
+                    self.watcher.add(&repo.repository_dir_abs_path).log_err();
+                }
+            }
+            drop(state);
+        }
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
