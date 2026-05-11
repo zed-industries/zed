@@ -3359,6 +3359,7 @@ fn handle_request_permission(
                     thread.request_tool_call_authorization(
                         args.tool_call,
                         acp_thread::PermissionOptions::Flat(args.options),
+                        acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
                     )
                 })

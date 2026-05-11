@@ -641,6 +641,8 @@ mod test_support {
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
 
+    use crate::AuthorizationKind;
+
     use super::*;
 
     /// Creates a PNG image encoded as base64 for testing.
@@ -915,6 +917,7 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
+                                        AuthorizationKind::PermissionGrant,
                                         cx,
                                     )
                                 })??

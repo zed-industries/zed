@@ -6,10 +6,10 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt,
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    RateLimiter, env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
+    OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
@@ -351,7 +351,34 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.reasoning_effort().is_some()
+        self.model.uses_responses_api() && self.model.reasoning_effort().is_some()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        if !self.supports_thinking() {
+            return Vec::new();
+        }
+
+        let default_effort = self.model.reasoning_effort();
+        self.model
+            .supported_reasoning_efforts()
+            .iter()
+            .map(|effort| {
+                let (name, value) = match effort {
+                    open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                    open_ai::ReasoningEffort::Low => ("Low", "low"),
+                    open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
+                    open_ai::ReasoningEffort::High => ("High", "high"),
+                    open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                };
+
+                LanguageModelEffortLevel {
+                    name: name.into(),
+                    value: value.into(),
+                    is_default: Some(*effort) == default_effort,
+                }
+            })
+            .collect()
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -406,7 +433,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.supports_parallel_tool_calls(),
                 self.model.supports_prompt_cache_key(),
                 self.max_output_tokens(),
-                self.model.reasoning_effort(),
+                None,
                 false,
             );
             let completions = self.stream_completion(request, cx);

@@ -150,8 +150,6 @@ actions!(
         ResetTrialEndUpsell,
         /// Opens the "Add Context" menu in the message editor.
         OpenAddContextMenu,
-        /// Continues the current thread.
-        ContinueThread,
         /// Interrupts the current generation and sends the message immediately.
         SendImmediately,
         /// Sends the next queued message immediately.
@@ -247,12 +245,33 @@ pub struct ToggleCommandPattern {
 pub struct NewThread;
 
 /// Creates a new external agent conversation thread.
-#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewExternalAgentThread {
-    /// Which agent to use for the conversation.
-    agent: Option<Agent>,
+    /// The agent id to use for the conversation.
+    #[serde(deserialize_with = "deserialize_external_agent_id")]
+    agent: AgentId,
+}
+
+fn deserialize_external_agent_id<'de, D>(deserializer: D) -> Result<AgentId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AgentIdOrLegacyAgent {
+        LegacyAgent(Agent),
+        AgentId(AgentId),
+    }
+
+    match AgentIdOrLegacyAgent::deserialize(deserializer)? {
+        AgentIdOrLegacyAgent::AgentId(agent_id) => Ok(agent_id),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Custom { id }) => Ok(id),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::NativeAgent) => Ok(Agent::NativeAgent.id()),
+        #[cfg(any(test, feature = "test-support"))]
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Stub) => Ok(Agent::Stub.id()),
+    }
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -281,14 +300,13 @@ pub enum Agent {
 impl From<AgentId> for Agent {
     fn from(id: AgentId) -> Self {
         if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
-            Self::NativeAgent
-        } else {
-            #[cfg(any(test, feature = "test-support"))]
-            if id.as_ref() == "stub" {
-                return Self::Stub;
-            }
-            Self::Custom { id }
+            return Self::NativeAgent;
         }
+        #[cfg(any(test, feature = "test-support"))]
+        if id.as_ref() == "stub" {
+            return Self::Stub;
+        }
+        Self::Custom { id }
     }
 }
 
@@ -699,6 +717,7 @@ mod tests {
             default_height: px(600.),
             max_content_width: Some(px(850.)),
             default_model: None,
+            subagent_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
@@ -913,5 +932,24 @@ mod tests {
                 id: "my-agent".into(),
             },
         );
+    }
+
+    #[test]
+    fn test_deserialize_new_external_agent_thread() {
+        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"gemini"}"#)
+            .expect("should deserialize agent id");
+        assert_eq!(action.agent, AgentId::from("gemini"));
+
+        let action = serde_json::from_str::<NewExternalAgentThread>(
+            r#"{"agent":{"custom":{"name":"gemini"}}}"#,
+        )
+        .expect("should deserialize legacy custom agent payload");
+        assert_eq!(action.agent, AgentId::from("gemini"));
+
+        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"NativeAgent"}"#)
+            .expect("should deserialize legacy native agent payload");
+        assert_eq!(action.agent, Agent::NativeAgent.id());
+
+        assert!(serde_json::from_str::<NewExternalAgentThread>(r#"{}"#).is_err());
     }
 }

@@ -42,7 +42,7 @@ use crate::{
     ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
-    ui::EndTrialUpsell,
+    ui::{AgentNotification, AgentNotificationEvent, EndTrialUpsell},
 };
 use crate::{
     Agent, AgentInitialContent, ExternalSourcePrompt, NewExternalAgentThread,
@@ -51,6 +51,8 @@ use crate::{
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::Result;
+#[cfg(feature = "audio")]
+use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
@@ -62,8 +64,9 @@ use feature_flags::{AgentPanelTerminalFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
-    Task, TaskExt, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
+    PlatformDisplay, Subscription, Task, TaskExt, UpdateGlobal, WeakEntity, WindowHandle,
+    prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -71,7 +74,7 @@ use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
-use settings::{Settings, update_settings_file};
+use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
@@ -81,7 +84,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
+    CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
     ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemEvent,
@@ -690,10 +693,14 @@ pub(crate) struct AgentThread {
 
 struct AgentTerminal {
     view: Entity<TerminalView>,
-    title_editor: Entity<Editor>,
+    title_editor: Option<Entity<Editor>>,
+    title_editor_initial_title: Option<String>,
+    title_editor_subscription: Option<Subscription>,
     last_known_title: String,
     created_at: DateTime<Utc>,
     has_notification: bool,
+    notification_windows: Vec<WindowHandle<AgentNotification>>,
+    notification_subscriptions: Vec<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -713,23 +720,12 @@ impl AgentTerminal {
             .unwrap_or_else(|| SharedString::from(view.terminal().read(cx).title(true)))
     }
 
-    fn refresh_title(&mut self, window: &mut Window, cx: &mut App) -> bool {
-        let title = self.display_title(cx).to_string();
-        let changed = self.last_known_title != title;
+    fn refresh_title(&mut self, cx: &mut App) -> bool {
+        let title = self.display_title(cx);
+        let changed = self.last_known_title != title.as_ref();
         if changed {
-            self.last_known_title = title.clone();
+            self.last_known_title = title.to_string();
         }
-
-        let should_update_editor = {
-            let title_editor = self.title_editor.read(cx);
-            !title_editor.is_focused(window) && title_editor.text(cx) != title
-        };
-        if should_update_editor {
-            self.title_editor.update(cx, |title_editor, cx| {
-                title_editor.set_text(title, window, cx);
-            });
-        }
-
         changed
     }
 }
@@ -1335,6 +1331,11 @@ impl AgentPanel {
         self.new_entry(None, window, cx);
     }
 
+    fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_agent = agent;
+        self.activate_new_thread(true, "agent_panel", window, cx);
+    }
+
     pub fn activate_new_thread(
         &mut self,
         focus: bool,
@@ -1442,10 +1443,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(agent) = action.agent.clone() {
-            self.selected_agent = agent;
-        }
-        self.activate_new_thread(true, "agent_panel", window, cx);
+        self.new_agent_thread(action.agent.clone().into(), window, cx);
     }
 
     pub fn new_terminal(
@@ -1532,37 +1530,11 @@ impl AgentPanel {
             return;
         }
         let terminal_entity = terminal_view.read(cx).terminal().clone();
-        let title = {
-            let terminal_view = terminal_view.read(cx);
-            terminal_view
-                .custom_title()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| terminal_view.terminal().read(cx).title(true))
-        };
-        let title_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_text(title, window, cx);
-            editor
-        });
-        let title_editor_subscription = cx.subscribe_in(
-            &title_editor,
-            window,
-            move |this, title_editor, event: &editor::EditorEvent, window, cx| {
-                this.handle_terminal_title_editor_event(
-                    terminal_id,
-                    title_editor,
-                    event,
-                    window,
-                    cx,
-                );
-            },
-        );
-        let view_subscription = cx.subscribe_in(
+        let view_subscription = cx.subscribe(
             &terminal_view,
-            window,
-            move |this, _terminal_view, event: &ItemEvent, window, cx| match event {
+            move |this, _terminal_view, event: &ItemEvent, cx| match event {
                 ItemEvent::UpdateTab | ItemEvent::UpdateBreadcrumbs => {
-                    this.refresh_terminal_title(terminal_id, window, cx);
+                    this.refresh_terminal_title(terminal_id, cx);
                 }
                 ItemEvent::CloseItem | ItemEvent::Edit => {}
             },
@@ -1576,7 +1548,7 @@ impl AgentPanel {
                 TerminalEvent::TitleChanged
                 | TerminalEvent::Wakeup
                 | TerminalEvent::BreadcrumbsChanged => {
-                    this.refresh_terminal_title(terminal_id, window, cx);
+                    this.refresh_terminal_title(terminal_id, cx);
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
@@ -1591,18 +1563,18 @@ impl AgentPanel {
 
         let mut terminal = AgentTerminal {
             view: terminal_view,
-            title_editor,
+            title_editor: None,
+            title_editor_initial_title: None,
+            title_editor_subscription: None,
             last_known_title: String::new(),
             created_at: Utc::now(),
             has_notification: false,
-            _subscriptions: vec![
-                view_subscription,
-                terminal_subscription,
-                title_editor_subscription,
-            ],
+            notification_windows: Vec::new(),
+            notification_subscriptions: Vec::new(),
+            _subscriptions: vec![view_subscription, terminal_subscription],
         };
         self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal, cx);
-        terminal.refresh_title(window, cx);
+        terminal.refresh_title(cx);
         self.terminals.insert(terminal_id, terminal);
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
@@ -1626,6 +1598,9 @@ impl AgentPanel {
         };
         let had_notification = terminal.has_notification;
         terminal.has_notification = false;
+        if had_notification {
+            self.dismiss_terminal_notifications(terminal_id, cx);
+        }
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         if had_notification {
             cx.emit(AgentPanelEvent::EntryChanged);
@@ -1641,6 +1616,7 @@ impl AgentPanel {
     ) {
         let was_active = self.active_terminal_id() == Some(terminal_id);
 
+        self.dismiss_terminal_notifications(terminal_id, cx);
         if self.terminals.remove(&terminal_id).is_none() {
             return;
         }
@@ -1654,18 +1630,83 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn refresh_terminal_title(
+    fn refresh_terminal_title(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+        if let Some(terminal) = self.terminals.get_mut(&terminal_id)
+            && terminal.refresh_title(cx)
+        {
+            cx.emit(AgentPanelEvent::EntryChanged);
+            cx.notify();
+        }
+    }
+
+    fn edit_terminal_title(
         &mut self,
         terminal_id: TerminalId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(terminal) = self.terminals.get_mut(&terminal_id)
-            && terminal.refresh_title(window, cx)
-        {
-            cx.emit(AgentPanelEvent::EntryChanged);
-            cx.notify();
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            return;
+        };
+
+        if let Some(title_editor) = terminal.title_editor.as_ref() {
+            title_editor.focus_handle(cx).focus(window, cx);
+            return;
         }
+
+        let title = terminal.display_title(cx).to_string();
+        let title_editor_initial_title = title.clone();
+        let title_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(title, window, cx);
+            editor
+        });
+        let title_editor_subscription = cx.subscribe_in(
+            &title_editor,
+            window,
+            move |this, title_editor, event: &editor::EditorEvent, window, cx| {
+                this.handle_terminal_title_editor_event(
+                    terminal_id,
+                    title_editor,
+                    event,
+                    window,
+                    cx,
+                );
+            },
+        );
+        title_editor.update(cx, |editor, cx| {
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        terminal.title_editor = Some(title_editor);
+        terminal.title_editor_initial_title = Some(title_editor_initial_title);
+        terminal.title_editor_subscription = Some(title_editor_subscription);
+        cx.notify();
+    }
+
+    fn stop_editing_terminal_title(
+        &mut self,
+        terminal_id: TerminalId,
+        focus_terminal: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            return;
+        };
+        let terminal_view = terminal.view.clone();
+        terminal.title_editor = None;
+        terminal.title_editor_initial_title = None;
+        terminal.title_editor_subscription = None;
+        let title_changed = terminal.refresh_title(cx);
+
+        if focus_terminal {
+            terminal_view.focus_handle(cx).focus(window, cx);
+        }
+        if title_changed {
+            cx.emit(AgentPanelEvent::EntryChanged);
+        }
+        cx.notify();
     }
 
     fn handle_terminal_title_editor_event(
@@ -1681,14 +1722,26 @@ impl AgentPanel {
                 if !title_editor.read(cx).is_focused(window) {
                     return;
                 }
-                let Some(terminal_view) = self
-                    .terminals
-                    .get(&terminal_id)
-                    .map(|terminal| terminal.view.clone())
+                let Some((terminal_view, initial_title)) =
+                    self.terminals.get(&terminal_id).and_then(|terminal| {
+                        terminal
+                            .title_editor
+                            .as_ref()
+                            .is_some_and(|current_editor| current_editor == title_editor)
+                            .then(|| {
+                                (
+                                    terminal.view.clone(),
+                                    terminal.title_editor_initial_title.clone(),
+                                )
+                            })
+                    })
                 else {
                     return;
                 };
                 let new_title = title_editor.read(cx).text(cx).trim().to_string();
+                if initial_title.as_deref().map(str::trim) == Some(new_title.as_str()) {
+                    return;
+                }
                 let label = if new_title.is_empty() {
                     None
                 } else {
@@ -1707,8 +1760,13 @@ impl AgentPanel {
                 });
             }
             editor::EditorEvent::Blurred => {
-                if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
-                    terminal.refresh_title(window, cx);
+                if self
+                    .terminals
+                    .get(&terminal_id)
+                    .and_then(|terminal| terminal.title_editor.as_ref())
+                    .is_some_and(|current_editor| current_editor == title_editor)
+                {
+                    self.stop_editing_terminal_title(terminal_id, false, window, cx);
                 }
             }
             _ => {}
@@ -1733,13 +1791,188 @@ impl AgentPanel {
         if user_is_looking {
             return;
         }
+        let newly_notified = {
+            let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+                return;
+            };
+            if terminal.has_notification {
+                false
+            } else {
+                terminal.has_notification = true;
+                true
+            }
+        };
+        if newly_notified {
+            cx.emit(AgentPanelEvent::EntryChanged);
+            cx.notify();
+            #[cfg(feature = "audio")]
+            self.play_terminal_notification_sound(cx);
+            self.show_terminal_notification(terminal_id, window, cx);
+        }
+    }
+
+    fn show_terminal_notification(
+        &mut self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(terminal) = self.terminals.get(&terminal_id) else {
+            return;
+        };
+        if !terminal.notification_windows.is_empty() {
+            return;
+        }
+        let title = terminal.display_title(cx);
+        let settings = AgentSettings::get_global(cx);
+        match settings.notify_when_agent_waiting {
+            NotifyWhenAgentWaiting::PrimaryScreen => {
+                if let Some(primary) = cx.primary_display() {
+                    self.pop_up_terminal_notification(terminal_id, &title, primary, window, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::AllScreens => {
+                for screen in cx.displays() {
+                    self.pop_up_terminal_notification(terminal_id, &title, screen, window, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::Never => {}
+        }
+    }
+
+    fn pop_up_terminal_notification(
+        &mut self,
+        terminal_id: TerminalId,
+        title: &SharedString,
+        screen: Rc<dyn PlatformDisplay>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let options = AgentNotification::window_options(screen, cx);
+        let project_name = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).root_name_str().to_string())
+        });
+        let title = title.clone();
+        let Ok(screen_window) = cx.open_window(options, |_window, cx| {
+            cx.new(|_cx| AgentNotification::new(title, None, IconName::Terminal, project_name))
+        }) else {
+            return;
+        };
+        let Ok(pop_up) = screen_window.entity(cx) else {
+            return;
+        };
+
+        let event_subscription = cx.subscribe_in(&pop_up, window, {
+            move |this, _, event: &AgentNotificationEvent, window, cx| match event {
+                AgentNotificationEvent::Accepted => {
+                    cx.activate(true);
+                    window.activate_window();
+                    this.activate_terminal(terminal_id, true, window, cx);
+                    this.dismiss_terminal_notifications(terminal_id, cx);
+                }
+                AgentNotificationEvent::Dismissed => {
+                    this.dismiss_terminal_notifications(terminal_id, cx);
+                }
+            }
+        });
+
+        let pop_up_weak = pop_up.downgrade();
+        let window_activation_subscription = cx.observe_window_activation(window, {
+            let pop_up_weak = pop_up_weak.clone();
+            move |this, window, cx| {
+                this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+            }
+        });
+
+        let multi_workspace_subscription = window.root::<MultiWorkspace>().flatten().map(|mw| {
+            cx.observe_in(&mw, window, move |this, _, window, cx| {
+                this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+            })
+        });
+
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            screen_window
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+            return;
+        };
+        terminal.notification_windows.push(screen_window);
+        terminal.notification_subscriptions.push(event_subscription);
+        terminal
+            .notification_subscriptions
+            .push(window_activation_subscription);
+        if let Some(subscription) = multi_workspace_subscription {
+            terminal.notification_subscriptions.push(subscription);
+        }
+    }
+
+    fn dismiss_terminal_notifications(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
-        if !terminal.has_notification {
-            terminal.has_notification = true;
-            cx.emit(AgentPanelEvent::EntryChanged);
-            cx.notify();
+        let windows = std::mem::take(&mut terminal.notification_windows);
+        terminal.notification_subscriptions.clear();
+        for window in windows {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+        }
+    }
+
+    fn terminal_visible_to_user(&self, terminal_id: TerminalId, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
+        }
+        if self.active_terminal_id() != Some(terminal_id) {
+            return false;
+        }
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+            let multi_workspace = multi_workspace.read(cx);
+            if multi_workspace.sidebar_open() {
+                return true;
+            }
+            if multi_workspace.workspace() != &workspace {
+                return false;
+            }
+        }
+        AgentPanel::is_visible(&workspace, cx)
+    }
+
+    fn dismiss_terminal_pop_up_if_visible(
+        &mut self,
+        terminal_id: TerminalId,
+        pop_up: &WeakEntity<AgentNotification>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.terminal_visible_to_user(terminal_id, window, cx) {
+            return;
+        }
+        if let Some(pop_up) = pop_up.upgrade() {
+            pop_up.update(cx, |notification, cx| {
+                notification.dismiss(cx);
+            });
+        }
+    }
+
+    #[cfg(feature = "audio")]
+    fn play_terminal_notification_sound(&self, cx: &mut App) {
+        // We only reach this when the user isn't looking at the terminal,
+        // so it is effectively hidden — only `Never` suppresses the sound.
+        let settings = AgentSettings::get_global(cx);
+        if settings.play_sound_when_agent_done.should_play(false) {
+            Audio::play_sound(Sound::AgentDone, cx);
         }
     }
 
@@ -2147,7 +2380,13 @@ impl AgentPanel {
                     theme_settings::adjust_agent_buffer_font_size(cx, |size| size + delta);
                 }
             }
-            WhichFontSize::None => {}
+            WhichFontSize::None => {
+                // The agent panel does not own this font size (e.g. when a
+                // terminal is the visible surface). Let the action bubble up
+                // to the workspace handler so the global buffer font size is
+                // adjusted instead.
+                cx.propagate();
+            }
         }
     }
 
@@ -2157,14 +2396,23 @@ impl AgentPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if action.persist {
-            update_settings_file(self.fs.clone(), cx, move |settings, _| {
-                settings.theme.agent_ui_font_size = None;
-                settings.theme.agent_buffer_font_size = None;
-            });
-        } else {
-            theme_settings::reset_agent_ui_font_size(cx);
-            theme_settings::reset_agent_buffer_font_size(cx);
+        match self.visible_font_size() {
+            WhichFontSize::AgentFont => {
+                if action.persist {
+                    update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                        settings.theme.agent_ui_font_size = None;
+                        settings.theme.agent_buffer_font_size = None;
+                    });
+                } else {
+                    theme_settings::reset_agent_ui_font_size(cx);
+                    theme_settings::reset_agent_buffer_font_size(cx);
+                }
+            }
+            WhichFontSize::None => {
+                // Let the workspace handler reset the global buffer font size
+                // that the terminal uses.
+                cx.propagate();
+            }
         }
     }
 
@@ -3289,6 +3537,12 @@ impl Panel for AgentPanel {
         true
     }
 
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.agent.get_or_insert_default().button = Some(false);
+        }))
+    }
+
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
         self.zoomed
     }
@@ -3502,22 +3756,41 @@ impl AgentPanel {
                 }
             }
             VisibleSurface::Terminal(_) => {
-                if let Some((title_editor, terminal_view)) = self
-                    .active_terminal_id()
-                    .and_then(|terminal_id| self.terminals.get(&terminal_id))
-                    .map(|terminal| (terminal.title_editor.clone(), terminal.view.clone()))
+                if let Some((terminal_id, title_editor, title)) =
+                    self.active_terminal_id().and_then(|terminal_id| {
+                        self.terminals.get(&terminal_id).map(|terminal| {
+                            (
+                                terminal_id,
+                                terminal.title_editor.clone(),
+                                terminal.display_title(cx),
+                            )
+                        })
+                    })
                 {
-                    let terminal_view_cancel = terminal_view.clone();
-                    div()
-                        .flex_1()
-                        .on_action(move |_: &menu::Confirm, window, cx| {
-                            terminal_view.focus_handle(cx).focus(window, cx);
-                        })
-                        .on_action(move |_: &editor::actions::Cancel, window, cx| {
-                            terminal_view_cancel.focus_handle(cx).focus(window, cx);
-                        })
-                        .child(title_editor)
-                        .into_any_element()
+                    if let Some(title_editor) = title_editor {
+                        div()
+                            .flex_1()
+                            .on_action(cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                this.stop_editing_terminal_title(terminal_id, true, window, cx);
+                            }))
+                            .on_action(cx.listener(
+                                move |this, _: &editor::actions::Cancel, window, cx| {
+                                    this.stop_editing_terminal_title(terminal_id, true, window, cx);
+                                },
+                            ))
+                            .child(title_editor)
+                            .into_any_element()
+                    } else {
+                        div()
+                            .id("terminal-title")
+                            .flex_1()
+                            .cursor_text()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.edit_terminal_title(terminal_id, window, cx);
+                            }))
+                            .child(Label::new(title).truncate())
+                            .into_any_element()
+                    }
                 } else {
                     Label::new("Terminal")
                         .color(Color::Muted)
@@ -3561,6 +3834,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
         let conversation_view = match &self.base_view {
             BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
@@ -3622,21 +3896,26 @@ impl AgentPanel {
                             }
                         }
 
+                        if !showing_terminal {
+                            menu = menu
+                                .header("MCP Servers")
+                                .action(
+                                    "View Server Extensions",
+                                    Box::new(zed_actions::Extensions {
+                                        category_filter: Some(
+                                            zed_actions::ExtensionCategoryFilter::ContextServers,
+                                        ),
+                                        id: None,
+                                    }),
+                                )
+                                .action("Add Custom Server…", Box::new(AddContextServer))
+                                .separator()
+                                .action("Rules", Box::new(OpenRulesLibrary::default()))
+                                .action("Profiles", Box::new(ManageProfiles::default()))
+                                .separator();
+                        }
+
                         menu = menu
-                            .header("MCP Servers")
-                            .action(
-                                "View Server Extensions",
-                                Box::new(zed_actions::Extensions {
-                                    category_filter: Some(
-                                        zed_actions::ExtensionCategoryFilter::ContextServers,
-                                    ),
-                                    id: None,
-                                }),
-                            )
-                            .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator()
-                            .action("Rules", Box::new(OpenRulesLibrary::default()))
-                            .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
@@ -3739,7 +4018,7 @@ impl AgentPanel {
                         .item(
                             ContextMenuEntry::new("Zed Agent")
                                 .when(is_agent_selected(Agent::NativeAgent), |this| {
-                                    this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    this.action(Box::new(NewThread))
                                 })
                                 .icon(IconName::ZedAgent)
                                 .icon_color(Color::Muted)
@@ -3752,10 +4031,8 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.new_external_agent_thread(
-                                                            &NewExternalAgentThread {
-                                                                agent: Some(Agent::NativeAgent),
-                                                            },
+                                                        panel.new_agent_thread(
+                                                            Agent::NativeAgent,
                                                             window,
                                                             cx,
                                                         );
@@ -3769,6 +4046,7 @@ impl AgentPanel {
                         .when(supports_terminal, |menu| {
                             menu.item(
                                 ContextMenuEntry::new("Terminal")
+                                    .when(showing_terminal, |this| this.action(Box::new(NewThread)))
                                     .icon(IconName::Terminal)
                                     .icon_color(Color::Muted)
                                     .handler({
@@ -3848,11 +4126,7 @@ impl AgentPanel {
                                         is_agent_selected(Agent::Custom {
                                             id: item.id.clone(),
                                         }),
-                                        |this| {
-                                            this.action(Box::new(NewExternalAgentThread {
-                                                agent: None,
-                                            }))
-                                        },
+                                        |this| this.action(Box::new(NewThread)),
                                     )
                                     .icon_color(Color::Muted)
                                     .disabled(is_via_collab)
@@ -3868,9 +4142,7 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_external_agent_thread(
                                                                 &NewExternalAgentThread {
-                                                                    agent: Some(Agent::Custom {
-                                                                        id: agent_id.clone(),
-                                                                    }),
+                                                                    agent: agent_id.clone(),
                                                                 },
                                                                 window,
                                                                 cx,
@@ -3954,10 +4226,22 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
-        let is_empty_state = !matches!(self.base_view, BaseView::Terminal { .. })
-            && !self.active_thread_has_messages(cx);
+        enum ToolbarMode {
+            Overlay,
+            Terminal,
+            EmptyThread,
+            ActiveThread,
+        }
 
-        let is_in_history_or_config = self.is_overlay_open();
+        let mode = if self.is_overlay_open() {
+            ToolbarMode::Overlay
+        } else if matches!(self.base_view, BaseView::Terminal { .. }) {
+            ToolbarMode::Terminal
+        } else if self.active_thread_has_messages(cx) {
+            ToolbarMode::ActiveThread
+        } else {
+            ToolbarMode::EmptyThread
+        };
 
         let is_full_screen = self.is_zoomed(window, cx);
         let full_screen_button = if is_full_screen {
@@ -3976,20 +4260,19 @@ impl AgentPanel {
                 }))
         };
 
-        let use_v2_empty_toolbar = is_empty_state && !is_in_history_or_config;
-
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
         let base_container = h_flex()
             .size_full()
-            .when(!is_in_history_or_config, |this| {
-                this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto())
-            })
+            .when(
+                matches!(mode, ToolbarMode::EmptyThread | ToolbarMode::ActiveThread),
+                |this| this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto()),
+            )
             .flex_none()
             .justify_between()
             .gap_2();
 
-        let toolbar_content = if use_v2_empty_toolbar {
+        let toolbar_content = if matches!(mode, ToolbarMode::EmptyThread) {
             let (chevron_icon, icon_color, label_color) =
                 if self.new_thread_menu_handle.is_deployed() {
                     (IconName::ChevronUp, Color::Accent, Color::Accent)
@@ -4082,7 +4365,7 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .child(if self.is_overlay_open() {
+                        .child(if matches!(mode, ToolbarMode::Overlay) {
                             self.render_toolbar_back_button(cx).into_any_element()
                         } else {
                             selected_agent.into_any_element()
@@ -4319,12 +4602,6 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        match self.visible_surface() {
-            VisibleSurface::AgentThread(_) => key_context.add("acp_thread"),
-            VisibleSurface::Terminal(_)
-            | VisibleSurface::Configuration(_)
-            | VisibleSurface::Uninitialized => {}
-        }
         key_context
     }
 }
@@ -4649,7 +4926,6 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Instant;
-    use workspace::MultiWorkspace;
 
     #[derive(Clone, Default)]
     struct SessionTrackingConnection {
@@ -5989,6 +6265,163 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_terminal_title_editor_is_created_only_while_editing(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(terminal.title_editor.is_none());
+        });
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.refresh_terminal_title(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(terminal.title_editor.is_none());
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.edit_terminal_title(terminal_id, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            let title_editor = terminal
+                .title_editor
+                .as_ref()
+                .expect("terminal title editor should be active while editing");
+            assert_eq!(title_editor.read(cx).text(cx), "Dev Server");
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.stop_editing_terminal_title(terminal_id, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(terminal.title_editor.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_title_editor_does_not_set_custom_title_when_unchanged(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Initial Custom Title", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        let terminal_view = panel.read_with(&cx, |panel, _cx| {
+            panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel")
+                .view
+                .clone()
+        });
+        terminal_view.update(&mut cx, |terminal_view, cx| {
+            terminal_view.set_custom_title(None, cx);
+        });
+        let terminal_entity =
+            terminal_view.read_with(&cx, |terminal_view, _cx| terminal_view.terminal().clone());
+        terminal_entity.update(&mut cx, |terminal, cx| {
+            terminal.breadcrumb_text = "Shell Breadcrumb".to_string();
+            cx.emit(TerminalEvent::BreadcrumbsChanged);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(terminals.len(), 1);
+            assert_eq!(terminals[0].title.as_ref(), "Shell Breadcrumb");
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.edit_terminal_title(terminal_id, window, cx);
+        });
+        cx.run_until_parked();
+
+        let title_editor = panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            let title_editor = terminal
+                .title_editor
+                .as_ref()
+                .expect("terminal title editor should be active while editing")
+                .clone();
+            assert_eq!(title_editor.read(cx).text(cx), "Shell Breadcrumb");
+            title_editor
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.handle_terminal_title_editor_event(
+                terminal_id,
+                &title_editor,
+                &editor::EditorEvent::BufferEdited,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        terminal_view.read_with(&cx, |terminal_view, _cx| {
+            assert!(terminal_view.custom_title().is_none());
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.stop_editing_terminal_title(terminal_id, false, window, cx);
+        });
+        terminal_entity.update(&mut cx, |terminal, cx| {
+            terminal.breadcrumb_text = "Updated Shell Breadcrumb".to_string();
+            cx.emit(TerminalEvent::BreadcrumbsChanged);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(terminals.len(), 1);
+            assert_eq!(terminals[0].title.as_ref(), "Updated Shell Breadcrumb");
+        });
+    }
+
+    #[gpui::test]
     async fn test_terminal_bell_marks_and_activation_clears_notification(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
         cx.update(|_, cx| {
@@ -7083,7 +7516,7 @@ mod tests {
         // sidebar, and a fresh ephemeral draft becomes active. The typed
         // content is carried over into the new draft via
         // `active_initial_content` so nothing is lost.
-        cx.dispatch_action(NewExternalAgentThread { agent: None });
+        cx.dispatch_action(NewThread);
         cx.run_until_parked();
 
         panel.read_with(cx, |panel, _cx| {
@@ -7165,7 +7598,7 @@ mod tests {
         // Switch to a different agent. ensure_draft should extract the typed
         // content from the old draft and pre-fill the new one.
         cx.dispatch_action(NewExternalAgentThread {
-            agent: Some(Agent::Stub),
+            agent: Agent::Stub.id(),
         });
         cx.run_until_parked();
 
