@@ -44,8 +44,8 @@ use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
-use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
 use crate::message_editor::SessionCapabilities;
+use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
 use rope::Point;
 use settings::{
     NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
@@ -2432,8 +2432,19 @@ impl ConversationView {
         }
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle, cx: &App) -> MarkdownElement {
-        render_agent_markdown(markdown, style, &self.workspace, &self.project.downgrade(), cx)
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
+        render_agent_markdown(
+            markdown,
+            style,
+            &self.workspace,
+            &self.project.downgrade(),
+            cx,
+        )
     }
 
     fn notify_with_sound(

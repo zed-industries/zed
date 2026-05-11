@@ -5904,12 +5904,12 @@ impl ThreadView {
         // Suppress the code block's built-in copy button so we don't stack two
         // copy buttons on top of each other; the outer button below is the one
         // we want, because it copies the unfenced command text.
-        let markdown_element =
-            self.render_markdown(command, style, cx)
-                .code_block_renderer(CodeBlockRenderer::Default {
-                    copy_button_visibility: CopyButtonVisibility::Hidden,
-                    border: false,
-                });
+        let markdown_element = self
+            .render_markdown(command, style, cx)
+            .code_block_renderer(CodeBlockRenderer::Default {
+                copy_button_visibility: CopyButtonVisibility::Hidden,
+                border: false,
+            });
         let copy_button = CopyButton::new("copy-command", command_text)
             .tooltip_label("Copy Command")
             .visible_on_hover(group.clone());
@@ -8593,7 +8593,12 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle, cx: &App) -> MarkdownElement {
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
         render_agent_markdown(markdown, style, &self.workspace, &self.project, cx)
     }
 

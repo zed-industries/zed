@@ -46,7 +46,6 @@ use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
 };
-use std::path::{Path, PathBuf};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -60,6 +59,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
+use std::path::{Path, PathBuf};
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -95,9 +95,7 @@ pub(crate) fn resolve_agent_image(
 
     let path = Path::new(dest_url);
     if path.is_absolute() && path.exists() {
-        return Some(ImageSource::Resource(Resource::Path(Arc::from(
-            path,
-        ))));
+        return Some(ImageSource::Resource(Resource::Path(Arc::from(path))));
     }
 
     for root in worktree_roots {
