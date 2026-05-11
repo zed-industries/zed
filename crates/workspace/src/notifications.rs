@@ -1,6 +1,5 @@
 use crate::{
-    MultiWorkspace, SuppressNotification, Toast, Workspace,
-    workspace_error::{DisplayWorkspaceError, WorkspaceError},
+    MultiWorkspace, SuppressNotification, Toast, Workspace, workspace_error::WorkspaceError,
 };
 use anyhow::Context as _;
 use gpui::{
@@ -603,9 +602,40 @@ pub mod simple_message_notification {
 
     use super::{FADE_OUT_DURATION, MINIMUM_RESUME_DURATION, Notification, SuppressEvent};
 
-    struct AutoDismissTimer {
-        instant_started: std::time::Instant,
-        _task: Task<()>,
+    enum AutoDismissState {
+        WaitingToDismiss {
+            timer_started: std::time::Instant,
+            duration: Duration,
+            _task: Task<()>,
+        },
+        Paused {
+            remaining: Duration,
+        },
+        FadingOut {
+            fade_started: std::time::Instant,
+        },
+    }
+
+    impl AutoDismissState {
+        fn is_fading(&self) -> bool {
+            matches!(self, Self::FadingOut { .. })
+        }
+
+        fn opacity(&self) -> f32 {
+            match self {
+                Self::FadingOut { fade_started } => {
+                    let elapsed = fade_started.elapsed();
+                    let progress =
+                        (elapsed.as_secs_f32() / FADE_OUT_DURATION.as_secs_f32()).min(1.0);
+                    1.0 - progress
+                }
+                _ => 1.0,
+            }
+        }
+
+        fn fade_complete(&self) -> bool {
+            matches!(self, Self::FadingOut { fade_started } if fade_started.elapsed() >= FADE_OUT_DURATION)
+        }
     }
 
     pub struct MessageNotification {
@@ -629,12 +659,9 @@ pub mod simple_message_notification {
         show_suppress_button: bool,
         title: Option<SharedString>,
         scroll_handle: ScrollHandle,
-        auto_dismiss_severity: Option<ErrorSeverity>,
+        dismiss_delay: Option<Duration>,
         hovered: bool,
-        opacity: f32,
-        dismiss_timer: Option<AutoDismissTimer>,
-        duration_remaining: Option<Duration>,
-        fade_task: Option<Task<()>>,
+        auto_dismiss: Option<AutoDismissState>,
     }
 
     impl Focusable for MessageNotification {
@@ -686,12 +713,9 @@ pub mod simple_message_notification {
                 title: None,
                 focus_handle: cx.focus_handle(),
                 scroll_handle: ScrollHandle::new(),
-                auto_dismiss_severity: None,
+                dismiss_delay: None,
                 hovered: false,
-                opacity: 1.0,
-                dismiss_timer: None,
-                duration_remaining: None,
-                fade_task: None,
+                auto_dismiss: None,
             }
         }
 
@@ -820,8 +844,8 @@ pub mod simple_message_notification {
         }
 
         fn auto_dismiss(mut self, severity: ErrorSeverity, cx: &mut Context<Self>) -> Self {
-            self.auto_dismiss_severity = Some(severity);
             if let Some(delay) = severity.auto_dismiss_delay() {
+                self.dismiss_delay = Some(delay);
                 self.start_dismiss_timer(delay, cx);
             }
             self
@@ -830,14 +854,8 @@ pub mod simple_message_notification {
         pub fn from_workspace_error<E: WorkspaceError>(error: E, cx: &mut Context<Self>) -> Self {
             let primary_message = error.primary_message();
             let severity = error.severity();
-            let (severity_icon, severity_color) = match severity {
-                ErrorSeverity::Error => (IconName::Warning, Color::Error),
-                ErrorSeverity::Warning => (IconName::Warning, Color::Warning),
-                ErrorSeverity::Info => (IconName::Info, Color::Accent),
-            };
-
             Self::new(primary_message.clone(), cx)
-                .content_icon(severity_icon, severity_color)
+                .content_icon(IconName::Warning, Color::Error)
                 .copy_text(primary_message)
                 .show_suppress_button(false)
                 .when_some(error.secondary_message(), |this, text| {
@@ -863,116 +881,96 @@ pub mod simple_message_notification {
         }
 
         fn start_dismiss_timer(&mut self, duration: Duration, cx: &mut Context<Self>) {
-            self.clear_dismiss_timer();
-
-            let instant_started = std::time::Instant::now();
             let task = cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(duration).await;
                 this.update(cx, |this, cx| {
-                    this.start_fade_out(cx);
+                    this.auto_dismiss = Some(AutoDismissState::FadingOut {
+                        fade_started: std::time::Instant::now(),
+                    });
+                    cx.notify();
                 })
                 .ok();
             });
 
-            self.duration_remaining = Some(duration);
-            self.dismiss_timer = Some(AutoDismissTimer {
-                instant_started,
+            self.auto_dismiss = Some(AutoDismissState::WaitingToDismiss {
+                timer_started: std::time::Instant::now(),
+                duration,
                 _task: task,
             });
         }
 
-        fn start_fade_out(&mut self, cx: &mut Context<Self>) {
-            self.dismiss_timer = None;
-            self.opacity = 1.0;
+        fn on_hover_changed(&mut self, hovering: bool, cx: &mut Context<Self>) {
+            let Some(state) = self.auto_dismiss.take() else {
+                return;
+            };
 
-            let start = std::time::Instant::now();
-            self.fade_task = Some(cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(16))
-                        .await;
-                    let elapsed = start.elapsed();
-                    let progress =
-                        (elapsed.as_secs_f32() / FADE_OUT_DURATION.as_secs_f32()).min(1.0);
-                    let should_dismiss = this
-                        .update(cx, |this, cx| {
-                            if this.hovered {
-                                return false;
-                            }
-                            this.opacity = 1.0 - progress;
-                            cx.notify();
-                            progress >= 1.0
-                        })
-                        .unwrap_or(true);
+            self.hovered = hovering;
 
-                    if should_dismiss {
-                        this.update(cx, |_, cx| {
-                            cx.emit(DismissEvent);
-                        })
-                        .ok();
-                        break;
+            if hovering {
+                self.auto_dismiss = Some(match state {
+                    AutoDismissState::WaitingToDismiss {
+                        timer_started,
+                        duration,
+                        ..
+                    } => {
+                        let elapsed = timer_started.elapsed();
+                        let remaining = duration
+                            .saturating_sub(elapsed)
+                            .max(MINIMUM_RESUME_DURATION);
+                        AutoDismissState::Paused { remaining }
+                    }
+                    AutoDismissState::FadingOut { .. } => {
+                        if let Some(delay) = self.dismiss_delay {
+                            self.start_dismiss_timer(delay, cx);
+                            return;
+                        }
+                        AutoDismissState::Paused {
+                            remaining: MINIMUM_RESUME_DURATION,
+                        }
+                    }
+                    other => other,
+                });
+            } else {
+                match state {
+                    AutoDismissState::Paused { remaining } => {
+                        self.start_dismiss_timer(remaining, cx);
+                    }
+                    _ => {
+                        self.auto_dismiss = Some(state);
                     }
                 }
-            }));
-            cx.notify();
-        }
-
-        fn pause_dismiss_timer(&mut self) {
-            let Some(dismiss_timer) = self.dismiss_timer.take() else {
-                return;
-            };
-            let Some(duration_remaining) = self.duration_remaining.as_mut() else {
-                return;
-            };
-            *duration_remaining = duration_remaining
-                .saturating_sub(dismiss_timer.instant_started.elapsed())
-                .max(MINIMUM_RESUME_DURATION);
-        }
-
-        fn cancel_fade_and_reset_timer(&mut self, cx: &mut Context<Self>) {
-            self.fade_task = None;
-            self.opacity = 1.0;
-            cx.notify();
-
-            if let Some(severity) = self.auto_dismiss_severity {
-                if let Some(delay) = severity.auto_dismiss_delay() {
-                    self.start_dismiss_timer(delay, cx);
-                }
             }
         }
 
-        fn restart_dismiss_timer(&mut self, cx: &mut Context<Self>) {
-            let Some(duration) = self.duration_remaining else {
-                return;
-            };
-            self.start_dismiss_timer(duration, cx);
+        fn opacity(&self) -> f32 {
+            self.auto_dismiss
+                .as_ref()
+                .map_or(1.0, |state| state.opacity())
         }
 
-        fn clear_dismiss_timer(&mut self) {
-            self.dismiss_timer.take();
-        }
-
-        fn on_hover_changed(&mut self, hovering: bool, cx: &mut Context<Self>) {
-            if self.auto_dismiss_severity.is_none() {
-                return;
-            }
-            self.hovered = hovering;
-            if hovering {
-                if self.fade_task.is_some() {
-                    self.cancel_fade_and_reset_timer(cx);
-                } else {
-                    self.pause_dismiss_timer();
-                }
-            } else if self.fade_task.is_none() {
-                self.restart_dismiss_timer(cx);
-            }
+        fn needs_animation_frame(&self) -> bool {
+            self.auto_dismiss
+                .as_ref()
+                .is_some_and(|state| state.is_fading())
         }
     }
 
     impl Render for MessageNotification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let opacity = self.opacity;
-            let has_auto_dismiss = self.auto_dismiss_severity.is_some();
+            if self
+                .auto_dismiss
+                .as_ref()
+                .is_some_and(|state| state.fade_complete())
+            {
+                cx.emit(DismissEvent);
+            }
+
+            if self.needs_animation_frame() {
+                window.request_animation_frame();
+            }
+
+            let opacity = self.opacity();
+            let has_auto_dismiss = self.auto_dismiss.is_some();
 
             div()
                 .id("message-notification-wrapper")
@@ -1244,7 +1242,7 @@ where
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("Showing error notification in workspace: {err:?}");
-                workspace.show_error(DisplayWorkspaceError::new_with_prefix(&err), cx);
+                workspace.show_error(format!("Error: {err}"), cx);
                 None
             }
         }
@@ -1259,9 +1257,9 @@ where
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("{err:?}");
-                let workspace_err = DisplayWorkspaceError::new_with_prefix(&err);
+                let message = format!("Error: {err}");
                 workspace
-                    .update(cx, |workspace, cx| workspace.show_error(workspace_err, cx))
+                    .update(cx, |workspace, cx| workspace.show_error(message, cx))
                     .ok();
                 None
             }
@@ -1272,17 +1270,14 @@ where
         match self {
             Ok(value) => Some(value),
             Err(err) => {
-                let message: SharedString = format!("Error: {err}").into();
+                let message = format!("Error: {err}");
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
                     move |cx| {
                         cx.new({
                             let message = message.clone();
                             move |cx| {
-                                let error = crate::workspace_error::StringWorkspaceError::new(
-                                    message.to_string(),
-                                );
-                                simple_message_notification::MessageNotification::from_workspace_error(error, cx)
+                                simple_message_notification::MessageNotification::from_workspace_error(message, cx)
                             }
                         })
                     }

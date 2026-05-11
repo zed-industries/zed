@@ -904,13 +904,13 @@ fn register_actions(
                     cx.open_url(parsed_url.as_str());
                 }
                 Err(e) => {
-                    let workspace_err = workspace::workspace_error::StringWorkspaceError::new(
+                    workspace.show_error(
                         format!(
                             "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
                             action.url
                         ),
+                        cx,
                     );
-                    workspace.show_error(workspace_err, cx);
                 }
             }
         })

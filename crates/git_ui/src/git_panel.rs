@@ -85,11 +85,7 @@ use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{
-        DetachAndPromptErr, NotificationId, NotifyResultExt,
-        simple_message_notification::MessageNotification,
-    },
-    workspace_error::{DisplayWorkspaceError, StringWorkspaceError},
+    notifications::{DetachAndPromptErr, NotifyResultExt},
 };
 
 actions!(
@@ -844,8 +840,7 @@ impl GitPanel {
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                let workspace_error = DisplayWorkspaceError::new(error);
-                                workspace.show_error(workspace_error, cx);
+                                workspace.show_error(format!("{error}"), cx);
                             })
                             .ok();
                     }
@@ -4033,16 +4028,7 @@ impl GitPanel {
     {
         if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
             let _ = workspace.update(cx, |workspace, cx| {
-                struct CommitMessageError;
-                let notification_id = NotificationId::unique::<CommitMessageError>();
-                workspace.show_notification(notification_id, cx, |cx| {
-                    cx.new(|cx| {
-                        let error = StringWorkspaceError::new(format!(
-                            "Failed to generate commit message: {err}"
-                        ));
-                        MessageNotification::from_workspace_error(error, cx)
-                    })
-                });
+                workspace.show_error(format!("Failed to generate commit message: {err}"), cx);
             });
         }
     }

@@ -4056,12 +4056,7 @@ impl Pane {
             .workspace
             .update(cx, |workspace, cx| {
                 if workspace.project().read(cx).is_via_collab() {
-                    workspace.show_error(
-                        crate::workspace_error::StringWorkspaceError::new(
-                            "Cannot drop files on a remote project",
-                        ),
-                        cx,
-                    );
+                    workspace.show_error("Cannot drop files on a remote project".to_string(), cx);
                     true
                 } else {
                     false
@@ -4117,10 +4112,7 @@ impl Pane {
                         _ = workspace.update_in(cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
-                                    workspace.show_error(
-                                        crate::workspace_error::DisplayWorkspaceError::new_with_prefix(&e),
-                                        cx,
-                                    );
+                                    workspace.show_error(format!("Error: {e}"), cx);
                                 }
                             }
                             if to_pane.read(cx).items_len() == 0 {

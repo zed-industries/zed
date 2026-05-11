@@ -156,11 +156,10 @@ pub fn init(cx: &mut App) {
                                     .update(cx, |workspace, cx| {
                                         // NOTE: using `anyhow::context` here ends up not printing
                                         // the error
-                                        let workspace_err =
-                                            workspace::workspace_error::StringWorkspaceError::new(
-                                                format!("Failed to install dev extension: {}", err),
-                                            );
-                                        workspace.show_error(workspace_err, cx);
+                                        workspace.show_error(
+                                            format!("Failed to install dev extension: {}", err),
+                                            cx,
+                                        );
                                     })
                                     .ok();
                             }

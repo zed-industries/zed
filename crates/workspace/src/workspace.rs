@@ -3828,9 +3828,7 @@ impl Workspace {
         let project = self.project.read(cx);
         if project.is_via_collab() {
             self.show_error(
-                workspace_error::StringWorkspaceError::new(
-                    "You cannot add folders to someone else's project",
-                ),
+                "You cannot add folders to someone else's project".to_string(),
                 cx,
             );
             return;
@@ -9948,10 +9946,7 @@ pub fn open_paths(
                 workspace.update(cx, |workspace, cx| {
                     for item in open_task.iter().flatten() {
                         if let Err(e) = item {
-                            workspace.show_error(
-                                workspace_error::DisplayWorkspaceError::new_with_prefix(e),
-                                cx,
-                            );
+                            workspace.show_error(format!("Error: {e}"), cx);
                         }
                     }
                 });
@@ -10286,15 +10281,10 @@ async fn open_remote_project_inner(
         for error in project_path_errors {
             if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                 if let Some(path) = error.error_tag("path") {
-                    workspace.show_error(
-                        workspace_error::StringWorkspaceError::new(format!(
-                            "'{path}' does not exist"
-                        )),
-                        cx,
-                    )
+                    workspace.show_error(format!("'{path}' does not exist"), cx)
                 }
             } else {
-                workspace.show_error(workspace_error::DisplayWorkspaceError::new(&error), cx)
+                workspace.show_error(format!("{error}"), cx)
             }
         }
     });

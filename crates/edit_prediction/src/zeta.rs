@@ -503,9 +503,12 @@ fn handle_api_response<T>(
                         NotificationId::unique::<ZedUpdateRequiredError>(),
                         cx,
                         move |cx| {
-                            cx.new(|cx| {
-                                let error = UpdateRequiredError { message };
-                                MessageNotification::from_workspace_error(error, cx)
+                            cx.new({
+                                let message = message.clone();
+                                move |cx| {
+                                    let error = UpdateRequiredError { message };
+                                    MessageNotification::from_workspace_error(error, cx)
+                                }
                             })
                         },
                     );

@@ -1,4 +1,3 @@
-use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,17 +6,17 @@ use ui::IconName;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorSeverity {
+    Critical,
     Error,
     Warning,
-    Info,
 }
 
 impl ErrorSeverity {
     pub fn auto_dismiss_delay(&self) -> Option<Duration> {
         match self {
-            ErrorSeverity::Error => None,
+            ErrorSeverity::Critical => None,
+            ErrorSeverity::Error => Some(Duration::from_secs(20)),
             ErrorSeverity::Warning => Some(Duration::from_secs(10)),
-            ErrorSeverity::Info => Some(Duration::from_secs(5)),
         }
     }
 }
@@ -79,6 +78,26 @@ pub trait WorkspaceError {
     fn severity(&self) -> ErrorSeverity;
 }
 
+impl WorkspaceError for String {
+    fn primary_message(&self) -> SharedString {
+        self.clone().into()
+    }
+
+    fn severity(&self) -> ErrorSeverity {
+        ErrorSeverity::Error
+    }
+}
+
+impl WorkspaceError for anyhow::Error {
+    fn primary_message(&self) -> SharedString {
+        format!("{self}").into()
+    }
+
+    fn severity(&self) -> ErrorSeverity {
+        ErrorSeverity::Critical
+    }
+}
+
 pub struct PortalError {
     message: String,
 }
@@ -97,7 +116,7 @@ impl WorkspaceError for PortalError {
     }
 
     fn severity(&self) -> ErrorSeverity {
-        ErrorSeverity::Error
+        ErrorSeverity::Critical
     }
 
     fn primary_action(&self) -> Option<ErrorAction> {
@@ -105,87 +124,5 @@ impl WorkspaceError for PortalError {
             "See docs",
             "https://zed.dev/docs/linux#i-cant-open-any-files",
         ))
-    }
-}
-
-pub struct AnyhowWorkspaceError {
-    error: anyhow::Error,
-}
-
-impl AnyhowWorkspaceError {
-    pub fn new(error: anyhow::Error) -> Self {
-        Self { error }
-    }
-}
-
-impl From<anyhow::Error> for AnyhowWorkspaceError {
-    fn from(error: anyhow::Error) -> Self {
-        Self::new(error)
-    }
-}
-
-impl WorkspaceError for AnyhowWorkspaceError {
-    fn primary_message(&self) -> SharedString {
-        format!("{}", self.error).into()
-    }
-
-    fn severity(&self) -> ErrorSeverity {
-        ErrorSeverity::Error
-    }
-}
-
-pub struct StringWorkspaceError {
-    message: String,
-}
-
-impl StringWorkspaceError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl From<String> for StringWorkspaceError {
-    fn from(message: String) -> Self {
-        Self::new(message)
-    }
-}
-
-impl WorkspaceError for StringWorkspaceError {
-    fn primary_message(&self) -> SharedString {
-        self.message.clone().into()
-    }
-
-    fn severity(&self) -> ErrorSeverity {
-        ErrorSeverity::Error
-    }
-}
-
-pub struct DisplayWorkspaceError {
-    message: String,
-}
-
-impl DisplayWorkspaceError {
-    pub fn new<E: fmt::Display + fmt::Debug>(error: &E) -> Self {
-        Self {
-            message: format!("{}", error),
-        }
-    }
-
-    pub fn new_with_prefix<E: fmt::Display + fmt::Debug>(error: &E) -> Self {
-        Self {
-            message: format!("Error: {}", error),
-        }
-    }
-}
-
-impl WorkspaceError for DisplayWorkspaceError {
-    fn primary_message(&self) -> SharedString {
-        self.message.clone().into()
-    }
-
-    fn severity(&self) -> ErrorSeverity {
-        ErrorSeverity::Error
     }
 }
