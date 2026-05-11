@@ -1,0 +1,46 @@
+warning: `.len()` called in a loop bound; consider hoisting into a local variable
+  --> $DIR/len_in_loop_condition.rs:12:17
+   |
+LL |     for i in 0..v.len() {
+   |                 ^^^^^^^
+   |
+   = note: `#[warn(len_in_loop_condition)]` on by default
+
+warning: `.len()` called in a loop bound; consider hoisting into a local variable
+  --> $DIR/len_in_loop_condition.rs:18:17
+   |
+LL |     for i in 0..s.len() {
+   |                 ^^^^^^^
+
+warning: `.len()` called in a loop bound; consider hoisting into a local variable
+  --> $DIR/len_in_loop_condition.rs:24:18
+   |
+LL |     for i in 0..=v.len() {
+   |                  ^^^^^^^
+
+warning: `.len()` called in a loop bound; consider hoisting into a local variable
+  --> $DIR/len_in_loop_condition.rs:30:17
+   |
+LL |     for i in 2..v.len() {
+   |                 ^^^^^^^
+
+warning: `.len()` called in a loop bound; consider hoisting into a local variable
+  --> $DIR/len_in_loop_condition.rs:37:15
+   |
+LL |     while i < v.len() {
+   |               ^^^^^^^
+
+warning: `.len()` called in a loop bound; consider hoisting into a local variable
+  --> $DIR/len_in_loop_condition.rs:44:11
+   |
+LL |     while v.len() > i {
+   |           ^^^^^^^
+
+warning: `.len()` called in a loop bound; consider hoisting into a local variable
+  --> $DIR/len_in_loop_condition.rs:50:17
+   |
+LL |     for i in 0..map.len() {
+   |                 ^^^^^^^^^
+
+warning: 7 warnings emitted
+

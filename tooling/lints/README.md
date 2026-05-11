@@ -8,6 +8,7 @@ A [dylint](https://github.com/trailofbits/dylint) library that flags various bad
 - `entity_update_in_render` — `Entity::update`/`WeakEntity::update` mutating an entity inside `Render::render`.
 - `notify_in_render` — `Context::notify()` called inside `Render::render`.
 - `owned_string_into_shared` — `String::from(<lit>).into()` / `<lit>.to_string().into()` / `<lit>.to_owned().into()` whose target is `SharedString`, `Arc<str>`, `Rc<str>`, or `Cow<'_, str>`.
+- `wrapped_doc_comment` — `///` doc-comment paragraphs wrapped across multiple physical lines. Tool description doc comments are serialized verbatim into JSON tool schemas sent to language models; mid-paragraph line breaks add no semantic value and waste tokens.
 
 ## How to run
 Ideally you run this as part of the `clippy` script in the  `zed/scripts` directory since this will also run our other linters.

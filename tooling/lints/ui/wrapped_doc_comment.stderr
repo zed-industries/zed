@@ -1,0 +1,34 @@
+warning: doc-comment paragraph is wrapped across multiple `///` lines; keep each paragraph on a single line
+  --> $DIR/wrapped_doc_comment.rs:8:1
+   |
+LL | /// line numbers, and code snippets.
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(wrapped_doc_comment)]` on by default
+
+warning: doc-comment paragraph is wrapped across multiple `///` lines; keep each paragraph on a single line
+  --> $DIR/wrapped_doc_comment.rs:12:1
+   |
+LL | /// across all files in the project. The language server determines which
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: doc-comment paragraph is wrapped across multiple `///` lines; keep each paragraph on a single line
+  --> $DIR/wrapped_doc_comment.rs:19:1
+   |
+LL | /// lines, which is what we want to flag.
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: doc-comment paragraph is wrapped across multiple `///` lines; keep each paragraph on a single line
+  --> $DIR/wrapped_doc_comment.rs:24:5
+   |
+LL |     /// (e.g. "crates/editor/src/editor.rs").
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: doc-comment paragraph is wrapped across multiple `///` lines; keep each paragraph on a single line
+  --> $DIR/wrapped_doc_comment.rs:30:5
+   |
+LL |     /// two physical lines for no good reason.
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: 5 warnings emitted
+
