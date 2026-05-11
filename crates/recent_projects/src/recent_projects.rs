@@ -2844,10 +2844,8 @@ mod tests {
         // Multi-path workspace that overlaps with one open folder but adds an
         // unrelated path (e.g. AC when AB is open). This is a distinct project
         // and must remain visible.
-        let partial_overlap = local_workspace(&[
-            open_folder(0).path,
-            PathBuf::from(path!("/elsewhere/c")),
-        ]);
+        let partial_overlap =
+            local_workspace(&[open_folder(0).path, PathBuf::from(path!("/elsewhere/c"))]);
         assert!(!delegate.is_open_folder(&partial_overlap));
 
         // Multi-path workspace fully made of open folders is still a distinct
