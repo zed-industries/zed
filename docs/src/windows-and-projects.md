@@ -5,7 +5,7 @@ description: "How Zed handles multiple projects in windows, including the projec
 
 # Windows & Projects
 
-Zed lets you work on multiple projects in a single window. Projects appear in a sidebar on the left, and you can switch between them while keeping your context intact.
+Zed lets you work on multiple projects in a single window. Projects appear in the threads sidebar on the left, and you can switch between them while keeping your context intact.
 
 ## How Projects Open
 
@@ -25,9 +25,9 @@ When you have multiple projects open:
 - Click a project in the sidebar to switch to it
 - Each project has its own file tree, git state, and search scope
 - Agent threads are tied to their project context
-- Your editor layout (splits, tabs) is preserved per project
+- Your workspace layout (splits, tabs) is preserved per project
 
-Think of projects in the sidebar like browser tabs, but for codebases.
+Think of projects in the sidebar like browser tabs, but for repositories.
 
 ## Opening in a New Window
 
@@ -77,7 +77,13 @@ This setting affects CLI and double-click behavior, not the File > Open menu.
 
 ## Adding Folders to a Project
 
-If you want to add a folder to your current project (not as a separate project in the sidebar), use File > Add Folder to Project. This adds the folder as an additional root in your current project's file tree, similar to VS Code's multi-root workspaces.
+If you want to add a folder to your current project (not as a separate project in the sidebar), you have several options:
+
+- **File menu**: File > Add Folder to Project
+- **Project panel**: Right-click in the project panel and choose "Add Folders to Project"
+- **Open Recent**: Select a recent project and click the "Add Folder to this Project" button
+
+This adds the folder as an additional root in your current project's file tree, similar to VS Code's multi-root workspaces.
 
 ## See Also
 

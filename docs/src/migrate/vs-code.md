@@ -259,7 +259,7 @@ Zed takes a different approach.
 
 In Zed:
 
-- **Multiple projects in one window**: You can open multiple folders in the same window. Each appears in a sidebar on the left, and you can switch between them while preserving your layout and agent threads. See [Windows & Projects](../windows-and-projects.md).
+- **Multiple projects in one window**: You can open multiple folders in the same window. Each appears in the threads sidebar on the left, and you can switch between them while preserving your layout and agent threads. See [Windows & Projects](../windows-and-projects.md).
 
 - **No workspace file format**: There’s no `.code-workspace` equivalent. Opening a folder is your project context.
 
