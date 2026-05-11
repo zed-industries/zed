@@ -29,8 +29,8 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    Skill, SkillLoadError, SkillScopeId, SkillSource, global_skills_dir,
-    load_skills_from_directory, project_skills_relative_path,
+    Skill, SkillScopeId, SkillSource, global_skills_dir, load_skills_from_directory,
+    project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -72,28 +72,10 @@ pub struct RulesLoadingError {
     pub message: SharedString,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SkillLoadingError {
-    pub project_id: EntityId,
-    pub path: PathBuf,
-    pub message: SharedString,
-}
-
-/// Emitted whenever the set of skill loading errors for a project changes.
-/// The `errors` field is the full replacement list; subscribers should treat
-/// it as a snapshot rather than appending. An empty `errors` list means all
-/// previously-reported errors have been resolved.
-#[derive(Clone, Debug)]
-pub struct SkillLoadingErrorsUpdated {
-    pub project_id: EntityId,
-    pub errors: Vec<SkillLoadingError>,
-}
-
 struct ProjectState {
     project: Entity<Project>,
     project_context: Entity<ProjectContext>,
     skills: Arc<Vec<Skill>>,
-    skill_loading_errors: Vec<SkillLoadingError>,
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
     context_server_registry: Entity<ContextServerRegistry>,
@@ -313,8 +295,6 @@ enum SkillsState {
     /// back to `Idle` if the watched directory itself is removed.
     Watching,
 }
-
-impl gpui::EventEmitter<SkillLoadingErrorsUpdated> for NativeAgent {}
 
 static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
     RULES_FILE_NAMES
@@ -664,7 +644,6 @@ impl NativeAgent {
                 project,
                 project_context,
                 skills: Arc::new(Vec::new()),
-                skill_loading_errors: Vec::new(),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
                 _maintain_project_context: cx.spawn(async move |this, cx| {
                     Self::maintain_project_context(
@@ -706,34 +685,11 @@ impl NativeAgent {
                     cx,
                 ))
             })??;
-            let (project_context, skills, skill_errors) = task.await;
+            let (project_context, skills) = task.await;
             let skills = Arc::new(skills);
-            let skill_loading_errors: Vec<SkillLoadingError> = skill_errors
-                .into_iter()
-                .map(|skill_error| SkillLoadingError {
-                    project_id,
-                    path: skill_error.path,
-                    message: skill_error.message.into(),
-                })
-                .collect();
             this.update(cx, |this, cx| {
-                // Only emit SkillLoadingErrorsUpdated when the error list
-                // actually changed. Refreshes happen frequently (prompt-store
-                // updates, rules-file edits, worktree events, trust-state
-                // changes), and re-emitting an unchanged list causes the UI
-                // to redisplay errors the user has already dismissed.
-                // Transitions from non-empty to empty still count as a change,
-                // so subscribers continue to receive an empty list to clear
-                // previously-displayed errors when they get resolved.
-                let errors_changed = this
-                    .projects
-                    .get(&project_id)
-                    .map(|state| state.skill_loading_errors != skill_loading_errors)
-                    .unwrap_or(true);
-
                 if let Some(state) = this.projects.get_mut(&project_id) {
                     state.skills = skills;
-                    state.skill_loading_errors = skill_loading_errors.clone();
                     state
                         .project_context
                         .update(cx, |current_project_context, cx| {
@@ -741,17 +697,10 @@ impl NativeAgent {
                             cx.notify();
                         });
                 }
-                if errors_changed {
-                    cx.emit(SkillLoadingErrorsUpdated {
-                        project_id,
-                        errors: skill_loading_errors,
-                    });
-                }
                 // Skills appear in the slash-command list, so a change in
                 // the loaded skills needs to be pushed out to active sessions.
                 // This runs unconditionally because MCP prompts (also part of
-                // the available commands) can change without affecting the
-                // skill error list.
+                // the available commands) can change as well.
                 this.update_available_commands_for_project(project_id, cx);
             })?;
         }
@@ -764,7 +713,7 @@ impl NativeAgent {
         prompt_store: Option<&Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
-    ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadError>)> {
+    ) -> Task<(ProjectContext, Vec<Skill>)> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         let worktree_tasks = worktrees
             .iter()
@@ -804,49 +753,49 @@ impl NativeAgent {
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
         let worktree_store = project.read(cx).worktree_store();
         let project_skills_task = if skills_enabled {
-            let project_skills_futures: Vec<
-                futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,
-            > = worktrees
-                .iter()
-                .filter_map(|worktree| {
-                    let worktree_id = worktree.read(cx).id();
-                    let is_trusted = trusted_worktrees.as_ref().is_none_or(|trusted_worktrees| {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(&worktree_store, worktree_id, cx)
-                        })
-                    });
-                    if !is_trusted {
-                        return None;
-                    }
-                    let worktree_snapshot = worktree.read(cx);
-                    let abs_path = worktree_snapshot.abs_path();
-                    let worktree_root_name: Arc<str> = worktree_snapshot.root_name_str().into();
-                    // Capture scan_complete *before* spawning so we don't have to re-borrow
-                    // the worktree from inside the async task (which would require a cx).
-                    let scan_complete = worktree_snapshot
-                        .as_local()
-                        .map(|local| local.scan_complete());
-                    let skills_dir = abs_path.join(project_skills_relative_path());
-                    let fs = fs.clone();
-                    Some(
-                        async move {
-                            if let Some(scan_complete) = scan_complete {
-                                scan_complete.await;
-                            }
-                            load_skills_from_directory(
-                                &fs,
-                                &skills_dir,
-                                SkillSource::ProjectLocal {
-                                    worktree_id: SkillScopeId(worktree_id.to_usize()),
-                                    worktree_root_name,
-                                },
-                            )
-                            .await
+            let project_skills_futures: Vec<futures::future::BoxFuture<'static, Vec<Skill>>> =
+                worktrees
+                    .iter()
+                    .filter_map(|worktree| {
+                        let worktree_id = worktree.read(cx).id();
+                        let is_trusted =
+                            trusted_worktrees.as_ref().is_none_or(|trusted_worktrees| {
+                                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                    trusted_worktrees.can_trust(&worktree_store, worktree_id, cx)
+                                })
+                            });
+                        if !is_trusted {
+                            return None;
                         }
-                        .boxed(),
-                    )
-                })
-                .collect();
+                        let worktree_snapshot = worktree.read(cx);
+                        let abs_path = worktree_snapshot.abs_path();
+                        let worktree_root_name: Arc<str> = worktree_snapshot.root_name_str().into();
+                        // Capture scan_complete *before* spawning so we don't have to re-borrow
+                        // the worktree from inside the async task (which would require a cx).
+                        let scan_complete = worktree_snapshot
+                            .as_local()
+                            .map(|local| local.scan_complete());
+                        let skills_dir = abs_path.join(project_skills_relative_path());
+                        let fs = fs.clone();
+                        Some(
+                            async move {
+                                if let Some(scan_complete) = scan_complete {
+                                    scan_complete.await;
+                                }
+                                load_skills_from_directory(
+                                    &fs,
+                                    &skills_dir,
+                                    SkillSource::ProjectLocal {
+                                        worktree_id: SkillScopeId(worktree_id.to_usize()),
+                                        worktree_root_name,
+                                    },
+                                )
+                                .await
+                            }
+                            .boxed(),
+                        )
+                    })
+                    .collect();
             cx.background_spawn(async move { future::join_all(project_skills_futures).await })
         } else {
             Task::ready(Vec::new())
@@ -900,14 +849,20 @@ impl NativeAgent {
                 })
                 .collect::<Vec<_>>();
 
-            // Load and merge skills
+            // Concatenate global skills followed by each worktree's
+            // project-local skills. `find_skill_files`'s sort plus this
+            // iteration order gives a deterministic-enough ordering for
+            // our needs (parsing and conflict resolution happen in a
+            // follow-up PR).
             let global_skills = global_skills_task.await;
             let project_skills_results = project_skills_task.await;
-            let (skills, skill_errors) =
-                merge_skills(global_skills, project_skills_results.into_iter().flatten());
+            let mut skills: Vec<Skill> = global_skills;
+            for project_skills in project_skills_results {
+                skills.extend(project_skills);
+            }
 
             let project_context = ProjectContext::new(worktrees, default_user_rules);
-            (project_context, skills, skill_errors)
+            (project_context, skills)
         })
     }
 
@@ -2556,68 +2511,6 @@ impl TerminalHandle for AcpTerminalHandle {
     }
 }
 
-/// Merge global and project-local skills.
-/// Project-local skills override global skills with the same name.
-fn merge_skills(
-    global: Vec<Result<Skill, SkillLoadError>>,
-    project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
-) -> (Vec<Skill>, Vec<SkillLoadError>) {
-    let mut skills = Vec::new();
-    let mut errors = Vec::new();
-    let mut seen_names: HashMap<String, (usize, SkillSource, PathBuf)> = HashMap::default();
-
-    for result in global.into_iter().chain(project) {
-        match result {
-            Ok(skill) => {
-                if let Some((existing_index, existing_source, existing_path)) =
-                    seen_names.get(&skill.name).cloned()
-                {
-                    match (&existing_source, &skill.source) {
-                        (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
-                            log::warn!(
-                                "Project skill '{}' at '{}' overrides global skill at '{}'",
-                                skill.name,
-                                skill.skill_file_path.display(),
-                                existing_path.display()
-                            );
-                            seen_names.insert(
-                                skill.name.clone(),
-                                (
-                                    existing_index,
-                                    skill.source.clone(),
-                                    skill.skill_file_path.clone(),
-                                ),
-                            );
-                            skills[existing_index] = skill;
-                        }
-                        _ => {
-                            log::warn!(
-                                "Skill '{}' at '{}' conflicts with skill at '{}'; keeping the first one",
-                                skill.name,
-                                skill.skill_file_path.display(),
-                                existing_path.display()
-                            );
-                        }
-                    }
-                } else {
-                    seen_names.insert(
-                        skill.name.clone(),
-                        (
-                            skills.len(),
-                            skill.source.clone(),
-                            skill.skill_file_path.clone(),
-                        ),
-                    );
-                    skills.push(skill);
-                }
-            }
-            Err(e) => errors.push(e),
-        }
-    }
-
-    (skills, errors)
-}
-
 #[cfg(test)]
 mod internal_tests {
     use std::path::Path;
@@ -2634,39 +2527,6 @@ mod internal_tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
-
-    #[test]
-    fn test_project_skills_override_global_skills() {
-        let global_skill = Skill {
-            name: "review".to_string(),
-            description: "Global review".to_string(),
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/home/user/.agents/skills/review"),
-            skill_file_path: PathBuf::from("/home/user/.agents/skills/review/SKILL.md"),
-            content: "global".to_string(),
-            disable_model_invocation: false,
-        };
-        let project_skill = Skill {
-            name: "review".to_string(),
-            description: "Project review".to_string(),
-            source: SkillSource::ProjectLocal {
-                worktree_id: SkillScopeId(1),
-                worktree_root_name: "project".into(),
-            },
-            directory_path: PathBuf::from("/project/.agents/skills/review"),
-            skill_file_path: PathBuf::from("/project/.agents/skills/review/SKILL.md"),
-            content: "project".to_string(),
-            disable_model_invocation: false,
-        };
-
-        let (skills, errors) =
-            merge_skills(vec![Ok(global_skill)], vec![Ok(project_skill)].into_iter());
-
-        assert!(errors.is_empty());
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].description, "Project review");
-        assert_eq!(skills[0].content, "project");
-    }
 
     #[gpui::test]
     async fn test_maintaining_project_context(cx: &mut TestAppContext) {
@@ -2767,11 +2627,8 @@ mod internal_tests {
         let initial_skill_dir = skills_dir.join("my-skill");
         let initial_skill_path = initial_skill_dir.join("SKILL.md");
         fs.create_dir(&initial_skill_dir).await.unwrap();
-        fs.insert_file(
-            &initial_skill_path,
-            b"---\nname: my-skill\ndescription: First version\n---\n\nbody-v1".to_vec(),
-        )
-        .await;
+        fs.insert_file(&initial_skill_path, b"placeholder".to_vec())
+            .await;
 
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
@@ -2802,23 +2659,21 @@ mod internal_tests {
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
             assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "my-skill");
-            assert_eq!(state.skills[0].description, "First version");
+            assert_eq!(state.skills[0].skill_file_path, initial_skill_path);
         });
 
-        // Modify the SKILL.md and verify the project context refreshes.
-        fs.write(
-            &initial_skill_path,
-            b"---\nname: my-skill\ndescription: Second version\n---\n\nbody-v2",
-        )
-        .await
-        .unwrap();
+        // Modify the SKILL.md and verify the watcher re-fires and the
+        // skill list is rebuilt. With parsing deferred, we just confirm
+        // the entry continues to point at the same path.
+        fs.write(&initial_skill_path, b"placeholder-v2")
+            .await
+            .unwrap();
         cx.run_until_parked();
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
             assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].description, "Second version");
+            assert_eq!(state.skills[0].skill_file_path, initial_skill_path);
         });
     }
 
@@ -2872,12 +2727,10 @@ mod internal_tests {
 
         // Create the global skills directory and a skill within it.
         let new_skill_dir = skills_dir.join("late-skill");
+        let new_skill_path = new_skill_dir.join("SKILL.md");
         fs.create_dir(&new_skill_dir).await.unwrap();
-        fs.insert_file(
-            &new_skill_dir.join("SKILL.md"),
-            b"---\nname: late-skill\ndescription: Created after startup\n---\n\nbody".to_vec(),
-        )
-        .await;
+        fs.insert_file(&new_skill_path, b"placeholder".to_vec())
+            .await;
 
         // Fire the trigger again, simulating the user interacting with
         // the agent panel after creating the skills directory. The
@@ -2891,8 +2744,7 @@ mod internal_tests {
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
             assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "late-skill");
-            assert_eq!(state.skills[0].description, "Created after startup");
+            assert_eq!(state.skills[0].skill_file_path, new_skill_path);
         });
     }
 
@@ -2918,7 +2770,7 @@ mod internal_tests {
                 ".agents": {
                     "skills": {
                         "my-skill": {
-                            "SKILL.md": "---\nname: my-skill\ndescription: A project skill\n---\n\nbody"
+                            "SKILL.md": "placeholder"
                         }
                     }
                 }
@@ -2963,7 +2815,7 @@ mod internal_tests {
                 state
                     .skills
                     .iter()
-                    .map(|s| s.name.as_str())
+                    .map(|s| s.skill_file_path.clone())
                     .collect::<Vec<_>>()
             );
         });
@@ -2985,8 +2837,15 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let names: Vec<&str> = state.skills.iter().map(|s| s.name.as_str()).collect();
-            assert_eq!(names, vec!["my-skill"]);
+            let paths: Vec<PathBuf> = state
+                .skills
+                .iter()
+                .map(|s| s.skill_file_path.clone())
+                .collect();
+            assert_eq!(
+                paths,
+                vec![PathBuf::from("/project/.agents/skills/my-skill/SKILL.md")]
+            );
         });
     }
 
