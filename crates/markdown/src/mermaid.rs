@@ -262,8 +262,7 @@ pub(crate) fn render_mermaid_diagram(
 
     match render_result {
         Some(Ok(render_image)) => {
-            let tab_header =
-                render_mermaid_tab_header(source_offset, showing_code, markdown);
+            let tab_header = render_mermaid_tab_header(source_offset, showing_code, markdown);
 
             let body = if showing_code {
                 render_mermaid_code_view(&parsed.contents.contents)
