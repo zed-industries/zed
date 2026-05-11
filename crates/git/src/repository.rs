@@ -426,6 +426,7 @@ pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
     pub allow_empty: bool,
+    pub allow_hooks: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -2328,7 +2329,11 @@ impl GitRepository for RealGitRepository {
             cmd.envs(env.iter())
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
-                .arg("--no-verify")
+                .args(if !options.allow_hooks {
+                    vec!["--no-verify"]
+                } else {
+                    vec![]
+                })
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 
@@ -4548,6 +4553,108 @@ mod tests {
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/.git")),
             Some(PathBuf::from("/"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_commit_with_allow_hooks_false_skips_hooks(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let hooks_dir = repo_dir.path().join(".git/hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let file_path = repo_dir.path().join("file");
+        smol::fs::write(&file_path, "content").await.unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        // With allow_hooks: false (default), --no-verify is passed so the failing hook is skipped.
+        repo.commit(
+            "commit skipping hooks".into(),
+            None,
+            CommitOptions {
+                allow_hooks: false,
+                ..Default::default()
+            },
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .expect("commit should succeed when hooks are skipped with allow_hooks: false");
+    }
+
+    #[gpui::test]
+    async fn test_commit_with_allow_hooks_true_runs_hooks(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let hooks_dir = repo_dir.path().join(".git/hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook_path = hooks_dir.join("pre-commit");
+        fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let file_path = repo_dir.path().join("file");
+        smol::fs::write(&file_path, "content").await.unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.set_trusted(true);
+
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        // With allow_hooks: true, --no-verify is not passed so the failing hook blocks the commit.
+        let result = repo
+            .commit(
+                "commit with hooks enabled".into(),
+                None,
+                CommitOptions {
+                    allow_hooks: true,
+                    ..Default::default()
+                },
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "commit should fail when hooks are enabled and the pre-commit hook exits with 1"
         );
     }
 

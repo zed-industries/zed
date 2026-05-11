@@ -521,6 +521,13 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+
+    /// Whether to allow git hooks to run when committing.
+    /// When false, commits are made with --no-verify, skipping hooks.
+    /// Useful in corporate environments where MDM policies block --no-verify.
+    ///
+    /// Default: false
+    pub allow_hooks: Option<bool>,
 }
 
 #[with_fallible_options]

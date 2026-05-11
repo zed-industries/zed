@@ -4,7 +4,7 @@ use crate::git_panel_settings::GitPanelSettings;
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
 use panel::panel_button;
-use project::DisableAiSettings;
+use project::{DisableAiSettings, project_settings::ProjectSettings};
 use settings::Settings;
 use ui::{
     ContextMenu, KeybindingHint, PopoverMenu, PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
@@ -455,6 +455,7 @@ impl CommitModal {
                                         amend: is_amend_pending,
                                         signoff: is_signoff_enabled,
                                         allow_empty: false,
+                                        allow_hooks: ProjectSettings::get_global(cx).git.allow_hooks,
                                     },
                                     window,
                                     cx,

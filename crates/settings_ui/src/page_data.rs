@@ -7045,6 +7045,25 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
+    fn git_commit_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Git Commit"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Allow Hooks",
+                description: "Run git hooks when committing. When disabled, commits use --no-verify.",
+                field: Box::new(SettingField::<bool> {
+                    json_path: Some("git.allow_hooks"),
+                    pick: |settings_content| settings_content.git.as_ref()?.allow_hooks.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.git.get_or_insert_default().allow_hooks = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn git_gutter_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Gutter"),
@@ -7316,6 +7335,7 @@ fn version_control_page() -> SettingsPage {
         title: "Version Control",
         items: concat_sections![
             git_integration_section(),
+            git_commit_section(),
             git_gutter_section(),
             inline_git_blame_section(),
             git_blame_view_section(),
