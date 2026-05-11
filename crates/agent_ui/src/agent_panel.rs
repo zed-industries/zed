@@ -3800,9 +3800,7 @@ impl AgentPanel {
             .size_full()
             .when(
                 matches!(mode, ToolbarMode::EmptyThread | ToolbarMode::ActiveThread),
-                |this| {
-                    this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto())
-                },
+                |this| this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto()),
             )
             .flex_none()
             .justify_between()
