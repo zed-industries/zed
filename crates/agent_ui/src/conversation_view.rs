@@ -1609,7 +1609,12 @@ impl ConversationView {
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = ThreadMetadataStore::try_global(cx)
-                    .and_then(|store| store.read(cx).entry(self.thread_id).map(|m| m.display_title()))
+                    .and_then(|store| {
+                        store
+                            .read(cx)
+                            .entry(self.thread_id)
+                            .map(|m| m.display_title())
+                    })
                     .or_else(|| thread.read(cx).title());
                 if let Some(title) = title
                     && let Some(active_thread) = self.thread_view(&session_id)
