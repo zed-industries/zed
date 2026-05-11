@@ -1,4 +1,3 @@
-use crate::PredictEditsRequestTrigger;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::ops::Range;
@@ -6,6 +5,7 @@ use strum::{AsRefStr, EnumString};
 
 pub const PREDICT_EDITS_MODE_HEADER_NAME: &str = "X-Zed-Predict-Edits-Mode";
 pub const PREDICT_EDITS_REQUEST_ID_HEADER_NAME: &str = "X-Zed-Predict-Edits-Request-Id";
+pub const PREDICT_EDITS_TRIGGER_HEADER_NAME: &str = "X-Zed-Predict-Edits-Trigger";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsRefStr, EnumString)]
 #[serde(rename_all = "snake_case")]
@@ -32,8 +32,6 @@ pub struct RawCompletionRequest {
 pub struct PredictEditsV3Request {
     #[serde(flatten)]
     pub input: zeta_prompt::ZetaPromptInput,
-    #[serde(default)]
-    pub trigger: PredictEditsRequestTrigger,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
