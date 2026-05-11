@@ -2,12 +2,13 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::item::test::TestItem;
+use agent_settings::AgentSettings;
 use client::proto;
 use fs::{FakeFs, Fs};
 use gpui::{TestAppContext, VisualTestContext};
 use project::DisableAiSettings;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use util::path;
 
 fn init_test(cx: &mut TestAppContext) {
@@ -87,6 +88,43 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
             mw.sidebar_open(),
             "Sidebar should open when toggled after re-enabling AI"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(project_b, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(multi_workspace.multi_workspace_enabled(cx));
+        assert_eq!(multi_workspace.workspaces().count(), 2);
+    });
+
+    cx.update(|_window, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.enabled = false;
+        AgentSettings::override_global(settings, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(!multi_workspace.multi_workspace_enabled(cx));
+        assert!(!multi_workspace.sidebar_open());
+        assert_eq!(multi_workspace.workspaces().count(), 1);
+        assert!(multi_workspace.project_group_keys().is_empty());
     });
 }
 
@@ -618,7 +656,7 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
 }
 
 #[gpui::test]
-async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspace(
+async fn test_switching_projects_with_sidebar_closed_retains_old_active_workspace(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
@@ -648,7 +686,7 @@ async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspa
     });
     cx.run_until_parked();
 
-    multi_workspace.read_with(cx, |mw, _cx| {
+    multi_workspace.read_with(cx, |mw, cx| {
         assert_eq!(
             mw.workspace().entity_id(),
             workspace_b.entity_id(),
@@ -656,14 +694,15 @@ async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspa
         );
         assert_eq!(
             mw.workspaces().count(),
-                        1,
-                        "only the new active workspace should remain open after switching with the sidebar closed"
+            2,
+            "the previous active workspace should remain open after switching with the sidebar closed"
         );
+        assert_eq!(mw.project_groups(cx).len(), 2);
     });
 
     assert!(
-        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_none()),
-        "the previous active workspace should be detached when switching away with the sidebar closed"
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),
+        "the previous active workspace should remain attached when switching away with the sidebar closed"
     );
 }
 

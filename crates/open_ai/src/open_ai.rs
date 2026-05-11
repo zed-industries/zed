@@ -265,10 +265,66 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
-            Self::FivePointThreeCodex | Self::FivePointFourPro | Self::FivePointFivePro => {
-                Some(ReasoningEffort::Medium)
-            }
+            Self::O1
+            | Self::O3
+            | Self::O3Mini
+            | Self::Five
+            | Self::FiveCodex
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointTwoCodex
+            | Self::FivePointThreeCodex
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => Some(ReasoningEffort::Medium),
             _ => None,
+        }
+    }
+
+    pub fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
+        match self {
+            Self::Custom {
+                reasoning_effort: Some(effort),
+                ..
+            } => match effort {
+                ReasoningEffort::Minimal => &[ReasoningEffort::Minimal],
+                ReasoningEffort::Low => &[ReasoningEffort::Low],
+                ReasoningEffort::Medium => &[ReasoningEffort::Medium],
+                ReasoningEffort::High => &[ReasoningEffort::High],
+                ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
+            },
+            Self::O1 | Self::O3 | Self::O3Mini | Self::FivePointOne => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Self::Five | Self::FiveMini | Self::FiveNano => &[
+                ReasoningEffort::Minimal,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Self::FiveCodex
+            | Self::FivePointTwoCodex
+            | Self::FivePointThreeCodex
+            | Self::FivePointFourPro => &[
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+            Self::FivePointTwo
+            | Self::FivePointFour
+            | Self::FivePointFive
+            | Self::FivePointFivePro => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+            _ => &[],
         }
     }
 
