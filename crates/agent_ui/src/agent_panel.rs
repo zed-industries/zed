@@ -3760,10 +3760,22 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
-        let is_empty_state = !matches!(self.base_view, BaseView::Terminal { .. })
-            && !self.active_thread_has_messages(cx);
+        enum ToolbarMode {
+            Overlay,
+            Terminal,
+            EmptyThread,
+            ActiveThread,
+        }
 
-        let is_in_history_or_config = self.is_overlay_open();
+        let mode = if self.is_overlay_open() {
+            ToolbarMode::Overlay
+        } else if matches!(self.base_view, BaseView::Terminal { .. }) {
+            ToolbarMode::Terminal
+        } else if self.active_thread_has_messages(cx) {
+            ToolbarMode::ActiveThread
+        } else {
+            ToolbarMode::EmptyThread
+        };
 
         let is_full_screen = self.is_zoomed(window, cx);
         let full_screen_button = if is_full_screen {
@@ -3782,20 +3794,21 @@ impl AgentPanel {
                 }))
         };
 
-        let use_v2_empty_toolbar = is_empty_state && !is_in_history_or_config;
-
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
         let base_container = h_flex()
             .size_full()
-            .when(!is_in_history_or_config, |this| {
-                this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto())
-            })
+            .when(
+                matches!(mode, ToolbarMode::EmptyThread | ToolbarMode::ActiveThread),
+                |this| {
+                    this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto())
+                },
+            )
             .flex_none()
             .justify_between()
             .gap_2();
 
-        let toolbar_content = if use_v2_empty_toolbar {
+        let toolbar_content = if matches!(mode, ToolbarMode::EmptyThread) {
             let (chevron_icon, icon_color, label_color) =
                 if self.new_thread_menu_handle.is_deployed() {
                     (IconName::ChevronUp, Color::Accent, Color::Accent)
@@ -3888,7 +3901,7 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .child(if self.is_overlay_open() {
+                        .child(if matches!(mode, ToolbarMode::Overlay) {
                             self.render_toolbar_back_button(cx).into_any_element()
                         } else {
                             selected_agent.into_any_element()
