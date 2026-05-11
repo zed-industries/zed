@@ -2908,6 +2908,13 @@ impl AgentPanel {
             .as_ref()
             .is_some_and(|d| d.entity_id() == conversation_view.entity_id())
         {
+            if self.draft_has_content(&conversation_view, cx) {
+                let thread_id = conversation_view.read(cx).thread_id;
+                self.draft_thread = None;
+                self._draft_editor_observation = None;
+                self.retained_threads.insert(thread_id, conversation_view);
+                self.cleanup_retained_threads(cx);
+            }
             return;
         }
 
@@ -5999,8 +6006,8 @@ mod tests {
         });
 
         // 4. Switch the active view back to the real thread. The ephemeral
-        //    draft remains in `draft_thread` (the ephemeral slot) but is
-        //    no longer the active view.
+        //    draft has content, so it gets parked into `retained_threads`
+        //    immediately (the `draft_thread` slot is cleared).
         panel.update_in(cx, |panel, window, cx| {
             panel.load_agent_thread(
                 Agent::Stub,
@@ -6029,8 +6036,9 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        // 6. The real thread is the active view on reload AND the draft
-        //    slot is still occupied by the ephemeral new-draft thread.
+        // 6. The real thread is the active view on reload. The draft
+        //    was parked when the user navigated away, so the draft_thread
+        //    slot is empty.
         loaded_panel.read_with(cx, |panel, cx| {
             assert_eq!(
                 panel.active_thread_id(cx),
@@ -6041,11 +6049,9 @@ mod tests {
                 !panel.active_thread_is_draft(cx),
                 "real thread is not a draft"
             );
-            let restored_draft_id = panel.draft_thread.as_ref().map(|d| d.read(cx).thread_id);
-            assert_eq!(
-                restored_draft_id,
-                Some(draft_thread_id),
-                "new-draft slot should be repopulated with the pre-reload draft"
+            assert!(
+                panel.draft_thread.is_none(),
+                "draft_thread slot should be empty since the draft was parked on navigate-away"
             );
         });
 
@@ -6072,9 +6078,9 @@ mod tests {
             assert_eq!(real_row.session_id.as_ref(), Some(&real_session_id));
         });
 
-        // 8. Opening the ephemeral draft via load_agent_thread activates
-        //    the restored new-draft ConversationView and exposes its
-        //    kvp-seeded prompt text in the editor.
+        // 8. Opening the parked draft via load_agent_thread activates
+        //    a fresh ConversationView and exposes its kvp-seeded prompt
+        //    text in the editor.
         loaded_panel.update_in(cx, |panel, window, cx| {
             panel.load_agent_thread(
                 Agent::Stub,
