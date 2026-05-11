@@ -1343,6 +1343,7 @@ impl AgentPanel {
         if let Some(draft) = self.draft_thread.clone()
             && self.active_thread_is_draft(cx)
             && !self.active_view_is_new_draft(cx)
+            && *draft.read(cx).agent_key() == self.selected_agent
         {
             self.set_base_view(
                 BaseView::AgentThread {
@@ -1355,13 +1356,20 @@ impl AgentPanel {
             return;
         }
 
-        if let Some(draft) = self.draft_thread.clone()
-            && self.draft_has_content(&draft, cx)
-        {
-            let draft_id = draft.read(cx).thread_id;
-            self.draft_thread = None;
-            self._draft_editor_observation = None;
-            self.retained_threads.insert(draft_id, draft);
+        if let Some(draft) = self.draft_thread.clone() {
+            if self.draft_has_content(&draft, cx) {
+                let draft_id = draft.read(cx).thread_id;
+                self.draft_thread = None;
+                self._draft_editor_observation = None;
+                self.retained_threads.insert(draft_id, draft);
+            } else if *draft.read(cx).agent_key() != self.selected_agent {
+                let old_draft_id = draft.read(cx).thread_id;
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.delete(old_draft_id, cx);
+                });
+                self.draft_thread = None;
+                self._draft_editor_observation = None;
+            }
         }
         self.activate_draft(focus, trigger, window, cx);
     }
