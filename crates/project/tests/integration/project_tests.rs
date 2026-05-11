@@ -187,6 +187,161 @@ async fn test_default_session_work_dirs_falls_back_to_home_for_empty_project(
     assert_eq!(ordered_paths, vec![paths::home_dir().to_path_buf()]);
 }
 
+/// End-to-end check that Phase 2 multi-tenant `Host` sharing is real:
+/// three `Project`s on the same machine (same `Arc<dyn Fs>`) with
+/// overlapping worktree sets share one `Host`, one host-shaped
+/// `WorktreeStore`, and the same `Entity<Worktree>` for any shared
+/// directory. Each Project's `visible_worktrees(cx)` returns only its
+/// own configured subset.
+///
+/// Layout:
+///   project_a: [zed, cloud]
+///   project_b: [delta, zed]
+///   project_c: [zed.dev, zed, cloud]
+///
+/// Shared:
+///   - `zed` worktree: A, B, C (all three)
+///   - `cloud` worktree: A, C
+///   - `delta` worktree: B only
+///   - `zed.dev` worktree: C only
+///
+/// The host's `WorktreeStore` should hold the union (4 worktrees).
+#[gpui::test]
+async fn test_multi_tenant_host_sharing_with_overlapping_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repos"),
+        json!({
+            "zed": { "Cargo.toml": "" },
+            "cloud": { "Cargo.toml": "" },
+            "delta": { "Cargo.toml": "" },
+            "zed.dev": { "package.json": "" },
+        }),
+    )
+    .await;
+
+    let project_a = Project::test(
+        fs.clone(),
+        [
+            Path::new(path!("/repos/zed")),
+            Path::new(path!("/repos/cloud")),
+        ],
+        cx,
+    )
+    .await;
+    let project_b = Project::test(
+        fs.clone(),
+        [
+            Path::new(path!("/repos/delta")),
+            Path::new(path!("/repos/zed")),
+        ],
+        cx,
+    )
+    .await;
+    let project_c = Project::test(
+        fs.clone(),
+        [
+            Path::new(path!("/repos/zed.dev")),
+            Path::new(path!("/repos/zed")),
+            Path::new(path!("/repos/cloud")),
+        ],
+        cx,
+    )
+    .await;
+
+    cx.run_until_parked();
+
+    // Helper: pull the worktree for a given basename out of a Project's
+    // visible worktree set.
+    let find_worktree = |project: &Entity<Project>, basename: &str| -> Option<Entity<Worktree>> {
+        let basename = basename.to_owned();
+        project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .find(|w| w.read(cx).abs_path().ends_with(&basename))
+        })
+    };
+
+    // The `zed` worktree is the same `Entity<Worktree>` in all three
+    // Projects.
+    let zed_in_a = find_worktree(&project_a, "zed").expect("project_a should have `zed`");
+    let zed_in_b = find_worktree(&project_b, "zed").expect("project_b should have `zed`");
+    let zed_in_c = find_worktree(&project_c, "zed").expect("project_c should have `zed`");
+    assert_eq!(
+        zed_in_a.entity_id(),
+        zed_in_b.entity_id(),
+        "A and B should share the same `zed` Worktree entity"
+    );
+    assert_eq!(
+        zed_in_b.entity_id(),
+        zed_in_c.entity_id(),
+        "B and C should share the same `zed` Worktree entity"
+    );
+
+    // The `cloud` worktree is shared between A and C, and *not*
+    // visible to B.
+    let cloud_in_a = find_worktree(&project_a, "cloud").expect("project_a should have `cloud`");
+    let cloud_in_c = find_worktree(&project_c, "cloud").expect("project_c should have `cloud`");
+    assert_eq!(
+        cloud_in_a.entity_id(),
+        cloud_in_c.entity_id(),
+        "A and C should share the same `cloud` Worktree entity"
+    );
+    assert!(
+        find_worktree(&project_b, "cloud").is_none(),
+        "project_b shouldn't see the `cloud` worktree (it's not in B's worktree set)"
+    );
+
+    // `delta` is visible only to B; `zed.dev` is visible only to C.
+    assert!(
+        find_worktree(&project_a, "delta").is_none(),
+        "project_a shouldn't see `delta`"
+    );
+    assert!(
+        find_worktree(&project_c, "delta").is_none(),
+        "project_c shouldn't see `delta`"
+    );
+    assert!(
+        find_worktree(&project_b, "delta").is_some(),
+        "project_b should see `delta`"
+    );
+
+    assert!(
+        find_worktree(&project_a, "zed.dev").is_none(),
+        "project_a shouldn't see `zed.dev`"
+    );
+    assert!(
+        find_worktree(&project_b, "zed.dev").is_none(),
+        "project_b shouldn't see `zed.dev`"
+    );
+    assert!(
+        find_worktree(&project_c, "zed.dev").is_some(),
+        "project_c should see `zed.dev`"
+    );
+
+    // Each Project's visible worktree count matches its configured
+    // set (2, 2, 3).
+    let a_count = project_a.read_with(cx, |project, cx| project.visible_worktrees(cx).count());
+    let b_count = project_b.read_with(cx, |project, cx| project.visible_worktrees(cx).count());
+    let c_count = project_c.read_with(cx, |project, cx| project.visible_worktrees(cx).count());
+    assert_eq!(a_count, 2, "project_a has 2 visible worktrees");
+    assert_eq!(b_count, 2, "project_b has 2 visible worktrees");
+    assert_eq!(c_count, 3, "project_c has 3 visible worktrees");
+
+    // 7. The shared host `WorktreeStore` holds the union of all four
+    // distinct worktrees — there's only one physical scanner per
+    // unique path, not one per Project.
+    let host_worktree_count = project_a.read_with(cx, |project, cx| {
+        project.worktree_store(cx).read(cx).worktrees().count()
+    });
+    assert_eq!(
+        host_worktree_count, 4,
+        "host WorktreeStore should hold the union: zed, cloud, delta, zed.dev"
+    );
+}
+
 // NOTE:
 // While POSIX symbolic links are somewhat supported on Windows, they are an opt in by the user, and thus
 // we assume that they are not supported out of the box.
