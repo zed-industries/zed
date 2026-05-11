@@ -5,6 +5,7 @@ use editor::SearchSettings;
 use gpui::{Action, App, ClickEvent, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
+pub use project_search_panel::ProjectSearchPanel;
 use ui::{ButtonStyle, IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
@@ -17,6 +18,7 @@ use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
 pub mod project_search;
+pub mod project_search_panel;
 pub(crate) mod search_bar;
 pub mod search_status_button;
 
@@ -24,6 +26,7 @@ pub fn init(cx: &mut App) {
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
+    project_search_panel::init(cx);
 }
 
 actions!(

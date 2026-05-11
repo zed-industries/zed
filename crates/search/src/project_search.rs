@@ -70,7 +70,7 @@ actions!(
     ]
 );
 
-fn split_glob_patterns(text: &str) -> Vec<&str> {
+pub(crate) fn split_glob_patterns(text: &str) -> Vec<&str> {
     let mut patterns = Vec::new();
     let mut pattern_start = 0;
     let mut brace_depth: usize = 0;
@@ -209,7 +209,15 @@ pub fn init(cx: &mut App) {
                 cx.propagate();
                 return;
             }
-            ProjectSearchView::deploy_search(workspace, action, window, cx);
+            if let Some(panel) =
+                workspace.focus_panel::<crate::project_search_panel::ProjectSearchPanel>(window, cx)
+            {
+                panel.update(cx, |panel, cx| {
+                    panel.deploy_search(action, window, cx);
+                });
+            } else {
+                ProjectSearchView::deploy_search(workspace, action, window, cx);
+            }
             cx.notify();
         });
         workspace.register_action(move |workspace, action: &NewSearch, window, cx| {

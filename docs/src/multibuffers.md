@@ -32,7 +32,7 @@ Additionally, if you prefer to use the mouse and would like to double-click on a
 
 ## Project search
 
-To start a search run the {#action pane::DeploySearch} command (`cmd-shift-f` on macOS, `ctrl-shift-f` on Windows/Linux, or `g/` in Vim mode). After the search has completed, the results will be shown in a new multibuffer. There will be one excerpt for each matching line across the whole project.
+To start a search run the {#action pane::DeploySearch} command (`cmd-shift-f` on macOS, `ctrl-shift-f` on Windows/Linux, or `g/` in Vim mode). Project search results are shown in the search panel, and can be opened in a new multibuffer when you want to edit matches in place. There will be one excerpt for each matching line across the whole project.
 
 ## Diagnostics
 
