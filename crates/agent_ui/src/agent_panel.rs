@@ -1310,6 +1310,11 @@ impl AgentPanel {
         self.new_entry(None, window, cx);
     }
 
+    fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_agent = agent;
+        self.activate_new_thread(true, "agent_panel", window, cx);
+    }
+
     pub fn activate_new_thread(
         &mut self,
         focus: bool,
@@ -1327,10 +1332,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(agent) = action.agent.clone() {
-            self.selected_agent = agent;
-        }
-        self.activate_new_thread(true, "agent_panel", window, cx);
+        self.new_agent_thread(action.agent.clone().into(), window, cx);
     }
 
     pub fn new_terminal(
@@ -3563,10 +3565,8 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.new_external_agent_thread(
-                                                            &NewExternalAgentThread {
-                                                                agent: Some(Agent::NativeAgent),
-                                                            },
+                                                        panel.new_agent_thread(
+                                                            Agent::NativeAgent,
                                                             window,
                                                             cx,
                                                         );
@@ -3580,6 +3580,7 @@ impl AgentPanel {
                         .when(supports_terminal, |menu| {
                             menu.item(
                                 ContextMenuEntry::new("Terminal")
+                                    .when(showing_terminal, |this| this.action(Box::new(NewThread)))
                                     .icon(IconName::Terminal)
                                     .icon_color(Color::Muted)
                                     .handler({
@@ -3675,9 +3676,7 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_external_agent_thread(
                                                                 &NewExternalAgentThread {
-                                                                    agent: Some(Agent::Custom {
-                                                                        id: agent_id.clone(),
-                                                                    }),
+                                                                    agent: agent_id.clone(),
                                                                 },
                                                                 window,
                                                                 cx,
@@ -6676,7 +6675,7 @@ mod tests {
         // Switch to a different agent. ensure_draft should extract the typed
         // content from the old draft and pre-fill the new one.
         cx.dispatch_action(NewExternalAgentThread {
-            agent: Some(Agent::Stub),
+            agent: Agent::Stub.id(),
         });
         cx.run_until_parked();
 
