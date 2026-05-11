@@ -15,10 +15,11 @@ Reads the event payload dispatched by the GitHub Actions workflow and:
 - On `issue_comment.created`: if the commenter is the PR author and
   current Status is "In Progress (author)", flips it to
   "In Progress (us)" — the author is likely signaling they're done.
-- On `pull_request_review.submitted`: if the reviewer is a team member,
-  sets Status to "In Progress (author)" (for COMMENT / REQUEST_CHANGES)
-  or "In Progress (us)" (for APPROVE — reviewer still needs to merge).
 - On `workflow_dispatch`: re-resolves Track for a manually specified PR.
+
+Review-based status changes (approved → "In Progress (us)", changes
+requested → "In Progress (author)") are handled by built-in board
+automations, not this script.
 
 Requires:
     requests (pip install requests)
@@ -43,7 +44,9 @@ SKIP_LABELS = {"staff", "bot"}
 
 
 STATUS_IN_PROGRESS_US = "In Progress (us)"
-STATUS_IN_PROGRESS_AUTHOR = "In Progress (author)"
+STATUS_IN_PROGRESS_AUTHOR = (
+    "In Progress (author)"  # set by built-in board automation, read by this script
+)
 
 MAPPING_PATH = Path(__file__).parent / "community-pr-track-mapping.json"
 
@@ -108,35 +111,6 @@ def return_to_reviewer(pr, project_number, reason):
         github_set_project_field(project, item_id, "Status", STATUS_IN_PROGRESS_US)
     else:
         print(f"Current status is '{current_status}', not flipping ({reason})")
-
-
-def set_status_after_review(pr, review, project_number):
-    """On review submitted: set project Status based on review outcome."""
-    reviewer = review.get("user", {}).get("login", "unknown")
-    if not github_is_staff_member(reviewer):
-        print(f"Reviewer '{reviewer}' is not a staff member, skipping")
-        return
-    if reviewer == pr.get("user", {}).get("login"):
-        print(f"Reviewer {reviewer} is the PR author, skipping")
-        return
-
-    project = github_fetch_project(project_number)
-    item_id = github_find_project_item(project["id"], pr["node_id"])
-    if not item_id:
-        print(f"PR #{pr['number']} not on board, skipping review status update")
-        return
-
-    review_state = review.get("state", "")
-    # to not lose the PRs that we approved but forgot to merge
-    if review_state == "approved":
-        new_status = STATUS_IN_PROGRESS_US
-    else:
-        new_status = STATUS_IN_PROGRESS_AUTHOR
-
-    print(
-        f"Team review by {reviewer} ({review_state}), setting status to '{new_status}'"
-    )
-    github_set_project_field(project, item_id, "Status", new_status)
 
 
 def load_mapping(path=MAPPING_PATH):
@@ -412,9 +386,6 @@ if __name__ == "__main__":
         if event_name in ("pull_request", "pull_request_target"):
             pr = event["pull_request"]
             action = event["action"]
-        elif event_name == "pull_request_review":
-            pr = event["pull_request"]
-            action = "review_submitted"
         elif event_name == "issue_comment":
             issue = event["issue"]
             if "pull_request" not in issue:
@@ -456,7 +427,5 @@ if __name__ == "__main__":
         return_to_reviewer(pr, project_number, "Author re-requested review")
     elif action == "author_commented":
         return_to_reviewer(pr, project_number, "Author commented on PR")
-    elif action == "review_submitted":
-        set_status_after_review(pr, event["review"], project_number)
     else:
         print(f"Ignoring action: {action}")

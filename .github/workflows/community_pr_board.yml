@@ -2,8 +2,10 @@
 #
 # When an area/platform label is added to a community PR (not staff, not bot),
 # the PR is added to the project board with a Track field set to the matching
-# review area group. Status transitions are driven by assignment, review,
-# re-request, and comment events.
+# review area group. Status transitions for assignment, re-request, and
+# comment events are handled here. Review-based status changes (approved →
+# "In Progress (us)", changes requested → "In Progress (author)") are handled
+# by built-in board automations.
 #
 # See script/community-pr-track-mapping.json for the label→track mapping.
 
@@ -12,8 +14,6 @@ name: Community PR Board
 on:
   pull_request_target:
     types: [labeled, unlabeled, assigned, review_requested]
-  pull_request_review:
-    types: [submitted]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -36,7 +36,9 @@ jobs:
       github.repository == 'zed-industries/zed' &&
       (github.event_name != 'issue_comment' ||
        (github.event.issue.pull_request &&
-        github.event.comment.user.login == github.event.issue.user.login))
+        github.event.comment.user.login == github.event.issue.user.login)) &&
+      !contains(toJSON(github.event.pull_request.labels.*.name), 'staff') &&
+      !contains(toJSON(github.event.pull_request.labels.*.name), 'bot')
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 5
 
