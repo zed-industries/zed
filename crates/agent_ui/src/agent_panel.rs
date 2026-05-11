@@ -1333,6 +1333,28 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         self.set_last_created_entry_kind(AgentPanelEntryKind::Thread, cx);
+
+        // If the user is viewing a *parked* draft and the ephemeral
+        // new-draft slot is occupied, pressing `+` should just focus the
+        // ephemeral draft — not park it and create yet another empty one.
+        // This matches the mental model of `+` as "go to my new-thread
+        // slot". The parked draft will be put back into `retained_threads`
+        // by `set_base_view`'s `retain_running_thread` call.
+        if let Some(draft) = self.draft_thread.clone()
+            && self.active_thread_is_draft(cx)
+            && !self.active_view_is_new_draft(cx)
+        {
+            self.set_base_view(
+                BaseView::AgentThread {
+                    conversation_view: draft,
+                },
+                focus,
+                window,
+                cx,
+            );
+            return;
+        }
+
         if let Some(draft) = self.draft_thread.clone()
             && self.draft_has_content(&draft, cx)
         {
@@ -7517,6 +7539,112 @@ mod tests {
             active_text, None,
             "fresh ephemeral draft should start empty, not carry the parked draft's prompt"
         );
+    }
+
+    /// When the user is viewing a *parked* draft (selected from the
+    /// sidebar) and presses `+`, the panel should just focus the
+    /// ephemeral new-draft slot — not park it and create yet another
+    /// empty draft. `+` is "go to my new-thread slot", not "reset state".
+    #[gpui::test]
+    async fn test_plus_with_parked_draft_active_focuses_ephemeral(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Open an initial draft, type into it, then press `+` to park it
+        // and create a fresh ephemeral. The fresh ephemeral is what we'll
+        // expect to refocus later.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_agent = Agent::Stub;
+            panel.activate_draft(true, "agent_panel", window, cx);
+        });
+        cx.run_until_parked();
+        let parked_thread_id = crate::test_support::active_thread_id(&panel, cx);
+        crate::test_support::type_draft_prompt(&panel, "parked draft prompt", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        let ephemeral_thread_id = crate::test_support::active_thread_id(&panel, cx);
+        let ephemeral_entity_id = panel.read_with(cx, |panel, _cx| {
+            panel.draft_thread.as_ref().unwrap().entity_id()
+        });
+        assert_ne!(
+            ephemeral_thread_id, parked_thread_id,
+            "sanity: parking should have produced a fresh ephemeral draft"
+        );
+
+        // Activate the parked draft (simulates clicking it in the sidebar).
+        panel.update_in(cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                Agent::Stub,
+                parked_thread_id,
+                None,
+                None,
+                true,
+                "sidebar",
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            crate::test_support::active_thread_id(&panel, cx),
+            parked_thread_id,
+            "sanity: parked draft should be the active view after load_agent_thread"
+        );
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.draft_thread.as_ref().unwrap().entity_id(),
+                ephemeral_entity_id,
+                "sanity: the ephemeral draft slot should still hold the fresh draft"
+            );
+        });
+
+        // Now press `+`. The ephemeral draft should become the active
+        // view; no new draft should be created.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.active_thread_id(cx),
+                Some(ephemeral_thread_id),
+                "`+` should have switched back to the existing ephemeral draft"
+            );
+            assert_eq!(
+                panel.draft_thread.as_ref().unwrap().entity_id(),
+                ephemeral_entity_id,
+                "`+` should not have replaced the ephemeral draft"
+            );
+            assert!(
+                panel.retained_threads.contains_key(&parked_thread_id),
+                "parked draft should remain in `retained_threads`"
+            );
+        });
     }
 
     #[gpui::test]
