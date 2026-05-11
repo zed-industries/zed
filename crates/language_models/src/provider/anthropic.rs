@@ -58,6 +58,7 @@ impl State {
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = AnthropicLanguageModelProvider::api_url(cx);
+        let should_fetch_models = api_key.is_some();
         let task = self.api_key_state.store(
             api_url,
             api_key,
@@ -65,8 +66,6 @@ impl State {
             credentials_provider,
             cx,
         );
-
-        let should_fetch_models = api_key.is_some();
         self.fetched_models.clear();
         cx.spawn(async move |this, cx| {
             let result = task.await;
