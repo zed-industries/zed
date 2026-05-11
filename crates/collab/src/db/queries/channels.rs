@@ -684,6 +684,26 @@ impl Database {
         .await
     }
 
+    /// Returns the channel memberships for the users with the specified IDs.
+    #[cfg(feature = "test-support")]
+    pub async fn get_channel_memberships_for_user_ids(
+        &self,
+        channel: &Channel,
+        ids: Vec<UserId>,
+    ) -> Result<Vec<channel_member::Model>> {
+        self.transaction(|tx| async {
+            let tx = tx;
+            let members = channel_member::Entity::find()
+                .filter(channel_member::Column::ChannelId.eq(channel.id))
+                .filter(channel_member::Column::UserId.is_in(ids.iter().copied()))
+                .all(&*tx)
+                .await?;
+
+            Ok(members)
+        })
+        .await
+    }
+
     /// Returns the details for the specified channel member.
     pub async fn get_channel_participant_details(
         &self,

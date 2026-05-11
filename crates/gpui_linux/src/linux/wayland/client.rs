@@ -768,7 +768,7 @@ impl LinuxClient for WaylandClient {
             .outputs
             .iter()
             .find_map(|(object_id, output)| {
-                (object_id.protocol_id() == u32::from(id)).then(|| {
+                (object_id.protocol_id() as u64 == u64::from(id)).then(|| {
                     Rc::new(WaylandDisplay {
                         id: object_id.clone(),
                         name: output.name.clone(),
@@ -810,11 +810,11 @@ impl LinuxClient for WaylandClient {
         let parent = state.keyboard_focused_window.clone();
 
         let target_output = params.display_id.and_then(|display_id| {
-            let target_protocol_id: u32 = display_id.into();
+            let target_protocol_id: u64 = display_id.into();
             state
                 .wl_outputs
                 .iter()
-                .find(|(id, _)| id.protocol_id() == target_protocol_id)
+                .find(|(id, _)| id.protocol_id() as u64 == target_protocol_id)
                 .map(|(_, output)| output.clone())
         });
 

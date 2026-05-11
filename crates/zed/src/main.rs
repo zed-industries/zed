@@ -4,6 +4,16 @@
 mod reliability;
 mod zed;
 
+// Ensure the binary name stays in sync with APP_NAME so that the paths used
+// at runtime (data dir, config dir, etc.) match what the binary is called.
+const _: () = assert!(
+    paths::APP_NAME_LOWERCASE
+        .as_bytes()
+        .eq_ignore_ascii_case(env!("CARGO_BIN_NAME").as_bytes()),
+    "paths::APP_NAME_LOWERCASE must match the binary name. \
+     Forks: update APP_NAME in crates/paths/src/paths.rs when renaming the binary.",
+);
+
 use agent::{SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;
 use agent_ui::AgentPanel;
@@ -22,8 +32,8 @@ use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
-    App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, Task, UpdateGlobal as _,
-    block_on,
+    App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, Task, TaskExt,
+    UpdateGlobal as _, block_on,
 };
 use gpui_platform;
 
