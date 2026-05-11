@@ -679,6 +679,7 @@ fn thread_metadata_to_debug_json(
         "session_id": metadata.session_id.as_ref().map(|s| s.0.to_string()),
         "agent_id": metadata.agent_id.0.to_string(),
         "title": metadata.title.as_ref().map(|t| t.to_string()),
+        "title_override": metadata.title_override.as_ref().map(|t| t.to_string()),
         "updated_at": format_timestamp_human(&metadata.updated_at),
         "created_at": metadata.created_at.as_ref().map(format_timestamp_human),
         "interacted_at": metadata.interacted_at.as_ref().map(format_timestamp_human),

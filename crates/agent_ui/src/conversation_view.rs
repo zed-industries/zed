@@ -792,7 +792,7 @@ impl ConversationView {
                     .and_then(|id| {
                         let store = ThreadMetadataStore::try_global(cx)?;
                         let entry = store.read(cx).entry_by_session(id)?;
-                        Some((Some(entry.folder_paths().clone()), entry.title.clone()))
+                        Some((Some(entry.folder_paths().clone()), entry.title()))
                     })
                     .unwrap_or((None, None));
                 (session_id, work_dirs, title)
@@ -1615,14 +1615,13 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                let title = ThreadMetadataStore::try_global(cx)
-                    .and_then(|store| {
-                        store
-                            .read(cx)
-                            .entry(self.thread_id)
-                            .map(|m| m.display_title())
-                    })
-                    .or_else(|| thread.read(cx).title());
+                let override_title = ThreadMetadataStore::try_global(cx).and_then(|store| {
+                    store
+                        .read(cx)
+                        .entry(self.thread_id)
+                        .and_then(|m| m.title_override.clone())
+                });
+                let title = override_title.or_else(|| thread.read(cx).title());
                 if let Some(title) = title
                     && let Some(active_thread) = self.thread_view(&session_id)
                 {

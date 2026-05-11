@@ -265,7 +265,7 @@ impl PermissionSelection {
 }
 
 pub struct ThreadView {
-    pub(crate) thread_id: ThreadId,
+    pub(crate) root_thread_id: ThreadId,
     pub session_id: acp::SessionId,
     pub parent_session_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
@@ -355,7 +355,7 @@ pub struct TurnFields {
 
 impl ThreadView {
     pub(crate) fn new(
-        thread_id: ThreadId,
+        root_thread_id: ThreadId,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
         server_view: WeakEntity<ConversationView>,
@@ -441,9 +441,11 @@ impl ThreadView {
             && agent_id.as_ref() == "Codex";
 
         let title_editor = {
-            let initial_title = ThreadMetadataStore::try_global(cx)
-                .and_then(|store| store.read(cx).entry(thread_id).map(|m| m.display_title()))
-                .or_else(|| thread.read(cx).title())
+            let metadata = ThreadMetadataStore::try_global(cx)
+                .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
+            let initial_title = metadata
+                .as_ref()
+                .and_then(|m| m.title())
                 .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
@@ -491,7 +493,7 @@ impl ThreadView {
         }));
 
         let mut this = Self {
-            thread_id,
+            root_thread_id,
             session_id,
             parent_session_id,
             focus_handle: cx.focus_handle(),
@@ -1652,10 +1654,11 @@ impl ThreadView {
                 if new_title.is_empty() {
                     return;
                 }
-
                 let title = SharedString::from(new_title);
-                if let Some(store) = ThreadMetadataStore::try_global(cx) {
-                    let thread_id = self.thread_id;
+                if let Some(store) = ThreadMetadataStore::try_global(cx)
+                    && !self.is_subagent()
+                {
+                    let thread_id = self.root_thread_id;
                     store.update(cx, |store, cx| {
                         store.set_title_override(thread_id, title.clone(), cx);
                     });

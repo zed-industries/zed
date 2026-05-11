@@ -333,10 +333,12 @@ impl ThreadMetadata {
     }
 
     pub fn display_title(&self) -> SharedString {
-        self.title_override
-            .clone()
-            .or_else(|| self.title.clone())
+        self.title()
             .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into())
+    }
+
+    pub fn title(&self) -> Option<SharedString> {
+        self.title_override.clone().or_else(|| self.title.clone())
     }
 
     pub fn folder_paths(&self) -> &PathList {
