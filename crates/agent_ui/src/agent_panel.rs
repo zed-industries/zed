@@ -815,6 +815,7 @@ pub struct AgentPanel {
     _active_thread_focus_subscription: Option<Subscription>,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
+    _active_draft_reclaim_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
     last_context_source: Option<AgentContextSource>,
 
@@ -1149,6 +1150,7 @@ impl AgentPanel {
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
+            _active_draft_reclaim_observation: None,
             _thread_metadata_store_subscription,
             last_context_source: None,
             is_active: false,
@@ -2119,6 +2121,91 @@ impl AgentPanel {
         }
     }
 
+    /// Sets up an editor observation on the active view that reclaims
+    /// it as ephemeral when the editor becomes empty. Only activates
+    /// for non-ephemeral draft threads.
+    fn setup_active_draft_reclaim(
+        &mut self,
+        conversation_view: &Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) {
+        let thread_id = conversation_view.read(cx).thread_id;
+        let is_ephemeral = self
+            .draft_thread
+            .as_ref()
+            .is_some_and(|d| d.read(cx).thread_id == thread_id);
+        if is_ephemeral {
+            self._active_draft_reclaim_observation = None;
+            return;
+        }
+        let is_draft = conversation_view
+            .read(cx)
+            .root_thread(cx)
+            .is_some_and(|t| t.read(cx).is_draft_thread());
+        if !is_draft {
+            self._active_draft_reclaim_observation = None;
+            return;
+        }
+        let Some(editor) = conversation_view
+            .read(cx)
+            .active_thread()
+            .map(|tv| tv.read(cx).message_editor.clone())
+        else {
+            self._active_draft_reclaim_observation = None;
+            return;
+        };
+        let cv = conversation_view.clone();
+        self._active_draft_reclaim_observation =
+            Some(cx.observe(&editor, move |this, _editor, cx| {
+                let editor_has_text = cv.read(cx).active_thread().is_some_and(|tv| {
+                    !tv.read(cx)
+                        .message_editor
+                        .read(cx)
+                        .text(cx)
+                        .trim()
+                        .is_empty()
+                });
+                if editor_has_text {
+                    return;
+                }
+                if this.ephemeral_draft_thread_id(cx) == Some(thread_id) {
+                    return;
+                }
+                if !this.active_thread_is_draft(cx) {
+                    return;
+                }
+                if this.active_thread_id(cx) != Some(thread_id) {
+                    return;
+                }
+                this.turn_into_ephemeral_draft(cv.clone(), cx);
+                this._active_draft_reclaim_observation = None;
+                cx.emit(AgentPanelEvent::EntryChanged);
+                cx.notify();
+            }));
+    }
+
+    /// Moves a conversation view into the ephemeral `draft_thread` slot,
+    /// cleaning up any previous ephemeral draft and deleting the thread's
+    /// metadata so it no longer appears in the sidebar.
+    fn turn_into_ephemeral_draft(
+        &mut self,
+        conversation_view: Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(old_draft) = self.draft_thread.take() {
+            let old_id = old_draft.read(cx).thread_id;
+            let new_id = conversation_view.read(cx).thread_id;
+            if old_id != new_id {
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.delete(old_id, cx);
+                });
+            }
+            self._draft_editor_observation = None;
+        }
+        self.draft_thread = Some(conversation_view.clone());
+        self.observe_draft_editor(&conversation_view, cx);
+    }
+
     pub fn activate_retained_thread(
         &mut self,
         id: ThreadId,
@@ -2127,6 +2214,14 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let conversation_view = if let Some(view) = self.retained_threads.remove(&id) {
+            let is_draft_thread = view
+                .read(cx)
+                .root_thread(cx)
+                .is_some_and(|t| t.read(cx).is_draft_thread());
+            let is_draft_empty = !self.draft_has_content(&view, cx);
+            if is_draft_thread && is_draft_empty {
+                self.turn_into_ephemeral_draft(view.clone(), cx);
+            }
             view
         } else if let Some(draft) = &self.draft_thread {
             if draft.read(cx).thread_id == id {
@@ -2215,6 +2310,10 @@ impl AgentPanel {
     }
 
     pub fn editor_text(&self, id: ThreadId, cx: &App) -> Option<String> {
+        self.editor_text_if_in_memory(id, cx).flatten()
+    }
+
+    pub fn editor_text_if_in_memory(&self, id: ThreadId, cx: &App) -> Option<Option<String>> {
         let cv = self
             .retained_threads
             .get(&id)
@@ -2234,9 +2333,9 @@ impl AgentPanel {
         let tv = cv.read(cx).root_thread_view()?;
         let text = tv.read(cx).message_editor.read(cx).text(cx);
         if text.trim().is_empty() {
-            None
+            Some(None)
         } else {
-            Some(text)
+            Some(Some(text))
         }
     }
 
@@ -3033,17 +3132,15 @@ impl AgentPanel {
                         cx.emit(AgentPanelEvent::ActiveViewFocused);
                         cx.notify();
                     }));
-                Some(cx.observe_in(
-                    conversation_view,
-                    window,
-                    |this, server_view, window, cx| {
-                        this._thread_view_subscription =
-                            Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                        cx.emit(AgentPanelEvent::ActiveViewChanged);
-                        this.serialize(cx);
-                        cx.notify();
-                    },
-                ))
+                let cv = conversation_view.clone();
+                self.setup_active_draft_reclaim(&cv, cx);
+                Some(cx.observe_in(&cv, window, |this, server_view, window, cx| {
+                    this._thread_view_subscription =
+                        Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                    cx.emit(AgentPanelEvent::ActiveViewChanged);
+                    this.serialize(cx);
+                    cx.notify();
+                }))
             }
             BaseView::Terminal { terminal_id } => {
                 self._thread_view_subscription = None;
@@ -3227,6 +3324,14 @@ impl AgentPanel {
             return;
         }
         if let Some(conversation_view) = self.retained_threads.remove(&thread_id) {
+            let is_empty_draft = conversation_view
+                .read(cx)
+                .root_thread(cx)
+                .is_some_and(|t| t.read(cx).is_draft_thread())
+                && !self.draft_has_content(&conversation_view, cx);
+            if is_empty_draft {
+                self.turn_into_ephemeral_draft(conversation_view.clone(), cx);
+            }
             self.set_base_view(
                 BaseView::AgentThread { conversation_view },
                 focus,
@@ -7641,16 +7746,19 @@ mod tests {
             parked_thread_id,
             "sanity: parked draft should be the active view after load_agent_thread"
         );
+        // The parked draft has content, so it was NOT reclaimed as
+        // ephemeral. The previous ephemeral draft should still be in
+        // the draft_thread slot.
         panel.read_with(cx, |panel, _cx| {
             assert_eq!(
                 panel.draft_thread.as_ref().unwrap().entity_id(),
                 ephemeral_entity_id,
-                "sanity: the ephemeral draft slot should still hold the fresh draft"
+                "ephemeral draft slot should still hold the fresh draft"
             );
         });
 
         // Now press `+`. The ephemeral draft should become the active
-        // view; no new draft should be created.
+        // view since it matches the selected agent.
         panel.update_in(cx, |panel, window, cx| {
             panel.new_thread(&NewThread, window, cx);
         });

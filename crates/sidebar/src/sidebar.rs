@@ -1407,14 +1407,13 @@ impl Sidebar {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace),
                         ThreadEntryWorkspace::Closed { .. } => None,
                     };
-                    if let Some(text) = agent_ui::draft_prompt_store::display_label_for_draft(
+                    thread.metadata.title = agent_ui::draft_prompt_store::display_label_for_draft(
                         workspace,
                         thread.metadata.thread_id,
                         cx,
-                    ) {
-                        thread.metadata.title = Some(text);
-                    }
+                    );
                 }
+                threads.retain(|thread| !thread.is_draft || thread.metadata.title.is_some());
 
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
@@ -1659,15 +1658,14 @@ impl Sidebar {
                 subscriptions.push(cx.observe(&editor, |this, _editor, cx| {
                     this.update_entries(cx);
                 }));
-            } else {
-                // Editor hasn't been constructed yet (still Loading). Observe
-                // the ConversationView and re-run this wiring once it flips
-                // to Connected.
-                subscriptions.push(cx.observe(&cv, |this, _cv, cx| {
-                    this.refresh_draft_editor_observations(cx);
-                    this.update_entries(cx);
-                }));
             }
+            // Also observe the ConversationView itself so that editor
+            // replacements during lifecycle transitions (Loading →
+            // Connected) re-wire the editor observation above.
+            subscriptions.push(cx.observe(&cv, |this, _cv, cx| {
+                this.refresh_draft_editor_observations(cx);
+                this.update_entries(cx);
+            }));
         }
         self._draft_editor_observations = subscriptions;
     }
