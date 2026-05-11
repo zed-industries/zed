@@ -514,18 +514,13 @@ pub(crate) fn active_buffer_diagnostics(
 
     diagnostics
         .into_iter()
-        .filter_map(|entry| {
+        .map(|entry| {
             let diagnostic_point_range = entry.range.clone();
             let snippet_point_range = cursor_excerpt::expand_context_syntactically_then_linewise(
                 snapshot,
                 diagnostic_point_range.clone(),
                 additional_context_token_count,
             );
-            if snippet_point_range.start == Point::new(0, 0)
-                && snippet_point_range.end == snapshot.max_point()
-            {
-                return None;
-            }
 
             let severity = match entry.diagnostic.severity {
                 DiagnosticSeverity::ERROR => Some(1),
@@ -534,41 +529,49 @@ pub(crate) fn active_buffer_diagnostics(
                 DiagnosticSeverity::HINT => Some(4),
                 _ => None,
             };
-            Some((
+            (
                 severity,
                 entry.diagnostic.message.clone(),
                 diagnostic_point_range,
                 snippet_point_range,
-            ))
+            )
         })
         .take(MAX_ACTIVE_BUFFER_DIAGNOSTICS_TO_COLLECT)
         .map(
             |(severity, message, diagnostic_point_range, snippet_point_range)| {
-                let snippet = snapshot
-                    .text_for_range(snippet_point_range.clone())
-                    .collect::<String>();
-                let snippet = zeta_prompt::clamp_text_to_token_count(
-                    &snippet,
-                    MAX_ACTIVE_BUFFER_DIAGNOSTIC_SNIPPET_TOKENS_TO_COLLECT,
-                )
-                .to_string();
-                let snippet_start_offset = snippet_point_range.start.to_offset(snapshot);
-                let diagnostic_offset_range = diagnostic_point_range.to_offset(snapshot);
-                let diagnostic_range_start = diagnostic_offset_range
-                    .start
-                    .saturating_sub(snippet_start_offset)
-                    .min(snippet.len());
-                let diagnostic_range_end = diagnostic_offset_range
-                    .end
-                    .saturating_sub(snippet_start_offset)
-                    .min(snippet.len());
+                let (snippet, diagnostic_range_in_snippet) = if snippet_point_range.start
+                    == Point::new(0, 0)
+                    && snippet_point_range.end == snapshot.max_point()
+                {
+                    (String::new(), 0..0)
+                } else {
+                    let snippet = snapshot
+                        .text_for_range(snippet_point_range.clone())
+                        .collect::<String>();
+                    let snippet = zeta_prompt::clamp_text_to_token_count(
+                        &snippet,
+                        MAX_ACTIVE_BUFFER_DIAGNOSTIC_SNIPPET_TOKENS_TO_COLLECT,
+                    )
+                    .to_string();
+                    let snippet_start_offset = snippet_point_range.start.to_offset(snapshot);
+                    let diagnostic_offset_range = diagnostic_point_range.to_offset(snapshot);
+                    let diagnostic_range_start = diagnostic_offset_range
+                        .start
+                        .saturating_sub(snippet_start_offset)
+                        .min(snippet.len());
+                    let diagnostic_range_end = diagnostic_offset_range
+                        .end
+                        .saturating_sub(snippet_start_offset)
+                        .min(snippet.len());
+                    (snippet, diagnostic_range_start..diagnostic_range_end)
+                };
                 zeta_prompt::ActiveBufferDiagnostic {
                     severity,
                     message,
                     snippet,
                     snippet_buffer_row_range: diagnostic_point_range.start.row
                         ..diagnostic_point_range.end.row,
-                    diagnostic_range_in_snippet: diagnostic_range_start..diagnostic_range_end,
+                    diagnostic_range_in_snippet,
                 }
             },
         )

@@ -2256,7 +2256,32 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
 
     let active_buffer_diagnostics =
         zeta::active_buffer_diagnostics(&snapshot, Point::new(0, 0)..snapshot.max_point(), 5, 100);
-    assert!(active_buffer_diagnostics.is_empty());
+    assert_eq!(
+        active_buffer_diagnostics,
+        vec![
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(1),
+                message: "second error".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 5..5,
+                diagnostic_range_in_snippet: 0..0,
+            },
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(2),
+                message: "first warning".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 1..1,
+                diagnostic_range_in_snippet: 0..0,
+            },
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(4),
+                message: "third hint".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 10..10,
+                diagnostic_range_in_snippet: 0..0,
+            },
+        ]
+    );
 
     let buffer = cx.new(|cx| {
         Buffer::local(
