@@ -189,24 +189,57 @@ enum AgentPanelEntryKind {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 struct SerializedAgentPanel {
     selected_agent: Option<Agent>,
     #[serde(default)]
     last_created_entry_kind: AgentPanelEntryKind,
-    #[serde(default)]
-    last_active_thread: Option<SerializedActiveThread>,
+    #[serde(default, alias = "last_active_thread")]
+    last_active_entry: Option<SerializedActiveEntry>,
     #[serde(default)]
     restore_terminal: bool,
     #[serde(default)]
     draft_thread_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 struct SerializedActiveThread {
     session_id: Option<String>,
     agent_type: Agent,
     title: Option<String>,
     work_dirs: Option<SerializedPathList>,
+}
+
+#[derive(Clone, Serialize, Debug)]
+enum SerializedActiveEntry {
+    Thread(SerializedActiveThread),
+    Terminal,
+}
+
+impl<'de> Deserialize<'de> for SerializedActiveEntry {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        enum ActiveEntry {
+            Thread(SerializedActiveThread),
+            Terminal,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum CompatibleActiveEntry {
+            ActiveEntry(ActiveEntry),
+            LegacyThread(SerializedActiveThread),
+        }
+
+        match CompatibleActiveEntry::deserialize(deserializer)? {
+            CompatibleActiveEntry::ActiveEntry(ActiveEntry::Thread(thread))
+            | CompatibleActiveEntry::LegacyThread(thread) => Ok(Self::Thread(thread)),
+            CompatibleActiveEntry::ActiveEntry(ActiveEntry::Terminal) => Ok(Self::Terminal),
+        }
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -823,7 +856,7 @@ impl AgentPanel {
         let restore_terminal = !self.terminals.is_empty();
 
         let is_draft_active = self.active_thread_is_draft(cx);
-        let last_active_thread = self
+        let active_thread = self
             .active_agent_thread(cx)
             .map(|thread| {
                 let thread = thread.read(cx);
@@ -860,6 +893,11 @@ impl AgentPanel {
                     work_dirs: metadata.map(|m| m.folder_paths().serialize()),
                 })
             });
+        let last_active_entry = if self.active_terminal_id().is_some() {
+            Some(SerializedActiveEntry::Terminal)
+        } else {
+            active_thread.map(SerializedActiveEntry::Thread)
+        };
 
         let kvp = KeyValueStore::global(cx);
         let draft_thread_prompt = self.draft_thread.as_ref().and_then(|conversation| {
@@ -880,7 +918,7 @@ impl AgentPanel {
                 SerializedAgentPanel {
                     selected_agent: Some(selected_agent),
                     last_created_entry_kind,
-                    last_active_thread,
+                    last_active_entry,
                     restore_terminal,
                     draft_thread_prompt,
                 },
@@ -922,14 +960,17 @@ impl AgentPanel {
                 })
                 .await;
 
-            let was_draft_active = serialized_panel
+            let last_active_entry = serialized_panel
                 .as_ref()
-                .and_then(|p| p.last_active_thread.as_ref())
-                .is_some_and(|t| t.session_id.is_none());
+                .and_then(|panel| panel.last_active_entry.clone());
 
-            let last_active_thread = if let Some(thread_info) = serialized_panel
-                .as_ref()
-                .and_then(|p| p.last_active_thread.as_ref())
+            let was_draft_active = matches!(
+                &last_active_entry,
+                Some(SerializedActiveEntry::Thread(thread)) if thread.session_id.is_none()
+            );
+
+            let last_active_thread = if let Some(SerializedActiveEntry::Thread(thread_info)) =
+                &last_active_entry
             {
                 match &thread_info.session_id {
                     Some(session_id_str) => {
@@ -961,6 +1002,8 @@ impl AgentPanel {
             let restore_terminal = serialized_panel
                 .as_ref()
                 .is_some_and(|panel| panel.restore_terminal);
+            let restore_terminal_as_active =
+                matches!(&last_active_entry, Some(SerializedActiveEntry::Terminal));
 
             let panel = workspace.update_in(cx, |workspace, window, cx| {
                 let panel = cx.new(|cx| Self::new(workspace, prompt_store, window, cx));
@@ -1054,7 +1097,14 @@ impl AgentPanel {
                 if restore_terminal {
                     panel.update(cx, |panel, cx| {
                         if panel.supports_terminal(cx) {
-                            panel.new_terminal_with_options(Some(workspace), false, false, window, cx);
+                            panel.new_terminal_with_options(
+                                Some(workspace),
+                                false,
+                                restore_terminal_as_active,
+                                false,
+                                window,
+                                cx,
+                            );
                         }
                     });
                 }
@@ -1362,13 +1412,14 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.new_terminal_with_options(workspace, true, true, window, cx);
+        self.new_terminal_with_options(workspace, true, true, true, window, cx);
     }
 
     fn new_terminal_with_options(
         &mut self,
         workspace: Option<&Workspace>,
         update_last_created_entry_kind: bool,
+        make_active: bool,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1383,6 +1434,7 @@ impl AgentPanel {
             TerminalId::new(),
             working_directory,
             update_last_created_entry_kind,
+            make_active,
             focus,
             window,
             cx,
@@ -1412,6 +1464,7 @@ impl AgentPanel {
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
         update_last_created_entry_kind: bool,
+        make_active: bool,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1442,6 +1495,7 @@ impl AgentPanel {
                     terminal_id,
                     terminal_view,
                     update_last_created_entry_kind,
+                    make_active,
                     focus,
                     window,
                     cx,
@@ -1457,6 +1511,7 @@ impl AgentPanel {
         terminal_id: TerminalId,
         terminal_view: Entity<TerminalView>,
         update_last_created_entry_kind: bool,
+        make_active: bool,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1511,8 +1566,8 @@ impl AgentPanel {
         }
         terminal.refresh_title(cx);
         self.terminals.insert(terminal_id, terminal);
-        if focus {
-            self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
+        if make_active {
+            self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         }
         self.serialize(cx);
         cx.emit(AgentPanelEvent::EntryChanged);
@@ -4481,7 +4536,7 @@ impl AgentPanel {
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.set_custom_title(Some(title.into()), cx);
         });
-        self.insert_terminal(terminal_id, terminal_view, true, focus, window, cx);
+        self.insert_terminal(terminal_id, terminal_view, true, focus, focus, window, cx);
         Ok(terminal_id)
     }
 
@@ -4956,8 +5011,11 @@ mod tests {
             .await;
         let serialized_session_id = serialized
             .as_ref()
-            .and_then(|p| p.last_active_thread.as_ref())
-            .and_then(|t| t.session_id.clone());
+            .and_then(|panel| panel.last_active_entry.as_ref())
+            .and_then(|entry| match entry {
+                SerializedActiveEntry::Thread(thread) => thread.session_id.clone(),
+                SerializedActiveEntry::Terminal => None,
+            });
         assert_eq!(
             serialized_session_id,
             Some(resume_session_id.0.to_string()),
@@ -5595,6 +5653,10 @@ mod tests {
 
         let serialized = read_serialized_panel_for_workspace(&workspace, &mut cx);
         assert!(serialized.restore_terminal);
+        assert!(matches!(
+            serialized.last_active_entry.as_ref(),
+            Some(SerializedActiveEntry::Thread(_))
+        ));
         assert_eq!(
             serialized.last_created_entry_kind,
             AgentPanelEntryKind::Thread,
@@ -5626,6 +5688,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_terminal_restore_selects_terminal_when_it_was_active(cx: &mut TestAppContext) {
+        let (workspace, panel, mut cx) = setup_persisted_panel(cx).await;
+
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)?;
+                panel.activate_draft(false, "test", window, cx);
+                panel.insert_test_terminal("Server", true, window, cx)?;
+                anyhow::Ok(())
+            })
+            .expect("test terminals should be inserted");
+        cx.run_until_parked();
+
+        let serialized = read_serialized_panel_for_workspace(&workspace, &mut cx);
+        assert!(serialized.restore_terminal);
+        assert!(matches!(
+            serialized.last_active_entry.as_ref(),
+            Some(SerializedActiveEntry::Terminal)
+        ));
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel.terminals(cx).len(),
+                1,
+                "restore should relaunch at most one terminal"
+            );
+            assert!(
+                panel.active_terminal_id().is_some(),
+                "the restored terminal should be selected when a terminal was the active surface"
+            );
+            assert!(
+                !panel.active_thread_is_draft(cx),
+                "restoring an active terminal should not select the draft"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_terminal_restore_does_not_relaunch_closed_terminal(cx: &mut TestAppContext) {
         let (workspace, panel, mut cx) = setup_persisted_panel(cx).await;
 
@@ -5643,6 +5749,10 @@ mod tests {
 
         let serialized = read_serialized_panel_for_workspace(&workspace, &mut cx);
         assert!(!serialized.restore_terminal);
+        assert!(!matches!(
+            serialized.last_active_entry.as_ref(),
+            Some(SerializedActiveEntry::Terminal)
+        ));
 
         let async_cx = cx.update(|window, cx| window.to_async(cx));
         let loaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
@@ -6301,6 +6411,63 @@ mod tests {
                 "the active loadable thread should not also be stored as a retained thread"
             );
         });
+    }
+
+    #[test]
+    fn test_deserialize_agent_panel_legacy_active_fields() {
+        let legacy_thread_panel: SerializedAgentPanel = serde_json::from_value(json!({
+            "selected_agent": null,
+            "last_active_thread": {
+                "session_id": "legacy-session",
+                "agent_type": "native_agent",
+                "title": null,
+                "work_dirs": null
+            },
+            "restore_terminal": false
+        }))
+        .unwrap();
+        let Some(SerializedActiveEntry::Thread(thread)) = legacy_thread_panel.last_active_entry
+        else {
+            panic!("legacy last_active_thread should deserialize as last_active_entry thread");
+        };
+        assert_eq!(thread.session_id.as_deref(), Some("legacy-session"));
+
+        let terminal_panel: SerializedAgentPanel = serde_json::from_value(json!({
+            "selected_agent": null,
+            "restore_terminal": true,
+            "last_active_thread": "Terminal"
+        }))
+        .unwrap();
+        assert!(terminal_panel.restore_terminal);
+        assert!(matches!(
+            terminal_panel.last_active_entry,
+            Some(SerializedActiveEntry::Terminal)
+        ));
+
+        let aliased_terminal_panel: SerializedAgentPanel = serde_json::from_value(json!({
+            "selected_agent": null,
+            "restore_terminal": true,
+            "last_active_entry": "Terminal"
+        }))
+        .unwrap();
+        assert!(matches!(
+            aliased_terminal_panel.last_active_entry,
+            Some(SerializedActiveEntry::Terminal)
+        ));
+
+        let serialized = serde_json::to_value(SerializedAgentPanel {
+            selected_agent: None,
+            last_created_entry_kind: AgentPanelEntryKind::Thread,
+            last_active_entry: Some(SerializedActiveEntry::Terminal),
+            restore_terminal: true,
+            draft_thread_prompt: None,
+        })
+        .unwrap();
+        assert_eq!(
+            serialized.get("last_active_entry"),
+            Some(&json!("Terminal"))
+        );
+        assert_eq!(serialized.get("last_active_thread"), None);
     }
 
     #[test]
