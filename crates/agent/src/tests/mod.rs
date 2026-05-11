@@ -3124,6 +3124,57 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_latest_token_usage_counts_cached_input_tokens(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let message_1_id = UserMessageId::new();
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(message_1_id, ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Response 1");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        language_model::TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 25,
+            cache_read_input_tokens: 75,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.latest_token_usage(),
+            Some(acp_thread::TokenUsage {
+                used_tokens: 250,
+                max_tokens: 1_000_000,
+                max_output_tokens: None,
+                input_tokens: 200,
+                output_tokens: 50,
+            })
+        );
+    });
+
+    let message_2_id = UserMessageId::new();
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(message_2_id.clone(), ["Message 2"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.tokens_before_message(&message_2_id), Some(200));
+    });
+}
+
+#[gpui::test]
 async fn test_truncate_second_message(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
