@@ -356,8 +356,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         match &self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic
-            | cloud_llm_client::LanguageModelProvider::OpenAi
+            cloud_llm_client::LanguageModelProvider::Anthropic => {
+                Some(LanguageModelCacheConfiguration {
+                    min_total_token: 2_048,
+                    should_speculate: true,
+                    max_cache_anchors: 4,
+                })
+            }
+            cloud_llm_client::LanguageModelProvider::OpenAi
             | cloud_llm_client::LanguageModelProvider::XAi
             | cloud_llm_client::LanguageModelProvider::Google => None,
         }
