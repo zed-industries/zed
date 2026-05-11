@@ -119,8 +119,37 @@ fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[Pat
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
 /// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
 /// the global config dir.
-pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<SensitiveSettingsKind> {
+///
+/// `canonical_worktree_roots` should be the result of
+/// [`canonicalize_worktree_roots`]; it's used to re-check the local
+/// `.zed/` and `.agents/skills/` protections against the canonical form
+/// of `path`, which catches two classes of bypass that the raw-component
+/// scan misses:
+///
+///   1. `..` traversal, e.g. `.agents/foo/../skills/SKILL.md`. The raw
+///      components are `[.agents, foo, .., skills, SKILL.md]`, so the
+///      consecutive-pair match in [`is_agents_skills_path`] fails.
+///   2. Intra-project symlinks, e.g. a symlink `safe -> .zed` followed
+///      by `safe/settings.json`. `resolve_project_path` correctly classes
+///      this as *not* a symlink escape (it stays inside the project), so
+///      the raw-path check is our only line of defense and it doesn't see
+///      `.zed` either.
+///
+/// After canonicalizing we strip the matching worktree root before
+/// re-scanning components, so that a worktree literally rooted at a path
+/// like `~/projects/.zed/foo` doesn't classify every file inside it as
+/// `.zed/` local-settings — only files that have `.zed` (or
+/// `.agents/skills`) inside the worktree are flagged.
+pub async fn sensitive_settings_kind(
+    path: &Path,
+    canonical_worktree_roots: &[PathBuf],
+    fs: &dyn Fs,
+) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
+
+    // Fast path: scan the raw path components before any I/O. Covers the
+    // common case where the agent passes a path that literally contains
+    // `.zed/` or `.agents/skills/`.
     if path.components().any(|component| {
         component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
     }) {
@@ -132,6 +161,28 @@ pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<Sensiti
     }
 
     if let Some(canonical_path) = canonicalize_with_ancestors(path, fs).await {
+        // Re-check the local protections against the canonical path,
+        // restricted to within the project's worktrees, to catch `..`
+        // and intra-project-symlink bypasses (see doc comment above).
+        for root in canonical_worktree_roots {
+            let Ok(relative) = canonical_path.strip_prefix(root) else {
+                continue;
+            };
+
+            if relative.components().any(|component| {
+                component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
+            }) {
+                return Some(SensitiveSettingsKind::Local);
+            }
+            if is_agents_skills_path(relative) {
+                return Some(SensitiveSettingsKind::AgentSkills);
+            }
+
+            // The canonical path can only live inside one worktree, so
+            // stop after the first match.
+            break;
+        }
+
         if let Some(canonical_skills_dir) = canonical_global_skills_dir(fs).await {
             if canonical_path.starts_with(&canonical_skills_dir) {
                 return Some(SensitiveSettingsKind::AgentSkills);
@@ -148,10 +199,6 @@ pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<Sensiti
     }
 
     None
-}
-
-pub async fn is_sensitive_settings_path(path: &Path, fs: &dyn Fs) -> bool {
-    sensitive_settings_kind(path, fs).await.is_some()
 }
 
 /// Resolves a path within the project, checking for symlink escapes.
@@ -429,12 +476,16 @@ pub fn authorize_file_edit(
     let thread = thread.clone();
     let event_stream = event_stream.clone();
 
-    // The local settings folder check is synchronous (pure path inspection),
-    // so we can handle this common case without spawning.
+    // The raw-path sensitivity checks are synchronous (pure path inspection).
+    // We still have to spawn anyway to resolve symlink escapes against the
+    // worktree, but we can short-circuit straight to the appropriate
+    // SensitiveSettingsKind on these fast paths and skip the async
+    // `sensitive_settings_kind` canonicalization step below.
     let local_settings_folder = paths::local_settings_folder_name();
     let is_local_settings = path.components().any(|component| {
         component_matches_ignore_ascii_case(component.as_os_str(), local_settings_folder)
     });
+    let is_agents_skills = is_agents_skills_path(path);
 
     cx.spawn(async move |cx| {
         // Resolve the path and check for symlink escapes.
@@ -494,11 +545,17 @@ pub fn authorize_file_edit(
 
         let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
 
-        // Check sensitive settings asynchronously.
+        // Check sensitive settings asynchronously. Short-circuit on the
+        // raw-path fast paths to skip the canonicalization in
+        // `sensitive_settings_kind`; the slow path still runs for paths
+        // that don't trivially look sensitive, so `..` traversal and
+        // intra-project-symlink bypasses are still caught there.
         let settings_kind = if is_local_settings {
             Some(SensitiveSettingsKind::Local)
+        } else if is_agents_skills {
+            Some(SensitiveSettingsKind::AgentSkills)
         } else {
-            sensitive_settings_kind(&path_owned, fs.as_ref()).await
+            sensitive_settings_kind(&path_owned, &canonical_roots, fs.as_ref()).await
         };
 
         let is_sensitive = settings_kind.is_some();
