@@ -1665,11 +1665,11 @@ impl ThreadView {
                         store.set_title_override(thread_id, title.clone(), cx);
                     });
                 }
-                if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
-                    thread.update(cx, |thread, cx| {
+                thread.update(cx, |thread, cx| {
+                    if thread.can_set_title(cx) {
                         thread.set_title(title, cx).detach_and_log_err(cx);
-                    })
-                }
+                    }
+                });
             }
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
