@@ -1656,7 +1656,7 @@ impl Panel for TerminalPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
-        Box::new(Toggle)
+        Box::new(ToggleFocus)
     }
 
     fn pane(&self) -> Option<Entity<Pane>> {
