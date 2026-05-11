@@ -30,8 +30,6 @@ pub enum SoftWrap {
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
-    /// The name of this language for a Markdown code fence block
-    pub code_fence_block_name: Option<Arc<str>>,
     /// Alternative language names that Jupyter kernels may report for this language.
     /// Used when a kernel's `language` field differs from Zed's language name.
     /// For example, the Nu extension would set this to `["nushell"]`.
@@ -162,7 +160,6 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: LanguageName::new_static(""),
-            code_fence_block_name: None,
             kernel_language_names: Default::default(),
             grammar: None,
             matcher: LanguageMatcher::default(),
@@ -243,12 +240,19 @@ pub struct LanguageMatcher {
     /// `filetype`/`ft` (vim) specified in the modeline.
     #[serde(default)]
     pub modeline_aliases: Vec<String>,
-    /// Alternative names for this language used in Markdown code fence blocks.
-    /// These are matched case-insensitively against the info string of a fenced
-    /// code block (e.g. ` ```protobuf `). Use this to accept aliases that differ
-    /// from the language name and file extensions (e.g. `protobuf` for Proto).
-    #[serde(default)]
-    pub code_fence_block_aliases: Vec<String>,
+    /// Names used to identify this language in Markdown fenced code blocks and
+    /// syntax injections. Accepts either a single string or a list of strings.
+    /// The first entry is used as the canonical name when Zed generates Markdown
+    /// (e.g. when the assistant creates a code block); if omitted, the lowercase
+    /// language name is used. All entries are matched case-insensitively for
+    /// lookup. The old key `code_fence_block_name` is accepted as an alias.
+    #[serde(
+        default,
+        alias = "code_fence_block_name",
+        deserialize_with = "deserialize_string_or_vec",
+    )]
+    #[schemars(schema_with = "string_or_vec_json_schema")]
+    pub code_fence_block_names: Vec<String>,
 }
 
 impl Ord for LanguageMatcher {
@@ -262,7 +266,7 @@ impl Ord for LanguageMatcher {
                     .cmp(&other.first_line_pattern.as_ref().map(Regex::as_str))
             })
             .then_with(|| self.modeline_aliases.cmp(&other.modeline_aliases))
-            .then_with(|| self.code_fence_block_aliases.cmp(&other.code_fence_block_aliases))
+            .then_with(|| self.code_fence_block_names.cmp(&other.code_fence_block_names))
     }
 }
 
@@ -280,7 +284,7 @@ impl PartialEq for LanguageMatcher {
             && self.first_line_pattern.as_ref().map(Regex::as_str)
                 == other.first_line_pattern.as_ref().map(Regex::as_str)
             && self.modeline_aliases == other.modeline_aliases
-            && self.code_fence_block_aliases == other.code_fence_block_aliases
+            && self.code_fence_block_names == other.code_fence_block_names
     }
 }
 
@@ -531,5 +535,42 @@ pub fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
     json_schema!({
         "type": "array",
         "items": { "type": "string" }
+    })
+}
+
+pub fn deserialize_string_or_vec<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<String>, D::Error> {
+    struct StringOrVec;
+
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or list of strings")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<String>, E> {
+            Ok(vec![v.to_owned()])
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
+            let mut out = Vec::new();
+            while let Some(s) = seq.next_element::<String>()? {
+                out.push(s);
+            }
+            Ok(out)
+        }
+    }
+
+    d.deserialize_any(StringOrVec)
+}
+
+pub fn string_or_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
+    json_schema!({
+        "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+        ]
     })
 }

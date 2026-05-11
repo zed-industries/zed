@@ -618,9 +618,9 @@ impl LanguageRegistry {
                         .iter()
                         .any(|suffix| UniCase::new(suffix) == string)
                     || config
-                        .code_fence_block_aliases
+                        .code_fence_block_names
                         .iter()
-                        .any(|alias| UniCase::new(alias) == string)
+                        .any(|name| UniCase::new(name) == string)
             };
 
             match current_best_match {

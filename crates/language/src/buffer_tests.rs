@@ -283,7 +283,7 @@ async fn test_code_fence_block_aliases(cx: &mut TestAppContext) {
         name: "Proto".into(),
         matcher: LanguageMatcher {
             path_suffixes: vec!["proto".into()],
-            code_fence_block_aliases: vec!["protobuf".into()],
+            code_fence_block_names: vec!["proto".into(), "protobuf".into()],
             ..LanguageMatcher::default()
         },
         ..Default::default()
