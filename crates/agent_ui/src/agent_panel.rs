@@ -195,6 +195,9 @@ struct SerializedAgentPanel {
     last_created_entry_kind: AgentPanelEntryKind,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
+    #[serde(default)]
+    restore_terminal: bool,
+    #[serde(default)]
     draft_thread_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
@@ -817,6 +820,7 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent.clone();
         let last_created_entry_kind = self.last_created_entry_kind;
+        let restore_terminal = !self.terminals.is_empty();
 
         let is_draft_active = self.active_thread_is_draft(cx);
         let last_active_thread = self
@@ -877,6 +881,7 @@ impl AgentPanel {
                     selected_agent: Some(selected_agent),
                     last_created_entry_kind,
                     last_active_thread,
+                    restore_terminal,
                     draft_thread_prompt,
                 },
                 kvp,
@@ -953,6 +958,9 @@ impl AgentPanel {
             } else {
                 None
             };
+            let restore_terminal = serialized_panel
+                .as_ref()
+                .is_some_and(|panel| panel.restore_terminal);
 
             let panel = workspace.update_in(cx, |workspace, window, cx| {
                 let panel = cx.new(|cx| Self::new(workspace, prompt_store, window, cx));
@@ -1039,6 +1047,14 @@ impl AgentPanel {
                                 window,
                                 cx,
                             );
+                        }
+                    });
+                }
+
+                if restore_terminal {
+                    panel.update(cx, |panel, cx| {
+                        if panel.supports_terminal(cx) {
+                            panel.new_terminal_with_options(Some(workspace), false, false, window, cx);
                         }
                     });
                 }
@@ -1323,8 +1339,12 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_last_created_entry_kind(AgentPanelEntryKind::Thread, cx);
+        let last_created_entry_kind_changed =
+            self.set_last_created_entry_kind(AgentPanelEntryKind::Thread);
         self.activate_draft(focus, trigger, window, cx);
+        if last_created_entry_kind_changed {
+            self.serialize(cx);
+        }
     }
 
     pub fn new_external_agent_thread(
@@ -1342,13 +1362,31 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.new_terminal_with_options(workspace, true, true, window, cx);
+    }
+
+    fn new_terminal_with_options(
+        &mut self,
+        workspace: Option<&Workspace>,
+        update_last_created_entry_kind: bool,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
             return;
         }
         let working_directory = workspace
             .map(|workspace| terminal_view::default_working_directory(workspace, cx))
             .unwrap_or_else(|| self.default_terminal_working_directory(cx));
-        self.spawn_terminal(TerminalId::new(), working_directory, true, window, cx);
+        self.spawn_terminal(
+            TerminalId::new(),
+            working_directory,
+            update_last_created_entry_kind,
+            focus,
+            window,
+            cx,
+        );
     }
 
     pub fn supports_terminal(&self, cx: &App) -> bool {
@@ -1360,14 +1398,12 @@ impl AgentPanel {
         self.last_created_entry_kind == AgentPanelEntryKind::Terminal && self.supports_terminal(cx)
     }
 
-    fn set_last_created_entry_kind(
-        &mut self,
-        entry_kind: AgentPanelEntryKind,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_last_created_entry_kind(&mut self, entry_kind: AgentPanelEntryKind) -> bool {
         if self.last_created_entry_kind != entry_kind {
             self.last_created_entry_kind = entry_kind;
-            self.serialize(cx);
+            true
+        } else {
+            false
         }
     }
 
@@ -1375,6 +1411,7 @@ impl AgentPanel {
         &mut self,
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
+        update_last_created_entry_kind: bool,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1401,7 +1438,14 @@ impl AgentPanel {
                 let terminal_view = cx.new(|cx| {
                     TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
                 });
-                this.insert_terminal(terminal_id, terminal_view, focus, window, cx);
+                this.insert_terminal(
+                    terminal_id,
+                    terminal_view,
+                    update_last_created_entry_kind,
+                    focus,
+                    window,
+                    cx,
+                );
             })?;
             anyhow::Ok(())
         })
@@ -1412,6 +1456,7 @@ impl AgentPanel {
         &mut self,
         terminal_id: TerminalId,
         terminal_view: Entity<TerminalView>,
+        update_last_created_entry_kind: bool,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1461,12 +1506,15 @@ impl AgentPanel {
             has_notification: false,
             _subscriptions: vec![view_subscription, terminal_subscription],
         };
-        self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal, cx);
+        if update_last_created_entry_kind {
+            self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal);
+        }
         terminal.refresh_title(cx);
         self.terminals.insert(terminal_id, terminal);
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
         }
+        self.serialize(cx);
         cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
     }
@@ -1510,6 +1558,7 @@ impl AgentPanel {
             self.activate_draft(false, "agent_panel", window, cx);
         }
 
+        self.serialize(cx);
         cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
     }
@@ -4432,7 +4481,7 @@ impl AgentPanel {
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.set_custom_title(Some(title.into()), cx);
         });
-        self.insert_terminal(terminal_id, terminal_view, focus, window, cx);
+        self.insert_terminal(terminal_id, terminal_view, true, focus, window, cx);
         Ok(terminal_id)
     }
 
@@ -5442,6 +5491,54 @@ mod tests {
         (panel, cx)
     }
 
+    async fn setup_persisted_panel(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, Entity<AgentPanel>, VisualTestContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        (workspace, panel, cx)
+    }
+
+    fn read_serialized_panel_for_workspace(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> SerializedAgentPanel {
+        let workspace_id = workspace
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .expect("workspace should have a database id");
+        cx.update(|_window, cx| {
+            let kvp = KeyValueStore::global(cx);
+            read_serialized_panel(workspace_id, &kvp)
+                .expect("serialized agent panel state should exist")
+        })
+    }
+
     #[gpui::test]
     async fn test_terminal_entry_kind_controls_new_entry(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
@@ -5479,6 +5576,85 @@ mod tests {
             assert_eq!(panel.active_terminal_id(), None);
             assert!(panel.has_terminal(terminal_id));
             assert!(!panel.should_create_terminal_for_new_entry(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_restore_relaunches_one_inactive_terminal(cx: &mut TestAppContext) {
+        let (workspace, panel, mut cx) = setup_persisted_panel(cx).await;
+
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)?;
+                panel.insert_test_terminal("Server", false, window, cx)?;
+                panel.activate_new_thread(false, "test", window, cx);
+                anyhow::Ok(())
+            })
+            .expect("test terminals should be inserted");
+        cx.run_until_parked();
+
+        let serialized = read_serialized_panel_for_workspace(&workspace, &mut cx);
+        assert!(serialized.restore_terminal);
+        assert_eq!(
+            serialized.last_created_entry_kind,
+            AgentPanelEntryKind::Thread,
+            "terminal restoration should not depend on the new-entry preference"
+        );
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel.terminals(cx).len(),
+                1,
+                "restore should relaunch at most one terminal"
+            );
+            assert_eq!(
+                panel.active_terminal_id(),
+                None,
+                "restored terminals should not become the active panel surface"
+            );
+            assert!(
+                !panel.should_create_terminal_for_new_entry(cx),
+                "restoring a terminal should preserve the saved new-entry preference"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_restore_does_not_relaunch_closed_terminal(cx: &mut TestAppContext) {
+        let (workspace, panel, mut cx) = setup_persisted_panel(cx).await;
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.close_terminal(terminal_id, window, cx);
+        });
+        cx.run_until_parked();
+
+        let serialized = read_serialized_panel_for_workspace(&workspace, &mut cx);
+        assert!(!serialized.restore_terminal);
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.terminals(cx).is_empty(),
+                "closed terminals should not be restored"
+            );
         });
     }
 
