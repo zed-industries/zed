@@ -13,7 +13,6 @@ Enable it with the new `mouse_wheel_zoom` setting.
 - https://github.com/zed-industries/zed/pull/51000 (git_ui: Add file and folder icons to the Git panel)
 - https://github.com/zed-industries/zed/pull/50777 (editor: Go to previous and next symbol actions)
 - Added scroll-to-top and scroll-to-bottom keybindings for markdown preview (gg /G in Vim mode,cmd-up /cmd-down on macOS,ctrl-home /ctrl-end on Linux/Windows). ([#50460](https://github.com/zed-industries/zed/pull/50460) ; thanks [dremnik](https://github.com/dremnik) )
-- remove all qwen AI code since the free tier got wiped
 - WHAT HAPPENS IF IT IS OFF? IS IT WRAPPED? Added project_panel.scrollbar.horizontal_scroll setting to toggle horizontal scrolling in the project panel. ([#51143](https://github.com/zed-industries/zed/pull/51143) ; thanks [k4yt3x](https://github.com/k4yt3x) )
 
 

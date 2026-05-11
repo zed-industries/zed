@@ -15,7 +15,6 @@ use crate::provider::{
     open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings,
     open_router::OpenRouterSettings,
-    qwen::{AvailableModel, QwenSettings},
     vercel::VercelSettings,
     x_ai::XAiSettings,
 };
@@ -32,7 +31,6 @@ pub struct AllLanguageModelSettings {
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
-    pub qwen: QwenSettings,
     pub vercel: VercelSettings,
     pub x_ai: XAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
@@ -53,7 +51,6 @@ impl settings::Settings for AllLanguageModelSettings {
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
-        let qwen = language_models.qwen.unwrap_or_default();
         let vercel = language_models.vercel.unwrap();
         let x_ai = language_models.x_ai.unwrap();
         let zed_dot_dev = language_models.zed_dot_dev.unwrap();
@@ -115,23 +112,6 @@ impl settings::Settings for AllLanguageModelSettings {
             vercel: VercelSettings {
                 api_url: vercel.api_url.unwrap(),
                 available_models: vercel.available_models.unwrap_or_default(),
-            },
-            qwen: QwenSettings {
-                available_models: qwen
-                    .available_models
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|m| AvailableModel {
-                        name: m.name,
-                        display_name: m.display_name,
-                        max_tokens: m.max_tokens,
-                        max_output_tokens: m.max_output_tokens,
-                        max_completion_tokens: m.max_completion_tokens,
-                        supports_images: m.supports_images,
-                        supports_tools: m.supports_tools,
-                        parallel_tool_calls: m.parallel_tool_calls,
-                    })
-                    .collect(),
             },
             x_ai: XAiSettings {
                 api_url: x_ai.api_url.unwrap(),
