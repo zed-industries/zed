@@ -927,7 +927,7 @@ impl WindowsPlatformInner {
 
     #[inline]
     fn run_foreground_task(&self) -> Option<isize> {
-        const MAIN_TASK_TIMEOUT: u128 = 10;
+        const MAIN_TASK_TIMEOUT: u128 = u128::MAX;
 
         let start = std::time::Instant::now();
         'tasks: loop {
