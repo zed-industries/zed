@@ -430,7 +430,7 @@ impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
         Self {
             session_id,
             work_dirs: Some(meta.folder_paths().clone()),
-            title: meta.title.clone(),
+            title: meta.title(),
             updated_at: Some(meta.updated_at),
             created_at: meta.created_at,
             meta: None,
@@ -1860,6 +1860,83 @@ mod tests {
             migrate_thread_remote_connections(cx, migration_task);
         });
         cx.run_until_parked();
+    }
+
+    #[test]
+    fn test_thread_metadata_title_prefers_override() {
+        let mut metadata = make_metadata(
+            "session-1",
+            "Agent Generated Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        metadata.title_override = Some("User Title".into());
+
+        assert_eq!(metadata.title().as_deref(), Some("User Title"));
+        assert_eq!(metadata.display_title().as_ref(), "User Title");
+
+        metadata.title_override = None;
+        assert_eq!(metadata.title().as_deref(), Some("Agent Generated Title"));
+        assert_eq!(metadata.display_title().as_ref(), "Agent Generated Title");
+    }
+
+    #[gpui::test]
+    async fn test_database_round_trips_title_override(_cx: &mut TestAppContext) {
+        let now = Utc::now();
+        let mut metadata = make_metadata(
+            "session-1",
+            "Agent Generated Title",
+            now,
+            PathList::new(&[Path::new("/project-a")]),
+        );
+        metadata.title_override = Some("User Title".into());
+
+        let thread = std::thread::current();
+        let test_name = thread.name().unwrap_or("unknown_test");
+        let db_name = format!("THREAD_METADATA_DB_{}", test_name);
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
+            &db_name,
+        )));
+
+        db.save(metadata).await.unwrap();
+
+        let rows = db.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title.as_deref(), Some("Agent Generated Title"));
+        assert_eq!(rows[0].title_override.as_deref(), Some("User Title"));
+        assert_eq!(rows[0].title().as_deref(), Some("User Title"));
+    }
+
+    #[gpui::test]
+    async fn test_store_set_title_override_updates_cached_metadata(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = make_metadata(
+            "session-1",
+            "Agent Generated Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_title_override(thread_id, "User Title".into(), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
+            assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
+            assert_eq!(metadata.display_title().as_ref(), "User Title");
+        });
     }
 
     #[gpui::test]
