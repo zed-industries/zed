@@ -259,7 +259,9 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
-        self.take_rename(true, window, cx);
+        if self.take_rename(true, window, cx).is_some() {
+            return;
+        }
 
         if self.mode.is_single_line() {
             cx.propagate();
@@ -866,10 +868,6 @@ impl Editor {
         self.nav_history = nav_history;
     }
 
-    pub fn nav_history(&self) -> Option<&ItemNavHistory> {
-        self.nav_history.as_ref()
-    }
-
     pub fn save_location(
         &mut self,
         _: &SaveLocation,
@@ -1079,15 +1077,6 @@ impl Editor {
         self.go_to_singleton_buffer_range(point..point, window, cx);
     }
 
-    pub fn go_to_singleton_buffer_range(
-        &mut self,
-        range: Range<Point>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.go_to_singleton_buffer_range_impl(range, true, window, cx);
-    }
-
     /// Like `go_to_singleton_buffer_point`, but does not push a navigation
     /// history entry. Useful when the caller already recorded one (e.g. when
     /// a file was just opened and we only need to move the cursor).
@@ -1098,30 +1087,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.go_to_singleton_buffer_range_impl(point..point, false, window, cx);
-    }
-
-    fn go_to_singleton_buffer_range_impl(
-        &mut self,
-        range: Range<Point>,
-        record_nav_history: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let multibuffer = self.buffer().read(cx);
-        if !multibuffer.is_singleton() {
-            return;
-        };
-        let anchor_range = range.to_anchors(&multibuffer.snapshot(cx));
-        self.change_selections(
-            SelectionEffects::scroll(Autoscroll::for_go_to_definition(
-                self.cursor_top_offset(cx),
-                cx,
-            ))
-            .nav_history(record_nav_history),
-            window,
-            cx,
-            |s| s.select_anchor_ranges([anchor_range]),
-        );
     }
 
     pub(super) fn go_to_next_change(
@@ -1182,71 +1147,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.go_to_document_highlight_before_or_after_position(Direction::Prev, window, cx);
-    }
-
-    pub fn go_to_document_highlight_before_or_after_position(
-        &mut self,
-        direction: Direction,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        let snapshot = self.snapshot(window, cx);
-        let buffer = &snapshot.buffer_snapshot();
-        let position = self
-            .selections
-            .newest::<Point>(&snapshot.display_snapshot)
-            .head();
-        let anchor_position = buffer.anchor_after(position);
-
-        // Get all document highlights (both read and write)
-        let mut all_highlights = Vec::new();
-
-        if let Some((_, read_highlights)) = self
-            .background_highlights
-            .get(&HighlightKey::DocumentHighlightRead)
-        {
-            all_highlights.extend(read_highlights.iter());
-        }
-
-        if let Some((_, write_highlights)) = self
-            .background_highlights
-            .get(&HighlightKey::DocumentHighlightWrite)
-        {
-            all_highlights.extend(write_highlights.iter());
-        }
-
-        if all_highlights.is_empty() {
-            return;
-        }
-
-        // Sort highlights by position
-        all_highlights.sort_by(|a, b| a.start.cmp(&b.start, buffer));
-
-        let target_highlight = match direction {
-            Direction::Next => {
-                // Find the first highlight after the current position
-                all_highlights
-                    .iter()
-                    .find(|highlight| highlight.start.cmp(&anchor_position, buffer).is_gt())
-            }
-            Direction::Prev => {
-                // Find the last highlight before the current position
-                all_highlights
-                    .iter()
-                    .rev()
-                    .find(|highlight| highlight.end.cmp(&anchor_position, buffer).is_lt())
-            }
-        };
-
-        if let Some(highlight) = target_highlight {
-            let destination = highlight.start.to_point(buffer);
-            let autoscroll = Autoscroll::center();
-
-            self.unfold_ranges(&[destination..destination], false, false, cx);
-            self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
-                s.select_ranges([destination..destination]);
-            });
-        }
     }
 
     pub(super) fn go_to_line<T: 'static>(
@@ -1681,7 +1581,9 @@ impl Editor {
                     None => Ok(Navigated::No),
                 }
             } else {
-                let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
+                let Some((target_buffer, target_ranges)) = locations.into_iter().next() else {
+                    return Ok(Navigated::No);
+                };
 
                 editor.update_in(cx, |editor, window, cx| {
                     let target_ranges = target_ranges
@@ -2185,8 +2087,12 @@ impl Editor {
             }
 
             if num_locations == 1 && !always_open_multibuffer {
-                let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
-                let target_range = target_ranges.first().unwrap().clone();
+                let Some((target_buffer, target_ranges)) = locations.into_iter().next() else {
+                    return anyhow::Ok(Navigated::No);
+                };
+                let Some(target_range) = target_ranges.first().cloned() else {
+                    return anyhow::Ok(Navigated::No);
+                };
 
                 return editor.update_in(cx, |editor, window, cx| {
                     let range = target_range.to_point(target_buffer.read(cx));
@@ -2391,5 +2297,103 @@ impl Editor {
         });
 
         Some((editor, pane))
+    }
+
+    fn go_to_singleton_buffer_range(
+        &mut self,
+        range: Range<Point>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_singleton_buffer_range_impl(range, true, window, cx);
+    }
+
+    fn go_to_singleton_buffer_range_impl(
+        &mut self,
+        range: Range<Point>,
+        record_nav_history: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let multibuffer = self.buffer().read(cx);
+        if !multibuffer.is_singleton() {
+            return;
+        };
+        let anchor_range = range.to_anchors(&multibuffer.snapshot(cx));
+        self.change_selections(
+            SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                self.cursor_top_offset(cx),
+                cx,
+            ))
+            .nav_history(record_nav_history),
+            window,
+            cx,
+            |s| s.select_anchor_ranges([anchor_range]),
+        );
+    }
+
+    fn go_to_document_highlight_before_or_after_position(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let buffer = &snapshot.buffer_snapshot();
+        let position = self
+            .selections
+            .newest::<Point>(&snapshot.display_snapshot)
+            .head();
+        let anchor_position = buffer.anchor_after(position);
+
+        // Get all document highlights (both read and write)
+        let mut all_highlights = Vec::new();
+
+        if let Some((_, read_highlights)) = self
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+        {
+            all_highlights.extend(read_highlights.iter());
+        }
+
+        if let Some((_, write_highlights)) = self
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightWrite)
+        {
+            all_highlights.extend(write_highlights.iter());
+        }
+
+        if all_highlights.is_empty() {
+            return;
+        }
+
+        // Sort highlights by position
+        all_highlights.sort_by(|a, b| a.start.cmp(&b.start, buffer));
+
+        let target_highlight = match direction {
+            Direction::Next => {
+                // Find the first highlight after the current position
+                all_highlights
+                    .iter()
+                    .find(|highlight| highlight.start.cmp(&anchor_position, buffer).is_gt())
+            }
+            Direction::Prev => {
+                // Find the last highlight before the current position
+                all_highlights
+                    .iter()
+                    .rev()
+                    .find(|highlight| highlight.end.cmp(&anchor_position, buffer).is_lt())
+            }
+        };
+
+        if let Some(highlight) = target_highlight {
+            let destination = highlight.start.to_point(buffer);
+            let autoscroll = Autoscroll::center();
+
+            self.unfold_ranges(&[destination..destination], false, false, cx);
+            self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
+                s.select_ranges([destination..destination]);
+            });
+        }
     }
 }

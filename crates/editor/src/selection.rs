@@ -412,8 +412,14 @@ impl Editor {
         if let Some(mut select_prev_state) = self.select_prev_state.take() {
             let query = &select_prev_state.query;
             if !select_prev_state.done {
-                let first_selection = selections.iter().min_by_key(|s| s.id).unwrap();
-                let last_selection = selections.iter().max_by_key(|s| s.id).unwrap();
+                let first_selection = selections
+                    .iter()
+                    .min_by_key(|s| s.id)
+                    .context("missing selection for select previous action")?;
+                let last_selection = selections
+                    .iter()
+                    .max_by_key(|s| s.id)
+                    .context("missing selection for select previous action")?;
                 let mut next_selected_range = None;
                 // When we're iterating matches backwards, the oldest match will actually be the furthest one in the buffer.
                 let bytes_before_last_selection =
@@ -429,7 +435,8 @@ impl Editor {
                             .map(|result| (buffer.len(), result)),
                     );
                 for (end_offset, query_match) in query_matches {
-                    let query_match = query_match.unwrap(); // can only fail due to I/O
+                    let query_match =
+                        query_match.context("query match for select previous action")?;
                     let offset_range =
                         end_offset - query_match.end()..end_offset - query_match.start();
 
@@ -537,10 +544,6 @@ impl Editor {
         Ok(())
     }
 
-    /// Builds an `AhoCorasick` automaton from the provided patterns, while
-    /// setting the case sensitivity based on the global
-    /// `SelectNextCaseSensitive` setting, if set, otherwise based on the
-    /// editor's settings.
     pub fn find_next_match(
         &mut self,
         _: &FindNextMatch,
@@ -734,13 +737,11 @@ impl Editor {
             last_new.reversed
         };
 
-        if selected_larger_node {
-            self.select_syntax_node_history.disable_clearing = true;
-            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select(new_selections.clone());
-            });
-            self.select_syntax_node_history.disable_clearing = false;
-        }
+        self.select_syntax_node_history.disable_clearing = true;
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select(new_selections.clone());
+        });
+        self.select_syntax_node_history.disable_clearing = false;
 
         let start_row = last_new.start.to_display_point(&display_map).row().0;
         let end_row = last_new.end.to_display_point(&display_map).row().0;
@@ -1271,66 +1272,6 @@ impl Editor {
         });
     }
 
-    pub(super) fn begin_columnar_selection(
-        &mut self,
-        position: DisplayPoint,
-        goal_column: u32,
-        reset: bool,
-        mode: ColumnarMode,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.focus_handle.is_focused(window) {
-            self.last_focused_descendant = None;
-            window.focus(&self.focus_handle, cx);
-        }
-
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-
-        if reset {
-            let pointer_position = display_map
-                .buffer_snapshot()
-                .anchor_before(position.to_point(&display_map));
-
-            self.change_selections(
-                SelectionEffects::scroll(Autoscroll::newest()),
-                window,
-                cx,
-                |s| {
-                    s.clear_disjoint();
-                    s.set_pending_anchor_range(
-                        pointer_position..pointer_position,
-                        SelectMode::Character,
-                    );
-                },
-            );
-        };
-
-        let tail = self.selections.newest::<Point>(&display_map).tail();
-        let selection_anchor = display_map.buffer_snapshot().anchor_before(tail);
-        self.columnar_selection_state = match mode {
-            ColumnarMode::FromMouse => Some(ColumnarSelectionState::FromMouse {
-                selection_tail: selection_anchor,
-                display_point: if reset {
-                    if position.column() != goal_column {
-                        Some(DisplayPoint::new(position.row(), goal_column))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                },
-            }),
-            ColumnarMode::FromSelection => Some(ColumnarSelectionState::FromSelection {
-                selection_tail: selection_anchor,
-            }),
-        };
-
-        if !reset {
-            self.select_columns(position, goal_column, &display_map, window, cx);
-        }
-    }
-
     pub(super) fn update_selection(
         &mut self,
         position: DisplayPoint,
@@ -1444,6 +1385,66 @@ impl Editor {
                     s.set_select_mode(pending_mode);
                 }
             });
+        }
+    }
+
+    fn begin_columnar_selection(
+        &mut self,
+        position: DisplayPoint,
+        goal_column: u32,
+        reset: bool,
+        mode: ColumnarMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.focus_handle.is_focused(window) {
+            self.last_focused_descendant = None;
+            window.focus(&self.focus_handle, cx);
+        }
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        if reset {
+            let pointer_position = display_map
+                .buffer_snapshot()
+                .anchor_before(position.to_point(&display_map));
+
+            self.change_selections(
+                SelectionEffects::scroll(Autoscroll::newest()),
+                window,
+                cx,
+                |s| {
+                    s.clear_disjoint();
+                    s.set_pending_anchor_range(
+                        pointer_position..pointer_position,
+                        SelectMode::Character,
+                    );
+                },
+            );
+        };
+
+        let tail = self.selections.newest::<Point>(&display_map).tail();
+        let selection_anchor = display_map.buffer_snapshot().anchor_before(tail);
+        self.columnar_selection_state = match mode {
+            ColumnarMode::FromMouse => Some(ColumnarSelectionState::FromMouse {
+                selection_tail: selection_anchor,
+                display_point: if reset {
+                    if position.column() != goal_column {
+                        Some(DisplayPoint::new(position.row(), goal_column))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                },
+            }),
+            ColumnarMode::FromSelection => Some(ColumnarSelectionState::FromSelection {
+                selection_tail: selection_anchor,
+            }),
+        };
+
+        if !reset {
+            self.select_columns(position, goal_column, &display_map, window, cx);
         }
     }
 
@@ -1990,8 +1991,14 @@ impl Editor {
         if let Some(mut select_next_state) = self.select_next_state.take() {
             let query = &select_next_state.query;
             if !select_next_state.done {
-                let first_selection = selections.iter().min_by_key(|s| s.id).unwrap();
-                let last_selection = selections.iter().max_by_key(|s| s.id).unwrap();
+                let first_selection = selections
+                    .iter()
+                    .min_by_key(|s| s.id)
+                    .context("missing selection for select next action")?;
+                let last_selection = selections
+                    .iter()
+                    .max_by_key(|s| s.id)
+                    .context("missing selection for select next action")?;
                 let mut next_selected_range = None;
 
                 let bytes_after_last_selection =
@@ -2008,7 +2015,7 @@ impl Editor {
                     );
 
                 for (start_offset, query_match) in query_matches {
-                    let query_match = query_match.unwrap(); // can only fail due to I/O
+                    let query_match = query_match.context("query match for select next action")?;
                     let offset_range =
                         start_offset + query_match.start()..start_offset + query_match.end();
 
@@ -2205,19 +2212,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
         move_to_end: bool,
-    ) -> bool {
+    ) {
         let old_selections: Box<[_]> = self
             .selections
             .all::<MultiBufferOffset>(&self.display_snapshot(cx))
             .into();
         if old_selections.is_empty() {
-            return false;
+            return;
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
 
-        let mut any_cursor_moved = false;
         let new_selections = old_selections
             .iter()
             .map(|selection| {
@@ -2233,8 +2239,6 @@ impl Editor {
                     &buffer,
                 );
 
-                any_cursor_moved |= new_pos != selection_pos;
-
                 Selection {
                     id: selection.id,
                     start: new_pos,
@@ -2249,8 +2253,6 @@ impl Editor {
             s.select(new_selections);
         });
         self.request_autoscroll(Autoscroll::newest(), cx);
-
-        any_cursor_moved
     }
 
     fn select_to_syntax_nodes(
