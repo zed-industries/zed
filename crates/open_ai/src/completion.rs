@@ -1037,11 +1037,16 @@ fn response_content_is_refusal(content: &serde_json::Value) -> bool {
 }
 
 fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
+    let cache_read_input_tokens = usage.input_tokens_details.cached_tokens;
+
     TokenUsage {
-        input_tokens: usage.input_tokens.unwrap_or_default(),
+        input_tokens: usage
+            .input_tokens
+            .unwrap_or_default()
+            .saturating_sub(cache_read_input_tokens),
         output_tokens: usage.output_tokens.unwrap_or_default(),
         cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
+        cache_read_input_tokens,
     }
 }
 
@@ -1076,8 +1081,9 @@ fn response_reasoning_input_item_from_output(
 mod tests {
     use crate::responses::{
         ReasoningSummaryPart, ResponseError, ResponseFunctionToolCall, ResponseIncompleteDetails,
-        ResponseOutputItem, ResponseOutputMessage, ResponseReasoningItem, ResponseStatusDetails,
-        ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
+        ResponseInputTokensDetails, ResponseOutputItem, ResponseOutputMessage,
+        ResponseReasoningItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
+        StreamEvent as ResponsesStreamEvent,
     };
     use futures::{StreamExt, executor::block_on};
     use language_model_core::{
@@ -1153,8 +1159,10 @@ mod tests {
                 response: ResponseSummary {
                     usage: Some(ResponseUsage {
                         input_tokens: Some(5),
+                        input_tokens_details: ResponseInputTokensDetails { cached_tokens: 2 },
                         output_tokens: Some(3),
                         total_tokens: Some(8),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },
@@ -1173,8 +1181,9 @@ mod tests {
         assert!(matches!(
             mapped[2],
             LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: 5,
+                input_tokens: 3,
                 output_tokens: 3,
+                cache_read_input_tokens: 2,
                 ..
             })
         ));
@@ -1182,6 +1191,34 @@ mod tests {
             mapped[3],
             LanguageModelCompletionEvent::Stop(StopReason::EndTurn)
         ));
+    }
+
+    #[test]
+    fn response_usage_deserializes_cached_tokens() -> Result<()> {
+        let usage: ResponseUsage = serde_json::from_value(json!({
+            "input_tokens": 5,
+            "input_tokens_details": {
+                "cached_tokens": 2,
+            },
+            "output_tokens": 3,
+            "output_tokens_details": {
+                "reasoning_tokens": 1,
+            },
+            "total_tokens": 8,
+        }))?;
+
+        assert_eq!(usage.output_tokens_details.reasoning_tokens, 1);
+        assert_eq!(
+            token_usage_from_response_usage(&usage),
+            TokenUsage {
+                input_tokens: 3,
+                output_tokens: 3,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 2,
+            }
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -1587,6 +1624,7 @@ mod tests {
                     input_tokens: Some(10),
                     output_tokens: Some(20),
                     total_tokens: Some(30),
+                    ..Default::default()
                 }),
                 ..Default::default()
             },
