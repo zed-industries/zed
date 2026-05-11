@@ -4061,7 +4061,6 @@ impl Sidebar {
                     None
                 }
                 ListEntry::Thread(thread) => {
-                    let session_id = thread.metadata.session_id.clone()?;
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
                         ThreadEntryWorkspace::Closed { .. } => {
@@ -4081,7 +4080,6 @@ impl Sidebar {
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
                             .into();
                     Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
-                        session_id,
                         title: thread.metadata.display_title(),
                         icon: thread.icon,
                         icon_from_external_svg: thread.icon_from_external_svg.clone(),
@@ -4099,6 +4097,7 @@ impl Sidebar {
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
+                        is_draft: thread.is_draft,
                         is_title_generating: thread.is_title_generating,
                         notified,
                         timestamp,
