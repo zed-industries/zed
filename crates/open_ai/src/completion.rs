@@ -15,14 +15,17 @@ use crate::responses::{
     Request as ResponseRequest, ResponseError, ResponseFunctionCallItem,
     ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
     ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
-    ResponseReasoningInputItem, ResponseReasoningItem, ResponseReasoningSummaryPart,
-    ResponseSummary as ResponsesSummary, ResponseUsage as ResponsesUsage,
-    StreamEvent as ResponsesStreamEvent,
+    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
+    ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
 };
 use crate::{
     FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
     ResponseStreamEvent, ToolCall, ToolCallContent,
 };
+
+const RESPONSE_MESSAGE_PHASE_COMMENTARY: &str = "commentary";
+const RESPONSE_MESSAGE_PHASE_FINAL_ANSWER: &str = "final_answer";
 
 pub fn into_open_ai(
     request: LanguageModelRequest,
@@ -277,9 +280,14 @@ fn append_message_to_response_items(
         reasoning_details,
         ..
     } = message;
+    let phase = if role == Role::Assistant {
+        response_message_phase_from_details(reasoning_details.as_ref())
+    } else {
+        None
+    };
 
     if role == Role::Assistant {
-        append_reasoning_details_to_response_items(reasoning_details, input_items);
+        append_reasoning_details_to_response_items(reasoning_details.as_ref(), input_items);
     }
 
     for content in content {
@@ -292,7 +300,13 @@ fn append_message_to_response_items(
                 push_response_image_part(&role, image, &mut content_parts);
             }
             MessageContent::ToolUse(tool_use) => {
-                flush_response_parts(&role, index, &mut content_parts, input_items);
+                flush_response_parts(
+                    &role,
+                    index,
+                    phase.as_deref(),
+                    &mut content_parts,
+                    input_items,
+                );
                 let call_id = tool_use.id.to_string();
                 input_items.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
                     call_id,
@@ -301,7 +315,13 @@ fn append_message_to_response_items(
                 }));
             }
             MessageContent::ToolResult(tool_result) => {
-                flush_response_parts(&role, index, &mut content_parts, input_items);
+                flush_response_parts(
+                    &role,
+                    index,
+                    phase.as_deref(),
+                    &mut content_parts,
+                    input_items,
+                );
                 let output = match tool_result.content.as_slice() {
                     [LanguageModelToolResultContent::Text(text)] => {
                         ResponseFunctionCallOutputContent::Text(text.to_string())
@@ -336,11 +356,17 @@ fn append_message_to_response_items(
         }
     }
 
-    flush_response_parts(&role, index, &mut content_parts, input_items);
+    flush_response_parts(
+        &role,
+        index,
+        phase.as_deref(),
+        &mut content_parts,
+        input_items,
+    );
 }
 
 fn append_reasoning_details_to_response_items(
-    reasoning_details: Option<serde_json::Value>,
+    reasoning_details: Option<&serde_json::Value>,
     input_items: &mut Vec<ResponseInputItem>,
 ) {
     let Some(reasoning_details) = reasoning_details else {
@@ -348,17 +374,29 @@ fn append_reasoning_details_to_response_items(
     };
 
     match reasoning_details {
+        serde_json::Value::Object(_) => {
+            if let Some(metadata) = response_message_metadata_from_details(reasoning_details) {
+                for reasoning_item in metadata.reasoning_items {
+                    input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+                }
+            } else if let Ok(reasoning_item) =
+                serde_json::from_value::<ResponseReasoningInputItem>(reasoning_details.clone())
+            {
+                input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+            }
+        }
         serde_json::Value::Array(items) => {
             for item in items {
                 if let Ok(reasoning_item) =
-                    serde_json::from_value::<ResponseReasoningInputItem>(item)
+                    serde_json::from_value::<ResponseReasoningInputItem>(item.clone())
                 {
                     input_items.push(ResponseInputItem::Reasoning(reasoning_item));
                 }
             }
         }
         value => {
-            if let Ok(reasoning_item) = serde_json::from_value::<ResponseReasoningInputItem>(value)
+            if let Ok(reasoning_item) =
+                serde_json::from_value::<ResponseReasoningInputItem>(value.clone())
             {
                 input_items.push(ResponseInputItem::Reasoning(reasoning_item));
             }
@@ -404,6 +442,7 @@ fn push_response_image_part(
 fn flush_response_parts(
     role: &Role,
     _index: usize,
+    phase: Option<&str>,
     parts: &mut Vec<ResponseInputContent>,
     input_items: &mut Vec<ResponseInputItem>,
 ) {
@@ -418,6 +457,10 @@ fn flush_response_parts(
             Role::System => crate::Role::System,
         },
         content: parts.clone(),
+        phase: match role {
+            Role::Assistant => phase.map(str::to_string),
+            Role::User | Role::System => None,
+        },
     });
 
     input_items.push(item);
@@ -607,6 +650,7 @@ struct RawToolCall {
 pub struct OpenAiResponseEventMapper {
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
+    current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
 }
 
@@ -622,6 +666,7 @@ impl OpenAiResponseEventMapper {
         Self {
             function_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
+            current_message_phase: None,
             pending_stop_reason: None,
         }
     }
@@ -654,6 +699,7 @@ impl OpenAiResponseEventMapper {
                                 message_id: id.clone(),
                             }));
                         }
+                        events.extend(self.capture_message_phase(message));
                     }
                     ResponseOutputItem::FunctionCall(function_call) => {
                         if let Some(item_id) = function_call.id.clone() {
@@ -825,9 +871,8 @@ impl OpenAiResponseEventMapper {
             }
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
-                ResponseOutputItem::Message(_)
-                | ResponseOutputItem::FunctionCall(_)
-                | ResponseOutputItem::Unknown => Vec::new(),
+                ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
+                ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
             ResponsesStreamEvent::OutputTextDone { .. }
             | ResponsesStreamEvent::ContentPartAdded { .. }
@@ -929,6 +974,23 @@ impl OpenAiResponseEventMapper {
         events
     }
 
+    fn capture_message_phase(
+        &mut self,
+        message: &ResponseOutputMessage,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        self.current_message_phase = message
+            .phase
+            .as_deref()
+            .and_then(normalize_response_message_phase)
+            .map(str::to_string);
+
+        if self.current_message_phase.is_none() {
+            return Vec::new();
+        }
+
+        self.emit_response_message_metadata()
+    }
+
     fn capture_reasoning_item(
         &mut self,
         reasoning: &ResponseReasoningItem,
@@ -942,17 +1004,70 @@ impl OpenAiResponseEventMapper {
         }
         self.reasoning_items.push(reasoning_item);
 
-        let reasoning_items = self
-            .reasoning_items
-            .iter()
-            .cloned()
-            .map(ResponseInputItem::Reasoning)
-            .collect::<Vec<_>>();
+        self.emit_response_message_metadata()
+    }
 
-        match serde_json::to_value(reasoning_items) {
+    fn emit_response_message_metadata(
+        &self,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let details = if self.current_message_phase.is_some() {
+            serde_json::to_value(ResponseMessageMetadata {
+                phase: self.current_message_phase.clone(),
+                reasoning_items: self.reasoning_items.clone(),
+            })
+        } else {
+            serde_json::to_value(
+                self.reasoning_items
+                    .iter()
+                    .cloned()
+                    .map(ResponseInputItem::Reasoning)
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        match details {
             Ok(details) => vec![Ok(LanguageModelCompletionEvent::ReasoningDetails(details))],
             Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
         }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ResponseMessageMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reasoning_items: Vec<ResponseReasoningInputItem>,
+}
+
+fn response_message_metadata_from_details(
+    details: &serde_json::Value,
+) -> Option<ResponseMessageMetadata> {
+    let serde_json::Value::Object(object) = details else {
+        return None;
+    };
+
+    if !object.contains_key("phase") && !object.contains_key("reasoning_items") {
+        return None;
+    }
+
+    serde_json::from_value::<ResponseMessageMetadata>(details.clone()).ok()
+}
+
+fn response_message_phase_from_details(details: Option<&serde_json::Value>) -> Option<String> {
+    let metadata = response_message_metadata_from_details(details?)?;
+    metadata
+        .phase
+        .as_deref()
+        .and_then(normalize_response_message_phase)
+        .map(str::to_string)
+}
+
+fn normalize_response_message_phase(phase: &str) -> Option<&'static str> {
+    match phase {
+        RESPONSE_MESSAGE_PHASE_COMMENTARY => Some(RESPONSE_MESSAGE_PHASE_COMMENTARY),
+        RESPONSE_MESSAGE_PHASE_FINAL_ANSWER => Some(RESPONSE_MESSAGE_PHASE_FINAL_ANSWER),
+        _ => None,
     }
 }
 
@@ -1128,6 +1243,7 @@ mod tests {
             role: Some("assistant".to_string()),
             status: Some("in_progress".to_string()),
             content: vec![],
+            phase: None,
         })
     }
 
@@ -1524,6 +1640,69 @@ mod tests {
     }
 
     #[test]
+    fn into_open_ai_response_replays_assistant_phase() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("Done.".into())],
+                cache: false,
+                reasoning_details: Some(json!({
+                    "phase": "final_answer",
+                    "reasoning_items": [
+                        {
+                            "id": "rs_123",
+                            "summary": [],
+                            "encrypted_content": "ENC",
+                            "status": "completed"
+                        }
+                    ]
+                })),
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.3-codex",
+            true,
+            true,
+            None,
+            Some(ReasoningEffort::Medium),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [],
+                    "encrypted_content": "ENC",
+                    "status": "completed"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ],
+                    "phase": "final_answer"
+                }
+            ])
+        );
+    }
+
+    #[test]
     fn into_open_ai_response_replays_reasoning_details_but_not_thinking_text() {
         let request = LanguageModelRequest {
             thread_id: None,
@@ -1774,6 +1953,7 @@ mod tests {
                         "type": "refusal",
                         "refusal": "I can't help with that."
                     })],
+                    phase: None,
                 })],
                 ..Default::default()
             },
@@ -2313,6 +2493,67 @@ mod tests {
                     "status": "completed"
                 }
             ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_preserves_assistant_phase_with_reasoning_details() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Message(ResponseOutputMessage {
+                    id: Some("msg_123".into()),
+                    role: Some("assistant".into()),
+                    status: Some("in_progress".into()),
+                    content: vec![],
+                    phase: Some("commentary".into()),
+                }),
+            },
+            ResponsesStreamEvent::OutputTextDelta {
+                item_id: "msg_123".into(),
+                output_index: 0,
+                content_index: Some(0),
+                delta: "I will inspect the workspace.".into(),
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 1,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                    id: Some("rs_123".into()),
+                    summary: Vec::new(),
+                    encrypted_content: Some("ENC".into()),
+                    status: Some("completed".into()),
+                }),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let details = mapped
+            .iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(details) => Some(details),
+                _ => None,
+            })
+            .last()
+            .expect("reasoning details");
+
+        assert_eq!(
+            details,
+            &json!({
+                "phase": "commentary",
+                "reasoning_items": [
+                    {
+                        "id": "rs_123",
+                        "summary": [],
+                        "encrypted_content": "ENC",
+                        "status": "completed"
+                    }
+                ]
+            })
         );
     }
 

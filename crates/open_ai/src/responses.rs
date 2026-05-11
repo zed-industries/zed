@@ -54,6 +54,8 @@ pub enum ResponseInputItem {
 pub struct ResponseMessageItem {
     pub role: Role,
     pub content: Vec<ResponseInputContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -381,6 +383,8 @@ pub struct ResponseOutputMessage {
     pub role: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
