@@ -22,7 +22,7 @@ By default, when you open a folder in Zed, it opens as a new project in your cur
 
 When you have multiple projects open:
 
-- Click a project in the threads sidebar to switch to it
+- Cmd+click (macOS) or Ctrl+click (Linux/Windows) a project in the threads sidebar to switch to it
 - Each project has its own file tree, git state, and search scope
 - Agent threads are tied to their project context
 - Your workspace layout (splits, tabs) is preserved per project
