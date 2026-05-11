@@ -2382,10 +2382,11 @@ fn open_settings_file(
                             })
                             .await?;
 
-                        workspace.update_in(cx, |_, window, cx| {
-                            create_and_open_local_file(abs_path, window, cx, default_content)
-                        })?
-                        .await?;
+                        workspace
+                            .update_in(cx, |_, window, cx| {
+                                create_and_open_local_file(abs_path, window, cx, default_content)
+                            })?
+                            .await?;
                         anyhow::Ok(())
                     })
                 })
