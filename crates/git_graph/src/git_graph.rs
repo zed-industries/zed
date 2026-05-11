@@ -25,6 +25,7 @@ use gpui::{
 };
 use language::line_diff;
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use picker::{Picker, PickerDelegate};
 use project::{
     ProjectPath,
     git_store::{
@@ -49,11 +50,11 @@ use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     Button, ButtonLike, ButtonStyle, Checkbox, Chip, ColumnWidthConfig, CommonAnimationExt as _,
-    ContextMenu, DiffStat, Divider, DropdownMenu, DropdownStyle, HeaderResizeInfo,
-    HighlightedLabel, RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
-    TableRenderContext, TableResizeBehavior, ToggleState, Tooltip, WithScrollbar,
-    bind_redistributable_columns, prelude::*, render_redistributable_columns_resize_handles,
-    render_table_header, table_row::TableRow,
+    ContextMenu, ContextMenuEntry, DiffStat, Divider, DropdownMenu, DropdownStyle,
+    HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing, RedistributableColumnsState,
+    ScrollableHandle, Table, TableInteractionState, TableRenderContext, TableResizeBehavior,
+    ToggleState, Tooltip, WithScrollbar, bind_redistributable_columns, prelude::*,
+    render_redistributable_columns_resize_handles, render_table_header, table_row::TableRow,
 };
 use workspace::{
     ModalView, Workspace,
@@ -94,6 +95,106 @@ impl CopiedState {
 }
 
 struct DraggedSplitHandle;
+
+struct CommitTagPicker {
+    picker: Entity<Picker<CommitTagPickerDelegate>>,
+}
+
+impl CommitTagPicker {
+    fn new(tag_names: Vec<SharedString>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let delegate = CommitTagPickerDelegate {
+            picker: cx.entity().downgrade(),
+            tag_names,
+            selected_index: 0,
+        };
+        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
+        Self { picker }
+    }
+}
+
+impl EventEmitter<DismissEvent> for CommitTagPicker {}
+impl ModalView for CommitTagPicker {}
+
+impl Focusable for CommitTagPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for CommitTagPicker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().w(rems(18.)).child(self.picker.clone())
+    }
+}
+
+struct CommitTagPickerDelegate {
+    picker: WeakEntity<CommitTagPicker>,
+    tag_names: Vec<SharedString>,
+    selected_index: usize,
+}
+
+impl PickerDelegate for CommitTagPickerDelegate {
+    type ListItem = ListItem;
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Copy Tag".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.tag_names.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(
+        &mut self,
+        _query: String,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(tag_name) = self.tag_names.get(self.selected_index) {
+            cx.write_to_clipboard(ClipboardItem::new_string(tag_name.to_string()));
+        }
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.picker
+            .update(cx, |_this, cx| cx.emit(DismissEvent))
+            .ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(Label::new(self.tag_names.get(ix)?.clone())),
+        )
+    }
+}
 
 #[derive(Clone)]
 struct ChangedFileEntry {
@@ -549,6 +650,8 @@ actions!(
     [
         /// Copies the SHA of the selected commit to the clipboard.
         CopyCommitSha,
+        /// Copies a tag from the selected commit to the clipboard.
+        CopyCommitTag,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
         /// Focuses the search field.
@@ -2701,6 +2804,45 @@ impl GitGraph {
         );
     }
 
+    fn copy_commit_tag(&mut self, entry_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = self.graph_data.commits.get(entry_index) else {
+            return;
+        };
+
+        let tag_names = commit
+            .data
+            .tag_names()
+            .into_iter()
+            .map(|tag_name| SharedString::from(tag_name.to_string()))
+            .collect::<Vec<_>>();
+
+        match tag_names.as_slice() {
+            [] => {}
+            [tag_name] => cx.write_to_clipboard(ClipboardItem::new_string(tag_name.to_string())),
+            _ => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            CommitTagPicker::new(tag_names, window, cx)
+                        });
+                    })
+                    .ok();
+            }
+        }
+    }
+
+    fn copy_selected_commit_tag(
+        &mut self,
+        _: &CopyCommitTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_entry_index) = self.selected_entry_idx else {
+            return;
+        };
+        self.copy_commit_tag(selected_entry_index, window, cx);
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2729,6 +2871,14 @@ impl GitGraph {
         }
 
         let copy_subject_disabled = selected_commit.subject.is_none();
+        let tag_names = self.graph_data.commits.get(entry_idx)?.data.tag_names();
+        let copy_tag_label = "Copy Tag";
+        let copy_tag_label: SharedString = match tag_names.as_slice() {
+            [] => copy_tag_label.into(),
+            [tag_name] => format!("{copy_tag_label}: {tag_name}").into(),
+            _ => format!("{copy_tag_label}...").into(),
+        };
+        let copy_tag_disabled = tag_names.is_empty();
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
 
@@ -2768,6 +2918,14 @@ impl GitGraph {
                     )
                     .separator()
                     .action("Copy Commit Hash", CopyCommitHash.boxed_clone())
+                    .item(
+                        ContextMenuEntry::new(copy_tag_label)
+                            .action(CopyCommitTag.boxed_clone())
+                            .disabled(copy_tag_disabled)
+                            .handler(window.handler_for(&git_graph, move |this, window, cx| {
+                                this.copy_commit_tag(entry_idx, window, cx);
+                            })),
+                    )
                     .action_disabled_when(
                         copy_subject_disabled,
                         "Copy Commit Subject",
@@ -6188,6 +6346,7 @@ impl Render for GitGraph {
                 this.open_selected_commit_view(window, cx);
             }))
             .on_action(cx.listener(Self::copy_selected_commit_sha))
+            .on_action(cx.listener(Self::copy_selected_commit_tag))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.search_state
@@ -8874,6 +9033,164 @@ mod tests {
                 computed_row_height, measured_item_height,
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_copy_selected_commit_tag_with_one_tag_copies_to_clipboard(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let commit_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let commits = vec![Arc::new(InitialGraphCommitData {
+            sha: commit_sha,
+            parents: smallvec![],
+            ref_names: vec![
+                SharedString::from("HEAD -> main"),
+                SharedString::from("origin/main"),
+                SharedString::from("tag: v1.0.0"),
+            ],
+        })];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            assert_eq!(graph.graph_data.commits.len(), 1);
+            graph.selected_entry_idx = Some(0);
+            graph.copy_selected_commit_tag(&CopyCommitTag, window, cx);
+        });
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("v1.0.0".to_string())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_selected_commit_tag_with_multiple_tags_opens_picker_and_copies_selected_tag(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let commit_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let commits = vec![Arc::new(InitialGraphCommitData {
+            sha: commit_sha,
+            parents: smallvec![],
+            ref_names: vec![
+                SharedString::from("HEAD -> main"),
+                SharedString::from("origin/main"),
+                SharedString::from("tag: v1.0.0"),
+                SharedString::from("tag: v1.1.0"),
+            ],
+        })];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            assert_eq!(graph.graph_data.commits.len(), 1);
+            graph.selected_entry_idx = Some(0);
+            graph.copy_selected_commit_tag(&CopyCommitTag, window, cx);
+        });
+
+        // Ensure that nothing has been copied at this point
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()), None);
+
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommitTagPicker>(cx)
+                .expect("commit tag picker is not open")
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(picker.delegate.selected_index, 0);
+            assert_eq!(
+                picker.delegate.tag_names,
+                [SharedString::from("v1.0.0"), SharedString::from("v1.1.0")]
+            );
+        });
+
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("v1.0.0".to_string())
+        );
     }
 
     #[gpui::test]
