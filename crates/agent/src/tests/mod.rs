@@ -5664,12 +5664,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         GetCodeActionsTool::NAME,
         ApplyCodeActionTool::NAME,
         GoToDefinitionTool::NAME,
-        RenameTool::NAME,
     ];
 
-    // All LSP tools should be registered on the thread regardless of the flag,
-    // since the feature flag now only controls exposure to the model rather
-    // than registration.
+    // All LSP tools and the rename tool should be registered on the thread
+    // regardless of the flag, since the feature flags only control exposure
+    // to the model rather than registration.
     thread.read_with(cx, |thread, _| {
         for name in &lsp_tool_names {
             assert!(
@@ -5677,10 +5676,16 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
                 "expected LSP tool {name} to be registered"
             );
         }
+        assert!(
+            thread.has_registered_tool(RenameTool::NAME),
+            "expected rename tool to be registered"
+        );
     });
 
     // Without the `lsp-tool` flag, sending a message should produce a
     // completion request whose tool list excludes the LSP tools.
+    // The rename tool is on its own `rename-tool` flag with
+    // `enabled_for_staff`, so it is already visible in debug builds.
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["hello"], cx)
@@ -5697,6 +5702,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to be visible (enabled_for_staff in debug builds), \
+         but completion tools were: {tool_names:?}"
+    );
     // Sanity check: a non-LSP default tool should still be exposed.
     assert!(
         tool_names.iter().any(|t| t == ReadFileTool::NAME),
@@ -5727,6 +5737,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to still be exposed, \
+         but completion tools were: {tool_names:?}"
+    );
 }
 
 #[gpui::test]
