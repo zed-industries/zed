@@ -6,7 +6,6 @@
 //! paths inside the agent skills tree without needing to know anything
 //! about the skill format itself.
 
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use util::paths::component_matches_ignore_ascii_case;
 
@@ -66,17 +65,14 @@ pub fn is_agents_skills_path(path: &Path) -> bool {
         return false;
     };
     for curr in components {
-        if matches_pair(prev, curr) {
+        if component_matches_ignore_ascii_case(prev, AGENTS_DIR_NAME)
+            && component_matches_ignore_ascii_case(curr, SKILLS_DIR_NAME)
+        {
             return true;
         }
         prev = curr;
     }
     false
-}
-
-fn matches_pair(agents: &OsStr, skills: &OsStr) -> bool {
-    component_matches_ignore_ascii_case(agents, AGENTS_DIR_NAME)
-        && component_matches_ignore_ascii_case(skills, SKILLS_DIR_NAME)
 }
 
 #[cfg(test)]
