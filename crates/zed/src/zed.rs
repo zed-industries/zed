@@ -4898,15 +4898,19 @@ mod tests {
 
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
+        let e = std::time::Instant::now();
         let executor = cx.executor();
         let app_state = init_keymap_test(cx);
+        dbg!(e.elapsed());
         let project = Project::test(app_state.fs.clone(), [], cx).await;
+        dbg!(e.elapsed());
         let window =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        dbg!(e.elapsed());
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
-
+        dbg!(e.elapsed());
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
@@ -4921,7 +4925,7 @@ mod tests {
             )
             .await
             .unwrap();
-
+        dbg!(e.elapsed());
         app_state
             .fs
             .save(
@@ -4931,6 +4935,7 @@ mod tests {
             )
             .await
             .unwrap();
+        dbg!(e.elapsed());
         executor.run_until_parked();
         cx.update(|cx| {
             let (keymap_rx, keymap_watcher) = watch_config_file(
@@ -4941,6 +4946,7 @@ mod tests {
             watch_settings_files(app_state.fs.clone(), cx);
             handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
+        dbg!(e.elapsed());
         window
             .update(cx, |_, _, cx| {
                 workspace.update(cx, |workspace, cx| {
@@ -4952,6 +4958,7 @@ mod tests {
                 });
             })
             .unwrap();
+        dbg!(e.elapsed());
         executor.run_until_parked();
         // Test loading the keymap base at all
         assert_key_bindings_for(
@@ -4960,7 +4967,7 @@ mod tests {
             vec![("backspace", &ActionA), ("k", &ActivatePreviousPane)],
             line!(),
         );
-
+        dbg!(e.elapsed());
         // Test modifying the users keymap, while retaining the base keymap
         app_state
             .fs
@@ -4973,7 +4980,7 @@ mod tests {
             .unwrap();
 
         executor.run_until_parked();
-
+        dbg!(e.elapsed());
         assert_key_bindings_for(
             window.into(),
             cx,
@@ -4991,7 +4998,7 @@ mod tests {
             )
             .await
             .unwrap();
-
+        dbg!(e.elapsed());
         executor.run_until_parked();
 
         assert_key_bindings_for(
@@ -5003,6 +5010,8 @@ mod tests {
             ],
             line!(),
         );
+        dbg!(e.elapsed());
+        panic!("ayy lmao");
     }
 
     #[gpui::test]
