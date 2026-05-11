@@ -287,10 +287,7 @@ fn append_message_to_response_items(
             MessageContent::Text(text) => {
                 push_response_text_part(&role, text, &mut content_parts);
             }
-            MessageContent::Thinking { text, .. } => {
-                push_response_text_part(&role, text, &mut content_parts);
-            }
-            MessageContent::RedactedThinking(_) => {}
+            MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -1448,6 +1445,83 @@ mod tests {
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
+    }
+
+    #[test]
+    fn into_open_ai_response_replays_reasoning_details_but_not_thinking_text() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Thinking {
+                        text: "This is a reasoning summary, not assistant output.".into(),
+                        signature: None,
+                    },
+                    MessageContent::Text("This is visible assistant output.".into()),
+                ],
+                cache: false,
+                reasoning_details: Some(json!([
+                    {
+                        "type": "reasoning",
+                        "id": "rs_123",
+                        "summary": [
+                            {
+                                "type": "summary_text",
+                                "text": "This is the reasoning summary to preserve."
+                            }
+                        ],
+                        "encrypted_content": "ENC",
+                        "status": "completed"
+                    }
+                ])),
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let response = into_open_ai_response(request, "custom-model", false, false, None, None);
+        let serialized = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "This is the reasoning summary to preserve."
+                        }
+                    ],
+                    "encrypted_content": "ENC",
+                    "status": "completed"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "This is visible assistant output.",
+                            "annotations": []
+                        }
+                    ]
+                }
+            ])
+        );
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
+        );
     }
 
     #[test]
