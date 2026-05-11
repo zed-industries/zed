@@ -186,7 +186,7 @@ Zed also supports per-project settings. You can find these in the Settings Edito
 
 ## Open or Create a Project
 
-After setup, press `Cmd+O` (`Ctrl+O` on Linux) to open a folder. By default, new folders open in the current window's sidebar, letting you work on multiple projects without juggling windows. See [Windows & Projects](../windows-and-projects.md) for details on managing multiple projects and opening in new windows.
+After setup, press `Cmd+O` (`Ctrl+O` on Linux) to open a folder. By default, new folders open in the current window's threads sidebar, letting you work on multiple projects without juggling windows. See [Windows & Projects](../windows-and-projects.md) for details on managing multiple projects and opening in new windows.
 
 To start a new project, create a directory using your terminal or file manager, then open it in Zed. The editor will treat that folder as the root of your project.
 
