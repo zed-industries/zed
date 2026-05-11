@@ -482,6 +482,7 @@ pub async fn handle_cli_connection(
                 env,
                 user_data_dir: _,
                 dev_container,
+                cwd,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -545,6 +546,7 @@ pub async fn handle_cli_connection(
                     dev_container,
                     app_state.clone(),
                     env,
+                    cwd,
                     cx,
                 )
                 .await;
@@ -665,6 +667,7 @@ async fn open_workspaces(
     dev_container: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
+    cwd: Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
     if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
@@ -754,6 +757,7 @@ async fn open_workspaces(
                     diff_paths.clone(),
                     diff_all,
                     open_options,
+                    cwd.clone(),
                     responses,
                     &app_state,
                     cx,
@@ -798,18 +802,23 @@ async fn open_local_workspace(
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_options: workspace::OpenOptions,
+    cwd: Option<PathBuf>,
     responses: &dyn CliResponseSink,
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
     let user_provided_paths = !workspace_paths.is_empty();
 
-    // When only diff paths are provided (no regular paths), add the current
+    // When only diff paths are provided (no regular paths), add the CLI's
     // working directory so the workspace opens with the right context.
-    if !user_provided_paths && !diff_paths.is_empty() {
-        if let Ok(cwd) = std::env::current_dir() {
-            workspace_paths.push(cwd.to_string_lossy().into_owned());
-        }
+    // Note: must use the CLI process's cwd (forwarded via `cli_cwd`), not
+    // `std::env::current_dir()`, since the Zed app process's cwd is typically
+    // `/` on macOS bundles or the launch dir of an already-running instance.
+    if !user_provided_paths
+        && !diff_paths.is_empty()
+        && let Some(cwd) = cwd
+    {
+        workspace_paths.push(cwd.to_string_lossy().to_string());
     }
 
     let paths_with_position =
@@ -1328,6 +1337,7 @@ mod tests {
                         wait: true,
                         ..Default::default()
                     },
+                    None,
                     &response_sink,
                     &app_state,
                     &mut cx,
@@ -1447,6 +1457,7 @@ mod tests {
                     vec![],
                     false,
                     open_options,
+                    None,
                     &response_sink,
                     &app_state,
                     &mut cx,
@@ -1517,6 +1528,7 @@ mod tests {
                         vec![],
                         false,
                         workspace::OpenOptions::default(),
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1553,6 +1565,7 @@ mod tests {
                             requesting_window: Some(window_to_replace),
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1699,6 +1712,7 @@ mod tests {
                         Vec::new(),
                         false,
                         workspace::OpenOptions::default(),
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1726,6 +1740,7 @@ mod tests {
                             workspace_matching: workspace::WorkspaceMatching::None, // Force new window
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1772,6 +1787,7 @@ mod tests {
                             workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory, // --add flag
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1836,6 +1852,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1890,6 +1907,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1933,6 +1951,7 @@ mod tests {
             env: None,
             user_data_dir: None,
             dev_container: false,
+            cwd: None,
         }
     }
 

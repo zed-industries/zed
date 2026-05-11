@@ -691,6 +691,7 @@ fn run() -> Result<()> {
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
+                    cwd: env::current_dir().ok(),
                 };
 
                 tx.send(open_request)?;
