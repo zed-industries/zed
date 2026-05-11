@@ -218,9 +218,9 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
-                .register_action(|workspace, _: &NewThread, window, cx| {
+                .register_action(|workspace, action: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |panel, cx| panel.new_entry(Some(workspace), window, cx));
+                        panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
                         workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
@@ -1314,26 +1314,15 @@ impl AgentPanel {
         cx.notify();
     }
 
-    pub fn new_entry(
-        &mut self,
-        workspace: Option<&Workspace>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         if self.should_create_terminal_for_new_entry(cx) {
-            self.new_terminal(workspace, window, cx);
+            // `new_terminal` falls back to `default_terminal_working_directory`
+            // when no workspace is passed; we pass `None` here because the
+            // panel already holds a `WeakEntity<Workspace>` it can resolve.
+            self.new_terminal(None, window, cx);
         } else {
             self.activate_new_thread(true, "agent_panel", window, cx);
         }
-    }
-
-    pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_entry(None, window, cx);
-    }
-
-    fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_agent = agent;
-        self.activate_new_thread(true, "agent_panel", window, cx);
     }
 
     pub fn activate_new_thread(
@@ -1423,8 +1412,9 @@ impl AgentPanel {
                 auto_submit: false,
             }
         });
-        let thread = self.create_agent_thread(
+        let thread = self.create_agent_thread_with_server(
             agent,
+            None,
             Some(thread_id),
             Some(metadata.folder_paths().clone()),
             metadata.title.clone(),
@@ -1443,7 +1433,8 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.new_agent_thread(action.agent.clone().into(), window, cx);
+        self.selected_agent = action.agent.clone().into();
+        self.activate_new_thread(true, "agent_panel", window, cx);
     }
 
     pub fn new_terminal(
@@ -2047,14 +2038,17 @@ impl AgentPanel {
             self.draft_thread = None;
             self._draft_editor_observation = None;
         }
-        // A fresh draft starts empty. Earlier versions copied the
-        // previous active view's prompt over via `active_initial_content`,
-        // but that meant pressing cmd-n on a typed draft left the prompt
-        // visible in *both* the parked draft (in `retained_threads`) and
-        // the new ephemeral draft. The parked one already holds the user's
-        // work; the new one should be a blank slate.
-        let thread =
-            self.create_agent_thread(desired_agent, None, None, None, None, source, window, cx);
+        let thread = self.create_agent_thread_with_server(
+            desired_agent,
+            None,
+            None,
+            None,
+            None,
+            None,
+            source,
+            window,
+            cx,
+        );
         self.draft_thread = Some(thread.conversation_view.clone());
         self.observe_draft_editor(&thread.conversation_view, cx);
         thread.conversation_view
@@ -2265,8 +2259,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let agent = agent_choice.unwrap_or_else(|| self.selected_agent(cx));
-        let thread = self.create_agent_thread(
+        let thread = self.create_agent_thread_with_server(
             agent,
+            None,
             resume_thread_id,
             work_dirs,
             title,
@@ -3221,31 +3216,7 @@ impl AgentPanel {
         );
     }
 
-    pub(crate) fn create_agent_thread(
-        &mut self,
-        agent: Agent,
-        resume_thread_id: Option<ThreadId>,
-        work_dirs: Option<PathList>,
-        title: Option<SharedString>,
-        initial_content: Option<AgentInitialContent>,
-        source: &'static str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AgentThread {
-        self.create_agent_thread_with_server(
-            agent,
-            None,
-            resume_thread_id,
-            work_dirs,
-            title,
-            initial_content,
-            source,
-            window,
-            cx,
-        )
-    }
-
-    fn create_agent_thread_with_server(
+    pub(crate) fn create_agent_thread_with_server(
         &mut self,
         agent: Agent,
         server_override: Option<Rc<dyn AgentServer>>,
@@ -3654,8 +3625,9 @@ impl AgentPanel {
             return false;
         };
 
-        let thread = self.create_agent_thread(
+        let thread = self.create_agent_thread_with_server(
             agent,
+            None,
             None,
             None,
             None,
@@ -4028,8 +4000,10 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.new_agent_thread(
-                                                            Agent::NativeAgent,
+                                                        panel.selected_agent = Agent::NativeAgent;
+                                                        panel.activate_new_thread(
+                                                            true,
+                                                            "agent_panel",
                                                             window,
                                                             cx,
                                                         );
