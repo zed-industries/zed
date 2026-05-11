@@ -37,8 +37,8 @@ Sometimes you want a completely separate window. Here's how:
 
 When using File > Open Recent ({#kb projects::OpenRecent}):
 
-- **Enter** opens in the current window (sidebar)
-- **Cmd+Enter** (macOS) / **Ctrl+Enter** (Linux/Windows) opens in a new window
+- **Enter** or **click** opens in the current window (threads sidebar)
+- **Cmd+Enter** or **Cmd+click** (macOS) / **Ctrl+Enter** or **Ctrl+click** (Linux/Windows) opens in a new window
 
 ### From the CLI
 
