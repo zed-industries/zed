@@ -680,9 +680,7 @@ impl ThreadMetadataStore {
         cx.notify();
     }
 
-    /// Set or clear the user-supplied title for a thread. Pass `None` (or an
-    /// empty string) to remove the override and fall back to the agent's
-    /// title.
+    /// Set or clear the user-supplied title for a thread.
     pub fn set_title_override(
         &mut self,
         thread_id: ThreadId,
