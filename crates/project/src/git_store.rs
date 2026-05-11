@@ -23,7 +23,9 @@ pub use conflict_set::{
     AutoResolution, AutoResolvePattern, AutoResolveTakeSide, ConflictRegion, ConflictSet,
     ConflictSetSnapshot, ConflictSetUpdate, DecompositionSegment, RegionSummary,
 };
-pub use structural_merge::LanguageMergeContext;
+pub use structural_merge::{
+    ConflictSide, DeferReason, LanguageMergeContext, ResolveMethod, StructuralMergeOutcome,
+};
 use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, SinkExt, Stream, StreamExt,

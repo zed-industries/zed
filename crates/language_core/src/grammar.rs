@@ -47,13 +47,17 @@ pub struct Grammar {
 
 /// Configuration loaded from `merges.scm`. Each capture tags a node whose
 /// direct children form a mergeable container (set, ordered list, ...) for
-/// Auto-Resolve's structural merge pass, or — via `@merge.key` — identifies
-/// the part of an item that should be used as its identity key when
-/// detecting "same item, modified on both sides".
+/// Auto-Resolve's structural merge pass, or — via `@merge.key` /
+/// `@merge.key.normalized` — identifies the part of an item that should be
+/// used as its identity key when detecting "same item, modified on both
+/// sides". `@merge.key.normalized` additionally instructs the engine to
+/// collapse whitespace before comparing.
 pub struct MergesConfig {
     pub query: Query,
     pub set_capture_ix: Option<u32>,
+    pub ordered_capture_ix: Option<u32>,
     pub key_capture_ix: Option<u32>,
+    pub key_normalized_capture_ix: Option<u32>,
 }
 
 pub struct HighlightsConfig {
@@ -386,10 +390,12 @@ impl Grammar {
                 .map(|ix| ix as u32)
         };
         let set_capture_ix = capture_index("merge.set");
+        let ordered_capture_ix = capture_index("merge.ordered_list");
         let key_capture_ix = capture_index("merge.key");
-        if set_capture_ix.is_none() {
+        let key_normalized_capture_ix = capture_index("merge.key.normalized");
+        if set_capture_ix.is_none() && ordered_capture_ix.is_none() {
             log::warn!(
-                "{} merges query has no @merge.set capture; ignoring",
+                "{} merges query has no @merge.set or @merge.ordered_list capture; ignoring",
                 language_name
             );
             return Ok(self);
@@ -397,7 +403,9 @@ impl Grammar {
         self.merges_config = Some(MergesConfig {
             query,
             set_capture_ix,
+            ordered_capture_ix,
             key_capture_ix,
+            key_normalized_capture_ix,
         });
         Ok(self)
     }

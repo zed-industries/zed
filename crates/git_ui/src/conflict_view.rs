@@ -671,7 +671,7 @@ pub(crate) fn auto_resolve_buffer(
 
     let patterns = compile_auto_resolve_patterns(cx);
     let language = buffer.read(cx).language().cloned();
-    let (edits, fully, partial) = {
+    let (edits, breakdown) = {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let structural = language.clone().and_then(|language| {
             LanguageMergeContext::build(&buffer_snapshot, language, &conflict_snapshot.conflicts)
@@ -681,44 +681,20 @@ pub(crate) fn auto_resolve_buffer(
             &patterns,
             structural.as_ref(),
         );
-        let (mut fully, mut partial) = (0, 0);
-        for (_conflict, summary) in conflict_snapshot.decomposition_summary(
-            &buffer_snapshot,
-            &patterns,
-            structural.as_ref(),
-        ) {
-            if summary.fully_resolved {
-                fully += 1;
-            } else {
-                partial += 1;
-            }
-        }
-        (edits, fully, partial)
+        let breakdown =
+            classify_outcomes(&conflict_snapshot, &buffer_snapshot, &patterns, structural.as_ref());
+        (edits, breakdown)
     };
     if edits.is_empty() {
         return;
     }
-    let remaining = total.saturating_sub(fully);
 
     buffer.update(cx, |buffer, cx| {
         buffer.edit(edits, None, cx);
     });
 
     if let Some(workspace) = editor.read(cx).workspace() {
-        let message = if partial == 0 {
-            format!(
-                "Auto-resolved {} of {} conflict{}; {} remain",
-                fully,
-                total,
-                if total == 1 { "" } else { "s" },
-                remaining,
-            )
-        } else {
-            format!(
-                "Auto-resolved {} fully, simplified {} more; {} remain",
-                fully, partial, remaining,
-            )
-        };
+        let message = breakdown.toast_message(total);
         workspace.update(cx, |workspace, cx| {
             workspace.show_toast(
                 workspace::Toast::new(NotificationId::unique::<AutoResolveToast>(), message),
@@ -726,6 +702,105 @@ pub(crate) fn auto_resolve_buffer(
             );
         });
     }
+}
+
+#[derive(Default)]
+struct OutcomeBreakdown {
+    fully_structural: usize,
+    fully_line: usize,
+    simplified: usize,
+    deferred_with_reason: Vec<project::git_store::DeferReason>,
+}
+
+impl OutcomeBreakdown {
+    fn toast_message(&self, total: usize) -> String {
+        let resolved = self.fully_structural + self.fully_line;
+        let remaining = total.saturating_sub(resolved);
+        let mut message = String::new();
+        message.push_str(&format!(
+            "Auto-resolved {} of {} conflict{}",
+            resolved,
+            total,
+            if total == 1 { "" } else { "s" },
+        ));
+        if self.fully_structural > 0 && self.fully_line > 0 {
+            message.push_str(&format!(
+                " ({} structural, {} line)",
+                self.fully_structural, self.fully_line,
+            ));
+        } else if self.fully_structural > 0 {
+            message.push_str(&format!(" ({} structural)", self.fully_structural));
+        }
+        if self.simplified > 0 {
+            message.push_str(&format!(
+                "; simplified {} more",
+                self.simplified,
+            ));
+        }
+        message.push_str(&format!("; {} remain", remaining));
+        if let Some(reason) = self.deferred_with_reason.first() {
+            if let Some(snippet) = describe_defer_reason(reason) {
+                message.push_str(&format!(" \u{2014} {}", snippet));
+            }
+        }
+        message
+    }
+}
+
+fn classify_outcomes(
+    snapshot: &ConflictSetSnapshot,
+    buffer: &language::BufferSnapshot,
+    patterns: &[AutoResolvePattern],
+    structural: Option<&LanguageMergeContext>,
+) -> OutcomeBreakdown {
+    use project::git_store::StructuralMergeOutcome;
+    let mut out = OutcomeBreakdown::default();
+    for conflict in snapshot.conflicts.iter() {
+        if let Some(structural) = structural {
+            match structural.try_merge_region(conflict) {
+                StructuralMergeOutcome::Resolved { .. } => {
+                    out.fully_structural += 1;
+                    continue;
+                }
+                StructuralMergeOutcome::Deferred(reason) => {
+                    out.deferred_with_reason.push(reason);
+                }
+            }
+        }
+        let Some(segments) = conflict.decompose(buffer, patterns) else {
+            continue;
+        };
+        let summary = project::RegionSummary::from_segments(&segments);
+        if !summary.is_improvement {
+            continue;
+        }
+        if summary.fully_resolved {
+            out.fully_line += 1;
+        } else {
+            out.simplified += 1;
+        }
+    }
+    out
+}
+
+fn describe_defer_reason(reason: &project::git_store::DeferReason) -> Option<String> {
+    use project::git_store::DeferReason;
+    Some(match reason {
+        DeferReason::BothModifiedDifferently { key } => {
+            format!("both branches modified `{}`", key)
+        }
+        DeferReason::DeleteVsModify { key, .. } => {
+            format!("`{}` deleted on one side, modified on the other", key)
+        }
+        DeferReason::BothAddedDifferently { key } => {
+            format!("both branches added `{}` differently", key)
+        }
+        DeferReason::CrossRegionKeyCollision { key, .. } => {
+            format!("`{}` was added in multiple regions", key)
+        }
+        DeferReason::OrderedHunksOverlap => "ordered-list edits overlap".into(),
+        _ => return None,
+    })
 }
 
 pub(crate) fn auto_resolve_in_editor(

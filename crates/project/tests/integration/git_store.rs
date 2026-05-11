@@ -835,7 +835,9 @@ mod conflict_set_tests {
 
         let replacement = context
             .try_merge_region(&conflict_snapshot.conflicts[0])
-            .expect("disjoint additions should merge");
+            .resolved_text()
+            .expect("disjoint additions should merge")
+            .to_string();
         assert!(replacement.contains("use bar;"));
         assert!(replacement.contains("use baz;"));
 
@@ -878,7 +880,9 @@ mod conflict_set_tests {
 
         let replacement = context
             .try_merge_region(&conflict_snapshot.conflicts[0])
-            .expect("both additions are disjoint by trimmed text");
+            .resolved_text()
+            .expect("both additions are disjoint by trimmed text")
+            .to_string();
         assert!(replacement.contains("use bar as alpha;"));
         assert!(replacement.contains("use bar as beta;"));
     }
@@ -911,7 +915,9 @@ mod conflict_set_tests {
 
         let replacement = context
             .try_merge_region(&conflict_snapshot.conflicts[0])
-            .expect("v2 should accept unilateral deletion");
+            .resolved_text()
+            .expect("v2 should accept unilateral deletion")
+            .to_string();
         assert!(!replacement.contains("use bar;"));
         assert!(replacement.contains("use baz;"));
 
@@ -952,9 +958,9 @@ mod conflict_set_tests {
             .expect("rust grammar with merges.scm is available");
 
         assert!(
-            context
+            !context
                 .try_merge_region(&conflict_snapshot.conflicts[0])
-                .is_none(),
+                .is_resolved(),
             "delete-vs-modify with overlapping keys must defer"
         );
     }
@@ -994,7 +1000,9 @@ mod conflict_set_tests {
 
         let replacement = context
             .try_merge_region(&conflict_snapshot.conflicts[0])
-            .expect("ours unchanged + theirs modified should take theirs");
+            .resolved_text()
+            .expect("ours unchanged + theirs modified should take theirs")
+            .to_string();
         assert!(replacement.contains("let x = 2;"));
         assert!(!replacement.contains("let x = 1;"));
 
@@ -1035,11 +1043,104 @@ mod conflict_set_tests {
             .expect("rust grammar with merges.scm is available");
 
         assert!(
-            context
+            !context
                 .try_merge_region(&conflict_snapshot.conflicts[0])
-                .is_none(),
+                .is_resolved(),
             "same key modified differently on both sides must defer"
         );
+    }
+
+    #[test]
+    fn test_structural_merge_ordered_list_disjoint_match_arms() {
+        // Both sides add an arm to the same match, in disjoint positions
+        // relative to the base. Git's conflict markers always sit at
+        // column 0 regardless of the surrounding indentation.
+        let test_content = "fn handle(x: u32) -> u32 {
+    match x {
+<<<<<<< HEAD
+        1 => 10,
+        2 => 20,
+||||||| base
+        2 => 20,
+=======
+        2 => 20,
+        3 => 30,
+>>>>>>> branch
+        _ => 0,
+    }
+}
+";
+        let buffer_id = BufferId::new(1).unwrap();
+        let mut buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(
+                outcome,
+                StructuralMergeOutcome::Resolved {
+                    method: ResolveMethod::OrderedList,
+                    ..
+                }
+            ),
+            "expected OrderedList resolution, got {outcome:?}"
+        );
+
+        let edits = conflict_snapshot.auto_resolution_edits(&snapshot, &[], Some(&context));
+        buffer.edit(edits);
+        let final_text = buffer.snapshot().text();
+        assert!(final_text.contains("1 => 10"));
+        assert!(final_text.contains("2 => 20"));
+        assert!(final_text.contains("3 => 30"));
+    }
+
+    #[test]
+    fn test_structural_merge_cross_region_key_collision_defers() {
+        // ours adds `fn brand_new` in conflict #1; theirs adds `fn brand_new`
+        // (different body) in conflict #2. Auto-merging both regions would
+        // leave two definitions in the file, so both regions must defer.
+        let test_content = r#"
+            <<<<<<< HEAD
+            fn brand_new() { 1 }
+            ||||||| base
+            =======
+            >>>>>>> branch
+
+            fn untouched() {}
+
+            <<<<<<< HEAD
+            ||||||| base
+            =======
+            fn brand_new() { 2 }
+            >>>>>>> branch
+        "#
+        .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
+
+        let language = language::rust_lang();
+        let context = LanguageMergeContext::build(&snapshot, language, &conflict_snapshot.conflicts)
+            .expect("rust grammar with merges.scm is available");
+
+        let outcome1 = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        let outcome2 = context.try_merge_region(&conflict_snapshot.conflicts[1]);
+        assert!(matches!(
+            outcome1,
+            StructuralMergeOutcome::Deferred(DeferReason::CrossRegionKeyCollision { .. })
+        ));
+        assert!(matches!(
+            outcome2,
+            StructuralMergeOutcome::Deferred(DeferReason::CrossRegionKeyCollision { .. })
+        ));
     }
 
     #[test]
@@ -1068,7 +1169,9 @@ mod conflict_set_tests {
 
         let replacement = context
             .try_merge_region(&conflict_snapshot.conflicts[0])
-            .expect("unanimous deletion should resolve");
+            .resolved_text()
+            .expect("unanimous deletion should resolve")
+            .to_string();
         assert!(replacement.contains("fn keeper()"));
         assert!(!replacement.contains("fn old()"));
 

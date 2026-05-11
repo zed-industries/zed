@@ -84,12 +84,14 @@ impl ConflictSetSnapshot {
     ) -> Vec<(Range<usize>, String)> {
         let mut edits = Vec::new();
         for conflict in self.conflicts.iter() {
-            if let Some(structural) = structural
-                && let Some(replacement) = structural.try_merge_region(conflict)
-            {
-                let outer = conflict.range.to_offset(buffer);
-                edits.push((outer, replacement));
-                continue;
+            if let Some(structural) = structural {
+                if let Some(replacement) =
+                    structural.try_merge_region(conflict).resolved_text()
+                {
+                    let outer = conflict.range.to_offset(buffer);
+                    edits.push((outer, replacement.to_string()));
+                    continue;
+                }
             }
             let Some(segments) = conflict.decompose(buffer, patterns) else {
                 continue;
@@ -121,7 +123,7 @@ impl ConflictSetSnapshot {
     ) -> impl Iterator<Item = (&'a ConflictRegion, RegionSummary)> + 'a {
         self.conflicts.iter().filter_map(move |conflict| {
             if let Some(structural) = structural
-                && structural.try_merge_region(conflict).is_some()
+                && structural.try_merge_region(conflict).is_resolved()
             {
                 return Some((
                     conflict,
@@ -215,7 +217,7 @@ pub struct RegionSummary {
 }
 
 impl RegionSummary {
-    fn from_segments(segments: &[DecompositionSegment]) -> Self {
+    pub fn from_segments(segments: &[DecompositionSegment]) -> Self {
         let any_resolved = segments
             .iter()
             .any(|s| matches!(s, DecompositionSegment::Resolved(_)));

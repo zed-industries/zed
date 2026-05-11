@@ -13467,6 +13467,7 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
+ "imara-diff",
  "indexmap 2.11.4",
  "itertools 0.14.0",
  "language",

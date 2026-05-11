@@ -61,6 +61,7 @@ gpui.workspace = true
 http_client.workspace = true
 image.workspace = true
 itertools.workspace = true
+imara-diff.workspace = true
 indexmap.workspace = true
 language.workspace = true
 log.workspace = true

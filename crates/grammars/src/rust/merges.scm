@@ -17,6 +17,10 @@
 
 (enum_variant_list) @merge.set
 
+; Match arms have meaningful positions (pattern matching has fall-through
+; semantics in some cases, so order matters).
+(match_block) @merge.ordered_list
+
 (function_item name: (identifier) @merge.key)
 
 (function_signature_item name: (identifier) @merge.key)

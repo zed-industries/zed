@@ -297,18 +297,29 @@ Auto-Resolve takes the following per-item decisions:
 
 Anything ambiguous falls back to line-level decomposition.
 
-Out of the box, Rust and TypeScript ship structural-merge rules covering source files, class/interface bodies, struct/enum fields, and named functions/types. To add a language, drop a `merges.scm` query file next to its `highlights.scm`:
+Out of the box, **Rust, TypeScript, Python, Go, JSON, and YAML** ship structural-merge rules covering top-level declarations, class/interface bodies, struct/enum fields, named functions/types, object pairs, and YAML mappings. To add a language, drop a `merges.scm` query file next to its `highlights.scm`:
 
 ```scheme
 ; The direct children of these nodes are mergeable as an unordered set.
 (source_file) @merge.set
 (declaration_list) @merge.set
 
+; For containers where order is semantically meaningful (e.g. match arms),
+; use @merge.ordered_list — the engine merges non-overlapping insertions
+; and deletions and defers when both sides edit overlapping positions.
+(match_block) @merge.ordered_list
+
 ; Identify items by name so a same-name function modified on both sides is
 ; treated as one item rather than two separate additions.
 (function_item name: (identifier) @merge.key)
 (struct_item name: (type_identifier) @merge.key)
+
+; @merge.key.normalized works like @merge.key but compares with whitespace
+; collapsed — useful when you want two cosmetically-different versions of an
+; identifier to be considered the same item.
 ```
+
+After the run, the toast lists how each region resolved — e.g. *"Auto-resolved 5 of 7 conflicts (3 structural, 2 line); simplified 1 more; 2 remain — both branches modified `process_event`"*. Cross-region key collisions (ours adds `fn foo` in one region while theirs adds a different `fn foo` in another) are detected and both regions are deferred, because applying both would leave duplicate definitions in the file.
 
 #### Auto-Resolve regex patterns
 
