@@ -675,17 +675,10 @@ pub(crate) fn auto_resolve_buffer(
     let language = buffer.read(cx).language().cloned();
     let (edits, breakdown, hints) = {
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let structural = language.clone().and_then(|language| {
+        let structural = language.and_then(|language| {
             LanguageMergeContext::build(&buffer_snapshot, language, &conflict_snapshot.conflicts)
         });
-        let edits = conflict_snapshot.auto_resolution_edits(
-            &buffer_snapshot,
-            &patterns,
-            structural.as_ref(),
-        );
-        let (breakdown, hints) =
-            classify_outcomes(&conflict_snapshot, &buffer_snapshot, &patterns, structural.as_ref());
-        (edits, breakdown, hints)
+        classify_outcomes(&conflict_snapshot, &buffer_snapshot, &patterns, structural.as_ref())
     };
     if edits.is_empty() {
         return;
@@ -850,19 +843,27 @@ struct ResolvedRegionHint {
     label: SharedString,
 }
 
+/// Walk every conflict once and produce both the buffer edits to apply and
+/// the classification used to render hints / the toast. Combining these in
+/// a single pass avoids re-running tree-sitter / line decomposition twice
+/// per Auto-Resolve click.
 fn classify_outcomes(
     snapshot: &ConflictSetSnapshot,
     buffer: &language::BufferSnapshot,
     patterns: &[AutoResolvePattern],
     structural: Option<&LanguageMergeContext>,
-) -> (OutcomeBreakdown, Vec<ResolvedRegionHint>) {
-    use project::git_store::{ResolveMethod, StructuralMergeOutcome};
+) -> (Vec<(Range<usize>, String)>, OutcomeBreakdown, Vec<ResolvedRegionHint>) {
+    use language::OffsetRangeExt as _;
+    use project::git_store::{ResolveMethod, StructuralMergeOutcome, render_decomposed_region};
+    let mut edits = Vec::new();
     let mut out = OutcomeBreakdown::default();
     let mut hints = Vec::new();
     for conflict in snapshot.conflicts.iter() {
         if let Some(structural) = structural {
             match structural.try_merge_region(conflict) {
-                StructuralMergeOutcome::Resolved { method, .. } => {
+                StructuralMergeOutcome::Resolved { text, method } => {
+                    let outer = conflict.range.to_offset(buffer);
+                    edits.push((outer, text));
                     out.fully_structural += 1;
                     hints.push(ResolvedRegionHint {
                         anchor: conflict.range.start,
@@ -889,6 +890,13 @@ fn classify_outcomes(
         if !summary.is_improvement {
             continue;
         }
+        let outer = conflict.range.to_offset(buffer);
+        let replacement = render_decomposed_region(
+            &segments,
+            &conflict.ours_branch_name,
+            &conflict.theirs_branch_name,
+        );
+        edits.push((outer, replacement));
         if summary.fully_resolved {
             out.fully_line += 1;
             hints.push(ResolvedRegionHint {
@@ -903,7 +911,7 @@ fn classify_outcomes(
             });
         }
     }
-    (out, hints)
+    (edits, out, hints)
 }
 
 fn describe_defer_reason(reason: &project::git_store::DeferReason) -> Option<String> {

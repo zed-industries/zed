@@ -629,7 +629,7 @@ fn compose_replacement(
 /// ======= / >>>>>>> ` markers so the result is still a parseable diff3
 /// conflict region (with smaller markers) that Auto-Resolve can be re-run
 /// against later if needed.
-pub(crate) fn render_decomposed_region(
+pub fn render_decomposed_region(
     segments: &[DecompositionSegment],
     ours_branch: &str,
     theirs_branch: &str,

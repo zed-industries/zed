@@ -115,6 +115,17 @@ struct SideContext {
     item_keys: HashMap<usize, String>,
 }
 
+impl SideContext {
+    fn in_region_children(
+        &self,
+        container: Node<'_>,
+        offset: usize,
+        len: usize,
+    ) -> Option<Vec<InRegionItem>> {
+        in_region_children(container, &self.source, &self.item_keys, offset..offset + len)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct RegionOffsets {
     base: usize,
@@ -268,32 +279,19 @@ impl LanguageMergeContext {
             return StructuralMergeOutcome::Deferred(DeferReason::DifferentContainerKinds);
         }
 
-        let base_items = match in_region_children(
-            base_node,
-            &self.base.source,
-            &self.base.item_keys,
-            offsets.base..offsets.base + offsets.base_len,
-        ) {
-            Some(items) => items,
-            None => return StructuralMergeOutcome::Deferred(DeferReason::ChildSplitsRegion),
+        let Some(base_items) = self.base.in_region_children(base_node, offsets.base, offsets.base_len)
+        else {
+            return StructuralMergeOutcome::Deferred(DeferReason::ChildSplitsRegion);
         };
-        let ours_items = match in_region_children(
-            ours_node,
-            &self.ours.source,
-            &self.ours.item_keys,
-            offsets.ours..offsets.ours + offsets.ours_len,
-        ) {
-            Some(items) => items,
-            None => return StructuralMergeOutcome::Deferred(DeferReason::ChildSplitsRegion),
+        let Some(ours_items) = self.ours.in_region_children(ours_node, offsets.ours, offsets.ours_len)
+        else {
+            return StructuralMergeOutcome::Deferred(DeferReason::ChildSplitsRegion);
         };
-        let theirs_items = match in_region_children(
-            theirs_node,
-            &self.theirs.source,
-            &self.theirs.item_keys,
-            offsets.theirs..offsets.theirs + offsets.theirs_len,
-        ) {
-            Some(items) => items,
-            None => return StructuralMergeOutcome::Deferred(DeferReason::ChildSplitsRegion),
+        let Some(theirs_items) = self
+            .theirs
+            .in_region_children(theirs_node, offsets.theirs, offsets.theirs_len)
+        else {
+            return StructuralMergeOutcome::Deferred(DeferReason::ChildSplitsRegion);
         };
 
         match base_kind {
@@ -309,29 +307,20 @@ impl LanguageMergeContext {
         theirs_items: &[InRegionItem],
     ) -> StructuralMergeOutcome {
 
-        let base_by_key = match items_by_key(base_items) {
-            Ok(map) => map,
-            Err(key) => {
-                return StructuralMergeOutcome::Deferred(DeferReason::DuplicateKey {
-                    side: ConflictSide::Base,
-                    key,
-                });
-            }
+        let by_key = |items, side| {
+            items_by_key(items)
+                .map_err(|key| StructuralMergeOutcome::Deferred(DeferReason::DuplicateKey { side, key }))
         };
-        let theirs_by_key = match items_by_key(theirs_items) {
+        let base_by_key = match by_key(base_items, ConflictSide::Base) {
             Ok(map) => map,
-            Err(key) => {
-                return StructuralMergeOutcome::Deferred(DeferReason::DuplicateKey {
-                    side: ConflictSide::Theirs,
-                    key,
-                });
-            }
+            Err(outcome) => return outcome,
         };
-        if let Err(key) = items_by_key(ours_items) {
-            return StructuralMergeOutcome::Deferred(DeferReason::DuplicateKey {
-                side: ConflictSide::Ours,
-                key,
-            });
+        let theirs_by_key = match by_key(theirs_items, ConflictSide::Theirs) {
+            Ok(map) => map,
+            Err(outcome) => return outcome,
+        };
+        if let Err(outcome) = by_key(ours_items, ConflictSide::Ours) {
+            return outcome;
         }
 
         let mut output = String::new();
@@ -436,11 +425,9 @@ impl LanguageMergeContext {
             }
         }
 
-        for base_item in base_items {
-            let key = base_item.key.as_str();
-            if handled.contains(key) {
-                continue;
-            }
+        // Any base item not seen on `ours` or `theirs` means both sides
+        // deleted it; treat that as a change so we don't bail with NoChange.
+        if base_items.iter().any(|item| !handled.contains(item.key.as_str())) {
             any_change = true;
         }
 
@@ -620,27 +607,14 @@ impl LanguageMergeContext {
                 continue;
             };
 
-            let base_items = in_region_children(
-                base_node,
-                &self.base.source,
-                &self.base.item_keys,
-                offsets.base..offsets.base + offsets.base_len,
-            );
-            let ours_items = in_region_children(
-                ours_node,
-                &self.ours.source,
-                &self.ours.item_keys,
-                offsets.ours..offsets.ours + offsets.ours_len,
-            );
-            let theirs_items = in_region_children(
-                theirs_node,
-                &self.theirs.source,
-                &self.theirs.item_keys,
-                offsets.theirs..offsets.theirs + offsets.theirs_len,
-            );
-            let (Some(base_items), Some(ours_items), Some(theirs_items)) =
-                (base_items, ours_items, theirs_items)
-            else {
+            let (Some(base_items), Some(ours_items), Some(theirs_items)) = (
+                self.base
+                    .in_region_children(base_node, offsets.base, offsets.base_len),
+                self.ours
+                    .in_region_children(ours_node, offsets.ours, offsets.ours_len),
+                self.theirs
+                    .in_region_children(theirs_node, offsets.theirs, offsets.theirs_len),
+            ) else {
                 continue;
             };
 
@@ -762,25 +736,13 @@ fn apply_side_edits(
         let Some(offsets) = region_offsets.get(&conflict.range.start) else {
             continue;
         };
-        let (new_len, _new_offset) = match side {
-            Side::Ours => (offsets.ours_len, offsets.ours),
-            Side::Theirs => (offsets.theirs_len, offsets.theirs),
+        let new_len = match side {
+            Side::Ours => offsets.ours_len,
+            Side::Theirs => offsets.theirs_len,
         };
-        if new_len == offsets.base_len
-            && match side {
-                Side::Ours => {
-                    let base_slice = &base_source[offsets.base..offsets.base + offsets.base_len];
-                    let ours_text: String = buffer.text_for_range(conflict.ours.clone()).collect();
-                    base_slice == ours_text
-                }
-                Side::Theirs => {
-                    let base_slice = &base_source[offsets.base..offsets.base + offsets.base_len];
-                    let theirs_text: String =
-                        buffer.text_for_range(conflict.theirs.clone()).collect();
-                    base_slice == theirs_text
-                }
-            }
-        {
+        let side_text: String = side_text(buffer, conflict, side);
+        let base_slice = &base_source[offsets.base..offsets.base + offsets.base_len];
+        if new_len == offsets.base_len && base_slice == side_text {
             // No textual change in this region — no edit to apply.
             continue;
         }
@@ -791,30 +753,26 @@ fn apply_side_edits(
             start_byte,
             old_end_byte,
             new_end_byte,
-            start_position: point_at_byte(base_source, offsets.base, shift),
-            old_end_position: point_at_byte(base_source, offsets.base + offsets.base_len, shift),
-            // For new_end_position we'd need the *new* source. We can
-            // approximate: the row delta = new line count - old line count
-            // within the region; the column at end = if last line of new
-            // ends with newline, 0, else its length. tree-sitter only uses
-            // this as a hint; we compute it by walking the buffer's text.
-            new_end_position: point_after_replacement(
-                base_source,
-                offsets.base,
-                offsets.base_len,
-                shift,
-                buffer,
-                conflict,
-                side,
-            ),
+            start_position: point_at_byte(base_source, offsets.base),
+            old_end_position: point_at_byte(base_source, offsets.base + offsets.base_len),
+            // tree-sitter only uses new_end_position as a hint; compute it by
+            // walking the replacement text from the region start.
+            new_end_position: point_after_replacement(base_source, offsets.base, &side_text),
         };
         tree.edit(&edit);
         shift += new_len as isize - offsets.base_len as isize;
     }
 }
 
-fn point_at_byte(source: &str, byte_offset: usize, shift: isize) -> tree_sitter::Point {
-    let target = (byte_offset as isize + shift) as usize;
+fn side_text(buffer: &text::BufferSnapshot, conflict: &ConflictRegion, side: Side) -> String {
+    let range = match side {
+        Side::Ours => conflict.ours.clone(),
+        Side::Theirs => conflict.theirs.clone(),
+    };
+    buffer.text_for_range(range).collect()
+}
+
+fn point_at_byte(source: &str, byte_offset: usize) -> tree_sitter::Point {
     let mut row: usize = 0;
     let mut col: usize = 0;
     let mut bytes_seen = 0usize;
@@ -834,24 +792,15 @@ fn point_at_byte(source: &str, byte_offset: usize, shift: isize) -> tree_sitter:
         }
         bytes_seen += len;
     }
-    let _ = target;
     tree_sitter::Point { row, column: col }
 }
 
 fn point_after_replacement(
     base_source: &str,
     base_offset: usize,
-    base_len: usize,
-    shift: isize,
-    buffer: &text::BufferSnapshot,
-    conflict: &ConflictRegion,
-    side: Side,
+    replacement: &str,
 ) -> tree_sitter::Point {
-    let start = point_at_byte(base_source, base_offset, shift);
-    let replacement: String = match side {
-        Side::Ours => buffer.text_for_range(conflict.ours.clone()).collect(),
-        Side::Theirs => buffer.text_for_range(conflict.theirs.clone()).collect(),
-    };
+    let start = point_at_byte(base_source, base_offset);
     let mut row = start.row;
     let mut col = start.column;
     for ch in replacement.chars() {
@@ -862,7 +811,6 @@ fn point_after_replacement(
             col += ch.len_utf8();
         }
     }
-    let _ = base_len;
     tree_sitter::Point { row, column: col }
 }
 

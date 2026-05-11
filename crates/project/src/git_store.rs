@@ -22,6 +22,7 @@ use collections::HashMap;
 pub use conflict_set::{
     AutoResolution, AutoResolvePattern, AutoResolveTakeSide, ConflictRegion, ConflictSet,
     ConflictSetSnapshot, ConflictSetUpdate, DecompositionSegment, RegionSummary,
+    render_decomposed_region,
 };
 pub use structural_merge::{
     ConflictSide, DeferReason, LanguageMergeContext, ResolveMethod, StructuralMergeOutcome,
