@@ -101,9 +101,6 @@ use crate::{
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
-/// How long after the last `PromptUpdated` event a draft's prompt is
-/// persisted to the kvp store. Exposed so test helpers can advance the
-/// simulated clock past it.
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
 mod thread_view;
@@ -510,9 +507,6 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
-    /// Debounces draft-prompt writes to the kvp store. Each `PromptUpdated`
-    /// event drops the previous task (cancelling the in-flight delay) and
-    /// schedules a new one, so a burst of typing collapses into one write.
     draft_prompt_persist_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -1690,20 +1684,6 @@ impl ConversationView {
         cx.notify();
     }
 
-    /// Schedules a debounced write of this draft's current prompt blocks to
-    /// the kvp store. Called from the [`AcpThreadEvent::PromptUpdated`]
-    /// handler.
-    ///
-    /// The actual write happens after a short delay; if another
-    /// `PromptUpdated` arrives in the meantime, the previous task is
-    /// dropped (cancelling its delay) and a new one is scheduled. Bursts of
-    /// typing therefore collapse into a single kvp write of the latest
-    /// prompt state.
-    ///
-    /// Re-reads `is_draft_thread()` and `draft_prompt()` at write time so a
-    /// promotion (first message sent) that races the timer correctly
-    /// short-circuits to a no-op — the metadata store handles kvp cleanup
-    /// for promoted threads.
     fn schedule_draft_prompt_persist(&mut self, cx: &mut Context<Self>) {
         let thread_id = self.thread_id;
         self.draft_prompt_persist_task = Some(cx.spawn(async move |this, cx| {

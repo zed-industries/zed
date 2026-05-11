@@ -163,13 +163,6 @@ pub fn send_message(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
-/// Drives draft-prompt text into the currently active thread's message
-/// editor. This mirrors how a real user would type into the panel, so the
-/// editor-observer chain (`cx.observe(&message_editor)` → `set_draft_prompt`
-/// → `PromptUpdated` → kvp write) fires naturally.
-///
-/// Advances the simulated clock past the kvp-write debounce so the
-/// persisted prompt actually lands in the kvp store before this returns.
 pub fn type_draft_prompt(panel: &Entity<AgentPanel>, text: &str, cx: &mut VisualTestContext) {
     let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
     let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());

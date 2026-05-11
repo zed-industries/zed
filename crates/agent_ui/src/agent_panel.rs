@@ -1343,11 +1343,6 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         self.set_last_created_entry_kind(AgentPanelEntryKind::Thread, cx);
-        // If the ephemeral draft has content, park it in `retained_threads`
-        // so the user can get back to it from the sidebar instead of
-        // losing the prompt, then create a fresh empty draft. When the
-        // active view is the draft, content still gets carried into the
-        // new draft via `ensure_draft` → `active_initial_content`.
         if let Some(draft) = self.draft_thread.clone()
             && self.draft_has_content(&draft, cx)
         {
@@ -1384,8 +1379,7 @@ impl AgentPanel {
 
     /// Reattaches the panel's new-draft slot to the persisted `thread_id`,
     /// seeding the editor with any prompt text from the draft-prompt kvp
-    /// store. Used by [`Self::load`] so a user's in-flight draft survives
-    /// a restart without becoming a parked sidebar row.
+    /// store.
     ///
     /// If the active view already holds this thread — because the user's
     /// last-active thread was the new-draft itself — we reuse that
@@ -1922,12 +1916,6 @@ impl AgentPanel {
         }
     }
 
-    /// Returns the [`ThreadId`] of the panel's **ephemeral** new-draft
-    /// slot, if any — regardless of whether it is also the active view.
-    ///
-    /// This is the draft the sidebar hides from its project group: it is
-    /// surfaced by the panel's `+` button instead of a sidebar row. Parked
-    /// (retained) drafts continue to show as sidebar rows.
     pub fn ephemeral_draft_thread_id(&self, cx: &App) -> Option<ThreadId> {
         self.draft_thread
             .as_ref()
@@ -5846,17 +5834,6 @@ mod tests {
         );
     }
 
-    /// Regression test for a silent agent-migration across restart:
-    /// when the ephemeral draft was also the active view at serialize
-    /// time and `selected_agent` had diverged from the draft's bound
-    /// agent, `AgentPanel::load` used to rebuild the active view from
-    /// `selected_agent` and then adopt that retargeted view into the
-    /// ephemeral slot via `restore_new_draft`'s short-circuit —
-    /// silently discarding the draft's original agent binding.
-    ///
-    /// The fix is in `serialize`: the active view's own `agent_key()`
-    /// is recorded in `SerializedActiveThread.agent_type`, instead of
-    /// the panel's (possibly-diverged) `selected_agent`.
     #[gpui::test]
     async fn test_reloaded_ephemeral_draft_preserves_original_agent(cx: &mut TestAppContext) {
         init_test(cx);

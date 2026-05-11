@@ -223,8 +223,6 @@ struct ThreadEntry {
     is_live: bool,
     is_background: bool,
     is_title_generating: bool,
-    /// A draft is a thread with no `session_id`: it has been persisted in the
-    /// metadata store but the user hasn't sent its first message yet.
     is_draft: bool,
     highlight_positions: Vec<usize>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
@@ -605,9 +603,6 @@ pub struct Sidebar {
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
-    /// Subscriptions to each workspace's draft ConversationView so the
-    /// sidebar re-renders when the user types in a draft. Rebuilt every
-    /// time entries are computed since the set of live drafts varies.
     _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
     /// Threads" but if we are showing both the external agents and other
@@ -1249,11 +1244,6 @@ impl Sidebar {
             if should_load_threads {
                 let thread_store = ThreadMetadataStore::global(cx);
 
-                // Every workspace's ephemeral new-draft slot is surfaced
-                // through its own `+` button, so we hide every workspace's
-                // ephemeral draft from the sidebar rows — regardless of
-                // whether it's also that workspace's active view. Parked
-                // (retained) drafts continue to appear as rows.
                 let ephemeral_drafts: HashSet<ThreadId> = group_workspaces
                     .iter()
                     .filter_map(|ws| {
@@ -1403,19 +1393,9 @@ impl Sidebar {
                     }
                 }
 
-                // Hide every workspace's ephemeral draft from its group:
-                // while the draft exists as a metadata row (so the
-                // promotion-on-send flow is straightforward), we surface
-                // it through the `+` button instead of a row.
                 if !ephemeral_drafts.is_empty() {
                     threads.retain(|thread| !ephemeral_drafts.contains(&thread.metadata.thread_id));
                 }
-
-                // Override draft titles with the thread's editor text (if
-                // the ConversationView is loaded) or the persisted kvp
-                // draft prompt (for drafts restored from disk that haven't
-                // been opened yet), so the sidebar shows what the user was
-                // writing instead of the generic "New Agent Thread".
                 for thread in &mut threads {
                     if !thread.is_draft {
                         continue;
@@ -2784,11 +2764,6 @@ impl Sidebar {
             }
         });
 
-        // `load_agent_thread` handles both the in-memory fast path
-        // (reuses an existing `ConversationView` from `draft_thread` or
-        // `retained_threads`) and the disk path (creates a fresh view
-        // from metadata + kvp). Routing drafts through it too means
-        // drafts restored from disk after restart activate correctly.
         Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
 
         self.update_entries(cx);
@@ -3300,10 +3275,6 @@ impl Sidebar {
     /// the one being archived. We capture both the neighbor's metadata
     /// (for activation) and its workspace paths (for the workspace
     /// removal fallback).
-    ///
-    /// Drafts are skipped: they are not meaningful "next things to look
-    /// at" after archiving or closing a terminal — the panel-clear path
-    /// activates a fresh draft on the originating workspace instead.
     fn neighboring_activatable_entry(&self, current_position: usize) -> Option<ActivatableEntry> {
         let after = self
             .contents
@@ -3313,7 +3284,6 @@ impl Sidebar {
         after
             .iter()
             .chain(before.iter().rev())
-            .filter(|entry| !matches!(entry, ListEntry::Thread(t) if t.is_draft))
             .find_map(ActivatableEntry::from_list_entry)
     }
 
@@ -4686,11 +4656,6 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                // Bypass `new_thread` / `new_entry` so we can attribute
-                // the trigger to "sidebar" for telemetry. `new_entry`'s
-                // terminal-vs-thread routing isn't needed here — this
-                // method only ever creates threads (terminals go through
-                // `create_new_terminal`).
                 panel.activate_new_thread(true, "sidebar", window, cx);
                 panel.active_thread_id(cx)
             });

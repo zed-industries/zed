@@ -675,10 +675,6 @@ impl ThreadMetadataStore {
     }
 
     fn save_internal(&mut self, metadata: ThreadMetadata) {
-        // Drafts are persisted with session_id=None. This is intentional
-        // — the draft is promoted to a real thread (with session_id)
-        // when the user sends their first message.
-
         if let Some(thread) = self.threads.get(&metadata.thread_id) {
             if thread.folder_paths() != metadata.folder_paths() {
                 if let Some(thread_ids) = self.threads_by_paths.get_mut(thread.folder_paths()) {
