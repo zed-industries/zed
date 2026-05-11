@@ -1815,7 +1815,12 @@ impl DisplaySnapshot {
                 edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
-        .flat_map(|chunk| {
+        .flat_map({
+            // track the current underline style so that we can apply it to
+            // inlay hints within the diagnostic's span
+            let mut current_diagnostic_underline: Option<UnderlineStyle> = None;
+            
+            move |chunk| {
             let syntax_highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| editor_style.syntax.get(id).cloned());
@@ -1838,30 +1843,42 @@ impl DisplaySnapshot {
                 }
             });
 
-            let diagnostic_highlight = chunk
-                .diagnostic_severity
-                .filter(|severity| {
-                    self.diagnostics_max_severity
-                        .into_lsp()
-                        .is_some_and(|max_severity| severity <= &max_severity)
-                })
-                .map(|severity| HighlightStyle {
-                    fade_out: chunk
-                        .is_unnecessary
-                        .then_some(editor_style.unnecessary_code_fade),
-                    underline: (chunk.underline
-                        && editor_style.show_underlines
-                        && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
-                        .then(|| {
-                            let diagnostic_color = diagnostic_style(severity, &editor_style.status);
-                            UnderlineStyle {
-                                color: Some(diagnostic_color),
-                                thickness: 1.0.into(),
-                                wavy: true,
-                            }
-                        }),
+            let diagnostic_highlight = if chunk.is_inlay {
+                current_diagnostic_underline.map(|underline| HighlightStyle {
+                    underline: Some(underline),
                     ..Default::default()
-                });
+                })
+            } else {
+                let highlight = chunk
+                    .diagnostic_severity
+                    .filter(|severity| {
+                        self.diagnostics_max_severity
+                            .into_lsp()
+                            .is_some_and(|max_severity| severity <= &max_severity)
+                    })
+                    .map(|severity| HighlightStyle {
+                        fade_out: chunk
+                            .is_unnecessary
+                            .then_some(editor_style.unnecessary_code_fade),
+                        underline: (chunk.underline
+                            && editor_style.show_underlines
+                            && !(chunk.is_unnecessary
+                                && severity > lsp::DiagnosticSeverity::WARNING))
+                            .then(|| {
+                                let diagnostic_color =
+                                    diagnostic_style(severity, &editor_style.status);
+                                UnderlineStyle {
+                                    color: Some(diagnostic_color),
+                                    thickness: 1.0.into(),
+                                    wavy: true,
+                                }
+                            }),
+                        ..Default::default()
+                    });
+
+                current_diagnostic_underline = highlight.as_ref().and_then(|h| h.underline);
+                highlight
+            };
 
             let style = [
                 syntax_highlight_style,
@@ -1880,7 +1897,7 @@ impl DisplaySnapshot {
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
-        })
+        }})
     }
 
     /// Returns combined highlight styles (tree-sitter syntax + semantic tokens)
