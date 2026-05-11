@@ -5143,7 +5143,7 @@ impl Repository {
         message: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let this = self.this.clone();
-        self.send_job(None, move |repo, mut cx| async move {
+        self.send_job("create_tag", None, move |repo, mut cx| async move {
             let result = match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.create_tag(sha, name, message).await
@@ -5165,7 +5165,7 @@ impl Repository {
 
     pub fn create_branch_at(&mut self, sha: String, name: String) -> oneshot::Receiver<Result<()>> {
         let this = self.this.clone();
-        self.send_job(None, move |repo, mut cx| async move {
+        self.send_job("create_branch_at", None, move |repo, mut cx| async move {
             let result = match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.create_branch_at(sha, name).await
@@ -5186,7 +5186,7 @@ impl Repository {
     }
 
     pub fn checkout_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
+        self.send_job("checkout_commit", None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.checkout_commit(sha).await
@@ -5204,7 +5204,7 @@ impl Repository {
         record_origin: bool,
         no_commit: bool,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
+        self.send_job("cherry_pick", None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.cherry_pick(sha, record_origin, no_commit).await
@@ -5217,7 +5217,7 @@ impl Repository {
     }
 
     pub fn revert_commit(&mut self, sha: String, no_commit: bool) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
+        self.send_job("revert_commit", None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.revert_commit(sha, no_commit).await
@@ -5233,7 +5233,7 @@ impl Repository {
         &mut self,
         sha: String,
     ) -> oneshot::Receiver<Result<DropCommitSupport>> {
-        self.send_job(None, move |repo, _cx| async move {
+        self.send_job("drop_commit_support", None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.drop_commit_support(sha).await
@@ -5246,7 +5246,7 @@ impl Repository {
     }
 
     pub fn drop_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
+        self.send_job("drop_commit", None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.drop_commit(sha).await
@@ -5259,7 +5259,7 @@ impl Repository {
     }
 
     pub fn merge_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
+        self.send_job("merge_commit", None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.merge_commit(sha).await
@@ -5272,7 +5272,7 @@ impl Repository {
     }
 
     pub fn rebase_onto(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
+        self.send_job("rebase_onto", None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.rebase_onto(sha).await
@@ -7274,7 +7274,7 @@ impl Repository {
 
     pub fn delete_tag(&mut self, name: String) -> oneshot::Receiver<Result<()>> {
         let this = self.this.clone();
-        self.send_job(None, move |repo, mut cx| async move {
+        self.send_job("delete_tag", None, move |repo, mut cx| async move {
             let result = match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.delete_tag(name).await
@@ -7308,6 +7308,7 @@ impl Repository {
         let id = self.id;
 
         self.send_job(
+            "push_tag",
             Some(format!("git push {} refs/tags/{}", remote, name).into()),
             move |repo, _cx| async move {
                 match repo {
