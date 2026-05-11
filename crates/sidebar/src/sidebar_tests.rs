@@ -530,7 +530,8 @@ fn visible_entries_as_strings(
                     }
                     ListEntry::Terminal(terminal) => {
                         let title = &terminal.title;
-                        format!("  {title}{selected}")
+                        let worktree = format_linked_worktree_chips(&terminal.worktrees);
+                        format!("  {title}{worktree}{selected}")
                     }
                 }
             })
@@ -1470,6 +1471,72 @@ async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut TestAppContext) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", serde_json::json!({ ".git": {}, "src": {} }))
+        .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-a"),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let worktree_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+    let panel = add_agent_panel(&worktree_workspace, cx);
+
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Dev Server {wt-feature-a}"]
+    );
+
+    type_in_search(&sidebar, "wt-feature-a", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Dev Server {wt-feature-a}  <== selected"]
+    );
+}
+
+#[gpui::test]
 async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     enable_agent_panel_terminal(cx);
@@ -1519,6 +1586,123 @@ async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestApp
                 .notified_terminals
                 .contains(&build_terminal_id)
         );
+    });
+}
+
+#[gpui::test]
+async fn test_thread_switcher_can_activate_agent_panel_terminal(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    let (entry_terminal_ids, selected_terminal_id) = sidebar.read_with(cx, |sidebar, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open");
+        let switcher = switcher.read(cx);
+        let entry_terminal_ids = switcher
+            .entries()
+            .iter()
+            .map(|entry| {
+                entry
+                    .terminal_id()
+                    .expect("expected terminal switcher entry")
+            })
+            .collect::<Vec<_>>();
+        let selected_terminal_id = switcher
+            .selected_entry()
+            .expect("switcher should have selected entry")
+            .terminal_id()
+            .expect("expected selected terminal switcher entry");
+        (entry_terminal_ids, selected_terminal_id)
+    });
+
+    assert_eq!(entry_terminal_ids.len(), 2);
+    assert!(entry_terminal_ids.contains(&build_terminal_id));
+    assert!(entry_terminal_ids.contains(&server_terminal_id));
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open");
+        let focus = switcher.focus_handle(cx);
+        focus.dispatch_action(&menu::Confirm, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(panel.active_terminal_id(), Some(selected_terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id, .. }) if *terminal_id == selected_terminal_id),
+            "expected selected terminal to become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_archive_selected_thread_closes_selected_agent_panel_terminal(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    focus_sidebar(&sidebar, cx);
+    let terminal_index = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| matches!(entry, ListEntry::Terminal(terminal) if terminal.id == terminal_id))
+            .expect("terminal should be visible in sidebar")
+    });
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(terminal_index);
+    });
+    cx.dispatch_action(ArchiveSelectedThread);
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.has_terminal(terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(sidebar.contents.entries.iter().all(|entry| {
+            !matches!(entry, ListEntry::Terminal(terminal) if terminal.id == terminal_id)
+        }));
     });
 }
 
@@ -5944,7 +6128,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                     .read(cx)
                     .entries()
                     .iter()
-                    .map(|e| e.metadata.thread_id)
+                    .map(|entry| entry.thread_id().expect("expected thread switcher entry"))
                     .collect()
             })
         };
@@ -5959,8 +6143,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                 let s = switcher.read(cx);
                 s.selected_entry()
                     .expect("should have selection")
-                    .metadata
-                    .thread_id
+                    .thread_id()
+                    .expect("expected selected thread entry")
             })
         };
 
@@ -8198,14 +8382,13 @@ async fn add_test_project(
 }
 
 #[gpui::test]
-async fn test_transient_workspace_lifecycle(cx: &mut TestAppContext) {
+async fn test_workspace_lifecycle_retains_projects_when_sidebar_is_closed(cx: &mut TestAppContext) {
     let (fs, project_a) =
         init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
     let _sidebar = setup_sidebar_closed(&multi_workspace, cx);
 
-    // Sidebar starts closed. Initial workspace A is transient.
     let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     assert!(!multi_workspace.read_with(cx, |mw, _| mw.sidebar_open()));
     assert_eq!(
@@ -8214,25 +8397,25 @@ async fn test_transient_workspace_lifecycle(cx: &mut TestAppContext) {
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_a));
 
-    // Add B — replaces A as the transient workspace.
     let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        2
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_b));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_a)));
 
-    // Add C — replaces B as the transient workspace.
     let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        3
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_b)));
 }
 
 #[gpui::test]
-async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
+async fn test_workspaces_remain_retained_after_sidebar_closes(cx: &mut TestAppContext) {
     let (fs, project_a) = init_multi_project_test(
         &["/project-a", "/project-b", "/project-c", "/project-d"],
         cx,
@@ -8242,15 +8425,14 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
     let _sidebar = setup_sidebar(&multi_workspace, cx);
     assert!(multi_workspace.read_with(cx, |mw, _| mw.sidebar_open()));
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-    // Add B — retained since sidebar is open.
-    let workspace_a = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
         2
     );
 
-    // Switch to A — B survives. (Switching from one internal workspace, to another)
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.activate(workspace_a, None, window, cx)
     });
@@ -8259,8 +8441,8 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
         2
     );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_b)));
 
-    // Close sidebar — both A and B remain retained.
     multi_workspace.update_in(cx, |mw, window, cx| mw.close_sidebar(window, cx));
     cx.run_until_parked();
     assert_eq!(
@@ -8268,7 +8450,6 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
         2
     );
 
-    // Add C — added as new transient workspace. (switching from retained, to transient)
     let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
@@ -8276,52 +8457,50 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
 
-    // Add D — replaces C as the transient workspace (Have retained and transient workspaces, transient workspace is dropped)
     let workspace_d = add_test_project("/project-d", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        3
+        4
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_d));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_c)));
 }
 
 #[gpui::test]
-async fn test_transient_workspace_promotion(cx: &mut TestAppContext) {
+async fn test_sidebar_opening_keeps_existing_retained_workspaces(cx: &mut TestAppContext) {
     let (fs, project_a) =
         init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
     setup_sidebar_closed(&multi_workspace, cx);
 
-    // Add B — replaces A as the transient workspace (A is discarded).
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        2
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_b));
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_a)));
 
-    // Open sidebar — promotes the transient B to retained.
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.toggle_sidebar(window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        1
+        2
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().any(|w| w == &workspace_b)));
 
-    // Close sidebar — the retained B remains.
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.toggle_sidebar(window, cx);
     });
 
-    // Add C — added as new transient workspace.
     let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
-        2
+        3
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
 }
