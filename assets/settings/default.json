@@ -365,6 +365,15 @@
   // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
   //    offscreen: `preserve`
   "go_to_definition_scroll_strategy": "center",
+  // How to present multiple LSP navigation results
+  // (Go to Definition, Go to Declaration, Go to Type Definition, Go to Implementation, Find All References).
+  //
+  // 1. Open all results in a multibuffer: `multibuffer` (default)
+  // 2. Open results in a compact picker with type-to-filter and a side preview pane: `picker`
+  //
+  // Per-keybinding override is available via `{"editor::FindAllReferences": {"always_open_multibuffer": true}}`
+  // (or the same payload on `editor::GoToDefinition` etc.) to force the multibuffer regardless of this setting.
+  "lsp_navigation_view": "multibuffer",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt

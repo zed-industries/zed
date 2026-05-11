@@ -6,8 +6,9 @@ use project::project_settings::DiagnosticSeverity;
 pub use settings::{
     CodeLens, CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
     DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback,
-    GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
-    ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    GoToDefinitionScrollStrategy, LspNavigationView, MinimapThumb, MinimapThumbBorder,
+    MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap,
+    SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::ShowScrollbar;
@@ -53,6 +54,7 @@ pub struct EditorSettings {
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub go_to_definition_scroll_strategy: GoToDefinitionScrollStrategy,
+    pub lsp_navigation_view: LspNavigationView,
     pub jupyter: Jupyter,
     pub snippet_sort_order: SnippetSortOrder,
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
@@ -286,6 +288,7 @@ impl Settings for EditorSettings {
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
             go_to_definition_scroll_strategy: editor.go_to_definition_scroll_strategy.unwrap(),
+            lsp_navigation_view: editor.lsp_navigation_view.unwrap(),
             jupyter: Jupyter {
                 enabled: editor.jupyter.unwrap().enabled.unwrap(),
             },

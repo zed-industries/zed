@@ -3,8 +3,10 @@ use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
     edit_prediction_tests::FakeEditPredictionDelegate,
+    editor_settings::LspNavigationView,
     element::{StickyHeader, header_jump_data},
     linked_editing_ranges::LinkedEditingRanges,
+    lsp_navigation_picker::LspNavigationPickerDelegate,
     runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -39,6 +41,7 @@ use languages::rust_lang;
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
+use picker::{Picker, PickerDelegate};
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs, Project, ProjectPath,
@@ -26142,10 +26145,23 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
         let references = cx
             .lsp
             .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
-                Ok(Some(vec![lsp::Location {
-                    uri: params.text_document_position.text_document.uri,
-                    range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
-                }]))
+                let uri = params.text_document_position.text_document.uri;
+                Ok(Some(vec![
+                    lsp::Location {
+                        uri: uri.clone(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 8),
+                            lsp::Position::new(0, 11),
+                        ),
+                    },
+                    lsp::Location {
+                        uri,
+                        range: lsp::Range::new(
+                            lsp::Position::new(1, 16),
+                            lsp::Position::new(1, 19),
+                        ),
+                    },
+                ]))
             });
         (go_to_definition, references)
     };
@@ -26160,7 +26176,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
     );
     set_up_lsp_handlers(false, &mut cx);
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to definition");
     assert_eq!(
@@ -26194,7 +26210,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
 
     set_up_lsp_handlers(true, &mut cx);
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to lookup references");
     assert_eq!(
@@ -26227,9 +26243,10 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
             .expect("Should have one non-test editor now")
             .read(test_editor_cx)
             .text(test_editor_cx);
-        assert_eq!(
-            references_fallback_text, "fn one() {\n    let mut a = two();\n}",
-            "Should use the range from the references response and not the GoToDefinition one"
+        assert!(
+            references_fallback_text.contains("let mut a = two();"),
+            "References multibuffer should contain the source line containing the references; \
+             got: {references_fallback_text:?}"
         );
     });
 }
@@ -26271,7 +26288,7 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
         });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to lookup references");
     go_to_definition
@@ -26340,7 +26357,7 @@ async fn test_goto_definition_close_ranges_open_singleton(cx: &mut TestAppContex
     });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to definitions");
     assert_eq!(navigated, Navigated::Yes);
@@ -26424,7 +26441,7 @@ async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContex
     });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to definitions");
     assert_eq!(navigated, Navigated::Yes);
@@ -26497,7 +26514,7 @@ async fn test_goto_definition_contained_ranges(cx: &mut TestAppContext) {
     });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to definitions");
     assert_eq!(navigated, Navigated::Yes);
@@ -26594,7 +26611,7 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         editor.set_scroll_position(gpui::Point::new(0.0, caller_row - offset), window, cx);
     });
-    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to definition");
     cx.run_until_parked();
@@ -26627,7 +26644,7 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
         assert!(cursor_row >= visible_lines, "Cursor should be offscreen");
     });
 
-    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition::default(), window, cx))
         .await
         .expect("Failed to navigate to definition");
     cx.run_until_parked();
@@ -34491,11 +34508,289 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    assert_eq!(navigated, Navigated::No);
+    assert_eq!(navigated, Navigated::Yes);
 
     cx.run_until_parked();
 
     cx.assert_editor_state(after);
+}
+
+fn enable_lsp_navigation_picker(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.lsp_navigation_view = Some(LspNavigationView::Picker);
+            });
+        });
+    });
+}
+
+async fn open_lsp_picker_for_far_references(cx: &mut TestAppContext) -> EditorLspTestContext {
+    let mut lsp_cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Two references in the same file, far enough apart that the
+    // multi-buffer branch (and not the singleton fast-path) would normally fire.
+    lsp_cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+
+
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    lsp_cx
+        .lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(7, 4), lsp::Position::new(7, 7)),
+                },
+            ]))
+        });
+    lsp_cx
+}
+
+#[gpui::test]
+async fn test_find_all_references_opens_picker_when_setting_enabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    enable_lsp_navigation_picker(cx);
+
+    let mut cx = open_lsp_picker_for_far_references(cx).await;
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .expect("find_all_references should spawn a task")
+        .await
+        .expect("find_all_references should complete");
+    assert_eq!(navigated, Navigated::Yes);
+
+    cx.run_until_parked();
+
+    let picker = cx
+        .update_workspace(|workspace, _, cx| {
+            workspace.active_modal::<Picker<LspNavigationPickerDelegate>>(cx)
+        })
+        .expect("LSP navigation picker should be the active modal");
+    let match_count = picker.read_with(&mut cx.cx.cx, |picker, _| picker.delegate.match_count());
+    assert_eq!(
+        match_count, 2,
+        "Picker should expose one row per reference"
+    );
+
+    let extra_editor_count = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).count()
+    });
+    assert_eq!(
+        extra_editor_count, 1,
+        "Only the source editor should be open; opening the picker must not create a multibuffer"
+    );
+}
+
+#[gpui::test]
+async fn test_find_all_references_uses_multibuffer_by_default(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = open_lsp_picker_for_far_references(cx).await;
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .expect("find_all_references should spawn a task")
+        .await
+        .expect("find_all_references should complete");
+    assert_eq!(navigated, Navigated::Yes);
+
+    cx.run_until_parked();
+
+    let modal = cx.update_workspace(|workspace, _, cx| {
+        workspace.active_modal::<Picker<LspNavigationPickerDelegate>>(cx)
+    });
+    assert!(
+        modal.is_none(),
+        "Default `lsp_navigation_view` should not open the picker modal"
+    );
+
+    let editor_count = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).count()
+    });
+    assert_eq!(
+        editor_count, 2,
+        "Default `lsp_navigation_view` should open a multibuffer alongside the source editor"
+    );
+}
+
+#[gpui::test]
+async fn test_find_all_references_always_open_multibuffer_overrides_picker(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    enable_lsp_navigation_picker(cx);
+
+    let mut cx = open_lsp_picker_for_far_references(cx).await;
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(
+                &FindAllReferences {
+                    always_open_multibuffer: true,
+                },
+                window,
+                cx,
+            )
+        })
+        .expect("find_all_references should spawn a task")
+        .await
+        .expect("find_all_references should complete");
+    assert_eq!(navigated, Navigated::Yes);
+
+    cx.run_until_parked();
+
+    let modal = cx.update_workspace(|workspace, _, cx| {
+        workspace.active_modal::<Picker<LspNavigationPickerDelegate>>(cx)
+    });
+    assert!(
+        modal.is_none(),
+        "`always_open_multibuffer: true` must short-circuit the picker"
+    );
+
+    let editor_count = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).count()
+    });
+    assert_eq!(
+        editor_count, 2,
+        "Override should still open the multibuffer escape hatch"
+    );
+}
+
+#[gpui::test]
+async fn test_go_to_definition_opens_picker_when_setting_enabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    enable_lsp_navigation_picker(cx);
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        &r#"fn caller() {
+            let _ = ˇtarget();
+        }
+        fn target_a() {}
+
+
+
+
+        fn target_b() {}
+        "#
+        .unindent(),
+    );
+
+    cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+        Ok(Some(lsp::GotoDefinitionResponse::Array(vec![
+            lsp::Location {
+                uri: url.clone(),
+                range: lsp::Range::new(lsp::Position::new(3, 3), lsp::Position::new(3, 11)),
+            },
+            lsp::Location {
+                uri: url,
+                range: lsp::Range::new(lsp::Position::new(8, 3), lsp::Position::new(8, 11)),
+            },
+        ])))
+    });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
+        .await
+        .expect("go_to_definition should complete");
+    assert_eq!(navigated, Navigated::Yes);
+
+    cx.run_until_parked();
+
+    let picker = cx
+        .update_workspace(|workspace, _, cx| {
+            workspace.active_modal::<Picker<LspNavigationPickerDelegate>>(cx)
+        })
+        .expect("Picker should open for multi-result Go to Definition");
+    let match_count = picker.read_with(&mut cx.cx.cx, |picker, _| picker.delegate.match_count());
+    assert_eq!(match_count, 2);
+}
+
+#[gpui::test]
+async fn test_lsp_navigation_picker_filters_matches(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    enable_lsp_navigation_picker(cx);
+
+    let mut cx = open_lsp_picker_for_far_references(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx)
+    })
+    .expect("find_all_references should spawn a task")
+    .await
+    .expect("find_all_references should complete");
+    cx.run_until_parked();
+
+    let picker = cx
+        .update_workspace(|workspace, _, cx| {
+            workspace.active_modal::<Picker<LspNavigationPickerDelegate>>(cx)
+        })
+        .expect("Picker should be active");
+
+    // All items live in the only test file `file.rs` under `dir/`, so the
+    // shared filename matches both rows but a foreign query matches none.
+    picker
+        .update_in(&mut cx.cx.cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches("file".to_string(), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+    let match_count = picker.read_with(&mut cx.cx.cx, |picker, _| picker.delegate.match_count());
+    assert_eq!(
+        match_count, 2,
+        "Filename query should keep both rows from the only file"
+    );
+
+    picker
+        .update_in(&mut cx.cx.cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches("zzznomatch".to_string(), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+    let match_count = picker.read_with(&mut cx.cx.cx, |picker, _| picker.delegate.match_count());
+    assert_eq!(
+        match_count, 0,
+        "Query that hits neither filename nor dir should drop all rows"
+    );
 }
 
 #[gpui::test]

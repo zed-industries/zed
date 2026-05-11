@@ -161,7 +161,7 @@ fn try_show_references(
         .map(|location| HoverLink::InlayHint(location, server_id))
         .collect();
     editor
-        .navigate_to_hover_links(None, links, nav_entry, false, window, cx)
+        .navigate_to_hover_links(None, links, nav_entry, false, false, window, cx)
         .detach_and_log_err(cx);
 
     true

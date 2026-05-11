@@ -564,22 +564,10 @@ actions!(
         /// edits outside the selected ranges are discarded. External command formatters do not
         /// support range formatting and are skipped.
         FormatSelections,
-        /// Goes to the declaration of the symbol at cursor.
-        GoToDeclaration,
-        /// Goes to declaration in a split pane.
-        GoToDeclarationSplit,
-        /// Goes to the definition of the symbol at cursor.
-        GoToDefinition,
-        /// Goes to definition in a split pane.
-        GoToDefinitionSplit,
         /// Goes to the next diff hunk.
         GoToHunk,
         /// Goes to the previous diff hunk.
         GoToPreviousHunk,
-        /// Goes to the implementation of the symbol at cursor.
-        GoToImplementation,
-        /// Goes to implementation in a split pane.
-        GoToImplementationSplit,
         /// Goes to the next bookmark in the file.
         GoToNextBookmark,
         /// Goes to the next change in the file.
@@ -598,10 +586,6 @@ actions!(
         GoToNextReference,
         /// Goes to the previous reference to the symbol under the cursor.
         GoToPreviousReference,
-        /// Goes to the type definition of the symbol at cursor.
-        GoToTypeDefinition,
-        /// Goes to type definition in a split pane.
-        GoToTypeDefinitionSplit,
         /// Goes to the next document highlight.
         GoToNextDocumentHighlight,
         /// Goes to the previous document highlight.
@@ -917,20 +901,91 @@ actions!(
 );
 
 /// Finds all references to the symbol at cursor.
-#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+///
+/// When `always_open_multibuffer` is `false` (the default), the `lsp_navigation_view`
+/// editor setting controls whether the results open as a multibuffer or as a picker.
+/// When `true`, the multibuffer is forced regardless of the setting.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct FindAllReferences {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub always_open_multibuffer: bool,
 }
 
-impl Default for FindAllReferences {
-    fn default() -> Self {
-        Self {
-            always_open_multibuffer: true,
-        }
-    }
+/// Goes to the declaration of the symbol at cursor.
+///
+/// When `always_open_multibuffer` is `true`, multi-result navigation forces the
+/// multibuffer regardless of `lsp_navigation_view`.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDeclaration {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
+}
+
+/// Goes to declaration in a split pane.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDeclarationSplit {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
+}
+
+/// Goes to the definition of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDefinition {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
+}
+
+/// Goes to definition in a split pane.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDefinitionSplit {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
+}
+
+/// Goes to the implementation of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToImplementation {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
+}
+
+/// Goes to implementation in a split pane.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToImplementationSplit {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
+}
+
+/// Goes to the type definition of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToTypeDefinition {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
+}
+
+/// Goes to type definition in a split pane.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToTypeDefinitionSplit {
+    #[serde(default)]
+    pub always_open_multibuffer: bool,
 }
 
 /// Edits a stored review comment inline.

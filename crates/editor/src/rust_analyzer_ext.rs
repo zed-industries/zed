@@ -127,6 +127,7 @@ pub fn go_to_parent_module(
                     location_links.into_iter().map(HoverLink::Text).collect(),
                     nav_entry,
                     false,
+                    false,
                     window,
                     cx,
                 )
