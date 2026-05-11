@@ -78,8 +78,12 @@ pub struct SkillMetadata {
 /// Minimal skill info for system prompt (not full content).
 ///
 /// `Serialize` is required for handlebars rendering of the system prompt
-/// template (see `ProjectContext` in `prompt_store`).
-#[derive(Debug, Clone, Serialize)]
+/// template (see `ProjectContext` in `prompt_store`). `PartialEq, Eq` lets
+/// the agent compare freshly-built `ProjectContext`s and skip pushing an
+/// unchanged value through the project_context entity (which would
+/// otherwise look like a system-prompt change to the model and invalidate
+/// the API's prompt cache).
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct SkillSummary {
     pub name: String,
     pub description: String,

@@ -60,6 +60,19 @@ Adding, removing, or editing a `SKILL.md` while the agent is running takes effec
 
 This matters more than it sounds: a skill author iterating on their `SKILL.md` should see the model's catalog update immediately, not after restarting their agent session.
 
+#### Prompt-cache implications
+
+The skill catalog (name + description + location for each visible skill) is part of the system prompt sent to the model. Anthropic-compatible prompt caching matches byte-identical prefixes, so any change to the catalog text invalidates the cache and the next request has to re-pay the cache-miss cost.
+
+To keep that cost paid only when it's actually owed:
+
+- Only the **catalog** lives in the system prompt. A skill's *body* is loaded on demand (via the `skill` tool or a slash command) and goes in a separate message, so editing a `SKILL.md` body never affects the cache.
+- Edits that touch only the body — the most common iteration mode for skill authors — are detected as no-op catalog changes by [`maintain_project_context`](../agent/src/agent.rs) (it compares the freshly-built `ProjectContext` to the current one and only swaps it in if they differ), so the system prompt the model sees is byte-identical and the cache stays warm.
+- Edits that change `name`, `description`, or move the `SKILL.md` file *do* change the catalog and *do* invalidate the cache. This is unavoidable: the model sees a different catalog now, so the cached system prompt is genuinely stale.
+- Adding or removing a skill likewise invalidates the cache.
+
+The practical upshot: iterating on the body of a skill is free from the model API's perspective. Iterating on the catalog metadata (name/description) costs one cache miss per change. Skill authors who care about cache cost should land on a stable name+description early and then iterate on the body.
+
 ## Frontmatter parsing
 
 ### Strict validation is a permanent design decision

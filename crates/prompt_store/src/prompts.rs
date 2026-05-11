@@ -33,7 +33,7 @@ pub const RULES_FILE_NAMES: &[&str] = &[
     "GEMINI.md",
 ];
 
-#[derive(Default, Debug, Clone, Serialize)]
+#[derive(Default, Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
@@ -91,7 +91,7 @@ impl ProjectContext {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct UserRulesContext {
     pub uuid: UserPromptId,
     pub title: Option<String>,

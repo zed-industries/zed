@@ -745,10 +745,22 @@ impl NativeAgent {
                 if let Some(state) = this.projects.get_mut(&project_id) {
                     state.skills = skills;
                     state.skill_loading_errors = skill_loading_errors.clone();
+                    // Only push the new `ProjectContext` through if it
+                    // differs from the current one. The system prompt is
+                    // re-rendered from this on every turn, so an unchanged
+                    // `ProjectContext` means a byte-identical system prompt
+                    // and a continued hit on the model API's prompt cache.
+                    // Refreshes fire on many events that don't actually
+                    // change what the model sees (e.g. a SKILL.md body edit
+                    // that leaves the catalog — name, description, location
+                    // — untouched), so this check matters in practice.
                     state
                         .project_context
-                        .update(cx, |current_project_context, _cx| {
-                            *current_project_context = project_context;
+                        .update(cx, |current_project_context, cx| {
+                            if *current_project_context != project_context {
+                                *current_project_context = project_context;
+                                cx.notify();
+                            }
                         });
                 }
                 if errors_changed {
