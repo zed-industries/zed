@@ -1565,6 +1565,7 @@
       "cmd--": "image_viewer::ZoomOut",
       "cmd-0": "image_viewer::ResetZoom",
       "cmd-1": "image_viewer::ZoomToActualSize",
+      "cmd-k r": "editor::RevealInFileManager",
       "cmd-shift-0": "image_viewer::FitToView",
     },
   },
