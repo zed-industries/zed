@@ -101,6 +101,8 @@ use crate::{
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
+pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
+
 mod thread_view;
 pub use thread_view::*;
 
@@ -505,6 +507,7 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    draft_prompt_persist_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -751,6 +754,7 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            draft_prompt_persist_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -763,6 +767,9 @@ impl ConversationView {
 
         self.server_state = state;
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
+        if matches!(&self.server_state, ServerState::Connected(_)) {
+            cx.emit(RootThreadUpdated);
+        }
         cx.notify();
     }
 
@@ -1681,10 +1688,41 @@ impl ConversationView {
                 cx.notify();
             }
             AcpThreadEvent::PromptUpdated => {
+                if !is_subagent && thread.read(cx).is_draft_thread() {
+                    self.schedule_draft_prompt_persist(cx);
+                }
                 cx.notify();
             }
         }
         cx.notify();
+    }
+
+    fn schedule_draft_prompt_persist(&mut self, cx: &mut Context<Self>) {
+        let thread_id = self.thread_id;
+        self.draft_prompt_persist_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(DRAFT_PROMPT_PERSIST_DEBOUNCE)
+                .await;
+            let persist = this.update(cx, |this, cx| {
+                let thread = this.root_thread(cx)?;
+                let thread = thread.read(cx);
+                if !thread.is_draft_thread() {
+                    return None;
+                }
+                let snapshot: Vec<acp::ContentBlock> = thread
+                    .draft_prompt()
+                    .map(|p| p.to_vec())
+                    .unwrap_or_default();
+                Some(if snapshot.is_empty() {
+                    crate::draft_prompt_store::delete(thread_id, cx)
+                } else {
+                    crate::draft_prompt_store::write(thread_id, &snapshot, cx)
+                })
+            });
+            if let Ok(Some(persist)) = persist {
+                persist.await.log_err();
+            }
+        }));
     }
 
     fn authenticate(
@@ -2531,7 +2569,7 @@ impl ConversationView {
             return;
         };
         let root_thread = root_thread.read(cx).thread.read(cx);
-        let root_session_id = root_thread.session_id().clone();
+        let root_thread_id = self.thread_id;
         let root_work_dirs = root_thread.work_dirs().cloned();
         let root_title = root_thread.title();
 
@@ -2545,7 +2583,7 @@ impl ConversationView {
                         icon,
                         caption.into(),
                         title,
-                        root_session_id,
+                        root_thread_id,
                         root_work_dirs,
                         root_title,
                         window,
@@ -2561,7 +2599,7 @@ impl ConversationView {
                         icon,
                         caption.clone(),
                         title.clone(),
-                        root_session_id.clone(),
+                        root_thread_id,
                         root_work_dirs.clone(),
                         root_title.clone(),
                         window,
@@ -2581,7 +2619,7 @@ impl ConversationView {
         icon: IconName,
         caption: SharedString,
         title: SharedString,
-        root_session_id: acp::SessionId,
+        root_thread_id: ThreadId,
         root_work_dirs: Option<PathList>,
         root_title: Option<SharedString>,
         window: &mut Window,
@@ -2603,7 +2641,7 @@ impl ConversationView {
         if let Some(screen_window) = cx
             .open_window(options, |_window, cx| {
                 cx.new(|_cx| {
-                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                    AgentNotification::new(title.clone(), Some(caption.clone()), icon, project_name)
                 })
             })
             .log_err()
@@ -2624,7 +2662,6 @@ impl ConversationView {
 
                             let workspace_handle = this.workspace.clone();
                             let agent = this.connection_key.clone();
-                            let root_session_id = root_session_id.clone();
                             let root_work_dirs = root_work_dirs.clone();
                             let root_title = root_title.clone();
 
@@ -2647,7 +2684,7 @@ impl ConversationView {
                                                     panel.update(cx, |panel, cx| {
                                                         panel.load_agent_thread(
                                                             agent.clone(),
-                                                            root_session_id.clone(),
+                                                            root_thread_id,
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
