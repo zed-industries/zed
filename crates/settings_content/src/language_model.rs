@@ -45,8 +45,6 @@ pub struct AnthropicAvailableModel {
     pub max_tokens: u64,
     /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
     pub tool_override: Option<String>,
-    /// Configuration of Anthropic's caching API.
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u64>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_temperature: Option<f32>,

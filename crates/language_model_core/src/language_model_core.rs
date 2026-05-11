@@ -28,13 +28,6 @@ pub use crate::tool_schema::LanguageModelToolSchemaFormat;
 pub use crate::util::{fix_streamed_json, parse_prompt_too_long, parse_tool_arguments};
 pub use gpui_shared_string::SharedString;
 
-#[derive(Clone, Debug)]
-pub struct LanguageModelCacheConfiguration {
-    pub max_cache_anchors: usize,
-    pub should_speculate: bool,
-    pub min_total_token: u64,
-}
-
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
