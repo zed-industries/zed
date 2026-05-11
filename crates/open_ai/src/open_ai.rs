@@ -265,6 +265,9 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
+            Self::FivePointOne | Self::FivePointTwo | Self::FivePointFour => {
+                Some(ReasoningEffort::None)
+            }
             Self::O1
             | Self::O3
             | Self::O3Mini
@@ -272,11 +275,8 @@ impl Model {
             | Self::FiveCodex
             | Self::FiveMini
             | Self::FiveNano
-            | Self::FivePointOne
-            | Self::FivePointTwo
             | Self::FivePointTwoCodex
             | Self::FivePointThreeCodex
-            | Self::FivePointFour
             | Self::FivePointFourPro
             | Self::FivePointFive
             | Self::FivePointFivePro => Some(ReasoningEffort::Medium),
@@ -290,13 +290,20 @@ impl Model {
                 reasoning_effort: Some(effort),
                 ..
             } => match effort {
+                ReasoningEffort::None => &[ReasoningEffort::None],
                 ReasoningEffort::Minimal => &[ReasoningEffort::Minimal],
                 ReasoningEffort::Low => &[ReasoningEffort::Low],
                 ReasoningEffort::Medium => &[ReasoningEffort::Medium],
                 ReasoningEffort::High => &[ReasoningEffort::High],
                 ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
             },
-            Self::O1 | Self::O3 | Self::O3Mini | Self::FivePointOne => &[
+            Self::O1 | Self::O3 | Self::O3Mini => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            Self::FivePointOne => &[
+                ReasoningEffort::None,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -307,18 +314,25 @@ impl Model {
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
             ],
-            Self::FiveCodex
-            | Self::FivePointTwoCodex
-            | Self::FivePointThreeCodex
-            | Self::FivePointFourPro => &[
+            Self::FiveCodex | Self::FivePointFourPro => &[
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
-            Self::FivePointTwo
-            | Self::FivePointFour
-            | Self::FivePointFive
-            | Self::FivePointFivePro => &[
+            Self::FivePointTwoCodex | Self::FivePointThreeCodex => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+            Self::FivePointTwo | Self::FivePointFour | Self::FivePointFive => &[
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ],
+            Self::FivePointFivePro => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -369,6 +383,85 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Model, ReasoningEffort};
+
+    #[test]
+    fn gpt_5_1_uses_none_reasoning_by_default() {
+        let expected_efforts = [
+            ReasoningEffort::None,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+        ];
+
+        assert_eq!(
+            Model::FivePointOne.reasoning_effort(),
+            Some(ReasoningEffort::None)
+        );
+        assert_eq!(
+            Model::FivePointOne.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+    }
+
+    #[test]
+    fn newer_frontier_models_support_none_reasoning() {
+        let expected_efforts = [
+            ReasoningEffort::None,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+        ];
+
+        assert_eq!(
+            Model::FivePointTwo.reasoning_effort(),
+            Some(ReasoningEffort::None)
+        );
+        assert_eq!(
+            Model::FivePointTwo.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+        assert_eq!(
+            Model::FivePointFour.reasoning_effort(),
+            Some(ReasoningEffort::None)
+        );
+        assert_eq!(
+            Model::FivePointFour.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+        assert_eq!(
+            Model::FivePointFive.reasoning_effort(),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            Model::FivePointFive.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+    }
+
+    #[test]
+    fn newer_codex_models_support_low_reasoning_effort() {
+        let expected_efforts = [
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+        ];
+
+        assert_eq!(
+            Model::FivePointTwoCodex.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
+        assert_eq!(
+            Model::FivePointThreeCodex.supported_reasoning_efforts(),
+            expected_efforts.as_slice()
+        );
     }
 }
 

@@ -365,6 +365,7 @@ impl LanguageModel for OpenAiLanguageModel {
             .iter()
             .map(|effort| {
                 let (name, value) = match effort {
+                    open_ai::ReasoningEffort::None => ("None", "none"),
                     open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
                     open_ai::ReasoningEffort::Low => ("Low", "low"),
                     open_ai::ReasoningEffort::Medium => ("Medium", "medium"),

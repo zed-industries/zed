@@ -32,6 +32,7 @@ use crate::provider::open_ai::{
 
 fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
     match effort.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(ReasoningEffort::None),
         "minimal" => Some(ReasoningEffort::Minimal),
         "low" => Some(ReasoningEffort::Low),
         "medium" => Some(ReasoningEffort::Medium),
@@ -43,6 +44,7 @@ fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
 
 fn reasoning_effort_display(effort: ReasoningEffort) -> (&'static str, &'static str) {
     match effort {
+        ReasoningEffort::None => ("None", "none"),
         ReasoningEffort::Minimal => ("Minimal", "minimal"),
         ReasoningEffort::Low => ("Low", "low"),
         ReasoningEffort::Medium => ("Medium", "medium"),
