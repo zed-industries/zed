@@ -1310,6 +1310,11 @@ impl AgentPanel {
         self.new_entry(None, window, cx);
     }
 
+    fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_agent = agent;
+        self.activate_new_thread(true, "agent_panel", window, cx);
+    }
+
     pub fn activate_new_thread(
         &mut self,
         focus: bool,
@@ -1327,10 +1332,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(agent) = action.agent.clone() {
-            self.selected_agent = agent;
-        }
-        self.activate_new_thread(true, "agent_panel", window, cx);
+        self.new_agent_thread(action.agent.clone().into(), window, cx);
     }
 
     pub fn new_terminal(
@@ -3366,6 +3368,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
         let conversation_view = match &self.base_view {
             BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
@@ -3427,21 +3430,26 @@ impl AgentPanel {
                             }
                         }
 
+                        if !showing_terminal {
+                            menu = menu
+                                .header("MCP Servers")
+                                .action(
+                                    "View Server Extensions",
+                                    Box::new(zed_actions::Extensions {
+                                        category_filter: Some(
+                                            zed_actions::ExtensionCategoryFilter::ContextServers,
+                                        ),
+                                        id: None,
+                                    }),
+                                )
+                                .action("Add Custom Server…", Box::new(AddContextServer))
+                                .separator()
+                                .action("Rules", Box::new(OpenRulesLibrary::default()))
+                                .action("Profiles", Box::new(ManageProfiles::default()))
+                                .separator();
+                        }
+
                         menu = menu
-                            .header("MCP Servers")
-                            .action(
-                                "View Server Extensions",
-                                Box::new(zed_actions::Extensions {
-                                    category_filter: Some(
-                                        zed_actions::ExtensionCategoryFilter::ContextServers,
-                                    ),
-                                    id: None,
-                                }),
-                            )
-                            .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator()
-                            .action("Rules", Box::new(OpenRulesLibrary::default()))
-                            .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
@@ -3544,7 +3552,7 @@ impl AgentPanel {
                         .item(
                             ContextMenuEntry::new("Zed Agent")
                                 .when(is_agent_selected(Agent::NativeAgent), |this| {
-                                    this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    this.action(Box::new(NewThread))
                                 })
                                 .icon(IconName::ZedAgent)
                                 .icon_color(Color::Muted)
@@ -3557,10 +3565,8 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.new_external_agent_thread(
-                                                            &NewExternalAgentThread {
-                                                                agent: Some(Agent::NativeAgent),
-                                                            },
+                                                        panel.new_agent_thread(
+                                                            Agent::NativeAgent,
                                                             window,
                                                             cx,
                                                         );
@@ -3574,6 +3580,7 @@ impl AgentPanel {
                         .when(supports_terminal, |menu| {
                             menu.item(
                                 ContextMenuEntry::new("Terminal")
+                                    .when(showing_terminal, |this| this.action(Box::new(NewThread)))
                                     .icon(IconName::Terminal)
                                     .icon_color(Color::Muted)
                                     .handler({
@@ -3653,11 +3660,7 @@ impl AgentPanel {
                                         is_agent_selected(Agent::Custom {
                                             id: item.id.clone(),
                                         }),
-                                        |this| {
-                                            this.action(Box::new(NewExternalAgentThread {
-                                                agent: None,
-                                            }))
-                                        },
+                                        |this| this.action(Box::new(NewThread)),
                                     )
                                     .icon_color(Color::Muted)
                                     .disabled(is_via_collab)
@@ -3673,9 +3676,7 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_external_agent_thread(
                                                                 &NewExternalAgentThread {
-                                                                    agent: Some(Agent::Custom {
-                                                                        id: agent_id.clone(),
-                                                                    }),
+                                                                    agent: agent_id.clone(),
                                                                 },
                                                                 window,
                                                                 cx,
@@ -4124,12 +4125,6 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        match self.visible_surface() {
-            VisibleSurface::AgentThread(_) => key_context.add("acp_thread"),
-            VisibleSurface::Terminal(_)
-            | VisibleSurface::Configuration(_)
-            | VisibleSurface::Uninitialized => {}
-        }
         key_context
     }
 }
@@ -6601,7 +6596,7 @@ mod tests {
         });
 
         // Press cmd-n (activate_draft again with the same agent).
-        cx.dispatch_action(NewExternalAgentThread { agent: None });
+        cx.dispatch_action(NewThread);
         cx.run_until_parked();
 
         // The draft entity should not have changed.
@@ -6680,7 +6675,7 @@ mod tests {
         // Switch to a different agent. ensure_draft should extract the typed
         // content from the old draft and pre-fill the new one.
         cx.dispatch_action(NewExternalAgentThread {
-            agent: Some(Agent::Stub),
+            agent: Agent::Stub.id(),
         });
         cx.run_until_parked();
 

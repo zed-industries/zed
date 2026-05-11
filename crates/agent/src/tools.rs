@@ -16,7 +16,6 @@ mod go_to_definition_tool;
 mod grep_tool;
 mod list_directory_tool;
 mod move_path_tool;
-mod open_tool;
 mod read_file_tool;
 mod rename_tool;
 mod spawn_agent_tool;
@@ -72,7 +71,6 @@ pub use go_to_definition_tool::*;
 pub use grep_tool::*;
 pub use list_directory_tool::*;
 pub use move_path_tool::*;
-pub use open_tool::*;
 pub use read_file_tool::*;
 pub use rename_tool::*;
 pub use spawn_agent_tool::*;
@@ -166,7 +164,6 @@ tools! {
     GrepTool,
     ListDirectoryTool,
     MovePathTool,
-    OpenTool,
     ReadFileTool,
     RenameTool,
     SpawnAgentTool,

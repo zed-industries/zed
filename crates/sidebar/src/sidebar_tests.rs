@@ -1523,6 +1523,123 @@ async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_thread_switcher_can_activate_agent_panel_terminal(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let build_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Build", true, window, cx)
+        })
+        .expect("build test terminal should be inserted");
+    let server_terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Server", true, window, cx)
+        })
+        .expect("server test terminal should be inserted");
+    cx.run_until_parked();
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    let (entry_terminal_ids, selected_terminal_id) = sidebar.read_with(cx, |sidebar, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open");
+        let switcher = switcher.read(cx);
+        let entry_terminal_ids = switcher
+            .entries()
+            .iter()
+            .map(|entry| {
+                entry
+                    .terminal_id()
+                    .expect("expected terminal switcher entry")
+            })
+            .collect::<Vec<_>>();
+        let selected_terminal_id = switcher
+            .selected_entry()
+            .expect("switcher should have selected entry")
+            .terminal_id()
+            .expect("expected selected terminal switcher entry");
+        (entry_terminal_ids, selected_terminal_id)
+    });
+
+    assert_eq!(entry_terminal_ids.len(), 2);
+    assert!(entry_terminal_ids.contains(&build_terminal_id));
+    assert!(entry_terminal_ids.contains(&server_terminal_id));
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open");
+        let focus = switcher.focus_handle(cx);
+        focus.dispatch_action(&menu::Confirm, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert_eq!(panel.active_terminal_id(), Some(selected_terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id, .. }) if *terminal_id == selected_terminal_id),
+            "expected selected terminal to become active, got {:?}",
+            sidebar.active_entry,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_archive_selected_thread_closes_selected_agent_panel_terminal(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    enable_agent_panel_terminal(cx);
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    focus_sidebar(&sidebar, cx);
+    let terminal_index = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| matches!(entry, ListEntry::Terminal(terminal) if terminal.id == terminal_id))
+            .expect("terminal should be visible in sidebar")
+    });
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(terminal_index);
+    });
+    cx.dispatch_action(ArchiveSelectedThread);
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(!panel.has_terminal(terminal_id));
+    });
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(sidebar.contents.entries.iter().all(|entry| {
+            !matches!(entry, ListEntry::Terminal(terminal) if terminal.id == terminal_id)
+        }));
+    });
+}
+
+#[gpui::test]
 async fn test_closing_active_agent_panel_terminal_activates_neighbor(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     enable_agent_panel_terminal(cx);
@@ -5944,7 +6061,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                     .read(cx)
                     .entries()
                     .iter()
-                    .map(|e| e.metadata.thread_id)
+                    .map(|entry| entry.thread_id().expect("expected thread switcher entry"))
                     .collect()
             })
         };
@@ -5959,8 +6076,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                 let s = switcher.read(cx);
                 s.selected_entry()
                     .expect("should have selection")
-                    .metadata
-                    .thread_id
+                    .thread_id()
+                    .expect("expected selected thread entry")
             })
         };
 

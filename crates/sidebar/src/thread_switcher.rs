@@ -1,6 +1,6 @@
 use action_log::DiffStats;
 use agent_client_protocol::schema as acp;
-use agent_ui::thread_metadata_store::ThreadMetadata;
+use agent_ui::{TerminalId, thread_metadata_store::ThreadMetadata};
 use gpui::{
     Action as _, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
     ModifiersChangedEvent, Render, ScrollHandle, SharedString, prelude::*,
@@ -9,7 +9,8 @@ use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WithScrollbar, p
 use workspace::{ModalView, Workspace};
 use zed_actions::agents_sidebar::ToggleThreadSwitcher;
 
-pub(crate) struct ThreadSwitcherEntry {
+#[derive(Clone)]
+pub(crate) struct ThreadSwitcherThreadEntry {
     pub session_id: acp::SessionId,
     pub title: SharedString,
     pub icon: IconName,
@@ -25,15 +26,150 @@ pub(crate) struct ThreadSwitcherEntry {
     pub timestamp: SharedString,
 }
 
+#[derive(Clone)]
+pub(crate) struct ThreadSwitcherTerminalEntry {
+    pub terminal_id: TerminalId,
+    pub title: SharedString,
+    pub workspace: Entity<Workspace>,
+    pub project_name: Option<SharedString>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub notified: bool,
+    pub timestamp: SharedString,
+}
+
+#[derive(Clone)]
+pub(crate) enum ThreadSwitcherEntry {
+    Thread(ThreadSwitcherThreadEntry),
+    Terminal(ThreadSwitcherTerminalEntry),
+}
+
+#[derive(Clone)]
+pub(crate) enum ThreadSwitcherSelection {
+    Thread {
+        metadata: ThreadMetadata,
+        workspace: Entity<Workspace>,
+    },
+    Terminal {
+        terminal_id: TerminalId,
+        workspace: Entity<Workspace>,
+    },
+}
+
+impl ThreadSwitcherEntry {
+    pub(crate) fn selection(&self) -> ThreadSwitcherSelection {
+        match self {
+            Self::Thread(entry) => ThreadSwitcherSelection::Thread {
+                metadata: entry.metadata.clone(),
+                workspace: entry.workspace.clone(),
+            },
+            Self::Terminal(entry) => ThreadSwitcherSelection::Terminal {
+                terminal_id: entry.terminal_id,
+                workspace: entry.workspace.clone(),
+            },
+        }
+    }
+
+    fn element_id(&self) -> SharedString {
+        match self {
+            Self::Thread(entry) => {
+                SharedString::from(format!("thread-switcher-thread-{}", entry.session_id))
+            }
+            Self::Terminal(entry) => {
+                SharedString::from(format!("thread-switcher-terminal-{}", entry.terminal_id))
+            }
+        }
+    }
+
+    fn title(&self) -> SharedString {
+        match self {
+            Self::Thread(entry) => entry.title.clone(),
+            Self::Terminal(entry) => entry.title.clone(),
+        }
+    }
+
+    fn icon(&self) -> IconName {
+        match self {
+            Self::Thread(entry) => entry.icon,
+            Self::Terminal(_) => IconName::Terminal,
+        }
+    }
+
+    fn icon_from_external_svg(&self) -> Option<SharedString> {
+        match self {
+            Self::Thread(entry) => entry.icon_from_external_svg.clone(),
+            Self::Terminal(_) => None,
+        }
+    }
+
+    fn status(&self) -> AgentThreadStatus {
+        match self {
+            Self::Thread(entry) => entry.status,
+            Self::Terminal(_) => AgentThreadStatus::default(),
+        }
+    }
+
+    fn project_name(&self) -> Option<SharedString> {
+        match self {
+            Self::Thread(entry) => entry.project_name.clone(),
+            Self::Terminal(entry) => entry.project_name.clone(),
+        }
+    }
+
+    fn worktrees(&self) -> Vec<ThreadItemWorktreeInfo> {
+        match self {
+            Self::Thread(entry) => entry.worktrees.clone(),
+            Self::Terminal(_) => Vec::new(),
+        }
+    }
+
+    fn timestamp(&self) -> SharedString {
+        match self {
+            Self::Thread(entry) => entry.timestamp.clone(),
+            Self::Terminal(entry) => entry.timestamp.clone(),
+        }
+    }
+
+    fn is_title_generating(&self) -> bool {
+        match self {
+            Self::Thread(entry) => entry.is_title_generating,
+            Self::Terminal(_) => false,
+        }
+    }
+
+    fn notified(&self) -> bool {
+        match self {
+            Self::Thread(entry) => entry.notified,
+            Self::Terminal(entry) => entry.notified,
+        }
+    }
+
+    fn diff_stats(&self) -> DiffStats {
+        match self {
+            Self::Thread(entry) => entry.diff_stats,
+            Self::Terminal(_) => DiffStats::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn thread_id(&self) -> Option<agent_ui::ThreadId> {
+        match self {
+            Self::Thread(entry) => Some(entry.metadata.thread_id),
+            Self::Terminal(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn terminal_id(&self) -> Option<TerminalId> {
+        match self {
+            Self::Thread(_) => None,
+            Self::Terminal(entry) => Some(entry.terminal_id),
+        }
+    }
+}
+
 pub(crate) enum ThreadSwitcherEvent {
-    Preview {
-        metadata: ThreadMetadata,
-        workspace: Entity<Workspace>,
-    },
-    Confirmed {
-        metadata: ThreadMetadata,
-        workspace: Entity<Workspace>,
-    },
+    Preview(ThreadSwitcherSelection),
+    Confirmed(ThreadSwitcherSelection),
     Dismissed,
 }
 
@@ -62,10 +198,7 @@ impl ThreadSwitcher {
         };
 
         if let Some(entry) = entries.get(selected_index) {
-            cx.emit(ThreadSwitcherEvent::Preview {
-                metadata: entry.metadata.clone(),
-                workspace: entry.workspace.clone(),
-            });
+            cx.emit(ThreadSwitcherEvent::Preview(entry.selection()));
         }
 
         let focus_handle = cx.focus_handle();
@@ -124,10 +257,7 @@ impl ThreadSwitcher {
     fn emit_preview(&mut self, cx: &mut Context<Self>) {
         self.scroll_handle.scroll_to_item(self.selected_index);
         if let Some(entry) = self.entries.get(self.selected_index) {
-            cx.emit(ThreadSwitcherEvent::Preview {
-                metadata: entry.metadata.clone(),
-                workspace: entry.workspace.clone(),
-            });
+            cx.emit(ThreadSwitcherEvent::Preview(entry.selection()));
         }
     }
 
@@ -137,10 +267,7 @@ impl ThreadSwitcher {
 
     fn confirm_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(entry) = self.entries.get(self.selected_index) {
-            cx.emit(ThreadSwitcherEvent::Confirmed {
-                metadata: entry.metadata.clone(),
-                workspace: entry.workspace.clone(),
-            });
+            cx.emit(ThreadSwitcherEvent::Confirmed(entry.selection()));
         }
         cx.emit(DismissEvent);
     }
@@ -233,28 +360,25 @@ impl Render for ThreadSwitcher {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .children(self.entries.iter().enumerate().map(|(ix, entry)| {
-                        let id =
-                            SharedString::from(format!("thread-switcher-{}", entry.session_id));
+                        let diff_stats = entry.diff_stats();
 
-                        ThreadItem::new(id, entry.title.clone())
+                        ThreadItem::new(entry.element_id(), entry.title())
                             .rounded(true)
-                            .icon(entry.icon)
-                            .status(entry.status)
-                            .when_some(entry.icon_from_external_svg.clone(), |this, svg| {
+                            .icon(entry.icon())
+                            .status(entry.status())
+                            .when_some(entry.icon_from_external_svg(), |this, svg| {
                                 this.custom_icon_from_external_svg(svg)
                             })
-                            .when_some(entry.project_name.clone(), |this, name| {
-                                this.project_name(name)
+                            .when_some(entry.project_name(), |this, name| this.project_name(name))
+                            .worktrees(entry.worktrees())
+                            .timestamp(entry.timestamp())
+                            .title_generating(entry.is_title_generating())
+                            .notified(entry.notified())
+                            .when(diff_stats.lines_added > 0, |this| {
+                                this.added(diff_stats.lines_added as usize)
                             })
-                            .worktrees(entry.worktrees.clone())
-                            .timestamp(entry.timestamp.clone())
-                            .title_generating(entry.is_title_generating)
-                            .notified(entry.notified)
-                            .when(entry.diff_stats.lines_added > 0, |this| {
-                                this.added(entry.diff_stats.lines_added as usize)
-                            })
-                            .when(entry.diff_stats.lines_removed > 0, |this| {
-                                this.removed(entry.diff_stats.lines_removed as usize)
+                            .when(diff_stats.lines_removed > 0, |this| {
+                                this.removed(diff_stats.lines_removed as usize)
                             })
                             .selected(ix == selected_index)
                             .base_bg(cx.theme().colors().elevated_surface_background)
