@@ -10219,6 +10219,728 @@ impl Editor {
         }
     }
 
+    pub fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
+            if let Some((selections, _)) =
+                self.selection_history.transaction(transaction_id).cloned()
+            {
+                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_anchors(selections.to_vec());
+                });
+            } else {
+                log::error!(
+                    "No entry in selection_history found for undo. \
+                     This may correspond to a bug where undo does not update the selection. \
+                     If this is occurring, please add details to \
+                     https://github.com/zed-industries/zed/issues/22692"
+                );
+            }
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.unmark_text(window, cx);
+            self.refresh_edit_prediction(true, false, window, cx);
+            cx.emit(EditorEvent::Edited { transaction_id });
+            cx.emit(EditorEvent::TransactionUndone { transaction_id });
+        }
+    }
+
+    pub fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
+            if let Some((_, Some(selections))) =
+                self.selection_history.transaction(transaction_id).cloned()
+            {
+                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_anchors(selections.to_vec());
+                });
+            } else {
+                log::error!(
+                    "No entry in selection_history found for redo. \
+                     This may correspond to a bug where undo does not update the selection. \
+                     If this is occurring, please add details to \
+                     https://github.com/zed-industries/zed/issues/22692"
+                );
+            }
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.unmark_text(window, cx);
+            self.refresh_edit_prediction(true, false, window, cx);
+            cx.emit(EditorEvent::Edited { transaction_id });
+        }
+    }
+
+    pub fn finalize_last_transaction(&mut self, cx: &mut Context<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
+    }
+
+    pub fn group_until_transaction(&mut self, tx_id: TransactionId, cx: &mut Context<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.group_until_transaction(tx_id, cx));
+    }
+
+    pub fn context_menu_first(
+        &mut self,
+        _: &ContextMenuFirst,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.select_first(self.completion_provider.as_deref(), window, cx);
+        }
+    }
+
+    pub fn context_menu_prev(
+        &mut self,
+        _: &ContextMenuPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.select_prev(self.completion_provider.as_deref(), window, cx);
+        }
+    }
+
+    pub fn context_menu_next(
+        &mut self,
+        _: &ContextMenuNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.select_next(self.completion_provider.as_deref(), window, cx);
+        }
+    }
+
+    pub fn context_menu_last(
+        &mut self,
+        _: &ContextMenuLast,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.select_last(self.completion_provider.as_deref(), window, cx);
+        }
+    }
+
+    pub fn signature_help_prev(
+        &mut self,
+        _: &SignatureHelpPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(popover) = self.signature_help_state.popover_mut() {
+            if popover.current_signature == 0 {
+                popover.current_signature = popover.signatures.len() - 1;
+            } else {
+                popover.current_signature -= 1;
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn signature_help_next(
+        &mut self,
+        _: &SignatureHelpNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(popover) = self.signature_help_state.popover_mut() {
+            if popover.current_signature + 1 == popover.signatures.len() {
+                popover.current_signature = 0;
+            } else {
+                popover.current_signature += 1;
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn rename(
+        &mut self,
+        _: &Rename,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
+
+        if self.read_only(cx) {
+            return None;
+        }
+        let provider = self.semantics_provider.clone()?;
+        let selection = self.selections.newest_anchor().clone();
+        let (cursor_buffer, cursor_buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.head(), cx)?;
+        let (tail_buffer, cursor_buffer_position_end) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.tail(), cx)?;
+        if tail_buffer != cursor_buffer {
+            return None;
+        }
+
+        let snapshot = cursor_buffer.read(cx).snapshot();
+        let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let cursor_buffer_offset_end = cursor_buffer_position_end.to_offset(&snapshot);
+        let prepare_rename = provider.range_for_rename(&cursor_buffer, cursor_buffer_position, cx);
+        drop(snapshot);
+
+        Some(cx.spawn_in(window, async move |this, cx| {
+            let rename_range = prepare_rename.await?;
+            if let Some(rename_range) = rename_range {
+                this.update_in(cx, |this, window, cx| {
+                    let snapshot = cursor_buffer.read(cx).snapshot();
+                    let rename_buffer_range = rename_range.to_offset(&snapshot);
+                    let cursor_offset_in_rename_range =
+                        cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+                    let cursor_offset_in_rename_range_end =
+                        cursor_buffer_offset_end.saturating_sub(rename_buffer_range.start);
+
+                    this.take_rename(false, window, cx);
+                    let buffer = this.buffer.read(cx).read(cx);
+                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let rename_start =
+                        cursor_offset.saturating_sub_usize(cursor_offset_in_rename_range);
+                    let rename_end = rename_start + rename_buffer_range.len();
+                    let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
+                    let mut old_highlight_id = None;
+                    let old_name: Arc<str> = buffer
+                        .chunks(
+                            rename_start..rename_end,
+                            LanguageAwareStyling {
+                                tree_sitter: true,
+                                diagnostics: true,
+                            },
+                        )
+                        .map(|chunk| {
+                            if old_highlight_id.is_none() {
+                                old_highlight_id = chunk.syntax_highlight_id;
+                            }
+                            chunk.text
+                        })
+                        .collect::<String>()
+                        .into();
+
+                    drop(buffer);
+
+                    // Position the selection in the rename editor so that it matches the current selection.
+                    this.show_local_selections = false;
+                    let rename_editor = cx.new(|cx| {
+                        let mut editor = Editor::single_line(window, cx);
+                        editor.buffer.update(cx, |buffer, cx| {
+                            buffer.edit(
+                                [(MultiBufferOffset(0)..MultiBufferOffset(0), old_name.clone())],
+                                None,
+                                cx,
+                            )
+                        });
+                        let cursor_offset_in_rename_range =
+                            MultiBufferOffset(cursor_offset_in_rename_range);
+                        let cursor_offset_in_rename_range_end =
+                            MultiBufferOffset(cursor_offset_in_rename_range_end);
+                        let rename_selection_range = match cursor_offset_in_rename_range
+                            .cmp(&cursor_offset_in_rename_range_end)
+                        {
+                            Ordering::Equal => {
+                                editor.select_all(&SelectAll, window, cx);
+                                return editor;
+                            }
+                            Ordering::Less => {
+                                cursor_offset_in_rename_range..cursor_offset_in_rename_range_end
+                            }
+                            Ordering::Greater => {
+                                cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
+                            }
+                        };
+                        if rename_selection_range.end.0 > old_name.len() {
+                            editor.select_all(&SelectAll, window, cx);
+                        } else {
+                            editor.change_selections(Default::default(), window, cx, |s| {
+                                s.select_ranges([rename_selection_range]);
+                            });
+                        }
+                        editor
+                    });
+                    cx.subscribe(&rename_editor, |_, _, e: &EditorEvent, cx| {
+                        if e == &EditorEvent::Focused {
+                            cx.emit(EditorEvent::FocusedIn)
+                        }
+                    })
+                    .detach();
+
+                    let write_highlights =
+                        this.clear_background_highlights(HighlightKey::DocumentHighlightWrite, cx);
+                    let read_highlights =
+                        this.clear_background_highlights(HighlightKey::DocumentHighlightRead, cx);
+                    let ranges = write_highlights
+                        .iter()
+                        .flat_map(|(_, ranges)| ranges.iter())
+                        .chain(read_highlights.iter().flat_map(|(_, ranges)| ranges.iter()))
+                        .cloned()
+                        .collect();
+
+                    this.highlight_text(
+                        HighlightKey::Rename,
+                        ranges,
+                        HighlightStyle {
+                            fade_out: Some(0.6),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                    let rename_focus_handle = rename_editor.focus_handle(cx);
+                    window.focus(&rename_focus_handle, cx);
+                    let block_id = this.insert_blocks(
+                        [BlockProperties {
+                            style: BlockStyle::Flex,
+                            placement: BlockPlacement::Below(range.start),
+                            height: Some(1),
+                            render: Arc::new({
+                                let rename_editor = rename_editor.clone();
+                                move |cx: &mut BlockContext| {
+                                    let mut text_style = cx.editor_style.text.clone();
+                                    if let Some(highlight_style) = old_highlight_id
+                                        .and_then(|h| cx.editor_style.syntax.get(h).cloned())
+                                    {
+                                        text_style = text_style.highlight(highlight_style);
+                                    }
+                                    div()
+                                        .block_mouse_except_scroll()
+                                        .pl(cx.anchor_x)
+                                        .child(EditorElement::new(
+                                            &rename_editor,
+                                            EditorStyle {
+                                                background: cx.theme().system().transparent,
+                                                local_player: cx.editor_style.local_player,
+                                                text: text_style,
+                                                scrollbar_width: cx.editor_style.scrollbar_width,
+                                                syntax: cx.editor_style.syntax.clone(),
+                                                status: cx.editor_style.status.clone(),
+                                                inlay_hints_style: HighlightStyle {
+                                                    font_weight: Some(FontWeight::BOLD),
+                                                    ..make_inlay_hints_style(cx.app)
+                                                },
+                                                edit_prediction_styles: make_suggestion_styles(
+                                                    cx.app,
+                                                ),
+                                                ..EditorStyle::default()
+                                            },
+                                        ))
+                                        .into_any_element()
+                                }
+                            }),
+                            priority: 0,
+                        }],
+                        Some(Autoscroll::fit()),
+                        cx,
+                    )[0];
+                    this.pending_rename = Some(RenameState {
+                        range,
+                        old_name,
+                        editor: rename_editor,
+                        block_id,
+                    });
+                })?;
+            }
+
+            Ok(())
+        }))
+    }
+
+    pub fn confirm_rename(
+        &mut self,
+        _: &ConfirmRename,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+        let rename = self.take_rename(false, window, cx)?;
+        let workspace = self.workspace()?.downgrade();
+        let (buffer, start) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(rename.range.start, cx)?;
+        let (end_buffer, _) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(rename.range.end, cx)?;
+        if buffer != end_buffer {
+            return None;
+        }
+
+        let old_name = rename.old_name;
+        let new_name = rename.editor.read(cx).text(cx);
+
+        let rename = self.semantics_provider.as_ref()?.perform_rename(
+            &buffer,
+            start,
+            new_name.clone(),
+            cx,
+        )?;
+
+        Some(cx.spawn_in(window, async move |editor, cx| {
+            let project_transaction = rename.await?;
+            Self::open_project_transaction(
+                &editor,
+                workspace,
+                project_transaction,
+                format!("Rename: {} → {}", old_name, new_name),
+                cx,
+            )
+            .await?;
+
+            editor.update(cx, |editor, cx| {
+                editor.refresh_document_highlights(cx);
+            })?;
+            Ok(())
+        }))
+    }
+
+    fn take_rename(
+        &mut self,
+        moving_cursor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<RenameState> {
+        let rename = self.pending_rename.take()?;
+        if rename.editor.focus_handle(cx).is_focused(window) {
+            window.focus(&self.focus_handle, cx);
+        }
+
+        self.remove_blocks(
+            [rename.block_id].into_iter().collect(),
+            Some(Autoscroll::fit()),
+            cx,
+        );
+        self.clear_highlights(HighlightKey::Rename, cx);
+        self.show_local_selections = true;
+
+        if moving_cursor {
+            let cursor_in_rename_editor = rename.editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                    .head()
+            });
+
+            // Update the selection to match the position of the selection inside
+            // the rename editor.
+            let snapshot = self.buffer.read(cx).read(cx);
+            let rename_range = rename.range.to_offset(&snapshot);
+            let cursor_in_editor = snapshot
+                .clip_offset(rename_range.start + cursor_in_rename_editor, Bias::Left)
+                .min(rename_range.end);
+            drop(snapshot);
+
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges(vec![cursor_in_editor..cursor_in_editor])
+            });
+        } else {
+            self.refresh_document_highlights(cx);
+        }
+
+        Some(rename)
+    }
+
+    pub fn pending_rename(&self) -> Option<&RenameState> {
+        self.pending_rename.as_ref()
+    }
+
+    fn can_format_selections(&self, cx: &App) -> bool {
+        if !self.mode.is_full() {
+            return false;
+        }
+
+        let Some(project) = &self.project else {
+            return false;
+        };
+
+        let project = project.read(cx);
+        let multi_buffer = self.buffer.read(cx);
+        let snapshot = multi_buffer.snapshot(cx);
+
+        self.selections
+            .disjoint_anchor_ranges()
+            .filter(|range| range.start != range.end)
+            .flat_map(|range| [range.start, range.end])
+            .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
+            .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
+            .any(|buffer| project.supports_range_formatting(&buffer, cx))
+    }
+
+    fn format(
+        &mut self,
+        _: &Format,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+
+        Some(self.perform_format(
+            project,
+            FormatTrigger::Manual,
+            FormatTarget::Buffers(self.buffer.read(cx).all_buffers()),
+            window,
+            cx,
+        ))
+    }
+
+    fn format_selections(
+        &mut self,
+        _: &FormatSelections,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+
+        let ranges = self
+            .selections
+            .all_adjusted(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect_vec();
+
+        Some(self.perform_format(
+            project,
+            FormatTrigger::Manual,
+            FormatTarget::Ranges(ranges),
+            window,
+            cx,
+        ))
+    }
+
+    fn perform_format(
+        &mut self,
+        project: Entity<Project>,
+        trigger: FormatTrigger,
+        target: FormatTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer.clone();
+        let (buffers, target) = match target {
+            FormatTarget::Buffers(buffers) => (buffers, LspFormatTarget::Buffers),
+            FormatTarget::Ranges(selection_ranges) => {
+                let multi_buffer = buffer.read(cx);
+                let snapshot = multi_buffer.read(cx);
+                let mut buffers = HashSet::default();
+                let mut buffer_id_to_ranges: BTreeMap<BufferId, Vec<Range<text::Anchor>>> =
+                    BTreeMap::new();
+                for selection_range in selection_ranges {
+                    for (buffer_snapshot, buffer_range, _) in
+                        snapshot.range_to_buffer_ranges(selection_range.start..selection_range.end)
+                    {
+                        let buffer_id = buffer_snapshot.remote_id();
+                        let start = buffer_snapshot.anchor_before(buffer_range.start);
+                        let end = buffer_snapshot.anchor_after(buffer_range.end);
+                        buffers.insert(multi_buffer.buffer(buffer_id).unwrap());
+                        buffer_id_to_ranges
+                            .entry(buffer_id)
+                            .and_modify(|buffer_ranges| buffer_ranges.push(start..end))
+                            .or_insert_with(|| vec![start..end]);
+                    }
+                }
+                (buffers, LspFormatTarget::Ranges(buffer_id_to_ranges))
+            }
+        };
+
+        let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
+        let selections_prev = transaction_id_prev
+            .and_then(|transaction_id_prev| {
+                // default to selections as they were after the last edit, if we have them,
+                // instead of how they are now.
+                // This will make it so that editing, moving somewhere else, formatting, then undoing the format
+                // will take you back to where you made the last edit, instead of staying where you scrolled
+                self.selection_history
+                    .transaction(transaction_id_prev)
+                    .map(|t| t.0.clone())
+            })
+            .unwrap_or_else(|| self.selections.disjoint_anchors_arc());
+
+        let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
+        let format = project.update(cx, |project, cx| {
+            project.format(buffers, target, true, trigger, cx)
+        });
+
+        cx.spawn_in(window, async move |editor, cx| {
+            let transaction = futures::select_biased! {
+                transaction = format.log_err().fuse() => transaction,
+                () = timeout => {
+                    log::warn!("timed out waiting for formatting");
+                    None
+                }
+            };
+
+            buffer.update(cx, |buffer, cx| {
+                if let Some(transaction) = transaction
+                    && !buffer.is_singleton()
+                {
+                    buffer.push_transaction(&transaction.0, cx);
+                }
+                cx.notify();
+            });
+
+            if let Some(transaction_id_now) =
+                buffer.read_with(cx, |b, cx| b.last_transaction_id(cx))
+            {
+                let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
+                if has_new_transaction {
+                    editor
+                        .update(cx, |editor, _| {
+                            editor
+                                .selection_history
+                                .insert_transaction(transaction_id_now, selections_prev);
+                        })
+                        .ok();
+                }
+            }
+
+            Ok(())
+        })
+    }
+
+    fn organize_imports(
+        &mut self,
+        _: &OrganizeImports,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if self.read_only(cx) {
+            return None;
+        }
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+        Some(self.perform_code_action_kind(
+            project,
+            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+            window,
+            cx,
+        ))
+    }
+
+    fn perform_code_action_kind(
+        &mut self,
+        project: Entity<Project>,
+        kind: CodeActionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer.clone();
+        let buffers = buffer.read(cx).all_buffers();
+        let mut timeout = cx.background_executor().timer(CODE_ACTION_TIMEOUT).fuse();
+        let apply_action = project.update(cx, |project, cx| {
+            project.apply_code_action_kind(buffers, kind, true, cx)
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            let transaction = futures::select_biased! {
+                () = timeout => {
+                    log::warn!("timed out waiting for executing code action");
+                    None
+                }
+                transaction = apply_action.log_err().fuse() => transaction,
+            };
+            buffer.update(cx, |buffer, cx| {
+                // check if we need this
+                if let Some(transaction) = transaction
+                    && !buffer.is_singleton()
+                {
+                    buffer.push_transaction(&transaction.0, cx);
+                }
+                cx.notify();
+            });
+            Ok(())
+        })
+    }
+
+    fn restart_language_server(
+        &mut self,
+        _: &RestartLanguageServer,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(project) = self.project.clone() {
+            self.buffer.update(cx, |multi_buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.restart_language_servers_for_buffers(
+                        multi_buffer.all_buffers().into_iter().collect(),
+                        HashSet::default(),
+                        cx,
+                    );
+                });
+            })
+        }
+    }
+
+    fn stop_language_server(
+        &mut self,
+        _: &StopLanguageServer,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(project) = self.project.clone() {
+            self.buffer.update(cx, |multi_buffer, cx| {
+                project.update(cx, |project, cx| {
+                    project.stop_language_servers_for_buffers(
+                        multi_buffer.all_buffers().into_iter().collect(),
+                        HashSet::default(),
+                        cx,
+                    );
+                });
+            });
+        }
+    }
+
+    fn cancel_language_server_work(
+        workspace: &mut Workspace,
+        _: &actions::CancelLanguageServerWork,
+        _: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let project = workspace.project();
+        let buffers = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .map_or(HashSet::default(), |editor| {
+                editor.read(cx).buffer.read(cx).all_buffers()
+            });
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work_for_buffers(buffers, cx);
+        });
+    }
+
+    fn show_character_palette(
+        &mut self,
+        _: &ShowCharacterPalette,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        window.show_character_palette();
+    }
+
     pub fn toggle_minimap(
         &mut self,
         _: &ToggleMinimap,
