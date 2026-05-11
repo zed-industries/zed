@@ -1044,7 +1044,7 @@ mod tests {
         let model = Model::from_listed(entry);
         assert_eq!(
             &model.supported_effort_levels,
-            &[Effort::Low, Effort::High, Effort::Max]
+            &[Effort::Low, Effort::High, Effort::XHigh, Effort::Max]
         );
     }
 }
