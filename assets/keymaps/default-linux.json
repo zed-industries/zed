@@ -1248,7 +1248,7 @@
     },
   },
   {
-    "context": "AgentPanel && Terminal",
+    "context": "AgentPanel > Terminal",
     "bindings": {
       "ctrl-n": "agent::NewThread",
     },

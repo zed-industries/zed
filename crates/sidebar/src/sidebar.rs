@@ -66,7 +66,10 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
 
-use crate::thread_switcher::{ThreadSwitcher, ThreadSwitcherEntry, ThreadSwitcherEvent};
+use crate::thread_switcher::{
+    ThreadSwitcher, ThreadSwitcherEntry, ThreadSwitcherEvent, ThreadSwitcherSelection,
+    ThreadSwitcherTerminalEntry, ThreadSwitcherThreadEntry,
+};
 
 #[cfg(test)]
 mod sidebar_tests;
@@ -376,6 +379,10 @@ impl SidebarContents {
     fn is_thread_notified(&self, thread_id: &agent_ui::ThreadId) -> bool {
         self.notified_threads.contains(thread_id)
     }
+
+    fn is_terminal_notified(&self, terminal_id: TerminalId) -> bool {
+        self.notified_terminals.contains(&terminal_id)
+    }
 }
 
 // TODO: The mapping from workspace root paths to git repositories needs a
@@ -572,6 +579,7 @@ pub struct Sidebar {
     /// thread, confirming in the thread switcher, etc.) — never from
     /// background data changes. Used to sort the thread switcher popup.
     thread_last_accessed: HashMap<ThreadId, DateTime<Utc>>,
+    terminal_last_accessed: HashMap<TerminalId, DateTime<Utc>>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
@@ -678,6 +686,7 @@ impl Sidebar {
             hovered_thread_index: None,
 
             thread_last_accessed: HashMap::new(),
+            terminal_last_accessed: HashMap::new(),
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
@@ -1123,6 +1132,7 @@ impl Sidebar {
         let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
+        let mut current_terminal_ids: HashSet<TerminalId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
         let mut seen_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
 
@@ -1188,6 +1198,7 @@ impl Sidebar {
                 .iter()
                 .flat_map(|workspace| terminal_entries_for_workspace(workspace, cx))
                 .collect();
+            current_terminal_ids.extend(terminals.iter().map(|terminal| terminal.id));
             notified_terminals.extend(
                 terminals
                     .iter()
@@ -1530,6 +1541,8 @@ impl Sidebar {
 
         self.thread_last_accessed
             .retain(|id, _| current_thread_ids.contains(id));
+        self.terminal_last_accessed
+            .retain(|id, _| current_terminal_ids.contains(id));
 
         self.contents = SidebarContents {
             entries,
@@ -3275,6 +3288,7 @@ impl Sidebar {
             return;
         };
 
+        self.record_terminal_access(terminal_id);
         self.active_entry = Some(ActiveEntry::Terminal {
             terminal_id,
             workspace: workspace.clone(),
@@ -3873,12 +3887,21 @@ impl Sidebar {
                     self.archive_thread(&session_id, window, cx);
                 }
             }
+            Some(ListEntry::Terminal(terminal)) => {
+                let workspace = terminal.workspace.clone();
+                let terminal_id = terminal.id;
+                self.close_terminal(&workspace, terminal_id, window, cx);
+            }
             _ => {}
         }
     }
 
     fn record_thread_access(&mut self, id: &ThreadId) {
         self.thread_last_accessed.insert(*id, Utc::now());
+    }
+
+    fn record_terminal_access(&mut self, id: TerminalId) {
+        self.terminal_last_accessed.insert(id, Utc::now());
     }
 
     fn record_thread_interacted(&mut self, thread_id: &agent_ui::ThreadId, cx: &mut App) {
@@ -3925,20 +3948,30 @@ impl Sidebar {
     }
 
     /// The sort order used by the ctrl-tab switcher
-    fn thread_cmp_for_switcher(&self, left: &ThreadMetadata, right: &ThreadMetadata) -> Ordering {
-        let sort_time = |x: &ThreadMetadata| {
-            self.thread_last_accessed
-                .get(&x.thread_id)
+    fn switcher_entry_cmp(
+        &self,
+        left: &ThreadSwitcherEntry,
+        right: &ThreadSwitcherEntry,
+    ) -> Ordering {
+        let sort_time = |entry: &ThreadSwitcherEntry| match entry {
+            ThreadSwitcherEntry::Thread(entry) => self
+                .thread_last_accessed
+                .get(&entry.metadata.thread_id)
                 .copied()
-                .or(x.interacted_at)
-                .unwrap_or(x.updated_at)
+                .or(entry.metadata.interacted_at)
+                .unwrap_or(entry.metadata.updated_at),
+            ThreadSwitcherEntry::Terminal(entry) => self
+                .terminal_last_accessed
+                .get(&entry.terminal_id)
+                .copied()
+                .unwrap_or(entry.created_at),
         };
 
         // .reverse() = most recent first
         sort_time(left).cmp(&sort_time(right)).reverse()
     }
 
-    fn mru_threads_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {
+    fn mru_entries_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {
         let mut current_header_label: Option<SharedString> = None;
         let mut current_header_key: Option<ProjectGroupKey> = None;
         let mut entries: Vec<ThreadSwitcherEntry> = self
@@ -3971,7 +4004,7 @@ impl Sidebar {
                     let timestamp: SharedString =
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
                             .into();
-                    Some(ThreadSwitcherEntry {
+                    Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
                         session_id,
                         title: thread.metadata.display_title(),
                         icon: thread.icon,
@@ -3993,13 +4026,25 @@ impl Sidebar {
                         is_title_generating: thread.is_title_generating,
                         notified,
                         timestamp,
-                    })
+                    }))
                 }
-                ListEntry::Terminal(_) => None,
+                ListEntry::Terminal(terminal) => {
+                    let timestamp: SharedString =
+                        format_history_entry_timestamp(terminal.created_at).into();
+                    Some(ThreadSwitcherEntry::Terminal(ThreadSwitcherTerminalEntry {
+                        terminal_id: terminal.id,
+                        title: terminal.title.clone(),
+                        workspace: terminal.workspace.clone(),
+                        project_name: current_header_label.clone(),
+                        created_at: terminal.created_at,
+                        notified: self.contents.is_terminal_notified(terminal.id),
+                        timestamp,
+                    }))
+                }
             })
             .collect();
 
-        entries.sort_by(|a, b| self.thread_cmp_for_switcher(&a.metadata, &b.metadata));
+        entries.sort_by(|a, b| self.switcher_entry_cmp(a, b));
 
         entries
     }
@@ -4023,6 +4068,96 @@ impl Sidebar {
         self.toggle_thread_switcher_impl(action.select_last, window, cx);
     }
 
+    fn preview_switcher_selection(
+        &mut self,
+        selection: &ThreadSwitcherSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match selection {
+            ThreadSwitcherSelection::Thread {
+                metadata,
+                workspace,
+            } => {
+                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+                    multi_workspace.update(cx, |multi_workspace, cx| {
+                        multi_workspace.activate(workspace.clone(), None, window, cx);
+                    });
+                }
+                self.active_entry = Some(ActiveEntry::Thread {
+                    thread_id: metadata.thread_id,
+                    session_id: metadata.session_id.clone(),
+                    workspace: workspace.clone(),
+                });
+                self.update_entries(cx);
+                Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
+            }
+            ThreadSwitcherSelection::Terminal {
+                terminal_id,
+                workspace,
+            } => {
+                if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
+                    return;
+                }
+                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+                    multi_workspace.update(cx, |multi_workspace, cx| {
+                        multi_workspace.activate(workspace.clone(), None, window, cx);
+                    });
+                }
+                self.active_entry = Some(ActiveEntry::Terminal {
+                    terminal_id: *terminal_id,
+                    workspace: workspace.clone(),
+                });
+                self.update_entries(cx);
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.activate_terminal(*terminal_id, false, window, cx);
+                        });
+                    }
+                    workspace.reveal_panel::<AgentPanel>(window, cx);
+                });
+            }
+        }
+    }
+
+    fn confirm_switcher_selection(
+        &mut self,
+        selection: &ThreadSwitcherSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match selection {
+            ThreadSwitcherSelection::Thread {
+                metadata,
+                workspace,
+            } => {
+                if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+                    multi_workspace.update(cx, |multi_workspace, cx| {
+                        multi_workspace.activate(workspace.clone(), None, window, cx);
+                        multi_workspace.retain_active_workspace(cx);
+                    });
+                }
+                self.record_thread_access(&metadata.thread_id);
+                self.active_entry = Some(ActiveEntry::Thread {
+                    thread_id: metadata.thread_id,
+                    session_id: metadata.session_id.clone(),
+                    workspace: workspace.clone(),
+                });
+                self.update_entries(cx);
+                self.dismiss_thread_switcher(cx);
+                Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+            }
+            ThreadSwitcherSelection::Terminal {
+                terminal_id,
+                workspace,
+            } => {
+                self.dismiss_thread_switcher(cx);
+                self.activate_terminal(workspace, *terminal_id, true, window, cx);
+            }
+        }
+    }
+
     fn toggle_thread_switcher_impl(
         &mut self,
         select_last: bool,
@@ -4040,21 +4175,27 @@ impl Sidebar {
             return;
         }
 
-        let entries = self.mru_threads_for_switcher(cx);
+        let entries = self.mru_entries_for_switcher(cx);
         if entries.len() < 2 {
             return;
         }
 
         let weak_multi_workspace = self.multi_workspace.clone();
 
-        // Capture the full active entry so dismissal can restore terminal
-        // entries too, not just threads.
+        // Snapshot the active entry (thread or terminal) so dismissal can
+        // restore it.
         let original_active_entry = self.active_entry.clone();
         let original_metadata = match &original_active_entry {
-            Some(ActiveEntry::Thread { thread_id, .. }) => entries
-                .iter()
-                .find(|e| *thread_id == e.metadata.thread_id)
-                .map(|e| e.metadata.clone()),
+            Some(ActiveEntry::Thread { thread_id, .. }) => {
+                entries.iter().find_map(|entry| match entry {
+                    ThreadSwitcherEntry::Thread(entry)
+                        if *thread_id == entry.metadata.thread_id =>
+                    {
+                        Some(entry.metadata.clone())
+                    }
+                    _ => None,
+                })
+            }
             _ => None,
         };
         let original_workspace = self
@@ -4069,44 +4210,13 @@ impl Sidebar {
         subscriptions.push(cx.subscribe_in(&thread_switcher, window, {
             let thread_switcher = thread_switcher.clone();
             move |this, _emitter, event: &ThreadSwitcherEvent, window, cx| match event {
-                ThreadSwitcherEvent::Preview {
-                    metadata,
-                    workspace,
-                } => {
-                    if let Some(mw) = weak_multi_workspace.upgrade() {
-                        mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), None, window, cx);
-                        });
-                    }
-                    this.active_entry = Some(ActiveEntry::Thread {
-                        thread_id: metadata.thread_id,
-                        session_id: metadata.session_id.clone(),
-                        workspace: workspace.clone(),
-                    });
-                    this.update_entries(cx);
-                    Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
+                ThreadSwitcherEvent::Preview(selection) => {
+                    this.preview_switcher_selection(selection, window, cx);
                     let focus = thread_switcher.focus_handle(cx);
                     window.focus(&focus, cx);
                 }
-                ThreadSwitcherEvent::Confirmed {
-                    metadata,
-                    workspace,
-                } => {
-                    if let Some(mw) = weak_multi_workspace.upgrade() {
-                        mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), None, window, cx);
-                            mw.retain_active_workspace(cx);
-                        });
-                    }
-                    this.record_thread_access(&metadata.thread_id);
-                    this.active_entry = Some(ActiveEntry::Thread {
-                        thread_id: metadata.thread_id,
-                        session_id: metadata.session_id.clone(),
-                        workspace: workspace.clone(),
-                    });
-                    this.update_entries(cx);
-                    this.dismiss_thread_switcher(cx);
-                    Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+                ThreadSwitcherEvent::Confirmed(selection) => {
+                    this.confirm_switcher_selection(selection, window, cx);
                 }
                 ThreadSwitcherEvent::Dismissed => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
@@ -4178,7 +4288,7 @@ impl Sidebar {
         let initial_preview = thread_switcher
             .read(cx)
             .selected_entry()
-            .map(|entry| (entry.metadata.clone(), entry.workspace.clone()));
+            .map(ThreadSwitcherEntry::selection);
 
         self.thread_switcher = Some(thread_switcher);
         self._thread_switcher_subscriptions = subscriptions;
@@ -4188,19 +4298,8 @@ impl Sidebar {
             });
         }
 
-        if let Some((metadata, workspace)) = initial_preview {
-            if let Some(mw) = self.multi_workspace.upgrade() {
-                mw.update(cx, |mw, cx| {
-                    mw.activate(workspace.clone(), None, window, cx);
-                });
-            }
-            self.active_entry = Some(ActiveEntry::Thread {
-                thread_id: metadata.thread_id,
-                session_id: metadata.session_id.clone(),
-                workspace: workspace.clone(),
-            });
-            self.update_entries(cx);
-            Self::load_agent_thread_in_workspace(&workspace, &metadata, false, window, cx);
+        if let Some(selection) = initial_preview {
+            self.preview_switcher_selection(&selection, window, cx);
         }
 
         window.focus(&focus, cx);
@@ -4359,6 +4458,7 @@ impl Sidebar {
             .blend(color.panel_background.opacity(0.25));
         let terminal_id = terminal.id;
         let workspace = terminal.workspace.clone();
+        let focus_handle = self.focus_handle.clone();
 
         ThreadItem::new(id, terminal.title.clone())
             .base_bg(sidebar_bg)
@@ -4382,7 +4482,17 @@ impl Sidebar {
                     IconButton::new("close-terminal", IconName::Close)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Close Terminal"))
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Close Terminal",
+                                    &ArchiveSelectedThread,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.close_terminal(&workspace, terminal_id, window, cx);
                         })),
