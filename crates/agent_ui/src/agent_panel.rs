@@ -51,6 +51,8 @@ use crate::{
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::Result;
+#[cfg(feature = "audio")]
+use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
@@ -1667,6 +1669,18 @@ impl AgentPanel {
             terminal.has_notification = true;
             cx.emit(AgentPanelEvent::EntryChanged);
             cx.notify();
+            #[cfg(feature = "audio")]
+            self.play_terminal_notification_sound(cx);
+        }
+    }
+
+    #[cfg(feature = "audio")]
+    fn play_terminal_notification_sound(&self, cx: &mut App) {
+        // We only reach this when the user isn't looking at the terminal,
+        // so it is effectively hidden — only `Never` suppresses the sound.
+        let settings = AgentSettings::get_global(cx);
+        if settings.play_sound_when_agent_done.should_play(false) {
+            Audio::play_sound(Sound::AgentDone, cx);
         }
     }
 
