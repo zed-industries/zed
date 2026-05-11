@@ -2293,20 +2293,23 @@ impl RecentProjectsDelegate {
             .any(|key| key.matches(&workspace.project_group_key()))
     }
 
+    /// A recent workspace is treated as "an open folder" only when it is a
+    /// single-path workspace that exactly matches one of the entries already
+    /// rendered in the "Current Folders" section. Multi-path recent
+    /// workspaces remain visible even if some of their paths overlap with the
+    /// current window, because they represent a distinct project (e.g. AC
+    /// with `[a, c]` should still appear when AB with `[a, b]` is open).
     fn is_open_folder(&self, paths: &PathList) -> bool {
         if self.open_folders.is_empty() {
             return false;
         }
 
-        for workspace_path in paths.paths() {
-            for open_folder in &self.open_folders {
-                if workspace_path == &open_folder.path {
-                    return true;
-                }
-            }
-        }
-
-        false
+        let [single_path] = paths.paths() else {
+            return false;
+        };
+        self.open_folders
+            .iter()
+            .any(|open_folder| &open_folder.path == single_path)
     }
 
     fn is_valid_recent_candidate(
@@ -2543,6 +2546,47 @@ mod tests {
 
         draw(cx);
         assert_pinned_to_bottom(&picker, cx, "after redraw");
+    }
+
+    #[gpui::test]
+    fn is_open_folder_only_filters_exact_single_path_match(cx: &mut TestAppContext) {
+        init_test(cx);
+        let delegate = cx.update(|cx| {
+            RecentProjectsDelegate::new(
+                WeakEntity::new_invalid(),
+                false,
+                cx.focus_handle(),
+                vec![open_folder(0), open_folder(1)],
+                Vec::new(),
+                None,
+                ProjectPickerStyle::Modal,
+            )
+        });
+
+        // Single path that matches an open folder: hide it (already shown in
+        // "Current Folders").
+        let exact_single = PathList::new(&[open_folder(0).path]);
+        assert!(delegate.is_open_folder(&exact_single));
+
+        // Single path that does not match any open folder: keep it.
+        let unrelated_single = PathList::new(&[PathBuf::from(path!("/elsewhere/project"))]);
+        assert!(!delegate.is_open_folder(&unrelated_single));
+
+        // Multi-path workspace that overlaps with one open folder but adds an
+        // unrelated path (e.g. AC when AB is open). This is a distinct project
+        // and must remain visible.
+        let partial_overlap = PathList::new(&[
+            open_folder(0).path,
+            PathBuf::from(path!("/elsewhere/c")),
+        ]);
+        assert!(!delegate.is_open_folder(&partial_overlap));
+
+        // Multi-path workspace fully made of open folders is still a distinct
+        // entity from this filter's perspective; `is_in_current_window_groups`
+        // is responsible for collapsing exact matches.
+        let multi_all_in_open_folders =
+            PathList::new(&[open_folder(0).path, open_folder(1).path]);
+        assert!(!delegate.is_open_folder(&multi_all_in_open_folders));
     }
 
     #[gpui::test]

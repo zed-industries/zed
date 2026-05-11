@@ -241,6 +241,157 @@ async fn test_open_new_window_does_not_open_sidebar_on_existing_window(cx: &mut 
 }
 
 #[gpui::test]
+async fn test_open_paths_does_not_merge_into_partially_overlapping_workspace(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/root_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/root_c"), json!({ "file.txt": "" }))
+        .await;
+
+    // Open workspace AB.
+    cx.update(|cx| {
+        open_paths(
+            &[
+                PathBuf::from(path!("/root_a")),
+                PathBuf::from(path!("/root_b")),
+            ],
+            app_state.clone(),
+            OpenOptions::default(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    let ab_window = cx
+        .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+        .unwrap();
+    let ab_workspace = ab_window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let ab_paths_before = ab_workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).abs_path().to_path_buf())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        ab_paths_before.len(),
+        2,
+        "AB should start with exactly two worktrees"
+    );
+
+    // Open AC (paths /root_a and /root_c). The shared /root_a should not
+    // cause AC to merge into the AB workspace's worktree set.
+    cx.update(|cx| {
+        open_paths(
+            &[
+                PathBuf::from(path!("/root_a")),
+                PathBuf::from(path!("/root_c")),
+            ],
+            app_state,
+            OpenOptions::default(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    let ab_paths_after = ab_workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|wt| wt.read(cx).abs_path().to_path_buf())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        ab_paths_after, ab_paths_before,
+        "opening AC must not merge /root_c into the existing AB workspace just because /root_a is shared",
+    );
+}
+
+#[gpui::test]
+async fn test_open_paths_still_reuses_window_when_file_is_inside_existing_worktree(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(
+        path!("/root_a"),
+        json!({ "src": { "lib.rs": "" }, "README.md": "" }),
+    )
+    .await;
+    fs.insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+        .await;
+
+    // Open workspace AB.
+    cx.update(|cx| {
+        open_paths(
+            &[
+                PathBuf::from(path!("/root_a")),
+                PathBuf::from(path!("/root_b")),
+            ],
+            app_state.clone(),
+            OpenOptions::default(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    let initial_window_count = cx.update(|cx| cx.windows().len());
+    let ab_window = cx
+        .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+        .unwrap();
+    let ab_workspace_id = ab_window
+        .read_with(cx, |mw, _| mw.workspace().entity_id())
+        .unwrap();
+
+    // Opening a file inside an existing worktree must continue to reuse the
+    // current workspace (this is the case the previous strict-equality
+    // attempt regressed — see PR #39985).
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/root_a/src/lib.rs"))],
+            app_state,
+            OpenOptions::default(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    let final_window_count = cx.update(|cx| cx.windows().len());
+    assert_eq!(
+        final_window_count, initial_window_count,
+        "opening a file inside an open worktree must not spawn a new window",
+    );
+    let active_workspace_id = ab_window
+        .read_with(cx, |mw, _| mw.workspace().entity_id())
+        .unwrap();
+    assert_eq!(
+        active_workspace_id, ab_workspace_id,
+        "the AB workspace should still be active after opening the file",
+    );
+}
+
+#[gpui::test]
 async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut TestAppContext) {
     init_test(cx);
 

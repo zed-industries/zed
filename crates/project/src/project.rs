@@ -2472,18 +2472,29 @@ impl Project {
             .project_path_git_status(project_path, cx)
     }
 
-    #[inline]
+    /// Returns whether this project's worktrees contain every path in `paths`.
+    ///
+    /// - `None` if any path is missing from this project — the caller should not
+    ///   reuse this workspace, because doing so would silently merge unrelated
+    ///   roots (e.g. opening `[a, c]` into a workspace containing `[a, b]`).
+    /// - `Some(true)` if all paths match and at least one matched a visible
+    ///   worktree.
+    /// - `Some(false)` if all paths match but only against hidden worktrees.
     pub fn visibility_for_paths(
         &self,
         paths: &[PathBuf],
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
-        paths
-            .iter()
-            .map(|path| self.visibility_for_path(path, exclude_sub_dirs, cx))
-            .max()
-            .flatten()
+        if paths.is_empty() {
+            return None;
+        }
+        let mut any_visible = false;
+        for path in paths {
+            let visible = self.visibility_for_path(path, exclude_sub_dirs, cx)?;
+            any_visible |= visible;
+        }
+        Some(any_visible)
     }
 
     pub fn visibility_for_path(
