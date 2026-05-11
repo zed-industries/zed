@@ -4009,7 +4009,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_git_context_menu_schedules_global_git_command_task(cx: &mut TestAppContext) {
+    async fn test_global_git_command_task_runs_from_context_menu(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
