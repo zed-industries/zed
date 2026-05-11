@@ -1224,16 +1224,7 @@ impl NativeAgent {
             Some(command)
         });
 
-        // Skills are exposed as slash commands regardless of
-        // `disable_model_invocation`. The flag controls catalog visibility
-        // for the model, not user-driven invocation — that's the whole
-        // point of marking a skill model-disabled.
-        let skill_commands = state
-            .skills
-            .iter()
-            .map(|skill| acp::AvailableCommand::new(skill.name.clone(), skill.description.clone()));
-
-        mcp_commands.chain(skill_commands).collect()
+        mcp_commands.collect()
     }
 
     pub fn load_thread(
@@ -2906,73 +2897,6 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn test_skills_appear_as_slash_commands(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
-        });
-        let fs = FakeFs::new(cx.executor());
-        let skills_dir = global_skills_dir();
-
-        // Two skills: one model-invocable (default), one slash-only via
-        // `disable-model-invocation: true`. Both should still appear as
-        // slash commands.
-        let visible_dir = skills_dir.join("visible-skill");
-        fs.create_dir(&visible_dir).await.unwrap();
-        fs.insert_file(
-            &visible_dir.join("SKILL.md"),
-            b"---\nname: visible-skill\ndescription: Visible skill\n---\n\nbody".to_vec(),
-        )
-        .await;
-
-        let hidden_dir = skills_dir.join("deploy");
-        fs.create_dir(&hidden_dir).await.unwrap();
-        fs.insert_file(
-            &hidden_dir.join("SKILL.md"),
-            b"---\nname: deploy\ndescription: Deploy to prod\ndisable-model-invocation: true\n---\n\nbody"
-                .to_vec(),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [], cx).await;
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent =
-            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
-
-        let connection = NativeAgentConnection(agent.clone());
-        let _acp_thread = cx
-            .update(|cx| {
-                Rc::new(connection).new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new("/")]),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        cx.run_until_parked();
-
-        let project_id = project.entity_id();
-
-        // Both skills should be exposed as slash commands.
-        agent.read_with(cx, |agent, cx| {
-            let commands = NativeAgent::build_available_commands_for_project(
-                agent.projects.get(&project_id),
-                cx,
-            );
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-            assert!(
-                names.contains(&"visible-skill"),
-                "visible skill missing from slash commands: {names:?}"
-            );
-            assert!(
-                names.contains(&"deploy"),
-                "slash-only skill missing from slash commands: {names:?}"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_project_skills_require_worktree_trust(cx: &mut TestAppContext) {
         use collections::{HashMap, HashSet};
         use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
@@ -3031,7 +2955,7 @@ mod internal_tests {
 
         // Untrusted: project skills are excluded from the loaded list and
         // never make it into the catalog or slash commands.
-        agent.read_with(cx, |agent, cx| {
+        agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
             assert!(
                 state.skills.is_empty(),
@@ -3042,16 +2966,10 @@ mod internal_tests {
                     .map(|s| s.name.as_str())
                     .collect::<Vec<_>>()
             );
-            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
-            let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-            assert!(
-                !names.contains(&"my-skill"),
-                "untrusted skill leaked into slash commands: {names:?}"
-            );
         });
 
         // Granting trust should trigger a context refresh; the skill then
-        // appears in both the catalog and the slash-command list.
+        // appears in `state.skills`.
         cx.update(|cx| {
             let trusted_worktrees = TrustedWorktrees::try_get_global(cx)
                 .expect("trusted worktrees global initialized by test_with_worktree_trust");
@@ -3065,16 +2983,10 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        agent.read_with(cx, |agent, cx| {
+        agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
             let names: Vec<&str> = state.skills.iter().map(|s| s.name.as_str()).collect();
             assert_eq!(names, vec!["my-skill"]);
-            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
-            let command_names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-            assert!(
-                command_names.contains(&"my-skill"),
-                "trusted skill should appear in slash commands: {command_names:?}"
-            );
         });
     }
 
