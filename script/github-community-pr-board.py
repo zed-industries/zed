@@ -30,9 +30,14 @@ Usage (called by the workflow, not directly):
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import requests
+
+RETRYABLE_STATUS_CODES = {502, 503, 504}
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 5
 
 GITHUB_API_URL = "https://api.github.com"
 REPO_OWNER = "zed-industries"
@@ -158,24 +163,38 @@ def resolve_track(pr_labels, tracks):
 
 
 def github_graphql(query, variables):
-    """Execute a GitHub GraphQL query. Raises on HTTP or GraphQL errors."""
-    response = requests.post(
-        f"{GITHUB_API_URL}/graphql",
-        headers=GITHUB_HEADERS,
-        json={"query": query, "variables": variables},
-    )
-    response.raise_for_status()
-    result = response.json()
-    if "errors" in result:
-        raise RuntimeError(f"GraphQL error: {result['errors']}")
-    return result["data"]
+    """Execute a GitHub GraphQL query. Retries on transient server errors."""
+    for attempt in range(MAX_RETRIES + 1):
+        response = requests.post(
+            f"{GITHUB_API_URL}/graphql",
+            headers=GITHUB_HEADERS,
+            json={"query": query, "variables": variables},
+        )
+        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
+            print(
+                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
+            )
+            time.sleep(RETRY_DELAY_SECONDS)
+            continue
+        response.raise_for_status()
+        result = response.json()
+        if "errors" in result:
+            raise RuntimeError(f"GraphQL error: {result['errors']}")
+        return result["data"]
 
 
 def github_rest_get(path):
-    """GET from the GitHub REST API."""
-    response = requests.get(f"{GITHUB_API_URL}/{path}", headers=GITHUB_HEADERS)
-    response.raise_for_status()
-    return response.json()
+    """GET from the GitHub REST API. Retries on transient server errors."""
+    for attempt in range(MAX_RETRIES + 1):
+        response = requests.get(f"{GITHUB_API_URL}/{path}", headers=GITHUB_HEADERS)
+        if response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
+            print(
+                f"GitHub API returned {response.status_code}, retrying in {RETRY_DELAY_SECONDS}s (attempt {attempt + 1}/{MAX_RETRIES})..."
+            )
+            time.sleep(RETRY_DELAY_SECONDS)
+            continue
+        response.raise_for_status()
+        return response.json()
 
 
 def github_is_staff_member(username):
