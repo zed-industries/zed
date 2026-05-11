@@ -384,13 +384,10 @@ impl Host {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Entity<Self> {
-        // Phase 2 dedup is enabled for `HostKey::Local` only. Remote and
-        // collab paths (`HostKey::Remote` / `HostKey::Collab`) build a
-        // fresh `Host` per call: the underlying stores' join-time
-        // worktree/buffer adds aren't yet tolerant of two `Project`
-        // lifecycles on the same shared host store, and tightening that
-        // is out of scope for this commit.
-        Self::build_remote(remote, client, node, user_store, languages, fs, cx)
+        let key = HostKey::Remote(remote.entity_id());
+        HostRegistry::get_or_build(cx, key, move |cx| {
+            Self::build_remote(remote, client, node, user_store, languages, fs, cx)
+        })
     }
 
     fn build_remote(
@@ -586,9 +583,6 @@ impl Host {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) -> Entity<Self> {
-        // See note on `Host::remote`: collab path builds a fresh `Host`
-        // per call until the underlying stores' join paths are made
-        // tolerant of multi-tenant adds.
         Self::build_collab(
             remote_id, path_style, client, run_tasks, user_store, languages, fs, cx,
         )
