@@ -6,7 +6,7 @@ use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
-use util::serde::default_true;
+use util::serde::{default_true, deserialize_string_or_vec};
 
 /// Controls the soft-wrapping behavior in the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -536,34 +536,6 @@ pub fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
         "type": "array",
         "items": { "type": "string" }
     })
-}
-
-pub fn deserialize_string_or_vec<'de, D: Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<String>, D::Error> {
-    struct StringOrVec;
-
-    impl<'de> de::Visitor<'de> for StringOrVec {
-        type Value = Vec<String>;
-
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a string or list of strings")
-        }
-
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<String>, E> {
-            Ok(vec![v.to_owned()])
-        }
-
-        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
-            let mut out = Vec::new();
-            while let Some(s) = seq.next_element::<String>()? {
-                out.push(s);
-            }
-            Ok(out)
-        }
-    }
-
-    d.deserialize_any(StringOrVec)
 }
 
 pub fn string_or_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
