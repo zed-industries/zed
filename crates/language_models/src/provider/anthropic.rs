@@ -331,6 +331,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
                 anthropic::Effort::Low,
                 anthropic::Effort::Medium,
                 anthropic::Effort::High,
+                anthropic::Effort::XHigh,
                 anthropic::Effort::Max,
             ]
         } else {
@@ -444,6 +445,7 @@ impl LanguageModel for AnthropicModel {
                     anthropic::Effort::Low => ("Low".into(), "low".into()),
                     anthropic::Effort::Medium => ("Medium".into(), "medium".into()),
                     anthropic::Effort::High => ("High".into(), "high".into()),
+                    anthropic::Effort::XHigh => ("XHigh".into(), "xhigh".into()),
                     anthropic::Effort::Max => ("Max".into(), "max".into()),
                 };
                 language_model::LanguageModelEffortLevel {

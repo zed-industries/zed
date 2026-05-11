@@ -128,6 +128,7 @@ impl Model {
                 (Effort::Low, effort.low.as_ref()),
                 (Effort::Medium, effort.medium.as_ref()),
                 (Effort::High, effort.high.as_ref()),
+                (Effort::XHigh, effort.xhigh.as_ref()),
                 (Effort::Max, effort.max.as_ref()),
             ] {
                 if supported.map(|c| c.supported).unwrap_or(false) {
@@ -650,6 +651,7 @@ pub enum Effort {
     Low,
     Medium,
     High,
+    XHigh,
     Max,
 }
 
