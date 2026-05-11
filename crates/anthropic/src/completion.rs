@@ -168,7 +168,7 @@ pub fn into_anthropic(
     // short-TTL conversation breakpoint is a valid mix.
     let long_lived_cache = any_message_wants_cache.then_some(CacheControl {
         cache_type: CacheControlType::Ephemeral,
-        ttl: Some(CacheTtl::Long),
+        ttl: Some(CacheTtl::OneHour),
     });
 
     let system = if system_message.is_empty() {
@@ -551,7 +551,7 @@ mod tests {
                     RequestContent::Text {
                         cache_control: Some(CacheControl {
                             cache_type: CacheControlType::Ephemeral,
-                            ttl: Some(CacheTtl::Long),
+                            ttl: Some(CacheTtl::OneHour),
                         }),
                         ..
                     }
@@ -566,7 +566,7 @@ mod tests {
             anthropic_request.tools[0].cache_control,
             Some(CacheControl {
                 cache_type: CacheControlType::Ephemeral,
-                ttl: Some(CacheTtl::Long),
+                ttl: Some(CacheTtl::OneHour),
             })
         ));
     }

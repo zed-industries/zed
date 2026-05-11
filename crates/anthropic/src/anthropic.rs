@@ -508,11 +508,11 @@ pub enum CacheTtl {
     /// Anthropic's default ephemeral TTL (currently 5 minutes). Refreshes for
     /// free on every cache hit.
     #[serde(rename = "5m")]
-    Short,
+    FiveMinutes,
     /// Anthropic's extended ephemeral TTL (currently 1 hour). Costs 2x base
     /// input tokens to write, but persists across longer idle gaps.
     #[serde(rename = "1h")]
-    Long,
+    OneHour,
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
