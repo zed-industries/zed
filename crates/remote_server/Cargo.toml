@@ -82,7 +82,6 @@ libc.workspace = true
 minidumper.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows.workspace = true
 gpui = { workspace = true, features = ["windows-manifest"] }
 
 [dev-dependencies]
