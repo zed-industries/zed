@@ -1160,6 +1160,8 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
+    bookmark_view_subscription: Option<Subscription>,
+    bookmark_refresh_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
@@ -2408,6 +2410,8 @@ impl Editor {
             blame_subscription: None,
 
             bookmark_store,
+            bookmark_view_subscription: None,
+            bookmark_refresh_task: None,
             breakpoint_store,
             gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),

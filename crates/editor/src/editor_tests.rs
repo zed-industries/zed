@@ -28999,6 +28999,115 @@ async fn test_go_to_bookmark_with_out_of_order_bookmarks(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_bookmarks_tab_auto_refresh(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .expect("window should still be open");
+    let mut visual_cx = VisualTestContext::from_window(*window, cx);
+
+    let worktree_id = workspace.update_in(&mut visual_cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have at least one worktree")
+                .read(cx)
+                .id()
+        })
+    });
+
+    let buffer = project
+        .update(&mut visual_cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .expect("main.rs buffer should open");
+
+    let editor = workspace.update_in(&mut visual_cx, |_workspace, window, cx| {
+        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multibuffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+
+    let pane = workspace.update_in(&mut visual_cx, |workspace, _window, _cx| {
+        workspace.active_pane().clone()
+    });
+    pane.update_in(&mut visual_cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    workspace.update_in(&mut visual_cx, |workspace, window, cx| {
+        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    let bookmarks_editor = workspace
+        .update_in(&mut visual_cx, |workspace, _window, cx| {
+            workspace.panes().iter().find_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| item.downcast::<Editor>())
+                    .find(|editor| editor.read(cx).bookmark_view_subscription.is_some())
+            })
+        })
+        .expect("bookmarks editor should exist after view_bookmarks");
+
+    let excerpt_count = bookmarks_editor.update_in(&mut visual_cx, |editor, _window, cx| {
+        editor.buffer.read(cx).snapshot(cx).excerpts().count()
+    });
+    assert_eq!(
+        excerpt_count, 1,
+        "bookmarks editor should have 1 excerpt after first bookmark"
+    );
+
+    // Line 7 is far enough from line 0 to produce a separate excerpt.
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(7, 0)..Point::new(7, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+    // The refresh task is spawned asynchronously; a second park drains it.
+    visual_cx.run_until_parked();
+
+    let excerpt_count = bookmarks_editor.update_in(&mut visual_cx, |editor, _window, cx| {
+        editor.buffer.read(cx).snapshot(cx).excerpts().count()
+    });
+    assert_eq!(
+        excerpt_count, 2,
+        "bookmarks editor should auto-refresh to 2 excerpts after second bookmark"
+    );
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {

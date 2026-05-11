@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use gpui::Entity;
-use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
+use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, PathKey, ToOffset as _};
 use project::{Project, bookmark_store::BookmarkStore};
 use rope::Point;
 use text::Bias;
@@ -178,9 +178,26 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let existing = workspace.panes().iter().find_map(|pane| {
+            let pane_ref = pane.read(cx);
+            let editor = pane_ref
+                .items()
+                .filter_map(|item| item.downcast::<Editor>())
+                .find(|editor| editor.read(cx).bookmark_view_subscription.is_some())?;
+            let index = pane_ref.index_for_item(&editor)?;
+            Some((pane.clone(), index))
+        });
+
+        if let Some((pane, index)) = existing {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(index, true, true, window, cx);
+            });
+            return;
+        }
+
         let bookmark_store = workspace.project().read(cx).bookmark_store();
         cx.spawn_in(window, async move |workspace, cx| {
-            let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store, cx)
+            let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store.clone(), cx)
                 .await
                 .log_err()
             else {
@@ -189,7 +206,7 @@ impl Editor {
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    Editor::open_locations_in_multibuffer(
+                    let Some((editor, _pane)) = Editor::open_locations_in_multibuffer(
                         workspace,
                         locations,
                         "Bookmarks".into(),
@@ -198,11 +215,51 @@ impl Editor {
                         MultibufferSelectionMode::First,
                         window,
                         cx,
-                    );
+                    ) else {
+                        return;
+                    };
+
+                    editor.update(cx, |editor, cx| {
+                        editor.bookmark_view_subscription =
+                            Some(cx.observe(&bookmark_store, |editor, bookmark_store, cx| {
+                                editor.schedule_bookmark_refresh(bookmark_store, cx);
+                            }));
+                    });
                 })
                 .log_err();
         })
         .detach();
+    }
+
+    fn schedule_bookmark_refresh(
+        &mut self,
+        bookmark_store: Entity<BookmarkStore>,
+        cx: &mut Context<Self>,
+    ) {
+        self.bookmark_refresh_task = Some(cx.spawn(async move |this, cx| {
+            let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store, cx)
+                .await
+                .log_err()
+            else {
+                return;
+            };
+
+            this.update(cx, |editor, cx| {
+                editor.buffer.update(cx, |multibuffer, cx| {
+                    multibuffer.clear(cx);
+                    for (buffer, ranges) in locations {
+                        multibuffer.set_excerpts_for_path(
+                            PathKey::for_buffer(&buffer, cx),
+                            buffer,
+                            ranges,
+                            crate::multibuffer_context_lines(cx),
+                            cx,
+                        );
+                    }
+                });
+            })
+            .log_err();
+        }));
     }
 
     fn bookmarks_in_range(
