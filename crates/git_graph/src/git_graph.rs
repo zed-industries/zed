@@ -22,7 +22,7 @@ use language::line_diff;
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use picker::{Picker, PickerDelegate};
 use project::{
-    GIT_COMMAND_TASK_TAG, ProjectPath, TaskSourceKind, WorktreeId,
+    GIT_COMMAND_TASK_TAG, ProjectPath, TaskSourceKind,
     git_store::{
         CommitDataState, GitGraphEvent, GitStore, GitStoreEvent, GraphDataResponse, Repository,
         RepositoryEvent, RepositoryId,
@@ -2064,26 +2064,6 @@ impl GitGraph {
         })
     }
 
-    fn worktree_id_for_repository(&self, cx: &App) -> Option<WorktreeId> {
-        let mut worktree_ids = self
-            .git_store
-            .read(cx)
-            .worktree_ids_for_repository(self.repo_id)
-            .collect::<Vec<_>>();
-
-        worktree_ids.sort();
-
-        let workspace = self.workspace.upgrade()?;
-        let project = workspace.read(cx).project().clone();
-
-        worktree_ids.into_iter().find(|worktree_id| {
-            project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)
-                .is_some_and(|worktree| worktree.read(cx).is_visible())
-        })
-    }
-
     fn git_context_menu_tasks(
         &self,
         task_context: &TaskContext,
@@ -2092,8 +2072,6 @@ impl GitGraph {
         let Some(workspace) = self.workspace.upgrade() else {
             return Vec::new();
         };
-
-        let worktree_id = self.worktree_id_for_repository(cx);
 
         let project = workspace.read(cx).project().clone();
 
@@ -2105,11 +2083,9 @@ impl GitGraph {
             return Vec::new();
         };
 
-        task_inventory.read(cx).resolve_tasks_with_tag(
-            GIT_COMMAND_TASK_TAG,
-            worktree_id,
-            task_context,
-        )
+        task_inventory
+            .read(cx)
+            .resolve_global_tasks_with_tag(GIT_COMMAND_TASK_TAG, task_context)
     }
 
     fn schedule_git_task(
@@ -4015,11 +3991,10 @@ mod tests {
     use project::{Project, TaskSourceKind, task_store::TaskSettingsLocation};
     use rand::prelude::*;
     use serde_json::json;
-    use settings::{SettingsLocation, SettingsStore, ThemeSettingsContent};
+    use settings::{SettingsStore, ThemeSettingsContent};
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
-    use util::rel_path::rel_path;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -4034,101 +4009,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_git_context_menu_tasks_resolve_git_command_tag(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            Path::new("/project"),
-            json!({
-                ".git": {},
-                "file.txt": "content",
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-        cx.run_until_parked();
-
-        let repository = project.read_with(cx, |project, cx| {
-            project
-                .active_repository(cx)
-                .expect("should have a repository")
-        });
-        let task_inventory = project.read_with(cx, |project, cx| {
-            project
-                .task_store()
-                .read(cx)
-                .task_inventory()
-                .cloned()
-                .expect("should have a task inventory")
-        });
-        task_inventory.update(cx, |inventory, _| {
-            inventory
-                .update_file_based_tasks(
-                    TaskSettingsLocation::Global(Path::new("/tasks.json")),
-                    Some(
-                        &serde_json::to_string(&json!([
-                            // Tagged task that should appear in the Git graph context menu.
-                            {
-                                "label": "Git Show $ZED_GIT_SHA_SHORT",
-                                "command": "git",
-                                "args": ["show", "$ZED_GIT_SHA"],
-                                "tags": [GIT_COMMAND_TASK_TAG],
-                            },
-                            // Untagged task that should not appear in the Git graph context menu.
-                            {
-                                "label": "Git Status",
-                                "command": "git",
-                                "args": ["status"],
-                            },
-                        ]))
-                        .unwrap(),
-                    ),
-                )
-                .unwrap();
-        });
-
-        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
-        });
-        let workspace_weak =
-            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
-        let commit_sha = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12").unwrap();
-        let git_graph = cx.new_window_entity(|window, cx| {
-            GitGraph::new(
-                repository.read(cx).id,
-                project.read(cx).git_store().clone(),
-                workspace_weak,
-                None,
-                window,
-                cx,
-            )
-        });
-        cx.run_until_parked();
-
-        let task_context = git_graph
-            .read_with(&*cx, |graph, cx| graph.git_task_context(commit_sha, cx))
-            .expect("should build Git task context");
-        let tasks = git_graph.read_with(&*cx, |graph, cx| {
-            graph.git_context_menu_tasks(&task_context, cx)
-        });
-        assert_eq!(tasks.len(), 1, "Expected one Git context menu task");
-        let (_, task) = tasks.first().expect("Expected one Git context menu task");
-
-        assert_eq!(task.resolved_label, "Git Show abcdef1");
-        assert_eq!(task.resolved.command, Some("git".to_string()));
-        assert_eq!(
-            task.resolved.args,
-            vec![
-                "show".to_string(),
-                "abcdef1234567890abcdef1234567890abcdef12".to_string(),
-            ]
-        );
-        assert_eq!(task.resolved.cwd, Some(Path::new("/project").to_path_buf()));
-    }
-
-    #[gpui::test]
-    async fn test_git_context_menu_task_schedules_resolved_task(cx: &mut TestAppContext) {
+    async fn test_git_context_menu_schedules_global_git_command_task(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -4160,14 +4041,6 @@ mod tests {
                 .active_repository(cx)
                 .expect("project should have an active repository")
         });
-        let worktree_id = project.read_with(cx, |project, cx| {
-            project
-                .visible_worktrees(cx)
-                .next()
-                .expect("project should have a visible worktree")
-                .read(cx)
-                .id()
-        });
         let task_inventory = project.read_with(cx, |project, cx| {
             project
                 .task_store()
@@ -4180,13 +4053,10 @@ mod tests {
         task_inventory.update(cx, |inventory, _| {
             inventory
                 .update_file_based_tasks(
-                    TaskSettingsLocation::Worktree(SettingsLocation {
-                        worktree_id,
-                        path: rel_path(".zed"),
-                    }),
+                    TaskSettingsLocation::Global(Path::new("/tasks.json")),
                     Some(
                         &serde_json::to_string(&json!([
-                            // Tagged worktree task that should be scheduled from the Git graph context menu.
+                            // Tagged global task that should be scheduled from the Git graph context menu.
                             {
                                 "label": "Git Show $ZED_GIT_SHA_SHORT",
                                 "command": "git",
@@ -4270,11 +4140,8 @@ mod tests {
         });
 
         assert!(
-            matches!(
-                task_source_kind,
-                TaskSourceKind::Worktree { id, .. } if id == worktree_id
-            ),
-            "scheduled task should come from the selected repository's worktree"
+            matches!(task_source_kind, TaskSourceKind::AbsPath { .. }),
+            "scheduled task should come from global tasks"
         );
         assert_eq!(resolved_task.resolved_label, "Git Show abcdef1");
         assert_eq!(resolved_task.resolved.command, Some("git".to_string()));

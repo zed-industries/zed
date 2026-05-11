@@ -646,29 +646,20 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
-    /// Returns global task templates and task templates for the provided tag /
-    /// worktree pair.
-    pub fn templates_with_tag(
-        &self,
-        tag: &str,
-        worktree: Option<WorktreeId>,
-    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
-        worktree
-            .into_iter()
-            .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
-            .chain(self.global_templates_from_settings())
+    /// Returns global task templates with the provided tag.
+    pub fn global_templates_with_tag(&self, tag: &str) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        self.global_templates_from_settings()
             .filter(|(_, template)| template.tags.iter().any(|template_tag| template_tag == tag))
             .collect()
     }
 
-    /// Resolves task templates with the provided tag against the provided task context.
-    pub fn resolve_tasks_with_tag(
+    /// Resolves global task templates with the provided tag against the provided task context.
+    pub fn resolve_global_tasks_with_tag(
         &self,
         tag: &str,
-        worktree: Option<WorktreeId>,
         task_context: &TaskContext,
     ) -> Vec<(TaskSourceKind, ResolvedTask)> {
-        self.templates_with_tag(tag, worktree)
+        self.global_templates_with_tag(tag)
             .into_iter()
             .filter_map(|(task_source_kind, task_template)| {
                 let id_base = task_source_kind.to_id_base();
