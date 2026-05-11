@@ -6,7 +6,7 @@ use lsp::LanguageServerBinary;
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::ContextProviderWithTasks;
 use semver::Version;
-use std::{path::PathBuf, vec};
+use std::{future::Future, path::PathBuf, sync::Arc, vec};
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
@@ -90,35 +90,41 @@ impl LspInstaller for BashLspAdapter {
         })
     }
 
-    async fn check_if_version_installed(
+    fn check_if_version_installed(
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<lsp::LanguageServerBinary> {
-        let server_path = container_dir
-            .join("node_modules")
-            .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<lsp::LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
+        let version = version.clone();
+        let container_dir = container_dir.clone();
+        let delegate = delegate.clone();
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                Self::PACKAGE_NAME,
-                &server_path,
-                container_dir,
-                VersionStrategy::Latest(version),
-            )
-            .await;
+        async move {
+            let server_path = container_dir
+                .join("node_modules")
+                .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
 
-        if should_install_language_server {
-            None
-        } else {
-            let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
-                env: Some(env),
-                arguments: vec![server_path.into(), "start".into()],
-            })
+            let should_install_language_server = node
+                .should_install_npm_package(
+                    Self::PACKAGE_NAME,
+                    &server_path,
+                    &container_dir,
+                    VersionStrategy::Latest(&version),
+                )
+                .await;
+
+            if should_install_language_server {
+                None
+            } else {
+                let env = delegate.shell_env().await;
+                Some(LanguageServerBinary {
+                    path: node.binary_path().await.ok()?,
+                    env: Some(env),
+                    arguments: vec![server_path.into(), "start".into()],
+                })
+            }
         }
     }
 
@@ -133,29 +139,34 @@ impl LspInstaller for BashLspAdapter {
             .await
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: Self::BinaryVersion,
         container_dir: std::path::PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<lsp::LanguageServerBinary> {
-        let server_path = container_dir
-            .join("node_modules")
-            .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<lsp::LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
+        let delegate = delegate.clone();
 
-        self.node
-            .npm_install_packages(
+        async move {
+            let server_path = container_dir
+                .join("node_modules")
+                .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
+            let latest_version = latest_version.to_string();
+
+            node.npm_install_packages(
                 &container_dir,
-                &[(Self::PACKAGE_NAME, &latest_version.to_string())],
+                &[(Self::PACKAGE_NAME, latest_version.as_str())],
             )
             .await?;
 
-        let env = delegate.shell_env().await;
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: Some(env),
-            arguments: vec![server_path.into(), "start".into()],
-        })
+            let env = delegate.shell_env().await;
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                env: Some(env),
+                arguments: vec![server_path.into(), "start".into()],
+            })
+        }
     }
 }
 

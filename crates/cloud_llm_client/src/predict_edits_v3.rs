@@ -5,6 +5,7 @@ use std::ops::Range;
 use strum::{AsRefStr, EnumString};
 
 pub const PREDICT_EDITS_MODE_HEADER_NAME: &str = "X-Zed-Predict-Edits-Mode";
+pub const PREDICT_EDITS_REQUEST_ID_HEADER_NAME: &str = "X-Zed-Predict-Edits-Request-Id";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsRefStr, EnumString)]
 #[serde(rename_all = "snake_case")]
