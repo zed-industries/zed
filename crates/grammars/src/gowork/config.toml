@@ -1,5 +1,5 @@
 name = "Go Work"
-code_fence_block_names = ["gowork"]
+code_fence_block_name = "gowork"
 grammar = "gowork"
 path_suffixes = ["work"]
 line_comments = ["// "]
