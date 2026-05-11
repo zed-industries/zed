@@ -7833,16 +7833,15 @@ impl Editor {
                                 .documentation_comment()
                                 .map(|c| c.prefix.as_ref())
                                 .filter(|p| !p.is_empty());
-                            let all_prefixes = language_scope
+                            let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
                                 .chain(block_prefix)
-                                .chain(doc_prefix)
-                                .chain(language_scope.unordered_list().iter().map(|p| p.as_ref()));
+                                .chain(doc_prefix);
 
                             let mut longest_prefix_len = None;
-                            for prefix in all_prefixes {
+                            for prefix in comment_prefixes {
                                 let trimmed = prefix.trim_end();
                                 if line_text_after_indent.starts_with(trimmed) {
                                     let candidate_len =
@@ -7851,6 +7850,16 @@ impl Editor {
                                         } else {
                                             trimmed.len()
                                         };
+                                    if longest_prefix_len.map_or(true, |len| candidate_len > len) {
+                                        longest_prefix_len = Some(candidate_len);
+                                    }
+                                }
+                            }
+
+                            for prefix in language_scope.unordered_list() {
+                                if line_text_after_indent.starts_with(prefix.as_ref()) {
+                                    let candidate_len = prefix.len();
+
                                     if longest_prefix_len.map_or(true, |len| candidate_len > len) {
                                         longest_prefix_len = Some(candidate_len);
                                     }
