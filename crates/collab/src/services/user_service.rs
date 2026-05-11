@@ -3,8 +3,10 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use cloud_api_types::internal_api::{
-    self, FuzzySearchUsersBody, FuzzySearchUsersResponse, LookUpUserByGithubLoginBody,
-    LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
+    self, FuzzySearchChannelMembersByGithubLoginBody,
+    FuzzySearchChannelMembersByGithubLoginResponse, FuzzySearchUsersBody, FuzzySearchUsersResponse,
+    LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody,
+    LookUpUsersByLegacyIdResponse,
 };
 use reqwest::RequestBuilder;
 use rpc::proto;
@@ -46,6 +48,7 @@ pub trait UserService: Send + Sync + 'static {
 /// A [`UserService`] implementation for transitioning from reading from the database to reading from Cloud.
 pub struct TransitionalUserService {
     cloud_user_service: CloudUserService,
+    #[expect(dead_code)]
     database_user_service: DatabaseUserService,
 }
 
@@ -85,7 +88,7 @@ impl UserService for TransitionalUserService {
         query: &str,
         limit: u32,
     ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
-        self.database_user_service
+        self.cloud_user_service
             .search_channel_members(channel, query, limit)
             .await
     }
@@ -205,11 +208,53 @@ impl UserService for CloudUserService {
         query: &str,
         limit: u32,
     ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
-        let _ = channel;
-        let _ = query;
-        let _ = limit;
+        let response_body: FuzzySearchChannelMembersByGithubLoginResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/channel_members/fuzzy_search_by_github_login",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&FuzzySearchChannelMembersByGithubLoginBody {
+                        channel_id: channel.root_id().0,
+                        query: query.to_string(),
+                        limit,
+                    }),
+            )
+            .await?;
 
-        unimplemented!("not yet implemented in Cloud")
+        let members = response_body
+            .channel_members
+            .into_iter()
+            .map(channel_member_to_proto)
+            .collect::<Vec<_>>();
+        let users = response_body
+            .users
+            .into_iter()
+            .map(User::from)
+            .collect::<Vec<_>>();
+
+        Ok((members, users))
+    }
+}
+
+fn channel_member_to_proto(member: internal_api::ChannelMember) -> proto::ChannelMember {
+    let kind = match member.kind {
+        internal_api::ChannelMemberKind::Member => proto::channel_member::Kind::Member,
+        internal_api::ChannelMemberKind::Invitee => proto::channel_member::Kind::Invitee,
+    };
+    let role = match member.role {
+        internal_api::ChannelMemberRole::Admin => proto::ChannelRole::Admin,
+        internal_api::ChannelMemberRole::Member => proto::ChannelRole::Member,
+        internal_api::ChannelMemberRole::Talker => proto::ChannelRole::Talker,
+        internal_api::ChannelMemberRole::Guest => proto::ChannelRole::Guest,
+        internal_api::ChannelMemberRole::Banned => proto::ChannelRole::Banned,
+    };
+
+    proto::ChannelMember {
+        user_id: UserId(member.legacy_user_id).to_proto(),
+        kind: kind.into(),
+        role: role.into(),
     }
 }
 
