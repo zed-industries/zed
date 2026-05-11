@@ -398,6 +398,20 @@ fn update_conflict_highlighting(
     Some(())
 }
 
+fn resolve_conflict_button(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    conflict: ConflictRegion,
+    ranges: Vec<Range<Anchor>>,
+    editor: WeakEntity<Editor>,
+) -> Button {
+    Button::new(id, label)
+        .label_size(LabelSize::Small)
+        .on_click(move |_, window, cx| {
+            resolve_conflict(editor.clone(), conflict.clone(), ranges.clone(), window, cx).detach()
+        })
+}
+
 fn render_conflict_buttons(
     conflict: &ConflictRegion,
     editor: WeakEntity<Editor>,
@@ -411,64 +425,27 @@ fn render_conflict_buttons(
         .ml(cx.margins.gutter.width)
         .gap_1()
         .bg(cx.theme().colors().editor_background)
-        .child(
-            Button::new("head", format!("Use {}", conflict.ours_branch_name))
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let ours = conflict.ours.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![ours.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
-        )
-        .child(
-            Button::new("origin", format!("Use {}", conflict.theirs_branch_name))
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let theirs = conflict.theirs.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![theirs.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
-        )
-        .child(
-            Button::new("both", "Use Both")
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let ours = conflict.ours.clone();
-                    let theirs = conflict.theirs.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![ours.clone(), theirs.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
-        )
+        .child(resolve_conflict_button(
+            "head",
+            format!("Use {}", conflict.ours_branch_name),
+            conflict.clone(),
+            vec![conflict.ours.clone()],
+            editor.clone(),
+        ))
+        .child(resolve_conflict_button(
+            "origin",
+            format!("Use {}", conflict.theirs_branch_name),
+            conflict.clone(),
+            vec![conflict.theirs.clone()],
+            editor.clone(),
+        ))
+        .child(resolve_conflict_button(
+            "both",
+            "Use Both",
+            conflict.clone(),
+            vec![conflict.ours.clone(), conflict.theirs.clone()],
+            editor.clone(),
+        ))
         .when(is_ai_enabled, |this| {
             this.child(Divider::vertical()).child(
                 Button::new("resolve-with-agent", "Resolve with Agent")

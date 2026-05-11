@@ -333,68 +333,19 @@ impl LanguageMergeContext {
             let base_item = base_by_key.get(key.as_str()).copied();
             let theirs_item = theirs_by_key.get(key.as_str()).copied();
 
-            let text = match (base_item, theirs_item) {
-                (None, None) => {
-                    any_change = true;
-                    Some(ours_item.text(&self.ours.source))
-                }
-                (None, Some(t)) => {
-                    if t.normalized_text(&self.theirs.source)
-                        == ours_item.normalized_text(&self.ours.source)
-                    {
-                        any_change = true;
-                        Some(ours_item.text(&self.ours.source))
-                    } else {
-                        return StructuralMergeOutcome::Deferred(
-                            DeferReason::BothAddedDifferently { key },
-                        );
-                    }
-                }
-                (Some(b), Some(t)) => {
-                    let ours_changed = b.normalized_text(&self.base.source)
-                        != ours_item.normalized_text(&self.ours.source);
-                    let theirs_changed = b.normalized_text(&self.base.source)
-                        != t.normalized_text(&self.theirs.source);
-                    match (ours_changed, theirs_changed) {
-                        (false, false) => Some(ours_item.text(&self.ours.source)),
-                        (true, false) => {
-                            any_change = true;
-                            Some(ours_item.text(&self.ours.source))
-                        }
-                        (false, true) => {
-                            any_change = true;
-                            Some(t.text(&self.theirs.source))
-                        }
-                        (true, true) => {
-                            if ours_item.normalized_text(&self.ours.source)
-                                == t.normalized_text(&self.theirs.source)
-                            {
-                                Some(ours_item.text(&self.ours.source))
-                            } else {
-                                return StructuralMergeOutcome::Deferred(
-                                    DeferReason::BothModifiedDifferently { key },
-                                );
-                            }
-                        }
-                    }
-                }
-                (Some(b), None) => {
-                    if b.normalized_text(&self.base.source)
-                        == ours_item.normalized_text(&self.ours.source)
-                    {
-                        any_change = true;
-                        None
-                    } else {
-                        return StructuralMergeOutcome::Deferred(DeferReason::DeleteVsModify {
-                            key,
-                            deleted_by: ConflictSide::Theirs,
-                        });
-                    }
-                }
-            };
-
-            if let Some(text) = text {
-                push_with_newline(&mut output, text);
+            match resolve_ours_item(
+                key,
+                base_item,
+                ours_item,
+                theirs_item,
+                &self.base.source,
+                &self.ours.source,
+                &self.theirs.source,
+                &mut any_change,
+            ) {
+                Ok(Some(text)) => push_with_newline(&mut output, &text),
+                Ok(None) => {}
+                Err(reason) => return StructuralMergeOutcome::Deferred(reason),
             }
         }
 
@@ -492,31 +443,14 @@ impl LanguageMergeContext {
             }
             base_cursor = cluster_start;
 
-            let mut cluster_o = Vec::new();
-            let mut cluster_t = Vec::new();
             let mut cluster_end = base_cursor;
-            loop {
-                let mut grew = false;
-                if let Some((b, _)) = ours_hunks.get(o_idx)
-                    && (b.start as usize) <= cluster_end
-                {
-                    cluster_o.push(o_idx);
-                    cluster_end = cluster_end.max(b.end as usize);
-                    o_idx += 1;
-                    grew = true;
-                }
-                if let Some((b, _)) = theirs_hunks.get(t_idx)
-                    && (b.start as usize) <= cluster_end
-                {
-                    cluster_t.push(t_idx);
-                    cluster_end = cluster_end.max(b.end as usize);
-                    t_idx += 1;
-                    grew = true;
-                }
-                if !grew {
-                    break;
-                }
-            }
+            let (cluster_o, cluster_t) = super::conflict_set::gather_hunk_cluster(
+                &ours_hunks,
+                &theirs_hunks,
+                &mut o_idx,
+                &mut t_idx,
+                &mut cluster_end,
+            );
 
             let ours_cluster_text = compose_side_text(
                 base_items,
@@ -677,6 +611,68 @@ impl LanguageMergeContext {
             }
         }
         self.cross_region_defer = collisions;
+    }
+}
+
+fn resolve_ours_item(
+    key: String,
+    base_item: Option<&InRegionItem>,
+    ours_item: &InRegionItem,
+    theirs_item: Option<&InRegionItem>,
+    base_source: &str,
+    ours_source: &str,
+    theirs_source: &str,
+    any_change: &mut bool,
+) -> Result<Option<String>, DeferReason> {
+    match (base_item, theirs_item) {
+        (None, None) => {
+            *any_change = true;
+            Ok(Some(ours_item.text(ours_source).to_string()))
+        }
+        (None, Some(theirs)) => {
+            if theirs.normalized_text(theirs_source) == ours_item.normalized_text(ours_source) {
+                *any_change = true;
+                Ok(Some(ours_item.text(ours_source).to_string()))
+            } else {
+                Err(DeferReason::BothAddedDifferently { key })
+            }
+        }
+        (Some(base), Some(theirs)) => {
+            let ours_changed =
+                base.normalized_text(base_source) != ours_item.normalized_text(ours_source);
+            let theirs_changed =
+                base.normalized_text(base_source) != theirs.normalized_text(theirs_source);
+            match (ours_changed, theirs_changed) {
+                (false, false) => Ok(Some(ours_item.text(ours_source).to_string())),
+                (true, false) => {
+                    *any_change = true;
+                    Ok(Some(ours_item.text(ours_source).to_string()))
+                }
+                (false, true) => {
+                    *any_change = true;
+                    Ok(Some(theirs.text(theirs_source).to_string()))
+                }
+                (true, true) => {
+                    if ours_item.normalized_text(ours_source) == theirs.normalized_text(theirs_source)
+                    {
+                        Ok(Some(ours_item.text(ours_source).to_string()))
+                    } else {
+                        Err(DeferReason::BothModifiedDifferently { key })
+                    }
+                }
+            }
+        }
+        (Some(base), None) => {
+            if base.normalized_text(base_source) == ours_item.normalized_text(ours_source) {
+                *any_change = true;
+                Ok(None)
+            } else {
+                Err(DeferReason::DeleteVsModify {
+                    key,
+                    deleted_by: ConflictSide::Theirs,
+                })
+            }
+        }
     }
 }
 
@@ -851,8 +847,8 @@ fn collect_set_and_keys(
         let mut current = key_node;
         while let Some(parent) = current.parent() {
             if set_nodes.contains(&parent.id()) || ordered_nodes.contains(&parent.id()) {
-                // Normalized key takes precedence: we insert raw first, then
-                // overwrite from normalized records.
+                // Normalized key takes precedence over raw, so that whitespace
+                // differences between sides don't produce false key mismatches.
                 item_keys.insert(current.id(), key_text);
                 break;
             }

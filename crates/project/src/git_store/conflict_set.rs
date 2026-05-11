@@ -509,31 +509,9 @@ fn decompose_three_way(
             base_cursor = cluster_start;
         }
 
-        let mut cluster_o = Vec::new();
-        let mut cluster_t = Vec::new();
         let mut cluster_end = base_cursor;
-        loop {
-            let mut grew = false;
-            if let Some((b, _)) = ours_hunks.get(o_idx) {
-                if (b.start as usize) <= cluster_end {
-                    cluster_o.push(o_idx);
-                    cluster_end = cluster_end.max(b.end as usize);
-                    o_idx += 1;
-                    grew = true;
-                }
-            }
-            if let Some((b, _)) = theirs_hunks.get(t_idx) {
-                if (b.start as usize) <= cluster_end {
-                    cluster_t.push(t_idx);
-                    cluster_end = cluster_end.max(b.end as usize);
-                    t_idx += 1;
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
+        let (cluster_o, cluster_t) =
+            gather_hunk_cluster(&ours_hunks, &theirs_hunks, &mut o_idx, &mut t_idx, &mut cluster_end);
 
         let base_segment: String = base_lines[base_cursor..cluster_end].concat();
         let ours_segment = compose_replacement(
@@ -572,7 +550,10 @@ fn decompose_three_way(
                 theirs: theirs_segment,
             }
         };
-        push_segment(&mut segments, segment);
+        match segment {
+            DecompositionSegment::Resolved(text) => push_resolved(&mut segments, text),
+            other => segments.push(other),
+        }
         base_cursor = cluster_end;
     }
 }
@@ -582,13 +563,6 @@ fn push_resolved(segments: &mut Vec<DecompositionSegment>, text: String) {
         prev.push_str(&text);
     } else {
         segments.push(DecompositionSegment::Resolved(text));
-    }
-}
-
-fn push_segment(segments: &mut Vec<DecompositionSegment>, segment: DecompositionSegment) {
-    match segment {
-        DecompositionSegment::Resolved(text) => push_resolved(segments, text),
-        other => segments.push(other),
     }
 }
 
@@ -700,4 +674,41 @@ fn single_line(text: &str) -> Option<&str> {
     } else {
         Some(trimmed)
     }
+}
+
+/// Grow a cluster by absorbing all hunks from `ours_hunks` and `theirs_hunks`
+/// that start at or before `cluster_end`. Advances `o_idx`/`t_idx` as hunks
+/// are consumed and extends `cluster_end` to cover the absorbed hunks.
+pub(crate) fn gather_hunk_cluster(
+    ours_hunks: &[(std::ops::Range<u32>, std::ops::Range<u32>)],
+    theirs_hunks: &[(std::ops::Range<u32>, std::ops::Range<u32>)],
+    o_idx: &mut usize,
+    t_idx: &mut usize,
+    cluster_end: &mut usize,
+) -> (Vec<usize>, Vec<usize>) {
+    let mut cluster_o = Vec::new();
+    let mut cluster_t = Vec::new();
+    loop {
+        let mut grew = false;
+        if let Some((b, _)) = ours_hunks.get(*o_idx) {
+            if (b.start as usize) <= *cluster_end {
+                cluster_o.push(*o_idx);
+                *cluster_end = (*cluster_end).max(b.end as usize);
+                *o_idx += 1;
+                grew = true;
+            }
+        }
+        if let Some((b, _)) = theirs_hunks.get(*t_idx) {
+            if (b.start as usize) <= *cluster_end {
+                cluster_t.push(*t_idx);
+                *cluster_end = (*cluster_end).max(b.end as usize);
+                *t_idx += 1;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    (cluster_o, cluster_t)
 }
