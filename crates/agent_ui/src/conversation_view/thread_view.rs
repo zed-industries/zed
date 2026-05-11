@@ -1653,7 +1653,7 @@ impl ThreadView {
                     return;
                 }
 
-                let title = SharedString::from(new_title.clone());
+                let title = SharedString::from(new_title);
                 if let Some(store) = ThreadMetadataStore::try_global(cx) {
                     let thread_id = self.thread_id;
                     store.update(cx, |store, cx| {
