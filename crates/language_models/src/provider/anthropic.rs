@@ -9,10 +9,11 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::HttpClient;
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
-    ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, env_var,
+    ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter, env_var,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
@@ -500,6 +501,10 @@ impl LanguageModel for AnthropicModel {
             Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        None
     }
 }
 

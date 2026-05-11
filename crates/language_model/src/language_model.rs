@@ -198,6 +198,10 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
+    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+        None
+    }
+
     fn stream_completion_tool(
         &self,
         request: LanguageModelRequest,
