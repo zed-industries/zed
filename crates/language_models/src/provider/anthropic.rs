@@ -66,11 +66,14 @@ impl State {
             cx,
         );
 
+        let should_fetch_models = api_key.is_some();
         self.fetched_models.clear();
         cx.spawn(async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
-                .ok();
+            if result.is_ok() && should_fetch_models {
+                this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                    .ok();
+            }
             result
         })
     }
