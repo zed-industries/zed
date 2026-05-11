@@ -399,7 +399,7 @@ pub async fn open_paths_with_positions(
         opened_items: mut items,
         ..
     } = cx
-        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
+        .update(|cx| workspace::open_paths(&paths, app_state.clone(), open_options, cx))
         .await?;
 
     if diff_all && !diff_paths.is_empty() {
@@ -416,9 +416,26 @@ pub async fn open_paths_with_positions(
         let workspace_weak = multi_workspace.read_with(cx, |multi_workspace, _cx| {
             multi_workspace.workspace().downgrade()
         })?;
+        let canonicalize = async |raw: &str| {
+            app_state
+                .fs
+                .canonicalize(Path::new(raw))
+                .await
+                .with_context(|| format!("opening --diff path {raw:?}"))
+        };
         for diff_pair in diff_paths {
-            let old_path = Path::new(&diff_pair[0]).canonicalize()?;
-            let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+            let (old_path, new_path) =
+                match futures::join!(canonicalize(&diff_pair[0]), canonicalize(&diff_pair[1])) {
+                    (Ok(old), Ok(new)) => (old, new),
+                    (old, new) => {
+                        for result in [old, new] {
+                            if let Err(err) = result {
+                                items.push(Some(Err(err)));
+                            }
+                        }
+                        continue;
+                    }
+                };
             if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
                 FileDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
             }) {
@@ -431,7 +448,7 @@ pub async fn open_paths_with_positions(
 
     for (item, path) in items.iter_mut().zip(&paths) {
         if let Some(Err(error)) = item {
-            *error = anyhow!("error opening {path:?}: {error}");
+            *error = anyhow!("error opening {path:?}: {error:#}");
         }
     }
 
@@ -465,6 +482,7 @@ pub async fn handle_cli_connection(
                 env,
                 user_data_dir: _,
                 dev_container,
+                cwd,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -528,6 +546,7 @@ pub async fn handle_cli_connection(
                     dev_container,
                     app_state.clone(),
                     env,
+                    cwd,
                     cx,
                 )
                 .await;
@@ -648,6 +667,7 @@ async fn open_workspaces(
     dev_container: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
+    cwd: Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
     if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
@@ -737,6 +757,7 @@ async fn open_workspaces(
                     diff_paths.clone(),
                     diff_all,
                     open_options,
+                    cwd.clone(),
                     responses,
                     &app_state,
                     cx,
@@ -781,18 +802,23 @@ async fn open_local_workspace(
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_options: workspace::OpenOptions,
+    cwd: Option<PathBuf>,
     responses: &dyn CliResponseSink,
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
     let user_provided_paths = !workspace_paths.is_empty();
 
-    // When only diff paths are provided (no regular paths), add the current
+    // When only diff paths are provided (no regular paths), add the CLI's
     // working directory so the workspace opens with the right context.
-    if !user_provided_paths && !diff_paths.is_empty() {
-        if let Ok(cwd) = std::env::current_dir() {
-            workspace_paths.push(cwd.to_string_lossy().into_owned());
-        }
+    // Note: must use the CLI process's cwd (forwarded via `cli_cwd`), not
+    // `std::env::current_dir()`, since the Zed app process's cwd is typically
+    // `/` on macOS bundles or the launch dir of an already-running instance.
+    if !user_provided_paths
+        && !diff_paths.is_empty()
+        && let Some(cwd) = cwd
+    {
+        workspace_paths.push(cwd.to_string_lossy().to_string());
     }
 
     let paths_with_position =
@@ -810,9 +836,15 @@ async fn open_local_workspace(
     {
         Ok(result) => result,
         Err(error) => {
+            let paths = paths_with_position
+                .iter()
+                .map(|p| p.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::error!("failed to open workspace [{paths}]: {error:#}");
             responses
                 .send(CliResponse::Stderr {
-                    message: format!("error opening {paths_with_position:?}: {error}"),
+                    message: format!("error opening [{paths}]: {error:#}"),
                 })
                 .log_err();
             return true;
@@ -863,9 +895,10 @@ async fn open_local_workspace(
                 }
             }
             Some(Err(err)) => {
+                log::error!("{err:#}");
                 responses
                     .send(CliResponse::Stderr {
-                        message: err.to_string(),
+                        message: format!("{err:#}"),
                     })
                     .log_err();
                 errored = true;
@@ -1304,6 +1337,7 @@ mod tests {
                         wait: true,
                         ..Default::default()
                     },
+                    None,
                     &response_sink,
                     &app_state,
                     &mut cx,
@@ -1423,6 +1457,7 @@ mod tests {
                     vec![],
                     false,
                     open_options,
+                    None,
                     &response_sink,
                     &app_state,
                     &mut cx,
@@ -1493,6 +1528,7 @@ mod tests {
                         vec![],
                         false,
                         workspace::OpenOptions::default(),
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1529,6 +1565,7 @@ mod tests {
                             requesting_window: Some(window_to_replace),
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1675,6 +1712,7 @@ mod tests {
                         Vec::new(),
                         false,
                         workspace::OpenOptions::default(),
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1702,6 +1740,7 @@ mod tests {
                             workspace_matching: workspace::WorkspaceMatching::None, // Force new window
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1748,6 +1787,7 @@ mod tests {
                             workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory, // --add flag
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1812,6 +1852,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1866,6 +1907,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1909,6 +1951,7 @@ mod tests {
             env: None,
             user_data_dir: None,
             dev_container: false,
+            cwd: None,
         }
     }
 
