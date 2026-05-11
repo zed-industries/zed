@@ -1,9 +1,10 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
-    HighlightKey, Navigated, PointForPosition, SelectPhase,
+    HighlightKey, Navigated, OpenSelectedFilename, OpenUrl, PointForPosition, SelectPhase,
     editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
+use client::parse_zed_link;
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Pixels, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
@@ -110,6 +111,87 @@ pub fn exclude_link_to_position(
 }
 
 impl Editor {
+    pub fn open_url(&mut self, _: &OpenUrl, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.selections.newest_anchor();
+        let head = selection.head();
+        let tail = selection.tail();
+
+        let Some((buffer, start_position)) =
+            self.buffer.read(cx).text_anchor_for_position(head, cx)
+        else {
+            return;
+        };
+
+        let end_position = if head != tail {
+            let Some((_, position)) = self.buffer.read(cx).text_anchor_for_position(tail, cx)
+            else {
+                return;
+            };
+            Some(position)
+        } else {
+            None
+        };
+
+        let url_finder = cx.spawn_in(window, async move |_editor, cx| {
+            let url = if let Some(end_position) = end_position {
+                find_url_from_range(&buffer, start_position..end_position, cx.clone())
+            } else {
+                find_url(&buffer, start_position, cx.clone()).map(|(_, url)| url)
+            };
+
+            if let Some(url) = url {
+                cx.update(|window, cx| {
+                    if parse_zed_link(&url, cx).is_some() {
+                        window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                    } else {
+                        cx.open_url(&url);
+                    }
+                })?;
+            }
+
+            anyhow::Ok(())
+        });
+
+        url_finder.detach();
+    }
+
+    pub fn open_selected_filename(
+        &mut self,
+        _: &OpenSelectedFilename,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+
+        let position = self.selections.newest_anchor().head();
+
+        let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(position, cx)
+        else {
+            return;
+        };
+
+        let project = self.project.clone();
+
+        cx.spawn_in(window, async move |_, cx| {
+            let result = find_file(&buffer, project, buffer_position, cx).await;
+
+            if let Some((_, file_target)) = result {
+                let item = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_resolved_path(file_target.resolved_path.clone(), window, cx)
+                    })?
+                    .await?;
+
+                file_target.navigate_item_to_position(item, cx);
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
     pub(crate) fn update_hovered_link(
         &mut self,
         point_for_position: PointForPosition,

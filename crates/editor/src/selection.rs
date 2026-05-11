@@ -210,17 +210,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn select_to_end(&mut self, _: &SelectToEnd, window: &mut Window, cx: &mut Context<Self>) {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selection = self
-            .selections
-            .first::<MultiBufferOffset>(&self.display_snapshot(cx));
-        selection.set_head(buffer.len(), SelectionGoal::None);
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.select(vec![selection]);
-        });
-    }
-
     pub fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(vec![Anchor::Min..Anchor::Max]);

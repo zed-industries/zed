@@ -1,9 +1,10 @@
-use std::ops::Range;
+use std::{cmp, ops::Range};
 
+use anyhow::Result;
 use collections::HashMap;
 use futures::FutureExt;
 use futures::future::join_all;
-use gpui::{App, Context, HighlightStyle, Task};
+use gpui::{App, AppContext as _, Context, HighlightStyle, Task, TaskExt as _, Window};
 use itertools::Itertools as _;
 use language::language_settings::LanguageSettings;
 use language::{Buffer, OutlineItem};
@@ -14,10 +15,13 @@ use multi_buffer::{
 use text::BufferId;
 use theme::{ActiveTheme as _, SyntaxTheme};
 use unicode_segmentation::UnicodeSegmentation as _;
-use util::maybe;
+use util::{ResultExt as _, maybe};
 
 use crate::display_map::DisplaySnapshot;
-use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT};
+use crate::{
+    Editor, GoToNextSymbol, GoToPreviousSymbol, LSP_REQUEST_DEBOUNCE_TIMEOUT, SelectionEffects,
+    scroll::Autoscroll,
+};
 
 impl Editor {
     /// Returns all document outline items for a buffer, using LSP or
@@ -53,6 +57,112 @@ impl Editor {
             cx.background_executor()
                 .spawn(async move { buffer_snapshot.outline(Some(&syntax)).items })
         }
+    }
+
+    pub(super) fn go_to_next_symbol(
+        &mut self,
+        _: &GoToNextSymbol,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_symbol_by_offset(window, cx, 1)
+            .detach_and_log_err(cx);
+    }
+
+    pub(super) fn go_to_previous_symbol(
+        &mut self,
+        _: &GoToPreviousSymbol,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_symbol_by_offset(window, cx, -1)
+            .detach_and_log_err(cx);
+    }
+
+    pub(super) fn go_to_symbol_by_offset(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        offset: i8,
+    ) -> Task<Result<()>> {
+        let editor_snapshot = self.snapshot(window, cx);
+
+        if !editor_snapshot.is_singleton() {
+            return Task::ready(Ok(()));
+        }
+
+        let cursor_offset = self
+            .selections
+            .newest::<MultiBufferOffset>(&editor_snapshot.display_snapshot)
+            .head();
+
+        cx.spawn_in(window, async move |editor, wcx| -> Result<()> {
+            let Ok(Some(remote_id)) = editor.update(wcx, |editor, cx| {
+                let buffer = editor.buffer.read(cx).as_singleton()?;
+                Some(buffer.read(cx).remote_id())
+            }) else {
+                return Ok(());
+            };
+
+            let task =
+                editor.update(wcx, |editor, cx| editor.buffer_outline_items(remote_id, cx))?;
+            let outline_items: Vec<OutlineItem<text::Anchor>> = task.await;
+
+            let multi_buffer_snapshot = editor_snapshot.buffer();
+            let buffer_range = |range: &Range<_>| {
+                Some(
+                    multi_buffer_snapshot
+                        .buffer_anchor_range_to_anchor_range(range.clone())?
+                        .to_offset(multi_buffer_snapshot),
+                )
+            };
+
+            wcx.update_window(wcx.window_handle(), |_, window, acx| {
+                let current_index = outline_items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| {
+                        let source_range = buffer_range(&item.source_range_for_text)?;
+                        let distance_to_closest_endpoint = cmp::min(
+                            (source_range.start.0 as isize - cursor_offset.0 as isize).abs(),
+                            (source_range.end.0 as isize - cursor_offset.0 as isize).abs(),
+                        );
+
+                        let item_towards_offset =
+                            (source_range.start.0 as isize - cursor_offset.0 as isize).signum()
+                                == (offset as isize).signum();
+
+                        let source_range_contains_cursor = source_range.contains(&cursor_offset);
+
+                        (item_towards_offset && !source_range_contains_cursor)
+                            .then_some((distance_to_closest_endpoint, index))
+                    })
+                    .min()
+                    .map(|(_, index)| index);
+
+                let Some(index) = current_index else {
+                    return;
+                };
+
+                let Some(range) = buffer_range(&outline_items[index].source_range_for_text) else {
+                    return;
+                };
+                let selection = [range.start..range.start];
+
+                editor
+                    .update(acx, |editor, cx| {
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::newest()),
+                            window,
+                            cx,
+                            |selections| selections.select_ranges(selection),
+                        );
+                    })
+                    .log_err();
+            })?;
+
+            Ok(())
+        })
     }
 
     /// Whether the buffer at `cursor` has LSP document symbols enabled.

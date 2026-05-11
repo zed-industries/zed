@@ -151,7 +151,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
     pulsating_between, px, relative, size,
 };
-use hover_links::{HoverLink, HoveredLinkState, find_file};
+use hover_links::{HoverLink, HoveredLinkState};
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
 use inlays::{InlaySplice, inlay_hints::InlayHintRefreshReason};
@@ -257,7 +257,6 @@ use zed_actions::editor::{MoveDown, MoveUp};
 use crate::{
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
-    hover_links::{find_url, find_url_from_range},
     inlays::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
