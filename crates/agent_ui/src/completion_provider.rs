@@ -313,6 +313,12 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
+
+    /// Called once each time the user opens slash-command autocomplete
+    /// in the editor this delegate serves. Implementations may use it
+    /// to lazily kick off work that produces commands (for example,
+    /// scanning the global skills directory). The default is a no-op.
+    fn slash_autocomplete_invoked(&self, _cx: &mut App) {}
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
@@ -817,6 +823,13 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
+        // Notify the delegate that slash autocomplete is being
+        // invoked, so it can lazily kick off any work that produces
+        // additional commands. Whatever it produces won't be visible
+        // in the current autocomplete pass (we read `available_commands`
+        // synchronously below), but will appear on the next invocation.
+        self.source.slash_autocomplete_invoked(cx);
+
         let commands = self.source.available_commands(cx);
         if commands.is_empty() {
             return Task::ready(Vec::new());
