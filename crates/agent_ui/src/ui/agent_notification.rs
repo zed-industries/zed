@@ -150,10 +150,13 @@ impl Render for AgentNotification {
                                     .when_some(
                                         self.project_name.clone(),
                                         |description, project_name| {
-                                            let mut row = h_flex().gap_1p5().child(
-                                                div().max_w_16().truncate().child(project_name),
-                                            );
-                                            if self.caption.is_some() {
+                                            let has_caption = self.caption.is_some();
+                                            let project = div()
+                                                .truncate()
+                                                .when(has_caption, |this| this.max_w_16())
+                                                .child(project_name);
+                                            let mut row = h_flex().gap_1p5().child(project);
+                                            if has_caption {
                                                 row = row.child(
                                                     div().size(px(3.)).rounded_full().bg(cx
                                                         .theme()
