@@ -18,26 +18,6 @@ fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent
     LanguageModelToolResultContent::from(e.to_string())
 }
 
-/// Build a vector where `offsets[N]` is the byte offset at which line `N+1`
-/// begins (1-indexed). Line 1 begins at offset 0, and each `\n` we see
-/// advances to the next line. This mirrors how
-/// `Buffer::text_for_range(Point::new(start_row, 0)..Point::new(end_row, 0))`
-/// works on the buffer-backed path: callers slice between line starts (or to
-/// end-of-content for the trailing line).
-///
-/// `content.bytes()` is correct here even for UTF-8 — `\n` is a single byte
-/// (0x0A) and never appears inside multi-byte UTF-8 sequences, so the byte
-/// offsets we record are valid string boundaries.
-fn line_start_offsets(content: &str) -> Vec<usize> {
-    let mut offsets = vec![0];
-    for (i, byte) in content.bytes().enumerate() {
-        if byte == b'\n' {
-            offsets.push(i + 1);
-        }
-    }
-    offsets
-}
-
 /// Read a file under the global skills directory directly via the filesystem,
 /// bypassing project/worktree resolution. Used for skill resources that live
 /// outside any worktree.
@@ -63,29 +43,19 @@ async fn read_global_skill_file(
     let result_text = if start_line.is_some() || end_line.is_some() {
         // Mirror the line-range semantics of the buffer-backed path: 1-indexed,
         // start clamped to >= 1, end exclusive of the next line, and always
-        // returning at least one line. Slicing on byte offsets preserves
-        // original line terminators (e.g. CRLF stays CRLF) and includes the
-        // trailing newline of the last returned line when present, matching
-        // the behavior of `Buffer::text_for_range`.
+        // returning at least one line. `split_inclusive` keeps each line's
+        // terminator attached, so CRLF stays CRLF and the trailing newline of
+        // the last returned line is preserved — matching `Buffer::text_for_range`.
         let start = start_line.unwrap_or(1).max(1);
         let mut end = end_line.unwrap_or(u32::MAX);
         if end < start {
             end = start;
         }
 
-        let line_starts = line_start_offsets(&content);
-        // Line N's start (1-indexed) is `line_starts[N - 1]`. To slice up to
-        // but not including the start of line `end + 1`, we look up
-        // `line_starts[(end + 1) - 1]` = `line_starts[end]`. When `end` is
-        // past the last recorded line start, slice to end-of-content.
-        let start_idx = (start as usize).saturating_sub(1).min(line_starts.len());
-        let end_byte = line_starts
-            .get(end as usize)
-            .copied()
-            .unwrap_or(content.len());
-        let start_byte = line_starts.get(start_idx).copied().unwrap_or(content.len());
-        let start_byte = start_byte.min(end_byte);
-        content[start_byte..end_byte].to_string()
+        let lines: Vec<&str> = content.split_inclusive('\n').collect();
+        let start_idx = (start as usize).saturating_sub(1).min(lines.len());
+        let end_idx = (end as usize).min(lines.len()).max(start_idx);
+        lines[start_idx..end_idx].concat()
     } else {
         content
     };
