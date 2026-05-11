@@ -2047,17 +2047,14 @@ impl AgentPanel {
             self.draft_thread = None;
             self._draft_editor_observation = None;
         }
-        let previous_content = self.active_initial_content(cx);
-        let thread = self.create_agent_thread(
-            desired_agent,
-            None,
-            None,
-            None,
-            previous_content,
-            source,
-            window,
-            cx,
-        );
+        // A fresh draft starts empty. Earlier versions copied the
+        // previous active view's prompt over via `active_initial_content`,
+        // but that meant pressing cmd-n on a typed draft left the prompt
+        // visible in *both* the parked draft (in `retained_threads`) and
+        // the new ephemeral draft. The parked one already holds the user's
+        // work; the new one should be a blank slate.
+        let thread =
+            self.create_agent_thread(desired_agent, None, None, None, None, source, window, cx);
         self.draft_thread = Some(thread.conversation_view.clone());
         self.observe_draft_editor(&thread.conversation_view, cx);
         thread.conversation_view
@@ -7513,9 +7510,9 @@ mod tests {
 
         // Press cmd-n on a typed draft — the draft is parked into
         // `retained_threads` so the user can return to it from the
-        // sidebar, and a fresh ephemeral draft becomes active. The typed
-        // content is carried over into the new draft via
-        // `active_initial_content` so nothing is lost.
+        // sidebar, and a fresh, *empty* ephemeral draft becomes active.
+        // The parked draft retains the prompt; the new one is a blank
+        // slate.
         cx.dispatch_action(NewThread);
         cx.run_until_parked();
 
@@ -7531,18 +7528,25 @@ mod tests {
             );
         });
 
-        // The new active draft should carry the previously typed content.
+        // The parked draft still holds the typed prompt.
+        let parked_text = panel.read_with(cx, |panel, cx| panel.editor_text(initial_thread_id, cx));
+        assert_eq!(
+            parked_text.as_deref(),
+            Some("Don't lose me!"),
+            "parked draft should retain the typed prompt"
+        );
+
+        // The new active draft starts empty — no carry-over.
         let active_thread_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
         let active_text = panel.read_with(cx, |panel, cx| panel.editor_text(active_thread_id, cx));
         assert_eq!(
-            active_text.as_deref(),
-            Some("Don't lose me!"),
-            "typed content should carry over into the new draft"
+            active_text, None,
+            "fresh ephemeral draft should start empty, not carry the parked draft's prompt"
         );
     }
 
     #[gpui::test]
-    async fn test_draft_content_carried_over_when_switching_agents(cx: &mut TestAppContext) {
+    async fn test_typed_draft_is_parked_when_switching_agents(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
@@ -7587,16 +7591,20 @@ mod tests {
         let initial_draft_id = panel.read_with(cx, |panel, _cx| {
             panel.draft_thread.as_ref().unwrap().entity_id()
         });
+        let initial_thread_id =
+            panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
 
         // Type text into the first draft's editor.
         let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
         let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("carry me over", window, cx);
+            editor.set_text("saved prompt", window, cx);
         });
 
-        // Switch to a different agent. ensure_draft should extract the typed
-        // content from the old draft and pre-fill the new one.
+        // Switch to a different agent. The typed draft should be parked
+        // into `retained_threads` (keeping the user's prompt accessible
+        // from the sidebar) and a fresh empty draft on the new agent
+        // should become active.
         cx.dispatch_action(NewExternalAgentThread {
             agent: Agent::Stub.id(),
         });
@@ -7615,15 +7623,26 @@ mod tests {
                 Agent::Stub,
                 "new draft should use the new agent"
             );
+            assert!(
+                panel.retained_threads.contains_key(&initial_thread_id),
+                "typed draft should have been parked into retained_threads"
+            );
         });
 
-        // The new draft's editor should contain the text typed in the old draft.
-        let thread_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
-        let text = panel.read_with(cx, |panel, cx| panel.editor_text(thread_id, cx));
+        // The parked draft retains the prompt.
+        let parked_text = panel.read_with(cx, |panel, cx| panel.editor_text(initial_thread_id, cx));
         assert_eq!(
-            text.as_deref(),
-            Some("carry me over"),
-            "content should be carried over to the new agent's draft"
+            parked_text.as_deref(),
+            Some("saved prompt"),
+            "parked draft should retain the user's prompt"
+        );
+
+        // The new draft on the new agent starts empty.
+        let active_thread_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+        let active_text = panel.read_with(cx, |panel, cx| panel.editor_text(active_thread_id, cx));
+        assert_eq!(
+            active_text, None,
+            "new draft on the new agent should start empty, not carry the parked draft's prompt"
         );
     }
 
