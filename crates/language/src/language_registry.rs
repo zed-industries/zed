@@ -604,7 +604,7 @@ impl LanguageRegistry {
     /// This performs a case-insensitive match against:
     /// 1. The language name
     /// 2. The language's path suffixes
-    /// 3. Explicit code fence aliases defined in the language config
+    /// 3. Explicit code fence names defined in the language config
     pub fn language_for_code_fence_name(
         self: &Arc<Self>,
         string: &str,

@@ -792,7 +792,7 @@ impl Markdown {
             let parsed =
                 parse_markdown_with_options(&source, should_parse_html, should_parse_heading_slugs);
             let events = parsed.events;
-            let language_names = parsed.language_names;
+            let code_block_language_names = parsed.language_names;
             let paths = parsed.language_paths;
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
@@ -807,7 +807,7 @@ impl Markdown {
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
             if let Some(registry) = language_registry.as_ref() {
-                for name in language_names {
+                for name in code_block_language_names {
                     let language = if !name.is_empty() {
                         registry.language_for_code_fence_name(&name).left_future()
                     } else if let Some(fallback) = &fallback {
