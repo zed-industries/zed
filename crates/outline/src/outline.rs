@@ -348,7 +348,12 @@ impl PickerDelegate for OutlineViewDelegate {
                         .matches
                         .iter()
                         .enumerate()
-                        .filter_map(|(ix, entry)| entry.as_match().map(|m| (ix, m.score)))
+                        .filter_map(|(ix, entry)| {
+                            entry
+                                .as_match()
+                                .filter(|m| !m.positions.is_empty())
+                                .map(|m| (ix, m.score))
+                        })
                         .max_by(|(ix_a, a), (ix_b, b)| {
                             OrderedFloat(*a)
                                 .cmp(&OrderedFloat(*b))

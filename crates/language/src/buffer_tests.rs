@@ -864,9 +864,15 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         ]
     );
 
+    // Multi-atom queries: rows whose match lives entirely in an ancestor
+    // are kept as context (empty positions, score zeroed) so descendants
+    // of a matched container surface alongside it.
     assert_eq!(
         search(&outline, "dp p", cx).await,
-        &[("impl Drop for Person", vec![5, 14])]
+        &[
+            ("impl Drop for Person", vec![5, 14]),
+            ("fn drop", vec![]),
+        ]
     );
     assert_eq!(
         search(&outline, "dpn", cx).await,
@@ -877,6 +883,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
         &[
             ("impl Eq for Person", vec![0, 1, 2, 3]),
             ("impl Drop for Person", vec![0, 1, 2, 3]),
+            ("fn drop", vec![]),
         ]
     );
 

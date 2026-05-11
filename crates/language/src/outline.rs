@@ -222,9 +222,13 @@ impl<T> Outline<T> {
         // actually contain "drop", not items whose ancestor path happens to.
         // We can rely on that behavior because nucleo prefers matches at the
         // end of the haystack, so the leafiest part of the candidate.
-        // Multi-atom queries (whitespace-separated) use the parent for scoping,
-        // so we just require at least one matched char in the leaf so the row
-        // has visible highlights.
+        //
+        // Multi-atom queries (whitespace-separated) use the ancestor path
+        // for scoping. Rows whose entire match landed in an ancestor are
+        // kept as context, with empty positions and zero score, so
+        // descendants of a matched container surface alongside it. The
+        // picker's score-based auto-select skips them so they never steal
+        // focus from a row with real highlights.
         let single_atom = !query.contains(char::is_whitespace);
         matches.retain_mut(|string_match| {
             let leaf_offset = self.leaf_offsets[string_match.candidate_id];
@@ -233,8 +237,11 @@ impl<T> Outline<T> {
                 .positions
                 .retain(|position| *position >= leaf_offset);
             let kept = string_match.positions.len();
-            if kept == 0 || (single_atom && kept != total) {
+            if single_atom && kept != total {
                 return false;
+            }
+            if kept == 0 {
+                string_match.score = 0.0;
             }
             for position in &mut string_match.positions {
                 *position -= leaf_offset;
