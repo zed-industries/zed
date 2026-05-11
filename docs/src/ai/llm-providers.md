@@ -156,9 +156,7 @@ Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite
 
 #### Guardrails {#bedrock-guardrails}
 
-Some AWS environments enforce IAM policies that require a guardrail to be specified on every Bedrock API call (via a `StringEquals` condition on `bedrock:GuardrailIdentifier`). Without this, Zed returns `AccessDenied` and Bedrock models become unusable in those environments.
-
-To apply a guardrail to all Bedrock requests, add `guardrail_identifier` to your Bedrock configuration:
+Some AWS environments enforce IAM policies that require a guardrail to be specified on every Bedrock API call. To apply a guardrail to all Bedrock requests, add `guardrail_identifier` to your Bedrock configuration:
 
 ```json [settings]
 {
