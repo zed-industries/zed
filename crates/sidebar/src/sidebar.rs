@@ -4434,20 +4434,18 @@ impl Sidebar {
             cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
         );
 
-        let icon = if is_draft {
-            IconName::Plus
+        let (icon, icon_svg) = if is_draft {
+            (IconName::Circle, None)
         } else {
-            thread.icon
-        };
-        let icon_svg = if is_draft {
-            None
-        } else {
-            thread.icon_from_external_svg.clone()
+            (thread.icon, thread.icon_from_external_svg.clone())
         };
 
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
             .icon(icon)
+            .when(is_draft, |this| {
+                this.icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.2)))
+            })
             .status(thread.status)
             .is_remote(is_remote)
             .when_some(icon_svg, |this, svg| {
@@ -4517,10 +4515,10 @@ impl Sidebar {
             })
             .when(is_hovered && !is_running && is_draft, |this| {
                 this.action_slot(
-                    IconButton::new("close-draft", IconName::Close)
+                    IconButton::new("discard_thread", IconName::Close)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Remove Draft"))
+                        .tooltip(Tooltip::text("Discard Draft"))
                         .on_click({
                             let thread_workspace = thread_workspace.clone();
                             cx.listener(move |this, _, window, cx| {
