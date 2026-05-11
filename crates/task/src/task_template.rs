@@ -1119,7 +1119,7 @@ mod tests {
         let sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
         let sha_short = "0123456".to_string();
         let repo_name = "zed".to_string();
-        let repo_path = format!("/Users/example/{repo_name}").to_string();
+        let repo_path = format!("/Users/example/{repo_name}");
 
         let context = TaskContext {
             task_variables: TaskVariables::from_iter([
