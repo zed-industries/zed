@@ -149,8 +149,6 @@ actions!(
         ResetTrialEndUpsell,
         /// Opens the "Add Context" menu in the message editor.
         OpenAddContextMenu,
-        /// Continues the current thread.
-        ContinueThread,
         /// Interrupts the current generation and sends the message immediately.
         SendImmediately,
         /// Sends the next queued message immediately.

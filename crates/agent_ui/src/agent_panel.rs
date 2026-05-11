@@ -3366,6 +3366,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
         let conversation_view = match &self.base_view {
             BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
@@ -3427,21 +3428,26 @@ impl AgentPanel {
                             }
                         }
 
+                        if !showing_terminal {
+                            menu = menu
+                                .header("MCP Servers")
+                                .action(
+                                    "View Server Extensions",
+                                    Box::new(zed_actions::Extensions {
+                                        category_filter: Some(
+                                            zed_actions::ExtensionCategoryFilter::ContextServers,
+                                        ),
+                                        id: None,
+                                    }),
+                                )
+                                .action("Add Custom Server…", Box::new(AddContextServer))
+                                .separator()
+                                .action("Rules", Box::new(OpenRulesLibrary::default()))
+                                .action("Profiles", Box::new(ManageProfiles::default()))
+                                .separator();
+                        }
+
                         menu = menu
-                            .header("MCP Servers")
-                            .action(
-                                "View Server Extensions",
-                                Box::new(zed_actions::Extensions {
-                                    category_filter: Some(
-                                        zed_actions::ExtensionCategoryFilter::ContextServers,
-                                    ),
-                                    id: None,
-                                }),
-                            )
-                            .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator()
-                            .action("Rules", Box::new(OpenRulesLibrary::default()))
-                            .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
@@ -4124,12 +4130,6 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        match self.visible_surface() {
-            VisibleSurface::AgentThread(_) => key_context.add("acp_thread"),
-            VisibleSurface::Terminal(_)
-            | VisibleSurface::Configuration(_)
-            | VisibleSurface::Uninitialized => {}
-        }
         key_context
     }
 }
