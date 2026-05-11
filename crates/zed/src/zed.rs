@@ -3661,7 +3661,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_opening_excluded_paths(cx: &mut TestAppContext) {
-        let t = std::time::Instant::now();
         let app_state = init_test(cx);
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -3671,7 +3670,6 @@ mod tests {
                 });
             });
         });
-        let init_test = t.elapsed();
         app_state
             .fs
             .as_fake()
@@ -3700,7 +3698,7 @@ mod tests {
                 }),
             )
             .await;
-        let fake_fs_e = t.elapsed();
+
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
         let window = cx.add_window({
@@ -3710,7 +3708,7 @@ mod tests {
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
-        let workspace_e = t.elapsed();
+
         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
         let paths_to_open = [
             PathBuf::from(path!("/root/excluded_dir/file")),
@@ -3775,7 +3773,7 @@ mod tests {
             initial_entries, entries,
             "Workspace entries should not change after opening excluded files and directories paths"
         );
-        let e_whatever = t.elapsed();
+
         cx.read(|cx| {
                 let pane = workspace.read(cx).active_pane().read(cx);
                 let mut opened_buffer_paths = pane
@@ -3793,7 +3791,6 @@ mod tests {
                     "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
                 );
             });
-        panic!("{init_test:?} {fake_fs_e:?} {workspace_e:?} {e_whatever:?}");
     }
 
     #[gpui::test]
