@@ -143,8 +143,13 @@ impl<R: RequestMessage> StreamResponse<R> {
     }
 
     fn end(self) -> Result<()> {
+        // Always mark `ended` even if sending `EndStream` on the wire fails, so that
+        // `ended` reflects "the handler intended to end the stream". The caller still
+        // gets the underlying error and routes through the Err arm of the handler,
+        // which sends `respond_with_error` to terminate the client-side stream.
+        let result = self.peer.end_stream(self.receipt);
         self.ended.store(true, SeqCst);
-        self.peer.end_stream(self.receipt)?;
+        result?;
         Ok(())
     }
 }
@@ -779,7 +784,11 @@ impl Server {
                         if responded.load(std::sync::atomic::Ordering::SeqCst) {
                             Ok(())
                         } else {
-                            Err(anyhow!("handler did not send a response"))?
+                            let error = anyhow!("handler did not send a response");
+                            let proto_err =
+                                ErrorCode::Internal.message(format!("{error}")).to_proto();
+                            peer.respond_with_error(receipt, proto_err)?;
+                            Err(error)?
                         }
                     }
                     Err(error) => {
@@ -818,7 +827,11 @@ impl Server {
                         if ended.load(std::sync::atomic::Ordering::SeqCst) {
                             Ok(())
                         } else {
-                            Err(anyhow!("handler did not end a response stream"))?
+                            let error = anyhow!("handler did not end a response stream");
+                            let proto_err =
+                                ErrorCode::Internal.message(format!("{error}")).to_proto();
+                            peer.respond_with_error(receipt, proto_err)?;
+                            Err(error)?
                         }
                     }
                     Err(error) => {
