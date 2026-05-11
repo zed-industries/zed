@@ -1,4 +1,5 @@
 after next main merge, test this:
+- See the commit history for all files in a given folder in your repo with `View History` in the project panel. <https://bsky.app/profile/zed.dev/post/3mllqbaehf22q>
 - Arriving this Zednesday: a dedicated action to toggle block comments. 
 `cmd-k, cmd-/` (or `ctrl-k, ctrl-/`)
 - try out bookmarks: <https://bsky.app/profile/zed.dev/post/3mjxczuagbc22>
