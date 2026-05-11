@@ -201,8 +201,14 @@ pub fn into_open_ai_response(
     } = request;
 
     let mut input_items = Vec::new();
+    let mut replayed_reasoning_item_indexes = HashMap::default();
     for (index, message) in messages.into_iter().enumerate() {
-        append_message_to_response_items(message, index, &mut input_items);
+        append_message_to_response_items(
+            message,
+            index,
+            &mut replayed_reasoning_item_indexes,
+            &mut input_items,
+        );
     }
 
     let tools: Vec<_> = tools
@@ -270,6 +276,7 @@ pub fn into_open_ai_response(
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
+    replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     input_items: &mut Vec<ResponseInputItem>,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
@@ -287,7 +294,11 @@ fn append_message_to_response_items(
     };
 
     if role == Role::Assistant {
-        append_reasoning_details_to_response_items(reasoning_details.as_ref(), input_items);
+        append_reasoning_details_to_response_items(
+            reasoning_details.as_ref(),
+            replayed_reasoning_item_indexes,
+            input_items,
+        );
     }
 
     for content in content {
@@ -367,6 +378,7 @@ fn append_message_to_response_items(
 
 fn append_reasoning_details_to_response_items(
     reasoning_details: Option<&serde_json::Value>,
+    replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     input_items: &mut Vec<ResponseInputItem>,
 ) {
     let Some(reasoning_details) = reasoning_details else {
@@ -377,12 +389,20 @@ fn append_reasoning_details_to_response_items(
         serde_json::Value::Object(_) => {
             if let Some(metadata) = response_message_metadata_from_details(reasoning_details) {
                 for reasoning_item in metadata.reasoning_items {
-                    input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+                    push_replayed_reasoning_item(
+                        reasoning_item,
+                        replayed_reasoning_item_indexes,
+                        input_items,
+                    );
                 }
             } else if let Ok(reasoning_item) =
                 serde_json::from_value::<ResponseReasoningInputItem>(reasoning_details.clone())
             {
-                input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+                push_replayed_reasoning_item(
+                    reasoning_item,
+                    replayed_reasoning_item_indexes,
+                    input_items,
+                );
             }
         }
         serde_json::Value::Array(items) => {
@@ -390,7 +410,11 @@ fn append_reasoning_details_to_response_items(
                 if let Ok(reasoning_item) =
                     serde_json::from_value::<ResponseReasoningInputItem>(item.clone())
                 {
-                    input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+                    push_replayed_reasoning_item(
+                        reasoning_item,
+                        replayed_reasoning_item_indexes,
+                        input_items,
+                    );
                 }
             }
         }
@@ -398,10 +422,31 @@ fn append_reasoning_details_to_response_items(
             if let Ok(reasoning_item) =
                 serde_json::from_value::<ResponseReasoningInputItem>(value.clone())
             {
-                input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+                push_replayed_reasoning_item(
+                    reasoning_item,
+                    replayed_reasoning_item_indexes,
+                    input_items,
+                );
             }
         }
     }
+}
+
+fn push_replayed_reasoning_item(
+    reasoning_item: ResponseReasoningInputItem,
+    replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
+    input_items: &mut Vec<ResponseInputItem>,
+) {
+    if let Some(id) = reasoning_item.id.as_ref() {
+        if let Some(index) = replayed_reasoning_item_indexes.get(id) {
+            input_items[*index] = ResponseInputItem::Reasoning(reasoning_item);
+            return;
+        }
+
+        replayed_reasoning_item_indexes.insert(id.clone(), input_items.len());
+    }
+
+    input_items.push(ResponseInputItem::Reasoning(reasoning_item));
 }
 
 fn push_response_text_part(
@@ -984,7 +1029,7 @@ impl OpenAiResponseEventMapper {
             .and_then(normalize_response_message_phase)
             .map(str::to_string);
 
-        if self.current_message_phase.is_none() {
+        if self.current_message_phase.is_none() && self.reasoning_items.is_empty() {
             return Vec::new();
         }
 
@@ -1695,6 +1740,107 @@ mod tests {
                     "role": "assistant",
                     "content": [
                         { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ],
+                    "phase": "final_answer"
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_deduplicates_replayed_reasoning_items() {
+        let first_reasoning_details = json!({
+            "phase": "final_answer",
+            "reasoning_items": [
+                {
+                    "id": "rs_123",
+                    "summary": [],
+                    "encrypted_content": "ENC_OLD",
+                    "status": "in_progress"
+                }
+            ]
+        });
+        let second_reasoning_details = json!({
+            "phase": "final_answer",
+            "reasoning_items": [
+                {
+                    "id": "rs_123",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "Later metadata has the complete summary."
+                        }
+                    ],
+                    "encrypted_content": "ENC_NEW",
+                    "status": "completed"
+                }
+            ]
+        });
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("First.".into())],
+                    cache: false,
+                    reasoning_details: Some(first_reasoning_details),
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("Second.".into())],
+                    cache: false,
+                    reasoning_details: Some(second_reasoning_details),
+                },
+            ],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.3-codex",
+            true,
+            true,
+            None,
+            Some(ReasoningEffort::Medium),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "Later metadata has the complete summary."
+                        }
+                    ],
+                    "encrypted_content": "ENC_NEW",
+                    "status": "completed"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "First.", "annotations": [] }
+                    ],
+                    "phase": "final_answer"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Second.", "annotations": [] }
                     ],
                     "phase": "final_answer"
                 }
@@ -2489,6 +2635,69 @@ mod tests {
                             "text": "Checked what information is needed."
                         }
                     ],
+                    "encrypted_content": "ENC",
+                    "status": "completed"
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_reemits_reasoning_details_after_phase_less_message_start() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                    id: Some("rs_123".into()),
+                    summary: Vec::new(),
+                    encrypted_content: Some("ENC".into()),
+                    status: Some("completed".into()),
+                }),
+            },
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: ResponseOutputItem::Message(ResponseOutputMessage {
+                    id: Some("msg_123".into()),
+                    role: Some("assistant".into()),
+                    status: Some("in_progress".into()),
+                    content: vec![],
+                    phase: None,
+                }),
+            },
+            ResponsesStreamEvent::OutputTextDelta {
+                item_id: "msg_123".into(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: "Hello".into(),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let start_message_index = mapped
+            .iter()
+            .position(|event| matches!(event, LanguageModelCompletionEvent::StartMessage { .. }))
+            .expect("start message");
+        let details = mapped
+            .iter()
+            .skip(start_message_index + 1)
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(details) => Some(details),
+                _ => None,
+            })
+            .expect("reasoning details after start message");
+
+        assert_eq!(
+            details,
+            &json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [],
                     "encrypted_content": "ENC",
                     "status": "completed"
                 }
