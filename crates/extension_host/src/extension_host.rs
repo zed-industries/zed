@@ -117,6 +117,7 @@ pub struct ExtensionStore {
     pub reload_tx: UnboundedSender<Option<Arc<str>>>,
     pub reload_complete_senders: Vec<oneshot::Sender<()>>,
     pub installed_dir: PathBuf,
+    pub staging_dir: PathBuf,
     pub outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
     pub index_path: PathBuf,
     pub modified_extensions: HashSet<Arc<str>>,
@@ -246,6 +247,7 @@ impl ExtensionStore {
         let work_dir = extensions_dir.join("work");
         let build_dir = build_dir.unwrap_or_else(|| extensions_dir.join("build"));
         let installed_dir = extensions_dir.join("installed");
+        let staging_dir = extensions_dir.join("staging");
         let index_path = extensions_dir.join("index.json");
 
         let (reload_tx, mut reload_rx) = unbounded();
@@ -254,6 +256,7 @@ impl ExtensionStore {
             proxy: extension_host_proxy.clone(),
             extension_index: Default::default(),
             installed_dir,
+            staging_dir,
             index_path,
             builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
@@ -708,6 +711,7 @@ impl ExtensionStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
+        let staging_dir = self.staging_dir.clone();
         let http_client = self.http_client.clone();
         let fs = self.fs.clone();
 
@@ -764,7 +768,12 @@ impl ExtensionStore {
                     )
                 };
 
-                match tempfile::tempdir_in(paths::temp_dir()).or_else(|_| tempfile::tempdir()) {
+                let temp_dir = fs
+                    .create_dir(&staging_dir)
+                    .await
+                    .and_then(|()| tempfile::tempdir_in(&staging_dir).map_err(Into::into));
+
+                match temp_dir {
                     Ok(temp_dir) => {
                         archive.unpack(temp_dir.path()).await?;
                         remove_dir().await?;
