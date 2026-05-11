@@ -131,7 +131,11 @@ impl AgentTool for SkillTool {
     const NAME: &'static str = "skill";
 
     fn kind() -> acp::ToolKind {
-        acp::ToolKind::Read
+        // The `Read` kind would map to a magnifying-glass icon in the UI,
+        // which reads as "search" — misleading for a skill activation.
+        // `Other` maps to the hammer icon, the generic "this is a tool"
+        // visual, which fits skill activations better.
+        acp::ToolKind::Other
     }
 
     fn initial_title(
