@@ -760,7 +760,7 @@ prost-build = "0.14"
 prost-types = "0.14"
 protox = "0.9"
 proxyvars = "0.2"
-pulldown-cmark = { version = "0.13.0", default-features = false }
+pulldown-cmark = { version = "0.13.0", default-features = false, features = ["html"] }
 quick-xml = "0.41"
 quote = "1.0.9"
 rand = "0.9"
