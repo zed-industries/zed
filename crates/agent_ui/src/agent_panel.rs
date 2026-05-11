@@ -3504,7 +3504,7 @@ impl AgentPanel {
                         div()
                             .id("terminal-title")
                             .flex_1()
-                            .cursor_pointer()
+                            .cursor_text()
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.edit_terminal_title(terminal_id, window, cx);
                             }))
