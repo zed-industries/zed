@@ -1,6 +1,6 @@
 ---
 title: Windows & Projects
-description: "How Zed handles multiple projects in windows, including the projects sidebar and options for opening in new windows."
+description: "How Zed handles multiple projects in windows, including the threads sidebar and options for opening in new windows."
 ---
 
 # Windows & Projects
@@ -9,25 +9,25 @@ Zed lets you work on multiple projects in a single window. Projects appear in th
 
 ## How Projects Open
 
-By default, when you open a folder in Zed, it opens as a new project in your current window's sidebar rather than creating a new window. This keeps related work together and preserves your agent threads and layout.
+By default, when you open a folder in Zed, it opens as a new project in your current window's threads sidebar rather than creating a new window. This keeps related work together and preserves your agent threads and layout.
 
-| Action             | Result                            |
-| ------------------ | --------------------------------- |
-| File > Open        | Opens in current window (sidebar) |
-| File > Open Recent | Opens in current window (sidebar) |
-| Drag folder to Zed | Opens in current window (sidebar) |
-| `zed ~/project`    | Opens in current window (sidebar) |
+| Action             | Result                                    |
+| ------------------ | ----------------------------------------- |
+| File > Open        | Opens in current window (threads sidebar) |
+| File > Open Recent | Opens in current window (threads sidebar) |
+| Drag folder to Zed | Opens in current window (threads sidebar) |
+| `zed ~/project`    | Opens in current window (threads sidebar) |
 
 ## Working with Multiple Projects
 
 When you have multiple projects open:
 
-- Click a project in the sidebar to switch to it
+- Click a project in the threads sidebar to switch to it
 - Each project has its own file tree, git state, and search scope
 - Agent threads are tied to their project context
 - Your workspace layout (splits, tabs) is preserved per project
 
-Think of projects in the sidebar like browser tabs, but for repositories.
+Think of projects in the threads sidebar like browser tabs, but for repositories.
 
 ## Opening in a New Window
 
@@ -53,7 +53,7 @@ Other CLI options for controlling window behavior:
 | Flag            | Behavior                                           |
 | --------------- | -------------------------------------------------- |
 | `-n`, `--new`   | Always open in a new window                        |
-| `-a`, `--add`   | Add to the current window's sidebar                |
+| `-a`, `--add`   | Add to the current window's threads sidebar        |
 | `-r`, `--reuse` | Replace the current project in the existing window |
 
 See [CLI Reference](./reference/cli.md) for full details.
@@ -70,14 +70,14 @@ You can change the default CLI behavior with the `cli_default_open_behavior` set
 
 Options:
 
-- `existing_window` (default): Open folders in the current window's sidebar
+- `existing_window` (default): Open folders in the current window's threads sidebar
 - `new_window`: Open folders in a new window
 
 This setting affects CLI and double-click behavior, not the File > Open menu.
 
 ## Adding Folders to a Project
 
-If you want to add a folder to your current project (not as a separate project in the sidebar), you have several options:
+If you want to add a folder to your current project (not as a separate project in the threads sidebar), you have several options:
 
 - **File menu**: File > Add Folder to Project
 - **Project panel**: Right-click in the project panel and choose "Add Folders to Project"
