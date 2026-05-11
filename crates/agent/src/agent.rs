@@ -573,10 +573,10 @@ impl NativeAgent {
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
             if cx.has_flag::<SkillsFeatureFlag>() {
-                thread.add_tool(SkillTool::new(skills_resolver_for_project(
-                    weak.clone(),
-                    project_id,
-                )));
+                thread.add_tool(SkillTool::new(
+                    skills_resolver_for_project(weak.clone(), project_id),
+                    self.fs.clone(),
+                ));
             }
         });
 
@@ -1600,6 +1600,7 @@ impl NativeAgent {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
         let path_style = state.project.read(cx).path_style(cx);
+        let fs = self.fs.clone();
 
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
@@ -1616,7 +1617,19 @@ impl NativeAgent {
             // command name isn't echoed into the model's context, but any
             // text the user typed after it on the same line is preserved
             // verbatim and appended after the envelope.
-            let envelope = crate::tools::render_skill_envelope(&skill);
+            //
+            // Read the body on demand here — bodies live on disk between
+            // materializations to keep memory cost O(total frontmatter)
+            // rather than O(total file size).
+            let body = agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to read skill body from {}",
+                        skill.skill_file_path.display()
+                    )
+                })?;
+            let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
 
             let mut user_blocks = original_content;
@@ -2897,7 +2910,6 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/home/user/.agents/skills/review"),
             skill_file_path: PathBuf::from("/home/user/.agents/skills/review/SKILL.md"),
-            content: "global".to_string(),
             disable_model_invocation: false,
         };
         let project_skill = Skill {
@@ -2909,7 +2921,6 @@ mod internal_tests {
             },
             directory_path: PathBuf::from("/project/.agents/skills/review"),
             skill_file_path: PathBuf::from("/project/.agents/skills/review/SKILL.md"),
-            content: "project".to_string(),
             disable_model_invocation: false,
         };
 
@@ -2919,7 +2930,7 @@ mod internal_tests {
         assert!(errors.is_empty());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "Project review");
-        assert_eq!(skills[0].content, "project");
+        assert!(matches!(skills[0].source, SkillSource::ProjectLocal { .. }));
     }
 
     #[test]
@@ -2938,7 +2949,6 @@ mod internal_tests {
                 source: SkillSource::Global,
                 directory_path: PathBuf::from(format!("/skills/{name}")),
                 skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
-                content: "body".to_string(),
                 disable_model_invocation: false,
             });
         }
@@ -3013,7 +3023,6 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/skill-01-first"),
             skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
-            content: "body".to_string(),
             disable_model_invocation: false,
         };
         let second = Skill {
@@ -3022,7 +3031,6 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/skill-02-overflows"),
             skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
-            content: "body".to_string(),
             disable_model_invocation: false,
         };
         let third = Skill {
@@ -3031,7 +3039,6 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/skill-03-would-fit"),
             skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
-            content: "body".to_string(),
             disable_model_invocation: false,
         };
 
@@ -3087,7 +3094,6 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/hidden-huge"),
             skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
-            content: "body".to_string(),
             disable_model_invocation: true,
         };
         let visible = Skill {
@@ -3096,7 +3102,6 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/visible"),
             skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
-            content: "body".to_string(),
             disable_model_invocation: false,
         };
 
@@ -3446,18 +3451,22 @@ mod internal_tests {
         // And rendering the envelope through the same path the tool uses
         // produces a `<skill_content name="my-skill">` block, confirming
         // the model would see the new skill if it invoked the tool.
-        cx.update(|cx| {
+        let skill_for_render = cx.update(|cx| {
             let snapshot = resolve(cx);
-            let skill = snapshot
+            snapshot
                 .iter()
                 .find(|s| s.name == "my-skill" && !s.disable_model_invocation)
-                .expect("my-skill should be model-invocable");
-            let rendered = render_skill_envelope(skill);
-            assert!(
-                rendered.contains("<skill_content name=\"my-skill\">"),
-                "rendered envelope missing skill_content tag: {rendered}"
-            );
+                .cloned()
+                .expect("my-skill should be model-invocable")
         });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &skill_for_render.skill_file_path)
+            .await
+            .expect("skill body should load");
+        let rendered = render_skill_envelope(&skill_for_render, &body);
+        assert!(
+            rendered.contains("<skill_content name=\"my-skill\">"),
+            "rendered envelope missing skill_content tag: {rendered}"
+        );
     }
 
     /// Subagents must inherit access to the same skills as their parent.

@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use fs::Fs;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::paths::component_matches_ignore_ascii_case;
@@ -46,8 +47,6 @@ pub struct Skill {
     pub directory_path: PathBuf,
     /// Absolute path to the SKILL.md file
     pub skill_file_path: PathBuf,
-    /// The full content of SKILL.md (excluding frontmatter)
-    pub content: String,
     /// When `true`, this skill is hidden from the model's catalog and the
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
@@ -118,12 +117,21 @@ impl std::fmt::Display for SkillLoadError {
 
 impl std::error::Error for SkillLoadError {}
 
-/// Parse a SKILL.md file into a Skill struct.
+/// Parse the frontmatter of a SKILL.md file into a `Skill` struct.
 ///
 /// The file must have YAML frontmatter between `---` delimiters containing
-/// `name` and `description` fields. The content after frontmatter becomes
-/// the skill's instructions.
-pub fn parse_skill(skill_file_path: &Path, content: &str, source: SkillSource) -> Result<Skill> {
+/// `name` and `description` fields. The body (everything after the closing
+/// `---`) is intentionally NOT returned — it's read on demand via
+/// `read_skill_body` when the skill is actually being materialized for the
+/// model, so we don't pay N × body-size in memory for N skills.
+///
+/// `content` only needs to contain bytes up through the closing `---`; any
+/// trailing body bytes are ignored.
+pub fn parse_skill_frontmatter(
+    skill_file_path: &Path,
+    content: &str,
+    source: SkillSource,
+) -> Result<Skill> {
     if content.len() > MAX_SKILL_FILE_SIZE {
         anyhow::bail!(
             "SKILL.md file exceeds maximum size of {}KB",
@@ -131,7 +139,7 @@ pub fn parse_skill(skill_file_path: &Path, content: &str, source: SkillSource) -
         );
     }
 
-    let (metadata, body) = extract_frontmatter(content)?;
+    let (metadata, _body) = extract_frontmatter(content)?;
 
     validate_name(&metadata.name)?;
     validate_description(&metadata.description)?;
@@ -147,7 +155,6 @@ pub fn parse_skill(skill_file_path: &Path, content: &str, source: SkillSource) -
         source,
         directory_path,
         skill_file_path: skill_file_path.to_path_buf(),
-        content: body.trim().to_string(),
         disable_model_invocation: metadata.disable_model_invocation,
     })
 }
@@ -270,7 +277,7 @@ pub async fn load_skills_from_directory(
         .map(|path| {
             let fs = fs.clone();
             let source = source.clone();
-            async move { load_single_skill(fs, path, source).await }
+            async move { load_skill_frontmatter(fs, path, source).await }
         })
         .buffer_unordered(SKILL_IO_CONCURRENCY)
         .collect()
@@ -330,22 +337,68 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
         .await
 }
 
-async fn load_single_skill(
+/// Returns the byte index ONE PAST the end of the closing frontmatter
+/// delimiter line in `bytes`, or `None` if no closing delimiter has been
+/// seen yet. Used by the chunked reader to know when it has enough
+/// bytes to stop pulling from disk.
+///
+/// Scans for the first `\n---` line followed by `\n`, `\r\n`, or EOF
+/// (excluding the opening line itself, which sits at byte 0 and is
+/// naturally skipped because we only consider lines following a `\n`).
+/// This may overshoot in pathological cases (e.g. `---` inside a quoted
+/// YAML string), but `parse_skill_frontmatter`'s candidate-and-validate
+/// logic still produces a correct result or a YAML parse error.
+fn closing_delimiter_end(bytes: &[u8]) -> Option<usize> {
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'\n' {
+            continue;
+        }
+        let line_start = i + 1;
+        if line_start + 3 > bytes.len() {
+            continue;
+        }
+        if &bytes[line_start..line_start + 3] != b"---" {
+            continue;
+        }
+        let after_dashes = line_start + 3;
+        if after_dashes == bytes.len() {
+            return Some(after_dashes);
+        }
+        if bytes[after_dashes] == b'\n' {
+            return Some(after_dashes + 1);
+        }
+        if after_dashes + 1 < bytes.len()
+            && bytes[after_dashes] == b'\r'
+            && bytes[after_dashes + 1] == b'\n'
+        {
+            return Some(after_dashes + 2);
+        }
+        // Line is `---trailing` or `----`; keep scanning.
+    }
+    None
+}
+
+/// Read just enough of `skill_file_path` from disk to parse its
+/// frontmatter. The SKILL.md body is NOT loaded — that's deferred to
+/// `read_skill_body`, called only when a skill is actually being
+/// materialized for the model. Reading in 4KB chunks keeps the peak
+/// memory cost of loading N skills proportional to total frontmatter
+/// size, not total file size.
+pub async fn load_skill_frontmatter(
     fs: Arc<dyn Fs>,
-    path: PathBuf,
+    skill_file_path: PathBuf,
     source: SkillSource,
 ) -> Result<Skill, SkillLoadError> {
-    // Short-circuit on oversized files before loading their contents into
-    // memory, so a stray multi-GB file named `SKILL.md` can't OOM the app.
-    // We only act on a positive signal that the file is too large; if
-    // metadata fails or is unavailable, we fall through to `fs.load`,
-    // which will surface its own error (and `parse_skill` enforces the
-    // same limit as a defense-in-depth backstop).
-    if let Ok(Some(metadata)) = fs.metadata(&path).await
+    // Short-circuit on oversized files before reading any of their
+    // contents, so a stray multi-GB file named `SKILL.md` can't OOM the
+    // app. We only act on a positive signal that the file is too large;
+    // if metadata fails or is unavailable, we fall through to the read
+    // loop, which is itself capped at `MAX_SKILL_FILE_SIZE`.
+    if let Ok(Some(metadata)) = fs.metadata(&skill_file_path).await
         && metadata.len > MAX_SKILL_FILE_SIZE as u64
     {
         return Err(SkillLoadError {
-            path: path.clone(),
+            path: skill_file_path.clone(),
             message: format!(
                 "SKILL.md file exceeds maximum size of {}KB",
                 MAX_SKILL_FILE_SIZE / 1024
@@ -353,15 +406,75 @@ async fn load_single_skill(
         });
     }
 
-    let content = fs.load(&path).await.map_err(|e| SkillLoadError {
-        path: path.clone(),
+    let mut reader = fs
+        .open_sync(&skill_file_path)
+        .await
+        .map_err(|e| SkillLoadError {
+            path: skill_file_path.clone(),
+            message: format!("Failed to open file: {}", e),
+        })?;
+
+    // The chunked read is intentionally synchronous: `Fs::open_sync`
+    // returns a synchronous `Read` (RealFs uses `std::fs::File`), and
+    // production callers already wrap `load_skills_from_directory` in
+    // `cx.background_spawn`, so any blocking happens on the background
+    // executor — not on the foreground thread. Routing through
+    // `smol::unblock` instead would schedule the work on smol's blocking
+    // pool, whose wakeups don't drive GPUI's test scheduler and therefore
+    // panic with "Parking forbidden" under `TestAppContext`.
+    let read_result: Result<Vec<u8>, io::Error> = (|| {
+        let mut accumulated: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = reader.read(&mut chunk)?;
+            if n == 0 {
+                break;
+            }
+            accumulated.extend_from_slice(&chunk[..n]);
+            if closing_delimiter_end(&accumulated).is_some() {
+                break;
+            }
+            if accumulated.len() > MAX_SKILL_FILE_SIZE {
+                break;
+            }
+        }
+        Ok(accumulated)
+    })();
+    let accumulated = read_result.map_err(|e| SkillLoadError {
+        path: skill_file_path.clone(),
         message: format!("Failed to read file: {}", e),
     })?;
 
-    parse_skill(&path, &content, source).map_err(|e| SkillLoadError {
-        path: path.clone(),
+    let content = std::str::from_utf8(&accumulated).map_err(|e| SkillLoadError {
+        path: skill_file_path.clone(),
+        message: format!("SKILL.md is not valid UTF-8: {}", e),
+    })?;
+
+    parse_skill_frontmatter(&skill_file_path, content, source).map_err(|e| SkillLoadError {
+        path: skill_file_path.clone(),
         message: e.to_string(),
     })
+}
+
+/// Read the body of a SKILL.md from disk — everything after the closing
+/// `---`. Called only when a skill is being materialized for the model
+/// (via `SkillTool` or a slash invocation). The body is intentionally
+/// NOT kept in memory between materializations.
+pub async fn read_skill_body(
+    fs: &dyn Fs,
+    skill_file_path: &Path,
+) -> Result<String, SkillLoadError> {
+    let content = fs.load(skill_file_path).await.map_err(|e| SkillLoadError {
+        path: skill_file_path.to_path_buf(),
+        message: format!("Failed to read file: {}", e),
+    })?;
+
+    let (_metadata, body) = extract_frontmatter(&content).map_err(|e| SkillLoadError {
+        path: skill_file_path.to_path_buf(),
+        message: e.to_string(),
+    })?;
+
+    Ok(body.trim().to_string())
 }
 
 /// Returns the global skills directory: `~/.agents/skills`.
@@ -440,7 +553,7 @@ description: A test skill for testing purposes
 Do the thing.
 "#;
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/my-skill/SKILL.md"),
             content,
             SkillSource::Global,
@@ -450,8 +563,6 @@ Do the thing.
         assert_eq!(skill.name, "my-skill");
         assert_eq!(skill.description, "A test skill for testing purposes");
         assert_eq!(skill.directory_path, Path::new("/skills/my-skill"));
-        assert!(skill.content.contains("# My Skill"));
-        assert!(skill.content.contains("Do the thing."));
         // Default: skill is invocable by both model and user.
         assert!(!skill.disable_model_invocation);
     }
@@ -467,7 +578,7 @@ disable-model-invocation: true
 Steps to deploy.
 "#;
 
-        let skill = parse_skill(
+        let skill = parse_skill_frontmatter(
             Path::new("/skills/deploy/SKILL.md"),
             content,
             SkillSource::Global,
@@ -487,7 +598,7 @@ disable-model-invocation: false
 Help.
 "#;
 
-        let skill = parse_skill(
+        let skill = parse_skill_frontmatter(
             Path::new("/skills/helper/SKILL.md"),
             content,
             SkillSource::Global,
@@ -500,7 +611,7 @@ Help.
     fn test_parse_missing_frontmatter() {
         let content = "# My Skill\n\nNo frontmatter here.";
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -522,7 +633,7 @@ description: Test
 # No closing delimiter
 "#;
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -545,7 +656,7 @@ description: Test
         // delimiter" — the closer is right there.
         let content = "---\n---\nbody\n";
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -577,7 +688,7 @@ description: A test skill
 Content here.
 "#;
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -603,7 +714,7 @@ name: test-skill
 Content here.
 "#;
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -633,7 +744,7 @@ Content.
 "#
         );
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             &content,
             SkillSource::Global,
@@ -657,7 +768,7 @@ description: Test
 Content.
 "#;
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -684,7 +795,7 @@ Content.
 "#
         );
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             &content,
             SkillSource::Global,
@@ -708,7 +819,7 @@ description: ""
 Content.
 "#;
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -729,7 +840,7 @@ description: Test skill
             "x".repeat(MAX_SKILL_FILE_SIZE + 1)
         );
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             &large_content,
             SkillSource::Global,
@@ -746,7 +857,7 @@ description: A skill with no body content
 ---
 "#;
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/minimal/SKILL.md"),
             content,
             SkillSource::Global,
@@ -755,28 +866,27 @@ description: A skill with no body content
         let skill = result.expect("Empty body should be allowed");
         assert_eq!(skill.name, "minimal-skill");
         assert_eq!(skill.description, "A skill with no body content");
-        assert!(skill.content.is_empty() || skill.content.trim().is_empty());
     }
 
     #[test]
     fn test_parse_whitespace_only_body() {
         let content = "---\nname: whitespace-skill\ndescription: Test\n---\n\n   \n\n   \n";
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/ws/SKILL.md"),
             content,
             SkillSource::Global,
         );
 
         let skill = result.expect("Whitespace-only body should be allowed");
-        assert!(skill.content.trim().is_empty());
+        assert_eq!(skill.name, "whitespace-skill");
     }
 
     #[test]
     fn test_parse_skill_with_crlf_line_endings() {
         let content = "---\r\nname: crlf-skill\r\ndescription: A skill with CRLF line endings\r\n---\r\n\r\n# CRLF Skill\r\n\r\nDo the thing.\r\n";
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/crlf-skill/SKILL.md"),
             content,
             SkillSource::Global,
@@ -785,15 +895,13 @@ description: A skill with no body content
 
         assert_eq!(skill.name, "crlf-skill");
         assert_eq!(skill.description, "A skill with CRLF line endings");
-        assert!(skill.content.contains("# CRLF Skill"));
-        assert!(skill.content.contains("Do the thing."));
     }
 
     #[test]
     fn test_parse_skill_with_mixed_line_endings() {
         let content = "---\r\nname: mixed-skill\r\ndescription: Frontmatter uses CRLF, body uses LF\r\n---\r\n\n# Mixed Skill\n\nBody uses LF only.\n";
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/mixed-skill/SKILL.md"),
             content,
             SkillSource::Global,
@@ -802,8 +910,6 @@ description: A skill with no body content
 
         assert_eq!(skill.name, "mixed-skill");
         assert_eq!(skill.description, "Frontmatter uses CRLF, body uses LF");
-        assert!(skill.content.contains("# Mixed Skill"));
-        assert!(skill.content.contains("Body uses LF only."));
     }
 
     #[test]
@@ -812,7 +918,7 @@ description: A skill with no body content
         // so it isn't a valid closing delimiter and parsing must error.
         let content = "---\nname: foo\ndescription: bar\n---trailing-junk\nbody content\n";
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -833,7 +939,7 @@ description: A skill with no body content
         // The real closer comes later as `\n---\n`.
         let content = "---\nname: skill-name\ndescription: A real description\nsummary: \"---trailing\"\n---\nbody content\n";
 
-        let skill = parse_skill(
+        let skill = parse_skill_frontmatter(
             Path::new("/skills/skill-name/SKILL.md"),
             content,
             SkillSource::Global,
@@ -842,7 +948,6 @@ description: A skill with no body content
 
         assert_eq!(skill.name, "skill-name");
         assert_eq!(skill.description, "A real description");
-        assert_eq!(skill.content, "body content");
     }
 
     #[test]
@@ -851,7 +956,7 @@ description: A skill with no body content
         // valid closer following, parsing must error.
         let content = "---\nname: foo\ndescription: bar\n----\nbody content\n";
 
-        let result = parse_skill(
+        let result = parse_skill_frontmatter(
             Path::new("/skills/test/SKILL.md"),
             content,
             SkillSource::Global,
@@ -903,7 +1008,6 @@ description: A skill with no body content
         let skill = results[0].as_ref().expect("Should load successfully");
         assert_eq!(skill.name, "my-skill");
         assert_eq!(skill.description, "Test skill");
-        assert!(skill.content.contains("# Instructions"));
     }
 
     #[gpui::test]
@@ -1073,7 +1177,6 @@ description: A skill with no body content
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/test-skill"),
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
-            content: "Instructions here".to_string(),
             disable_model_invocation: false,
         };
 
@@ -1153,6 +1256,83 @@ description: A skill with no body content
             "unexpected error message: {}",
             err.message
         );
+    }
+
+    #[gpui::test]
+    async fn test_load_skill_frontmatter_parses_metadata_without_body(cx: &mut TestAppContext) {
+        // `load_skill_frontmatter` should read just enough of the file to
+        // parse the frontmatter and return a `Skill` with name/description/
+        // disable_model_invocation populated. The body is intentionally not
+        // surfaced; callers go through `read_skill_body` for that.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "my-skill": {
+                    "SKILL.md": "---\nname: my-skill\ndescription: A skill for tests\ndisable-model-invocation: true\n---\n\n# Body\n\nLots of body text here.\n"
+                }
+            }),
+        )
+        .await;
+
+        let skill = load_skill_frontmatter(
+            fs as Arc<dyn Fs>,
+            PathBuf::from("/skills/my-skill/SKILL.md"),
+            SkillSource::Global,
+        )
+        .await
+        .expect("frontmatter should parse");
+
+        assert_eq!(skill.name, "my-skill");
+        assert_eq!(skill.description, "A skill for tests");
+        assert!(skill.disable_model_invocation);
+        assert_eq!(
+            skill.skill_file_path,
+            PathBuf::from("/skills/my-skill/SKILL.md")
+        );
+        assert_eq!(skill.directory_path, PathBuf::from("/skills/my-skill"));
+    }
+
+    #[gpui::test]
+    async fn test_read_skill_body_returns_trimmed_body(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "my-skill": {
+                    "SKILL.md": "---\nname: my-skill\ndescription: Test skill\n---\n\n# Instructions\n\nDo the thing.\n\n"
+                }
+            }),
+        )
+        .await;
+
+        let body = read_skill_body(fs.as_ref(), Path::new("/skills/my-skill/SKILL.md"))
+            .await
+            .expect("body should load");
+
+        // Trimmed: no leading blank line after the closing `---`, and no
+        // trailing whitespace.
+        assert_eq!(body, "# Instructions\n\nDo the thing.");
+    }
+
+    #[gpui::test]
+    async fn test_read_skill_body_for_skill_without_body(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "empty": {
+                    "SKILL.md": "---\nname: empty\ndescription: No body\n---\n"
+                }
+            }),
+        )
+        .await;
+
+        let body = read_skill_body(fs.as_ref(), Path::new("/skills/empty/SKILL.md"))
+            .await
+            .expect("body should load");
+
+        assert!(body.is_empty(), "expected empty body, got: {body:?}");
     }
 
     #[test]
