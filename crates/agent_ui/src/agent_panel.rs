@@ -2171,17 +2171,50 @@ impl AgentPanel {
                 if this.ephemeral_draft_thread_id(cx) == Some(thread_id) {
                     return;
                 }
-                if !this.active_thread_is_draft(cx) {
-                    return;
-                }
                 if this.active_thread_id(cx) != Some(thread_id) {
                     return;
                 }
-                this.turn_into_ephemeral_draft(cv.clone(), cx);
-                this._active_draft_reclaim_observation = None;
-                cx.emit(AgentPanelEvent::EntryChanged);
-                cx.notify();
+                if this.reclaim_empty_draft_as_ephemeral(cv.clone(), cx) {
+                    this._active_draft_reclaim_observation = None;
+                    cx.emit(AgentPanelEvent::EntryChanged);
+                    cx.notify();
+                }
             }));
+    }
+
+    fn reclaim_empty_draft_as_ephemeral(
+        &mut self,
+        conversation_view: Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (thread_id, is_draft, is_empty) = {
+            let conversation = conversation_view.read(cx);
+            let thread_id = conversation.thread_id;
+            let is_draft = conversation
+                .root_thread(cx)
+                .is_some_and(|thread| thread.read(cx).is_draft_thread());
+            let is_empty = if let Some(thread_view) = conversation.active_thread() {
+                thread_view
+                    .read(cx)
+                    .message_editor
+                    .read(cx)
+                    .text(cx)
+                    .trim()
+                    .is_empty()
+            } else {
+                !self.draft_has_content(&conversation_view, cx)
+            };
+
+            (thread_id, is_draft, is_empty)
+        };
+
+        if !is_draft || !is_empty {
+            return false;
+        }
+
+        self.retained_threads.remove(&thread_id);
+        self.turn_into_ephemeral_draft(conversation_view, cx);
+        true
     }
 
     /// Moves a conversation view into the ephemeral `draft_thread` slot,
@@ -2204,6 +2237,7 @@ impl AgentPanel {
         }
         self.draft_thread = Some(conversation_view.clone());
         self.observe_draft_editor(&conversation_view, cx);
+        self.serialize(cx);
     }
 
     pub fn activate_retained_thread(
@@ -2214,14 +2248,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let conversation_view = if let Some(view) = self.retained_threads.remove(&id) {
-            let is_draft_thread = view
-                .read(cx)
-                .root_thread(cx)
-                .is_some_and(|t| t.read(cx).is_draft_thread());
-            let is_draft_empty = !self.draft_has_content(&view, cx);
-            if is_draft_thread && is_draft_empty {
-                self.turn_into_ephemeral_draft(view.clone(), cx);
-            }
+            self.reclaim_empty_draft_as_ephemeral(view.clone(), cx);
             view
         } else if let Some(draft) = &self.draft_thread {
             if draft.read(cx).thread_id == id {
@@ -3137,6 +3164,7 @@ impl AgentPanel {
                 Some(cx.observe_in(&cv, window, |this, server_view, window, cx| {
                     this._thread_view_subscription =
                         Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                    this.setup_active_draft_reclaim(&server_view, cx);
                     cx.emit(AgentPanelEvent::ActiveViewChanged);
                     this.serialize(cx);
                     cx.notify();
@@ -3324,14 +3352,7 @@ impl AgentPanel {
             return;
         }
         if let Some(conversation_view) = self.retained_threads.remove(&thread_id) {
-            let is_empty_draft = conversation_view
-                .read(cx)
-                .root_thread(cx)
-                .is_some_and(|t| t.read(cx).is_draft_thread())
-                && !self.draft_has_content(&conversation_view, cx);
-            if is_empty_draft {
-                self.turn_into_ephemeral_draft(conversation_view.clone(), cx);
-            }
+            self.reclaim_empty_draft_as_ephemeral(conversation_view.clone(), cx);
             self.set_base_view(
                 BaseView::AgentThread { conversation_view },
                 focus,
