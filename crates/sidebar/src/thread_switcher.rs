@@ -32,6 +32,7 @@ pub(crate) struct ThreadSwitcherTerminalEntry {
     pub title: SharedString,
     pub workspace: Entity<Workspace>,
     pub project_name: Option<SharedString>,
+    pub worktrees: Vec<ThreadItemWorktreeInfo>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub notified: bool,
     pub timestamp: SharedString,
@@ -118,7 +119,7 @@ impl ThreadSwitcherEntry {
     fn worktrees(&self) -> Vec<ThreadItemWorktreeInfo> {
         match self {
             Self::Thread(entry) => entry.worktrees.clone(),
-            Self::Terminal(_) => Vec::new(),
+            Self::Terminal(entry) => entry.worktrees.clone(),
         }
     }
 

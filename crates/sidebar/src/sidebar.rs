@@ -237,6 +237,7 @@ struct TerminalEntry {
     id: TerminalId,
     title: SharedString,
     workspace: Entity<Workspace>,
+    worktrees: Vec<ThreadItemWorktreeInfo>,
     created_at: DateTime<Utc>,
     has_notification: bool,
     highlight_positions: Vec<usize>,
@@ -541,6 +542,16 @@ fn apply_worktree_label_mode(
         }
     }
     worktrees
+}
+
+fn terminal_worktree_info<S: std::hash::BuildHasher>(
+    workspace: &Entity<Workspace>,
+    branch_by_path: &HashMap<PathBuf, SharedString, S>,
+    cx: &App,
+) -> Vec<ThreadItemWorktreeInfo> {
+    let project = workspace.read(cx).project().clone();
+    let worktree_paths = project.read(cx).worktree_paths(cx);
+    worktree_info_from_thread_paths(&worktree_paths, branch_by_path)
 }
 
 /// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
@@ -1196,7 +1207,9 @@ impl Sidebar {
             let group_workspaces = &group.workspaces;
             let terminals: Vec<TerminalEntry> = group_workspaces
                 .iter()
-                .flat_map(|workspace| terminal_entries_for_workspace(workspace, cx))
+                .flat_map(|workspace| {
+                    terminal_entries_for_workspace(workspace, &branch_by_path, cx)
+                })
                 .collect();
             current_terminal_ids.extend(terminals.iter().map(|terminal| terminal.id));
             notified_terminals.extend(
@@ -1483,7 +1496,17 @@ impl Sidebar {
                         terminal.highlight_positions = positions;
                         terminal_matched = true;
                     }
-                    if workspace_matched || terminal_matched {
+                    let mut worktree_matched = false;
+                    for worktree in &mut terminal.worktrees {
+                        let Some(name) = worktree.worktree_name.as_ref() else {
+                            continue;
+                        };
+                        if let Some(positions) = fuzzy_match_positions(&query, name) {
+                            worktree.highlight_positions = positions;
+                            worktree_matched = true;
+                        }
+                    }
+                    if workspace_matched || terminal_matched || worktree_matched {
                         matched_terminals.push(terminal);
                     }
                 }
@@ -4036,6 +4059,15 @@ impl Sidebar {
                         title: terminal.title.clone(),
                         workspace: terminal.workspace.clone(),
                         project_name: current_header_label.clone(),
+                        worktrees: terminal
+                            .worktrees
+                            .iter()
+                            .cloned()
+                            .map(|mut wt| {
+                                wt.highlight_positions = Vec::new();
+                                wt
+                            })
+                            .collect(),
                         created_at: terminal.created_at,
                         notified: self.contents.is_terminal_notified(terminal.id),
                         timestamp,
@@ -4459,10 +4491,15 @@ impl Sidebar {
         let terminal_id = terminal.id;
         let workspace = terminal.workspace.clone();
         let focus_handle = self.focus_handle.clone();
+        let worktrees = apply_worktree_label_mode(
+            terminal.worktrees.clone(),
+            cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
+        );
 
         ThreadItem::new(id, terminal.title.clone())
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
+            .worktrees(worktrees)
             .timestamp(timestamp)
             .notified(terminal.has_notification)
             .highlight_positions(terminal.highlight_positions.clone())
@@ -5579,8 +5616,9 @@ impl Render for Sidebar {
     }
 }
 
-fn terminal_entries_for_workspace(
+fn terminal_entries_for_workspace<S: std::hash::BuildHasher>(
     workspace: &Entity<Workspace>,
+    branch_by_path: &HashMap<PathBuf, SharedString, S>,
     cx: &App,
 ) -> impl Iterator<Item = TerminalEntry> {
     if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
@@ -5589,19 +5627,17 @@ fn terminal_entries_for_workspace(
     let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
         return None.into_iter().flatten();
     };
-    let terminals =
-        agent_panel
-            .read(cx)
-            .terminals(cx)
-            .into_iter()
-            .map(|terminal: AgentPanelTerminalInfo| TerminalEntry {
-                id: terminal.id,
-                title: terminal.title,
-                workspace: workspace.clone(),
-                created_at: terminal.created_at,
-                has_notification: terminal.has_notification,
-                highlight_positions: Vec::new(),
-            });
+    let terminals = agent_panel.read(cx).terminals(cx).into_iter().map(
+        move |terminal: AgentPanelTerminalInfo| TerminalEntry {
+            id: terminal.id,
+            title: terminal.title,
+            workspace: workspace.clone(),
+            worktrees: terminal_worktree_info(workspace, branch_by_path, cx),
+            created_at: terminal.created_at,
+            has_notification: terminal.has_notification,
+            highlight_positions: Vec::new(),
+        },
+    );
 
     Some(terminals).into_iter().flatten()
 }
