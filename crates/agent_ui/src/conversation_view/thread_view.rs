@@ -443,10 +443,12 @@ impl ThreadView {
         let title_editor = {
             let metadata = ThreadMetadataStore::try_global(cx)
                 .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
-            let initial_title = metadata
-                .as_ref()
-                .and_then(|m| m.title())
-                .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
+            let initial_title = if parent_session_id.is_none() {
+                metadata.as_ref().and_then(|m| m.title())
+            } else {
+                thread.read(cx).title()
+            }
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_text(initial_title, window, cx);
