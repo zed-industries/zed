@@ -389,11 +389,9 @@ impl State {
     }
 
     fn get_guardrail_config(&self) -> (Option<String>, Option<String>) {
-        self.settings
-            .as_ref()
-            .map_or((None, None), |s| {
-                (s.guardrail_identifier.clone(), s.guardrail_version.clone())
-            })
+        self.settings.as_ref().map_or((None, None), |s| {
+            (s.guardrail_identifier.clone(), s.guardrail_version.clone())
+        })
     }
 }
 
