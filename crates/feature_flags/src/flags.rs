@@ -40,10 +40,6 @@ pub struct ExperimentalSystemPromptFeatureFlag;
 impl FeatureFlag for ExperimentalSystemPromptFeatureFlag {
     const NAME: &'static str = "experimental-system-prompt";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 register_feature_flag!(ExperimentalSystemPromptFeatureFlag);
 
