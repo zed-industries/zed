@@ -2062,12 +2062,22 @@ impl AgentPanel {
                 BaseView::AgentThread { conversation_view }
                     if conversation_view.entity_id() == draft_entity
             );
+
             if agent_matches || has_editor_content || !draft_is_active {
                 return draft.clone();
             }
+
+            // Clean up the old empty draft's metadata so it doesn't
+            // linger as a ghost entry in the sidebar.
+            let old_draft_id = draft.read(cx).thread_id;
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.delete(old_draft_id, cx);
+            });
+
             self.draft_thread = None;
             self._draft_editor_observation = None;
         }
+
         let thread = self.create_agent_thread_with_server(
             desired_agent,
             None,
@@ -2079,6 +2089,7 @@ impl AgentPanel {
             window,
             cx,
         );
+
         self.draft_thread = Some(thread.conversation_view.clone());
         self.observe_draft_editor(&thread.conversation_view, cx);
         thread.conversation_view
