@@ -42,7 +42,7 @@ use crate::{
     ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
-    ui::EndTrialUpsell,
+    ui::{AgentNotification, AgentNotificationEvent, EndTrialUpsell},
 };
 use crate::{
     Agent, AgentInitialContent, ExternalSourcePrompt, NewExternalAgentThread,
@@ -51,6 +51,8 @@ use crate::{
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::Result;
+#[cfg(feature = "audio")]
+use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
@@ -62,8 +64,9 @@ use feature_flags::{AgentPanelTerminalFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription,
-    Task, TaskExt, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
+    PlatformDisplay, Subscription, Task, TaskExt, UpdateGlobal, WeakEntity, WindowHandle,
+    prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -71,7 +74,7 @@ use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
-use settings::{Settings, update_settings_file};
+use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
@@ -81,7 +84,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
+    CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
     ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemEvent,
@@ -691,6 +694,8 @@ struct AgentTerminal {
     last_known_title: String,
     created_at: DateTime<Utc>,
     has_notification: bool,
+    notification_windows: Vec<WindowHandle<AgentNotification>>,
+    notification_subscriptions: Vec<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1459,6 +1464,8 @@ impl AgentPanel {
             last_known_title: String::new(),
             created_at: Utc::now(),
             has_notification: false,
+            notification_windows: Vec::new(),
+            notification_subscriptions: Vec::new(),
             _subscriptions: vec![view_subscription, terminal_subscription],
         };
         self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal, cx);
@@ -1486,6 +1493,9 @@ impl AgentPanel {
         };
         let had_notification = terminal.has_notification;
         terminal.has_notification = false;
+        if had_notification {
+            self.dismiss_terminal_notifications(terminal_id, cx);
+        }
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         if had_notification {
             cx.emit(AgentPanelEvent::EntryChanged);
@@ -1501,6 +1511,7 @@ impl AgentPanel {
     ) {
         let was_active = self.active_terminal_id() == Some(terminal_id);
 
+        self.dismiss_terminal_notifications(terminal_id, cx);
         if self.terminals.remove(&terminal_id).is_none() {
             return;
         }
@@ -1675,13 +1686,188 @@ impl AgentPanel {
         if user_is_looking {
             return;
         }
+        let newly_notified = {
+            let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+                return;
+            };
+            if terminal.has_notification {
+                false
+            } else {
+                terminal.has_notification = true;
+                true
+            }
+        };
+        if newly_notified {
+            cx.emit(AgentPanelEvent::EntryChanged);
+            cx.notify();
+            #[cfg(feature = "audio")]
+            self.play_terminal_notification_sound(cx);
+            self.show_terminal_notification(terminal_id, window, cx);
+        }
+    }
+
+    fn show_terminal_notification(
+        &mut self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(terminal) = self.terminals.get(&terminal_id) else {
+            return;
+        };
+        if !terminal.notification_windows.is_empty() {
+            return;
+        }
+        let title = terminal.display_title(cx);
+        let settings = AgentSettings::get_global(cx);
+        match settings.notify_when_agent_waiting {
+            NotifyWhenAgentWaiting::PrimaryScreen => {
+                if let Some(primary) = cx.primary_display() {
+                    self.pop_up_terminal_notification(terminal_id, &title, primary, window, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::AllScreens => {
+                for screen in cx.displays() {
+                    self.pop_up_terminal_notification(terminal_id, &title, screen, window, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::Never => {}
+        }
+    }
+
+    fn pop_up_terminal_notification(
+        &mut self,
+        terminal_id: TerminalId,
+        title: &SharedString,
+        screen: Rc<dyn PlatformDisplay>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let options = AgentNotification::window_options(screen, cx);
+        let project_name = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).root_name_str().to_string())
+        });
+        let title = title.clone();
+        let Ok(screen_window) = cx.open_window(options, |_window, cx| {
+            cx.new(|_cx| AgentNotification::new(title, None, IconName::Terminal, project_name))
+        }) else {
+            return;
+        };
+        let Ok(pop_up) = screen_window.entity(cx) else {
+            return;
+        };
+
+        let event_subscription = cx.subscribe_in(&pop_up, window, {
+            move |this, _, event: &AgentNotificationEvent, window, cx| match event {
+                AgentNotificationEvent::Accepted => {
+                    cx.activate(true);
+                    window.activate_window();
+                    this.activate_terminal(terminal_id, true, window, cx);
+                    this.dismiss_terminal_notifications(terminal_id, cx);
+                }
+                AgentNotificationEvent::Dismissed => {
+                    this.dismiss_terminal_notifications(terminal_id, cx);
+                }
+            }
+        });
+
+        let pop_up_weak = pop_up.downgrade();
+        let window_activation_subscription = cx.observe_window_activation(window, {
+            let pop_up_weak = pop_up_weak.clone();
+            move |this, window, cx| {
+                this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+            }
+        });
+
+        let multi_workspace_subscription = window.root::<MultiWorkspace>().flatten().map(|mw| {
+            cx.observe_in(&mw, window, move |this, _, window, cx| {
+                this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+            })
+        });
+
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            screen_window
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+            return;
+        };
+        terminal.notification_windows.push(screen_window);
+        terminal.notification_subscriptions.push(event_subscription);
+        terminal
+            .notification_subscriptions
+            .push(window_activation_subscription);
+        if let Some(subscription) = multi_workspace_subscription {
+            terminal.notification_subscriptions.push(subscription);
+        }
+    }
+
+    fn dismiss_terminal_notifications(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
-        if !terminal.has_notification {
-            terminal.has_notification = true;
-            cx.emit(AgentPanelEvent::EntryChanged);
-            cx.notify();
+        let windows = std::mem::take(&mut terminal.notification_windows);
+        terminal.notification_subscriptions.clear();
+        for window in windows {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+        }
+    }
+
+    fn terminal_visible_to_user(&self, terminal_id: TerminalId, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
+        }
+        if self.active_terminal_id() != Some(terminal_id) {
+            return false;
+        }
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+            let multi_workspace = multi_workspace.read(cx);
+            if multi_workspace.sidebar_open() {
+                return true;
+            }
+            if multi_workspace.workspace() != &workspace {
+                return false;
+            }
+        }
+        AgentPanel::is_visible(&workspace, cx)
+    }
+
+    fn dismiss_terminal_pop_up_if_visible(
+        &mut self,
+        terminal_id: TerminalId,
+        pop_up: &WeakEntity<AgentNotification>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.terminal_visible_to_user(terminal_id, window, cx) {
+            return;
+        }
+        if let Some(pop_up) = pop_up.upgrade() {
+            pop_up.update(cx, |notification, cx| {
+                notification.dismiss(cx);
+            });
+        }
+    }
+
+    #[cfg(feature = "audio")]
+    fn play_terminal_notification_sound(&self, cx: &mut App) {
+        // We only reach this when the user isn't looking at the terminal,
+        // so it is effectively hidden — only `Never` suppresses the sound.
+        let settings = AgentSettings::get_global(cx);
+        if settings.play_sound_when_agent_done.should_play(false) {
+            Audio::play_sound(Sound::AgentDone, cx);
         }
     }
 
@@ -3348,7 +3534,7 @@ impl AgentPanel {
                         div()
                             .id("terminal-title")
                             .flex_1()
-                            .cursor_pointer()
+                            .cursor_text()
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.edit_terminal_title(terminal_id, window, cx);
                             }))
@@ -4474,7 +4660,6 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Instant;
-    use workspace::MultiWorkspace;
 
     #[derive(Clone, Default)]
     struct SessionTrackingConnection {

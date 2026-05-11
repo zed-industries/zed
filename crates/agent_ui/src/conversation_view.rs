@@ -2594,7 +2594,7 @@ impl ConversationView {
         if let Some(screen_window) = cx
             .open_window(options, |_window, cx| {
                 cx.new(|_cx| {
-                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                    AgentNotification::new(title.clone(), Some(caption.clone()), icon, project_name)
                 })
             })
             .log_err()
