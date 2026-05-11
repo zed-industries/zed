@@ -608,10 +608,15 @@ fn run() -> Result<()> {
         .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
 
     for path in args.diff.chunks(2) {
-        diff_paths.push([
-            parse_path_with_position(&path[0])?,
-            parse_path_with_position(&path[1])?,
-        ]);
+        let left = parse_path_with_position(&path[0])?;
+        let right = parse_path_with_position(&path[1])?;
+        for diff_path in [&left, &right] {
+            anyhow::ensure!(
+                Path::new(diff_path).exists(),
+                "--diff path does not exist: {diff_path}"
+            );
+        }
+        diff_paths.push([left, right]);
     }
 
     let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
