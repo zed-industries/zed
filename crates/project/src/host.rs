@@ -49,20 +49,33 @@ use crate::{
 /// Identifies a "machine" for purposes of `Host` deduplication. Two
 /// `Project`s with the same `HostKey` share a single `Entity<Host>`.
 ///
-/// - `Local`: there's exactly one local machine; all `Project::local`
-///   calls in the same `App` share a `Host`.
+/// - `Local(fs_identity)`: keyed on the `Arc<dyn Fs>` pointer. In
+///   production there's a single `RealFs` shared across the app, so
+///   all `Project::local` calls dedupe. In tests each invocation
+///   typically constructs a fresh `FakeFs`, which gives each test
+///   project its own `Host` (correct — distinct test fixtures
+///   shouldn't conflate machine state). Tests that want to exercise
+///   actual sharing pass the same `Arc<dyn Fs>` to multiple
+///   `Project::local` calls (which collab's `TestClient` already
+///   does).
 /// - `Remote(EntityId)`: keyed on the `RemoteClient`'s entity id.
 ///   Two `Project::remote` calls referencing the same `RemoteClient`
 ///   share a `Host`; calls referencing different `RemoteClient`s do
 ///   not.
-/// - `Collab(remote_id)`: keyed on the joined collab project's
-///   `remote_id`. Two `Project::from_join_project_response` calls for
-///   the same shared project share a `Host`.
+/// - `Collab(remote_id)`: kept for completeness; collab joins do not
+///   dedupe (see `Host::collab`).
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub enum HostKey {
-    Local,
+    Local(usize),
     Remote(EntityId),
     Collab(u64),
+}
+
+impl HostKey {
+    /// Computes the `Local` key from an `Arc<dyn Fs>` by its address.
+    pub fn local_for_fs(fs: &Arc<dyn Fs>) -> Self {
+        Self::Local(Arc::as_ptr(fs) as *const () as usize)
+    }
 }
 
 /// Global registry that maps a `HostKey` to a weak handle on the live
@@ -203,7 +216,8 @@ impl Host {
         watch_global_configs: bool,
         cx: &mut App,
     ) -> Entity<Self> {
-        HostRegistry::get_or_build(cx, HostKey::Local, move |cx| {
+        let key = HostKey::local_for_fs(&fs);
+        HostRegistry::get_or_build(cx, key, move |cx| {
             Self::build_local(
                 client,
                 node,

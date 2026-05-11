@@ -295,6 +295,17 @@ pub struct Project {
     /// `StartLanguageServer`/`RefreshInlayHints`/etc. broadcasts from
     /// each tenant Project.
     language_servers: HashSet<LanguageServerId>,
+    /// Paths this Project has requested via `find_or_create_worktree`
+    /// or `create_worktree` whose worktree-creation is still in flight.
+    /// Consulted by `on_worktree_store_event::WorktreeAdded` to claim a
+    /// just-added visible worktree synchronously — critical because
+    /// downstream events fired by other host stores (notably
+    /// `GitStore::RepositoryAdded`) race against the
+    /// `find_or_create_worktree` continuation that would otherwise be
+    /// the only place visible worktrees get claimed. Pruned by the
+    /// continuation; the event handler doesn't prune (so a duplicate
+    /// add for the same path remains claimable).
+    pending_worktree_paths: HashSet<Arc<Path>>,
     /// Drives the context server maintain loop on this Project's behalf.
     /// Set when a refresh is in flight; cleared when the spawned task
     /// completes. Lives on `Project` (not `ContextServerStore`) so that
@@ -1337,6 +1348,7 @@ impl Project {
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
                 language_servers: HashSet::default(),
+                pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             }
@@ -1455,6 +1467,7 @@ impl Project {
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
                 language_servers: HashSet::default(),
+                pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -1708,6 +1721,7 @@ impl Project {
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
                 language_servers: HashSet::default(),
+                pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
             };
@@ -1953,6 +1967,9 @@ impl Project {
         );
         self.worktree_store(cx)
             .update(cx, |store, cx| store.add(&worktree, cx));
+        // Phase 2 sharing: event handler no longer auto-claims; claim
+        // explicitly so `self.worktrees` reflects the new worktree.
+        self.claim_found_worktree(&worktree, cx);
         worktree
     }
 
@@ -2339,8 +2356,26 @@ impl Project {
     }
 
     pub fn default_path_list(&self, cx: &App) -> PathList {
-        let worktree_roots =
-            Self::default_visible_worktree_paths(&self.worktree_store(cx).read(cx), cx);
+        // Use this Project's visible worktrees, not the host store's
+        // full set: in Phase 2 sharing the host may contain sibling
+        // Projects' worktrees that aren't part of our path list.
+        let worktree_roots: Vec<PathBuf> = self
+            .visible_worktrees(cx)
+            .sorted_by(|left, right| {
+                left.read(cx)
+                    .is_single_file()
+                    .cmp(&right.read(cx).is_single_file())
+            })
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let path = worktree.abs_path();
+                if worktree.is_single_file() {
+                    Some(path.parent()?.to_path_buf())
+                } else {
+                    Some(path.to_path_buf())
+                }
+            })
+            .collect();
 
         if worktree_roots.is_empty() {
             PathList::new(&[paths::home_dir().as_path()])
@@ -4268,20 +4303,44 @@ impl Project {
     ) {
         match event {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
-                // Pin the new worktree on the project side. Visible worktrees
-                // are always strong; invisible worktrees are strong only
-                // while we're collab-sharing (so they outlive their sole
-                // external user).
+                // In Phase 2 sharing the same `WorktreeStore` serves
+                // multiple `Project`s. Ownership rules:
                 //
-                // Idempotent: `set_worktrees_from_proto` may already have
-                // pushed this worktree before the queued event fires.
+                // - VISIBLE worktrees correspond to user-opened
+                //   workspaces. Each is owned by exactly one Project
+                //   (the one whose `find_or_create_worktree` /
+                //   `create_worktree` / `add_worktree` initiated it).
+                //   The initiating call site claims explicitly; this
+                //   handler does NOT auto-claim visible worktrees, so a
+                //   sibling Project opening its own visible worktree
+                //   doesn't leak into ours.
+                //
+                // - INVISIBLE worktrees are typically created by host
+                //   stores (e.g. `LspStore::open_local_buffer_via_lsp`
+                //   when a Go-to-Definition crosses into an external
+                //   file). These don't have a clean "initiator Project"
+                //   because the host store doesn't know which Project's
+                //   request triggered them. Auto-claim them so they
+                //   appear in the Project's view; in shared-Host
+                //   multi-tenant scenarios every Project will claim,
+                //   which matches the "visible to all" semantics that
+                //   already applied in Phase 1.
                 let already_owned = self.worktrees.iter().any(|handle| {
                     handle
                         .upgrade()
                         .is_some_and(|w| w.entity_id() == worktree.entity_id())
                 });
                 if !already_owned {
-                    let push_strong = self.retain_worktrees || worktree.read(cx).is_visible();
+                    let snapshot = worktree.read(cx);
+                    let is_visible = snapshot.is_visible();
+                    let abs_path = snapshot.abs_path();
+                    let was_pending = self.pending_worktree_paths.contains(&abs_path);
+                    if is_visible && !was_pending {
+                        // A sibling Project on a shared `WorktreeStore`
+                        // added its own visible worktree; don't claim.
+                        return;
+                    }
+                    let push_strong = self.retain_worktrees || is_visible;
                     let handle = if push_strong {
                         WorktreeHandle::Strong(worktree.clone())
                     } else {
@@ -4289,7 +4348,6 @@ impl Project {
                     };
                     self.worktrees.push(handle);
                 }
-
                 self.on_worktree_added(worktree, cx);
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
                 self.emit_group_key_changed_if_needed(cx);
@@ -5244,9 +5302,76 @@ impl Project {
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<Worktree>, Arc<RelPath>)>> {
+        let path_arc: Arc<Path> = Arc::from(abs_path.as_ref());
+        // Mark the path as "this Project's pending worktree creation"
+        // so the `WorktreeAdded` event handler can claim synchronously
+        // when the worktree-creation case fires `WorktreeAdded`.
+        self.pending_worktree_paths.insert(path_arc.clone());
+        // If the store can satisfy the request immediately from an
+        // existing worktree (no `WorktreeAdded` event will fire for
+        // us), claim it here. In Phase 2 sharing this is how we pick
+        // up a sibling Project's worktree at the same path.
+        if let Some((worktree, _)) = self.find_worktree(abs_path.as_ref(), cx) {
+            self.pending_worktree_paths.remove(&path_arc);
+            self.claim_found_worktree(&worktree, cx);
+        }
         self.worktree_store(cx).update(cx, |worktree_store, cx| {
             worktree_store.find_or_create_worktree(abs_path, visible, cx)
         })
+    }
+
+    /// Idempotent counterpart to the `WorktreeAdded` event handler:
+    /// adds `worktree` to `self.worktrees` and runs the same side
+    /// effects (`on_worktree_added`, `Event::WorktreeAdded` emit,
+    /// `emit_group_key_changed_if_needed`) iff this Project didn't
+    /// already own it. Used by `find_or_create_worktree` when the host
+    /// store returns an existing worktree (no `WorktreeAdded` fires in
+    /// that case).
+    ///
+    /// Also back-claims any repositories already registered for the
+    /// worktree on the shared `GitStore`. In multi-tenant Phase 2, a
+    /// sibling Project may have already triggered repository
+    /// registration before this Project claimed the worktree, so the
+    /// `RepositoryAdded` event would have fired before our
+    /// `self.worktrees` contained the new worktree — we'd otherwise
+    /// miss the repo.
+    fn claim_found_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
+        let already_owned = self.worktrees.iter().any(|handle| {
+            handle
+                .upgrade()
+                .is_some_and(|w| w.entity_id() == worktree.entity_id())
+        });
+        if already_owned {
+            return;
+        }
+        let push_strong = self.retain_worktrees || worktree.read(cx).is_visible();
+        let handle = if push_strong {
+            WorktreeHandle::Strong(worktree.clone())
+        } else {
+            WorktreeHandle::Weak(worktree.downgrade())
+        };
+        self.worktrees.push(handle);
+        self.on_worktree_added(worktree, cx);
+        cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
+        self.emit_group_key_changed_if_needed(cx);
+
+        let worktree_id = worktree.read(cx).id();
+        let git_store = self.git_store(cx);
+        let pre_existing_repos: Vec<RepositoryId> = git_store
+            .read(cx)
+            .repositories()
+            .keys()
+            .copied()
+            .filter(|repo_id| {
+                git_store
+                    .read(cx)
+                    .worktree_ids_for_repository(*repo_id)
+                    .is_some_and(|ids| ids.contains(&worktree_id))
+            })
+            .collect();
+        for repo_id in pre_existing_repos {
+            self.repositories.insert(repo_id);
+        }
     }
 
     pub fn find_worktree(
@@ -5608,6 +5733,11 @@ impl Project {
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>>> {
+        let path_arc: Arc<Path> = Arc::from(abs_path.as_ref());
+        // `create_worktree` always forces a new worktree (no
+        // find-existing path). The `WorktreeAdded` event handler will
+        // claim synchronously via `pending_worktree_paths`.
+        self.pending_worktree_paths.insert(path_arc);
         self.worktree_store(cx).update(cx, |worktree_store, cx| {
             worktree_store.create_worktree(abs_path, visible, cx)
         })
@@ -5674,6 +5804,11 @@ impl Project {
         self.worktree_store(cx).update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
         });
+        // Claim explicitly: the `WorktreeAdded` event no longer
+        // auto-claims in Phase 2 sharing. Used by
+        // `Project::from_join_project_response` to register the
+        // worktrees that arrived in the join response.
+        self.claim_found_worktree(worktree, cx);
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
@@ -7450,7 +7585,26 @@ impl Project {
     }
 
     pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
-        self.worktree_store(cx).read(cx).paths(cx)
+        // Compute paths from *this* Project's visible worktrees, not
+        // the host's full set: in Phase 2 sharing the host `WorktreeStore`
+        // may contain sibling Projects' worktrees, and we'd otherwise
+        // surface their roots through every key (e.g.
+        // `project_group_key`) that flows through `worktree_paths`.
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let snapshot = worktree.read(cx).snapshot();
+                let folder_path = snapshot.abs_path().to_path_buf();
+                let main_path = snapshot
+                    .root_repo_common_dir()
+                    .map(|dir| git_store::repo_identity_path(dir).to_path_buf())
+                    .unwrap_or_else(|| folder_path.clone());
+                (main_path, folder_path)
+            })
+            .unzip();
+
+        WorktreePaths::from_path_lists(PathList::new(&mains), PathList::new(&folders))
+            .expect("main and folder path lists are built from the same iteration")
     }
 
     pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {

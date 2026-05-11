@@ -1508,14 +1508,25 @@ impl GitStore {
                 if let Some(new_work_directory_abs_path) =
                     update.new_work_directory_abs_path.clone()
                 {
-                    self.worktree_ids
+                    let worktree_ids_entry = self
+                        .worktree_ids
                         .entry(repo_id)
-                        .or_insert_with(HashSet::new)
-                        .insert(worktree_id);
+                        .or_insert_with(HashSet::new);
+                    let newly_associated = worktree_ids_entry.insert(worktree_id);
                     existing.update(cx, |existing, cx| {
                         existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
                         existing.schedule_scan(cx);
                     });
+                    if newly_associated {
+                        // Re-emit `RepositoryAdded` so listeners (notably
+                        // `Project::on_git_store_event`) can re-check
+                        // ownership now that this repository's set of
+                        // associated worktrees has expanded — a new
+                        // Project that just claimed a worktree at the
+                        // same path can now claim this pre-existing
+                        // repository too. The handler is idempotent.
+                        cx.emit(GitStoreEvent::RepositoryAdded(repo_id));
+                    }
                 } else {
                     if let Some(worktree_ids) = self.worktree_ids.get_mut(&repo_id) {
                         worktree_ids.remove(&worktree_id);
