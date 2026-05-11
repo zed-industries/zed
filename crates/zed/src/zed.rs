@@ -2361,7 +2361,7 @@ fn open_settings_file(
                 workspace.with_local_or_wsl_workspace(window, cx, move |workspace, window, cx| {
                     let project = workspace.project().clone();
 
-                    cx.spawn_in(window, async move |ws, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
                         let config_dir = project
                             .update(cx, |project, cx| {
                                 project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx)
@@ -2382,7 +2382,7 @@ fn open_settings_file(
                             })
                             .await?;
 
-                        ws.update_in(cx, |_, window, cx| {
+                        workspace.update_in(cx, |_, window, cx| {
                             create_and_open_local_file(abs_path, window, cx, default_content)
                         })?
                         .await?;
