@@ -7,7 +7,7 @@ use smol::Unblock;
 use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::io::FromRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -351,8 +351,10 @@ fn spawn_posix_spawn(
 ) -> io::Result<Child> {
     // posix_spawnp resolves programs against the parent's cwd/PATH, not the child's.
     let program_cstr = CString::new(if program.as_bytes().contains(&b'/') {
-        std::path::absolute(current_dir.join(program))
-            .map_or_else(|_| program.as_bytes().to_vec(), |p| p.into_os_string().into_vec())
+        std::path::absolute(current_dir.join(program)).map_or_else(
+            |_| program.as_bytes().to_vec(),
+            |p| p.into_os_string().into_vec(),
+        )
     } else {
         envs.and_then(|e| {
             e.iter()
