@@ -2304,9 +2304,12 @@ impl AgentPanel {
     }
 
     pub fn ephemeral_draft_thread_id(&self, cx: &App) -> Option<ThreadId> {
-        self.draft_thread
-            .as_ref()
-            .map(|draft| draft.read(cx).thread_id)
+        let draft = self.draft_thread.as_ref()?;
+        let draft = draft.read(cx);
+        draft
+            .root_thread(cx)
+            .is_some_and(|thread| thread.read(cx).is_draft_thread())
+            .then_some(draft.thread_id)
     }
 
     pub fn active_terminal_id(&self) -> Option<TerminalId> {
@@ -3537,10 +3540,15 @@ impl AgentPanel {
     }
 
     /// Whether the active view is in the **ephemeral** new-draft slot
-    pub fn active_view_is_new_draft(&self, _cx: &App) -> bool {
+    pub fn active_view_is_new_draft(&self, cx: &App) -> bool {
         self.draft_thread.as_ref().is_some_and(|draft| {
-            self.active_conversation_view()
-                .is_some_and(|active| active.entity_id() == draft.entity_id())
+            draft
+                .read(cx)
+                .root_thread(cx)
+                .is_some_and(|thread| thread.read(cx).is_draft_thread())
+                && self
+                    .active_conversation_view()
+                    .is_some_and(|active| active.entity_id() == draft.entity_id())
         })
     }
     /// Whether the active thread is any kind of draft
