@@ -1207,6 +1207,202 @@ mod conflict_set_tests {
         );
     }
 
+    fn build_lang_with_merges(
+        name: &'static str,
+        ts_language: tree_sitter::Language,
+        merges_scm: &'static str,
+    ) -> std::sync::Arc<language::Language> {
+        use std::borrow::Cow;
+        let language = language::Language::new(
+            language::LanguageConfig {
+                name: name.into(),
+                ..Default::default()
+            },
+            Some(ts_language),
+        )
+        .with_queries(language::LanguageQueries {
+            merges: Some(Cow::from(merges_scm)),
+            ..Default::default()
+        })
+        .expect("merges.scm parses");
+        std::sync::Arc::new(language)
+    }
+
+    #[test]
+    fn test_structural_merge_python_disjoint_functions() {
+        let test_content = "import os
+<<<<<<< HEAD
+def alpha():
+    return 1
+||||||| base
+=======
+def beta():
+    return 2
+>>>>>>> branch
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "Python",
+            tree_sitter_python::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/python/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("python merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_go_disjoint_functions() {
+        let test_content = "package main
+<<<<<<< HEAD
+func Alpha() int { return 1 }
+||||||| base
+=======
+func Beta() int { return 2 }
+>>>>>>> branch
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "Go",
+            tree_sitter_go::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/go/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("go merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_json_disjoint_keys() {
+        let test_content = "{
+    \"shared\": 1,
+<<<<<<< HEAD
+    \"ours_only\": true,
+||||||| base
+=======
+    \"theirs_only\": false,
+>>>>>>> branch
+    \"trailing\": null
+}
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "JSON",
+            tree_sitter_json::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/json/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("json merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_yaml_disjoint_keys() {
+        let test_content = "shared: 1
+<<<<<<< HEAD
+ours_only: true
+||||||| base
+=======
+theirs_only: false
+>>>>>>> branch
+trailing: null
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let lang = build_lang_with_merges(
+            "YAML",
+            tree_sitter_yaml::LANGUAGE.into(),
+            include_str!("../../../../crates/grammars/src/yaml/merges.scm"),
+        );
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("yaml merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_structural_merge_key_normalized_matches_with_whitespace_diff() {
+        // Two function bodies that differ only in whitespace. The normalized
+        // key collapses that, so the engine sees them as the same item
+        // (unchanged) when both have identical text on ours and theirs.
+        // (For Rust we don't ship @merge.key.normalized by default; this
+        // test uses a custom query to exercise the path.)
+        let normalized_merges = "
+            (source_file) @merge.set
+            (function_item name: (identifier) @merge.key.normalized)
+        ";
+        let lang = build_lang_with_merges(
+            "RustForNormKey",
+            tree_sitter_rust::LANGUAGE.into(),
+            // Leak the string so it has 'static lifetime for include_str!-style use.
+            Box::leak(normalized_merges.to_string().into_boxed_str()),
+        );
+        let test_content = "<<<<<<< HEAD
+fn alpha() { 1 }
+||||||| base
+fn alpha() { 1 }
+=======
+fn  alpha()  { 1 }
+>>>>>>> branch
+"
+        .to_string();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
+        let snapshot = buffer.snapshot();
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let context = LanguageMergeContext::build(&snapshot, lang, &conflict_snapshot.conflicts)
+            .expect("normalized merges.scm available");
+        let outcome = context.try_merge_region(&conflict_snapshot.conflicts[0]);
+        // The function name "alpha" is the normalized key; whitespace
+        // collapses to the same identifier; v2 treats both sides' versions
+        // as a modification of "the same item" — ours unchanged, theirs
+        // whitespace-only change — taking theirs.
+        assert!(
+            matches!(outcome, StructuralMergeOutcome::Resolved { .. }),
+            "normalized key should allow same-name match across whitespace difference, got {outcome:?}"
+        );
+    }
+
     #[gpui::test]
     async fn test_conflict_updates(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         zlog::init_test();

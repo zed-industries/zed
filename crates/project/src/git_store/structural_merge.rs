@@ -65,10 +65,13 @@ pub enum DeferReason {
     BothAddedDifferently { key: String },
     /// ours adds an item with key K in this region; a different region adds
     /// the same key on theirs — auto-merging both would produce a duplicate
-    /// definition.
+    /// definition. `other_region` is the anchor of one of the colliding
+    /// regions (a single collision per region is reported, even when more
+    /// than one other region adds the same key).
     CrossRegionKeyCollision {
         key: String,
         added_by: ConflictSide,
+        other_region: Anchor,
     },
     /// Ordered-list merge found overlapping hunks on the two sides.
     OrderedHunksOverlap,
@@ -79,6 +82,7 @@ pub enum DeferReason {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictSide {
+    Base,
     Ours,
     Theirs,
 }
@@ -309,7 +313,7 @@ impl LanguageMergeContext {
             Ok(map) => map,
             Err(key) => {
                 return StructuralMergeOutcome::Deferred(DeferReason::DuplicateKey {
-                    side: ConflictSide::Ours, // approximation; base would be rare
+                    side: ConflictSide::Base,
                     key,
                 });
             }
@@ -680,18 +684,18 @@ impl LanguageMergeContext {
                         continue;
                     }
                     if theirs_added.contains(key) {
-                        collisions.insert(
-                            anchor,
-                            DeferReason::CrossRegionKeyCollision {
+                        collisions
+                            .entry(anchor)
+                            .or_insert(DeferReason::CrossRegionKeyCollision {
                                 key: key.clone(),
                                 added_by: ConflictSide::Ours,
-                            },
-                        );
-                        collisions.insert(
-                            other_anchor,
+                                other_region: other_anchor,
+                            });
+                        collisions.entry(other_anchor).or_insert(
                             DeferReason::CrossRegionKeyCollision {
                                 key: key.clone(),
                                 added_by: ConflictSide::Theirs,
+                                other_region: anchor,
                             },
                         );
                     }

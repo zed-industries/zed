@@ -4,4 +4,6 @@
 
 (object) @merge.set
 
+(array) @merge.ordered_list
+
 (pair key: (string (string_content) @merge.key))

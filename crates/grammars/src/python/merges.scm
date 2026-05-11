@@ -7,3 +7,7 @@
 (function_definition name: (identifier) @merge.key)
 
 (class_definition name: (identifier) @merge.key)
+
+(decorated_definition definition: (function_definition name: (identifier) @merge.key))
+
+(decorated_definition definition: (class_definition name: (identifier) @merge.key))

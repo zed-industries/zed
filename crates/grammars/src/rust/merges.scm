@@ -39,6 +39,8 @@
 
 (type_item name: (type_identifier) @merge.key)
 
+(union_item name: (type_identifier) @merge.key)
+
 (field_declaration name: (field_identifier) @merge.key)
 
 (enum_variant name: (identifier) @merge.key)

@@ -45,6 +45,7 @@ impl ConflictAddon {
 struct BufferConflicts {
     block_ids: Vec<(Range<Anchor>, CustomBlockId)>,
     banner_block_id: Option<CustomBlockId>,
+    resolution_hint_block_ids: Vec<CustomBlockId>,
     conflict_set: Entity<ConflictSet>,
     _subscription: Subscription,
 }
@@ -122,6 +123,7 @@ fn buffer_ranges_updated(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut C
             BufferConflicts {
                 block_ids: Vec::new(),
                 banner_block_id: None,
+                resolution_hint_block_ids: Vec::new(),
                 conflict_set,
                 _subscription: subscription,
             }
@@ -671,7 +673,7 @@ pub(crate) fn auto_resolve_buffer(
 
     let patterns = compile_auto_resolve_patterns(cx);
     let language = buffer.read(cx).language().cloned();
-    let (edits, breakdown) = {
+    let (edits, breakdown, hints) = {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let structural = language.clone().and_then(|language| {
             LanguageMergeContext::build(&buffer_snapshot, language, &conflict_snapshot.conflicts)
@@ -681,9 +683,9 @@ pub(crate) fn auto_resolve_buffer(
             &patterns,
             structural.as_ref(),
         );
-        let breakdown =
+        let (breakdown, hints) =
             classify_outcomes(&conflict_snapshot, &buffer_snapshot, &patterns, structural.as_ref());
-        (edits, breakdown)
+        (edits, breakdown, hints)
     };
     if edits.is_empty() {
         return;
@@ -691,6 +693,47 @@ pub(crate) fn auto_resolve_buffer(
 
     buffer.update(cx, |buffer, cx| {
         buffer.edit(edits, None, cx);
+    });
+
+    // Replace any earlier hint annotations for this buffer with fresh ones.
+    let old_hint_ids: HashSet<CustomBlockId> = editor
+        .update(cx, |editor, _cx| {
+            let addon = editor.addon_mut::<ConflictAddon>()?;
+            let entry = addon.buffers.get_mut(&buffer_id)?;
+            Some(entry.resolution_hint_block_ids.drain(..).collect())
+        })
+        .unwrap_or_default();
+    if !old_hint_ids.is_empty() {
+        editor.update(cx, |editor, cx| {
+            editor.remove_blocks(old_hint_ids, None, cx);
+        });
+    }
+    editor.update(cx, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let editor_handle = cx.weak_entity();
+        let blocks: Vec<_> = hints
+            .iter()
+            .filter_map(|hint| {
+                let anchor = snapshot.anchor_in_excerpt(hint.anchor)?;
+                let label = hint.label.clone();
+                let editor_handle = editor_handle.clone();
+                Some(BlockProperties {
+                    placement: BlockPlacement::Above(anchor),
+                    height: Some(1),
+                    style: BlockStyle::Sticky,
+                    render: Arc::new(move |cx| {
+                        render_resolution_hint(label.clone(), editor_handle.clone(), cx)
+                    }),
+                    priority: 0,
+                })
+            })
+            .collect();
+        let new_ids = editor.insert_blocks(blocks, None, cx);
+        if let Some(addon) = editor.addon_mut::<ConflictAddon>()
+            && let Some(entry) = addon.buffers.get_mut(&buffer_id)
+        {
+            entry.resolution_hint_block_ids = new_ids;
+        }
     });
 
     if let Some(workspace) = editor.read(cx).workspace() {
@@ -702,6 +745,60 @@ pub(crate) fn auto_resolve_buffer(
             );
         });
     }
+}
+
+fn render_resolution_hint(
+    label: SharedString,
+    editor: WeakEntity<Editor>,
+    cx: &mut BlockContext,
+) -> AnyElement {
+    let block_id = cx.block_id;
+    let custom_block_id = match block_id {
+        editor::display_map::BlockId::Custom(id) => Some(id),
+        _ => None,
+    };
+    h_flex()
+        .id(block_id)
+        .h(cx.line_height)
+        .ml(cx.margins.gutter.width)
+        .gap_1()
+        .bg(cx.theme().colors().editor_background)
+        .child(
+            Icon::new(IconName::Check)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+        )
+        .child(
+            Label::new(label)
+                .size(LabelSize::XSmall)
+                .color(Color::Muted),
+        )
+        .child(
+            IconButton::new("dismiss-resolution-hint", IconName::Close)
+                .icon_size(IconSize::XSmall)
+                .on_click(move |_, _, cx| {
+                    let Some(custom_block_id) = custom_block_id else {
+                        return;
+                    };
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.remove_blocks(
+                                HashSet::from_iter([custom_block_id]),
+                                None,
+                                cx,
+                            );
+                            if let Some(addon) = editor.addon_mut::<ConflictAddon>() {
+                                for entry in addon.buffers.values_mut() {
+                                    entry
+                                        .resolution_hint_block_ids
+                                        .retain(|id| *id != custom_block_id);
+                                }
+                            }
+                        })
+                        .ok();
+                }),
+        )
+        .into_any()
 }
 
 #[derive(Default)]
@@ -747,19 +844,37 @@ impl OutcomeBreakdown {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedRegionHint {
+    anchor: language::Anchor,
+    label: SharedString,
+}
+
 fn classify_outcomes(
     snapshot: &ConflictSetSnapshot,
     buffer: &language::BufferSnapshot,
     patterns: &[AutoResolvePattern],
     structural: Option<&LanguageMergeContext>,
-) -> OutcomeBreakdown {
-    use project::git_store::StructuralMergeOutcome;
+) -> (OutcomeBreakdown, Vec<ResolvedRegionHint>) {
+    use project::git_store::{ResolveMethod, StructuralMergeOutcome};
     let mut out = OutcomeBreakdown::default();
+    let mut hints = Vec::new();
     for conflict in snapshot.conflicts.iter() {
         if let Some(structural) = structural {
             match structural.try_merge_region(conflict) {
-                StructuralMergeOutcome::Resolved { .. } => {
+                StructuralMergeOutcome::Resolved { method, .. } => {
                     out.fully_structural += 1;
+                    hints.push(ResolvedRegionHint {
+                        anchor: conflict.range.start,
+                        label: match method {
+                            ResolveMethod::Set => {
+                                "Auto-Resolve · structural set merge".into()
+                            }
+                            ResolveMethod::OrderedList => {
+                                "Auto-Resolve · structural ordered merge".into()
+                            }
+                        },
+                    });
                     continue;
                 }
                 StructuralMergeOutcome::Deferred(reason) => {
@@ -776,11 +891,19 @@ fn classify_outcomes(
         }
         if summary.fully_resolved {
             out.fully_line += 1;
+            hints.push(ResolvedRegionHint {
+                anchor: conflict.range.start,
+                label: "Auto-Resolve · line-level merge".into(),
+            });
         } else {
             out.simplified += 1;
+            hints.push(ResolvedRegionHint {
+                anchor: conflict.range.start,
+                label: "Auto-Resolve · partially simplified".into(),
+            });
         }
     }
-    out
+    (out, hints)
 }
 
 fn describe_defer_reason(reason: &project::git_store::DeferReason) -> Option<String> {

@@ -19,11 +19,19 @@
 
 (function_declaration name: (identifier) @merge.key)
 
+(function_signature name: (identifier) @merge.key)
+
 (class_declaration name: (type_identifier) @merge.key)
 
 (interface_declaration name: (type_identifier) @merge.key)
 
+(enum_declaration name: (identifier) @merge.key)
+
+(type_alias_declaration name: (type_identifier) @merge.key)
+
 (method_definition name: (property_identifier) @merge.key)
+
+(method_signature name: (property_identifier) @merge.key)
 
 (public_field_definition name: (property_identifier) @merge.key)
 

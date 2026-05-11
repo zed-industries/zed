@@ -6,6 +6,10 @@
 
 (flow_mapping) @merge.set
 
+(block_sequence) @merge.ordered_list
+
+(flow_sequence) @merge.ordered_list
+
 (block_mapping_pair key: (_) @merge.key)
 
 (flow_pair key: (_) @merge.key)
