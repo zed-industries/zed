@@ -162,9 +162,9 @@ graph TD
     A[Start] --> B[End]
 ```
 
-The diagram will be rendered as an image by default, with "Preview" and "Code" tabs so the user can toggle between the rendered diagram and the source code. 
+The diagram will be rendered as an image by default, with "Preview" and "Code" tabs so the user can toggle between the rendered diagram and the source code.
 
-The rendered view may be narrow, so do not try to generate very wide diagrams.
+Mermaid diagrams are automatically themed to match the user's editor theme. Do not include `%%{init}%%` directives or `style`/`classDef` color overrides unless the user specifically asks for custom colors.
 
 {{#if (gt (len available_tools) 0)}}
 ## Fixing Diagnostics

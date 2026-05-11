@@ -539,6 +539,18 @@ impl Markdown {
             .retain(|id, _| ids.contains(id));
     }
 
+    /// Used in the agent panel to force a re-render when the theme changes
+    pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
+        if self.options.render_mermaid_diagrams
+            && !self.parsed_markdown.mermaid_diagrams.is_empty()
+        {
+            self.mermaid_state.clear();
+            let parsed_markdown = self.parsed_markdown.clone();
+            self.mermaid_state.update(&parsed_markdown, cx);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
         self.mermaid_showing_code.contains(&source_offset)
     }

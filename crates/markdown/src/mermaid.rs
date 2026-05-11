@@ -1,17 +1,19 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity, ImageSource,
-    RenderImage, StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity, Hsla,
+    ImageSource, Rgba, RenderImage, StyledText, Task, img, pulsating_between,
 };
-use ui::CopyButton;
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use ui::CopyButton;
 use ui::prelude::*;
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
-use std::path::Path;
+use settings::Settings as _;
+use theme_settings::ThemeSettings;
 
 use super::{Markdown, MarkdownStyle, ParsedMarkdown};
 
@@ -101,11 +103,19 @@ impl CachedMermaidDiagram {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
         let render_image_clone = render_image.clone();
         let svg_renderer = cx.svg_renderer();
+        let mermaid_theme = build_mermaid_theme(cx);
 
         let task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
+                    let options = mermaid_rs_renderer::RenderOptions {
+                        theme: mermaid_theme,
+                        layout: mermaid_rs_renderer::LayoutConfig::default(),
+                    };
+                    let svg_string = mermaid_rs_renderer::render_with_options(
+                        &contents.contents,
+                        options,
+                    )?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale)
@@ -141,6 +151,35 @@ impl CachedMermaidDiagram {
             _task: Task::ready(()),
         }
     }
+}
+
+fn hsla_to_hex(color: Hsla) -> String {
+    let rgba: Rgba = color.to_rgb();
+    let r = (rgba.r * 255.0).round() as u8;
+    let g = (rgba.g * 255.0).round() as u8;
+    let b = (rgba.b * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_rs_renderer::Theme {
+    let colors = cx.theme().colors();
+    let theme_settings = ThemeSettings::get_global(cx);
+    let mut theme = mermaid_rs_renderer::Theme::modern();
+
+    theme.font_family = theme_settings.ui_font.family.to_string();
+    theme.background = hsla_to_hex(colors.editor_background);
+    theme.primary_color = hsla_to_hex(colors.surface_background);
+    theme.primary_text_color = hsla_to_hex(colors.text);
+    theme.primary_border_color = hsla_to_hex(colors.border);
+    theme.line_color = hsla_to_hex(colors.border);
+    theme.secondary_color = hsla_to_hex(colors.element_background);
+    theme.tertiary_color = hsla_to_hex(colors.ghost_element_hover);
+    theme.edge_label_background = hsla_to_hex(colors.editor_background);
+    theme.cluster_background = hsla_to_hex(colors.panel_background);
+    theme.cluster_border = hsla_to_hex(colors.border_variant);
+    theme.text_color = hsla_to_hex(colors.text);
+
+    theme
 }
 
 fn parse_mermaid_info(info: &str) -> Option<u32> {

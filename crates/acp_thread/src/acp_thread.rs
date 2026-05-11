@@ -1351,6 +1351,26 @@ impl AcpThread {
         &self.entries
     }
 
+    pub fn invalidate_mermaid_caches(&self, cx: &mut App) {
+        for entry in &self.entries {
+            let chunks = match entry {
+                AgentThreadEntry::AssistantMessage(message) => &message.chunks,
+                _ => continue,
+            };
+            for chunk in chunks {
+                let block = match chunk {
+                    AssistantMessageChunk::Message { block } => block,
+                    AssistantMessageChunk::Thought { block } => block,
+                };
+                if let Some(markdown) = block.markdown() {
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.invalidate_mermaid_cache(cx);
+                    });
+                }
+            }
+        }
+    }
+
     pub fn session_id(&self) -> &acp::SessionId {
         &self.session_id
     }
