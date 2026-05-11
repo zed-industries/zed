@@ -854,6 +854,30 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.document_highlight.bracket_background")]
     pub editor_document_highlight_bracket_background: Option<String>,
 
+    /// Filled background color for added diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.added.background")]
+    pub editor_diff_hunk_added_background: Option<String>,
+
+    /// Hollow background color for added diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.added.hollow_background")]
+    pub editor_diff_hunk_added_hollow_background: Option<String>,
+
+    /// Hollow border color for added diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.added.hollow_border")]
+    pub editor_diff_hunk_added_hollow_border: Option<String>,
+
+    /// Filled background color for deleted diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.deleted.background")]
+    pub editor_diff_hunk_deleted_background: Option<String>,
+
+    /// Hollow background color for deleted diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.deleted.hollow_background")]
+    pub editor_diff_hunk_deleted_hollow_background: Option<String>,
+
+    /// Hollow border color for deleted diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.deleted.hollow_border")]
+    pub editor_diff_hunk_deleted_hollow_border: Option<String>,
+
     /// Terminal background color.
     #[serde(rename = "terminal.background")]
     pub terminal_background: Option<String>,

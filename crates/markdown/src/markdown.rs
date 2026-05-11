@@ -1730,15 +1730,28 @@ impl Element for MarkdownElement {
                             }
                         }
                         MarkdownTag::Paragraph => {
-                            self.push_markdown_paragraph(&mut builder, range, markdown_end, None);
+                            let text_align_override = builder
+                                .table
+                                .current_cell_alignment()
+                                .and_then(alignment_to_text_align);
+                            self.push_markdown_paragraph(
+                                &mut builder,
+                                range,
+                                markdown_end,
+                                text_align_override,
+                            );
                         }
                         MarkdownTag::Heading { level, .. } => {
+                            let text_align_override = builder
+                                .table
+                                .current_cell_alignment()
+                                .and_then(alignment_to_text_align);
                             self.push_markdown_heading(
                                 &mut builder,
                                 *level,
                                 range,
                                 markdown_end,
-                                None,
+                                text_align_override,
                             );
                         }
                         MarkdownTag::BlockQuote(kind) => {
@@ -2000,20 +2013,46 @@ impl Element for MarkdownElement {
                             let is_header = builder.table.in_head;
                             let row_index = builder.table.row_index;
                             let col_index = builder.table.col_index;
+                            let alignment = builder.table.current_cell_alignment();
+                            let text_align = alignment
+                                .and_then(alignment_to_text_align)
+                                .unwrap_or(self.style.base_text_style.text_align);
 
+                            let mut cell_div = div()
+                                .flex()
+                                .flex_col()
+                                .h_full()
+                                .when(col_index > 0, |this| this.border_l_1())
+                                .when(row_index > 0, |this| this.border_t_1())
+                                .border_color(cx.theme().colors().border)
+                                .px_1()
+                                .py_0p5()
+                                .when(is_header, |this| {
+                                    this.bg(cx.theme().colors().title_bar_background)
+                                })
+                                .when(!is_header && row_index % 2 == 1, |this| {
+                                    this.bg(cx.theme().colors().panel_background)
+                                });
+
+                            cell_div = match alignment {
+                                Some(Alignment::Center) => cell_div.items_center(),
+                                Some(Alignment::Right) => cell_div.items_end(),
+                                _ => cell_div,
+                            };
+
+                            builder.push_text_style(TextStyleRefinement {
+                                text_align: Some(text_align),
+                                ..Default::default()
+                            });
+                            builder.push_div(cell_div, range, markdown_end);
                             builder.push_div(
                                 div()
-                                    .when(col_index > 0, |this| this.border_l_1())
-                                    .when(row_index > 0, |this| this.border_t_1())
-                                    .border_color(cx.theme().colors().border)
-                                    .px_1()
-                                    .py_0p5()
-                                    .when(is_header, |this| {
-                                        this.bg(cx.theme().colors().title_bar_background)
-                                    })
-                                    .when(!is_header && row_index % 2 == 1, |this| {
-                                        this.bg(cx.theme().colors().panel_background)
-                                    }),
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .w_full()
+                                    .justify_center()
+                                    .text_align(text_align),
                                 range,
                                 markdown_end,
                             );
@@ -2113,6 +2152,8 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::TableCell => {
                         builder.replace_pending_checkbox(self.on_checkbox_toggle.clone());
                         builder.pop_div();
+                        builder.pop_div();
+                        builder.pop_text_style();
                         builder.table.end_cell();
                     }
                     MarkdownTagEnd::FootnoteDefinition => {
@@ -2414,6 +2455,25 @@ impl TableState {
     fn end_cell(&mut self) {
         self.col_index += 1;
     }
+
+    fn current_cell_alignment(&self) -> Option<Alignment> {
+        if self.alignments.is_empty() {
+            return None;
+        }
+        if self.in_head {
+            return Some(Alignment::Center);
+        }
+        self.alignments.get(self.col_index).copied()
+    }
+}
+
+fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
+    match alignment {
+        Alignment::Left => Some(TextAlign::Left),
+        Alignment::Center => Some(TextAlign::Center),
+        Alignment::Right => Some(TextAlign::Right),
+        Alignment::None => None,
+    }
 }
 
 struct MarkdownElementBuilder {
@@ -2702,7 +2762,7 @@ impl MarkdownElementBuilder {
         )
         .fill();
 
-        let element = if let Some(on_toggle) = on_toggle {
+        let checkbox = if let Some(on_toggle) = on_toggle {
             checkbox
                 .on_click(move |_state, window, cx| {
                     on_toggle(marker_source.clone(), !checked, window, cx);
@@ -2711,7 +2771,18 @@ impl MarkdownElementBuilder {
         } else {
             checkbox.visualization_only(true).into_any_element()
         };
-        self.div_stack.last_mut().unwrap().extend([element]);
+
+        let mut checkbox_container = h_flex().w_full();
+        checkbox_container = match self.text_style().text_align {
+            TextAlign::Left => checkbox_container.justify_start(),
+            TextAlign::Center => checkbox_container.justify_center(),
+            TextAlign::Right => checkbox_container.justify_end(),
+        };
+
+        self.div_stack
+            .last_mut()
+            .unwrap()
+            .extend([checkbox_container.child(checkbox).into_any_element()]);
     }
 
     fn source_range_for_rendered(&self, rendered: &Range<usize>) -> Option<Range<usize>> {
@@ -3430,6 +3501,37 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    #[test]
+    fn test_table_state_current_cell_alignment_centers_headers() {
+        let mut table = TableState::default();
+        table.start(vec![Alignment::Left, Alignment::Right, Alignment::None]);
+
+        table.start_head();
+        for _ in 0..3 {
+            assert_eq!(table.current_cell_alignment(), Some(Alignment::Center));
+            table.end_cell();
+        }
+
+        table.end_head();
+        table.start_row();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::Left));
+        table.end_cell();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::Right));
+        table.end_cell();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::None));
+        table.end_cell();
+        table.end_row();
+
+        table.end();
+        assert_eq!(table.current_cell_alignment(), None);
+    }
+
+    #[test]
+    fn test_table_state_current_cell_alignment_outside_table() {
+        let table = TableState::default();
+        assert_eq!(table.current_cell_alignment(), None);
     }
 
     #[test]

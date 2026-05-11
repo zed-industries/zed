@@ -35,6 +35,22 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
+pub struct ExperimentalSystemPromptFeatureFlag;
+
+impl FeatureFlag for ExperimentalSystemPromptFeatureFlag {
+    const NAME: &'static str = "experimental-system-prompt";
+    type Value = PresenceFlag;
+}
+register_feature_flag!(ExperimentalSystemPromptFeatureFlag);
+
+pub struct AgentPanelTerminalFeatureFlag;
+
+impl FeatureFlag for AgentPanelTerminalFeatureFlag {
+    const NAME: &'static str = "agent-panel-terminal";
+    type Value = PresenceFlag;
+}
+register_feature_flag!(AgentPanelTerminalFeatureFlag);
+
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -70,6 +86,18 @@ impl FeatureFlag for LspToolFeatureFlag {
     }
 }
 register_feature_flag!(LspToolFeatureFlag);
+
+pub struct RenameToolFeatureFlag;
+
+impl FeatureFlag for RenameToolFeatureFlag {
+    const NAME: &'static str = "rename-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(RenameToolFeatureFlag);
 
 pub struct ProjectPanelUndoRedoFeatureFlag;
 

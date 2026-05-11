@@ -113,7 +113,6 @@ pub struct AmazonBedrockSettings {
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
     pub allow_global: Option<bool>,
-    pub allow_extended_context: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -384,13 +383,6 @@ impl State {
         self.settings
             .as_ref()
             .and_then(|s| s.allow_global)
-            .unwrap_or(false)
-    }
-
-    fn get_allow_extended_context(&self) -> bool {
-        self.settings
-            .as_ref()
-            .and_then(|s| s.allow_extended_context)
             .unwrap_or(false)
     }
 }
@@ -718,14 +710,9 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (region, allow_global, allow_extended_context) =
-            cx.read_entity(&self.state, |state, _cx| {
-                (
-                    state.get_region(),
-                    state.get_allow_global(),
-                    state.get_allow_extended_context(),
-                )
-            });
+        let (region, allow_global) = cx.read_entity(&self.state, |state, _cx| {
+            (state.get_region(), state.get_allow_global())
+        });
 
         let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
@@ -736,8 +723,6 @@ impl LanguageModel for BedrockModel {
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
 
-        let use_extended_context = allow_extended_context && self.model.supports_extended_context();
-
         let request = match into_bedrock(
             request,
             model_id,
@@ -746,7 +731,6 @@ impl LanguageModel for BedrockModel {
             self.model.thinking_mode(),
             self.model.supports_caching(),
             self.model.supports_tool_use(),
-            use_extended_context,
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -839,7 +823,6 @@ pub fn into_bedrock(
     thinking_mode: BedrockModelMode,
     supports_caching: bool,
     supports_tool_use: bool,
-    allow_extended_context: bool,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
@@ -1144,7 +1127,6 @@ pub fn into_bedrock(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
-        allow_extended_context,
     })
 }
 

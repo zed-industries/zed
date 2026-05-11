@@ -3341,6 +3341,27 @@ mod tests {
         });
     }
 
+    /// Polls the terminal content until `expected` appears, or panics after ~1s.
+    /// The PTY IO thread writes into the terminal grid independently of the
+    /// GPUI executor, so we need a real-time polling loop to synchronize.
+    async fn assert_content_eventually(
+        terminal: &Entity<Terminal>,
+        expected: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let mut content = String::new();
+        for _ in 0..100 {
+            content = terminal.update(cx, |term, _| term.get_content());
+            if content.contains(expected) {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        panic!("Expected terminal content to contain {expected:?}, got: {content}");
+    }
+
     /// Test that kill_active_task properly terminates both the foreground process
     /// and the shell, allowing wait_for_completed_task to complete and output to be captured.
     #[cfg(unix)]
@@ -3353,10 +3374,7 @@ mod tests {
         let (terminal, completion_rx) =
             build_test_terminal(cx, "echo", &["test_output_before_kill; sleep 60"]).await;
 
-        // Wait a bit for the echo to execute and produce output
-        cx.background_executor
-            .timer(Duration::from_millis(200))
-            .await;
+        assert_content_eventually(&terminal, "test_output_before_kill", cx).await;
 
         // Kill the active task
         terminal.update(cx, |term, _cx| {
@@ -3399,6 +3417,8 @@ mod tests {
             .await
             .expect("Should receive exit status");
         assert_eq!(exit_status, Some(ExitStatus::default()));
+
+        assert_content_eventually(&terminal, "done", cx).await;
 
         // Now try to kill - should be a no-op since task already completed
         terminal.update(cx, |term, _cx| {

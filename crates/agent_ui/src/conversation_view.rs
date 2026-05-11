@@ -80,6 +80,7 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
+use crate::completion_provider::AgentContextSelection;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{InputAttempt, MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
@@ -99,6 +100,8 @@ use crate::{
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
+
+pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
 mod thread_view;
 pub use thread_view::*;
@@ -504,6 +507,7 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    draft_prompt_persist_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -750,6 +754,7 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            draft_prompt_persist_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -762,6 +767,9 @@ impl ConversationView {
 
         self.server_state = state;
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
+        if matches!(&self.server_state, ServerState::Connected(_)) {
+            cx.emit(RootThreadUpdated);
+        }
         cx.notify();
     }
 
@@ -1506,18 +1514,6 @@ impl ConversationView {
                     return;
                 }
 
-                let used_tools = thread.read(cx).used_tools_since_last_user_message();
-                self.notify_with_sound(
-                    if used_tools {
-                        "Finished running tools"
-                    } else {
-                        "New message"
-                    },
-                    IconName::ZedAssistant,
-                    window,
-                    cx,
-                );
-
                 let should_send_queued = if let Some(active) = self.root_thread_view() {
                     active.update(cx, |active, cx| {
                         if active.skip_queue_processing_count > 0 {
@@ -1541,7 +1537,23 @@ impl ConversationView {
                 } else {
                     false
                 };
-                if should_send_queued {
+
+                // Skip notifying when a queued message is about to be auto-sent: the agent
+                // is not actually idle and a notification here would fire just before the
+                // next turn starts.
+                if !should_send_queued {
+                    let used_tools = thread.read(cx).used_tools_since_last_user_message();
+                    self.notify_with_sound(
+                        if used_tools {
+                            "Finished running tools"
+                        } else {
+                            "New message"
+                        },
+                        IconName::ZedAssistant,
+                        window,
+                        cx,
+                    );
+                } else {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
             }
@@ -1667,10 +1679,41 @@ impl ConversationView {
                 cx.notify();
             }
             AcpThreadEvent::PromptUpdated => {
+                if !is_subagent && thread.read(cx).is_draft_thread() {
+                    self.schedule_draft_prompt_persist(cx);
+                }
                 cx.notify();
             }
         }
         cx.notify();
+    }
+
+    fn schedule_draft_prompt_persist(&mut self, cx: &mut Context<Self>) {
+        let thread_id = self.thread_id;
+        self.draft_prompt_persist_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(DRAFT_PROMPT_PERSIST_DEBOUNCE)
+                .await;
+            let persist = this.update(cx, |this, cx| {
+                let thread = this.root_thread(cx)?;
+                let thread = thread.read(cx);
+                if !thread.is_draft_thread() {
+                    return None;
+                }
+                let snapshot: Vec<acp::ContentBlock> = thread
+                    .draft_prompt()
+                    .map(|p| p.to_vec())
+                    .unwrap_or_default();
+                Some(if snapshot.is_empty() {
+                    crate::draft_prompt_store::delete(thread_id, cx)
+                } else {
+                    crate::draft_prompt_store::write(thread_id, &snapshot, cx)
+                })
+            });
+            if let Ok(Some(persist)) = persist {
+                persist.await.log_err();
+            }
+        }));
     }
 
     fn authenticate(
@@ -2517,7 +2560,7 @@ impl ConversationView {
             return;
         };
         let root_thread = root_thread.read(cx).thread.read(cx);
-        let root_session_id = root_thread.session_id().clone();
+        let root_thread_id = self.thread_id;
         let root_work_dirs = root_thread.work_dirs().cloned();
         let root_title = root_thread.title();
 
@@ -2531,7 +2574,7 @@ impl ConversationView {
                         icon,
                         caption.into(),
                         title,
-                        root_session_id,
+                        root_thread_id,
                         root_work_dirs,
                         root_title,
                         window,
@@ -2547,7 +2590,7 @@ impl ConversationView {
                         icon,
                         caption.clone(),
                         title.clone(),
-                        root_session_id.clone(),
+                        root_thread_id,
                         root_work_dirs.clone(),
                         root_title.clone(),
                         window,
@@ -2567,7 +2610,7 @@ impl ConversationView {
         icon: IconName,
         caption: SharedString,
         title: SharedString,
-        root_session_id: acp::SessionId,
+        root_thread_id: ThreadId,
         root_work_dirs: Option<PathList>,
         root_title: Option<SharedString>,
         window: &mut Window,
@@ -2589,7 +2632,7 @@ impl ConversationView {
         if let Some(screen_window) = cx
             .open_window(options, |_window, cx| {
                 cx.new(|_cx| {
-                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                    AgentNotification::new(title.clone(), Some(caption.clone()), icon, project_name)
                 })
             })
             .log_err()
@@ -2610,7 +2653,6 @@ impl ConversationView {
 
                             let workspace_handle = this.workspace.clone();
                             let agent = this.connection_key.clone();
-                            let root_session_id = root_session_id.clone();
                             let root_work_dirs = root_work_dirs.clone();
                             let root_title = root_title.clone();
 
@@ -2633,7 +2675,7 @@ impl ConversationView {
                                                     panel.update(cx, |panel, cx| {
                                                         panel.load_agent_thread(
                                                             agent.clone(),
-                                                            root_session_id.clone(),
+                                                            root_thread_id,
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
@@ -2707,10 +2749,10 @@ impl ConversationView {
                     &panel,
                     window,
                     move |this, _, event: &AgentPanelEvent, window, cx| match event {
-                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ThreadFocused => {
+                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ActiveViewFocused => {
                             dismiss_if_visible(this, window, cx);
                         }
-                        AgentPanelEvent::RetainedThreadChanged
+                        AgentPanelEvent::EntryChanged
                         | AgentPanelEvent::ThreadInteracted { .. } => {}
                     },
                 ));
@@ -2760,11 +2802,16 @@ impl ConversationView {
 
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
-    pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn insert_selection(
+        &self,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
-                    editor.insert_selections(window, cx);
+                    editor.insert_selections(selection, window, cx);
                 })
             });
         }
@@ -2974,6 +3021,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::completion_provider::AgentContextSource;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
@@ -3062,6 +3110,71 @@ pub(crate) mod tests {
             cx.windows()
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_when_queued_message_will_be_auto_sent(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("first", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let session_id = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .read(cx)
+                .session_id()
+                .clone()
+        });
+
+        active_thread(&conversation_view, cx).update_in(cx, |thread, _window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+
+        cx.deactivate_window();
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "first response".into(),
+                )),
+                cx,
+            );
+            connection.end_turn(session_id, acp::StopReason::EndTurn);
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows()
+                .iter()
+                .filter(|window| window.downcast::<AgentNotification>().is_some())
+                .count(),
+            0,
+            "No notification should fire when a queued message will be auto-sent on Stopped"
         );
     }
 
@@ -5903,7 +6016,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
-            view.insert_selections(window, cx);
+            let workspace = workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -5966,7 +6086,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
-            view.insert_selections(window, cx);
+            let workspace = view.workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         message_editor.read_with(cx, |editor, cx| {
@@ -7099,6 +7226,7 @@ pub(crate) mod tests {
                             "Allow",
                             acp::PermissionOptionKind::AllowOnce,
                         )]),
+                        acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
                     )
                     .unwrap()

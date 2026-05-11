@@ -25,7 +25,7 @@ pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
-use util::{ResultExt as _, debug_panic};
+use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
 use crate::DEFAULT_THREAD_TITLE;
@@ -36,6 +36,11 @@ pub struct ThreadId(uuid::Uuid);
 impl ThreadId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4())
+    }
+
+    /// Stable, hyphenated string form suitable for use as a key.
+    pub fn to_key_string(&self) -> String {
+        self.0.hyphenated().to_string()
     }
 }
 
@@ -316,6 +321,12 @@ pub struct ThreadMetadata {
 }
 
 impl ThreadMetadata {
+    /// A thread is a draft until its first message is sent, at which point
+    /// it gets an ACP `session_id`.
+    pub fn is_draft(&self) -> bool {
+        self.session_id.is_none()
+    }
+
     pub fn display_title(&self) -> SharedString {
         self.title
             .clone()
@@ -664,11 +675,6 @@ impl ThreadMetadataStore {
     }
 
     fn save_internal(&mut self, metadata: ThreadMetadata) {
-        if metadata.session_id.is_none() {
-            debug_panic!("cannot store thread metadata without a session_id");
-            return;
-        };
-
         if let Some(thread) = self.threads.get(&metadata.thread_id) {
             if thread.folder_paths() != metadata.folder_paths() {
                 if let Some(thread_ids) = self.threads_by_paths.get_mut(thread.folder_paths()) {
@@ -694,13 +700,12 @@ impl ThreadMetadataStore {
     }
 
     fn cache_thread_metadata(&mut self, metadata: ThreadMetadata) {
-        let Some(session_id) = metadata.session_id.as_ref() else {
-            debug_panic!("cannot store thread metadata without a session_id");
-            return;
-        };
-
-        self.threads_by_session
-            .insert(session_id.clone(), metadata.thread_id);
+        // Drafts may not have a session_id yet; only index by session
+        // when one is present.
+        if let Some(session_id) = metadata.session_id.as_ref() {
+            self.threads_by_session
+                .insert(session_id.clone(), metadata.thread_id);
+        }
 
         self.threads.insert(metadata.thread_id, metadata.clone());
 
@@ -1080,6 +1085,7 @@ impl ThreadMetadataStore {
         self.pending_thread_ops_tx
             .try_send(DbOperation::Delete(thread_id))
             .log_err();
+        crate::draft_prompt_store::delete(thread_id, cx).detach_and_log_err(cx);
         cx.notify();
     }
 
@@ -1176,12 +1182,19 @@ impl ThreadMetadataStore {
         };
 
         let thread_ref = thread.read(cx);
-        if thread_ref.is_draft_thread() || thread_ref.project().read(cx).is_via_collab() {
+        // Collab-hosted threads don't own their metadata locally.
+        if thread_ref.project().read(cx).is_via_collab() {
             return;
         }
-
+        let is_draft = thread_ref.is_draft_thread();
         let existing_thread = self.entry(thread_id);
-        let session_id = Some(thread_ref.session_id().clone());
+
+        // Draft session IDs may change on reload, so let's not save them until they're valid
+        let session_id = if is_draft {
+            None
+        } else {
+            Some(thread_ref.session_id().clone())
+        };
         let title = thread_ref.title();
 
         let updated_at = Utc::now();
@@ -1222,6 +1235,14 @@ impl ThreadMetadataStore {
         let archived = existing_thread
             .map(|t| t.archived)
             .unwrap_or(worktree_paths.is_empty());
+
+        let was_draft = existing_thread.map_or(true, |t| t.is_draft());
+        if was_draft && !is_draft {
+            // Draft has been promoted: drop its persisted prompt since the
+            // promoted thread now owns its prompt state via the native
+            // agent's thread database.
+            crate::draft_prompt_store::delete(thread_id, cx).detach_and_log_err(cx);
+        }
 
         let metadata = ThreadMetadata {
             thread_id,
@@ -1353,7 +1374,6 @@ impl ThreadMetadataDb {
     pub fn list_ids(&self) -> anyhow::Result<Vec<ThreadId>> {
         self.select::<ThreadId>(
             "SELECT thread_id FROM sidebar_threads \
-             WHERE session_id IS NOT NULL \
              ORDER BY updated_at DESC",
         )?()
     }
@@ -1362,7 +1382,6 @@ impl ThreadMetadataDb {
         created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
         main_worktree_paths_order, remote_connection \
         FROM sidebar_threads \
-        WHERE session_id IS NOT NULL \
         ORDER BY updated_at DESC";
 
     /// List all sidebar thread metadata, ordered by updated_at descending.
@@ -1373,12 +1392,11 @@ impl ThreadMetadataDb {
     }
 
     /// Upsert metadata for a thread.
+    ///
+    /// Drafts are persisted with `session_id = None`. They get a real
+    /// session_id on promotion (when the first message is sent) and
+    /// then flow through this same upsert path.
     pub async fn save(&self, row: ThreadMetadata) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            row.session_id.is_some(),
-            "refusing to persist thread metadata without a session_id"
-        );
-
         let session_id = row.session_id.as_ref().map(|s| s.0.clone());
         let agent_id = if row.agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
             None
@@ -2416,7 +2434,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_thread_events_do_not_create_metadata(cx: &mut TestAppContext) {
+    async fn test_draft_thread_metadata_promotes_on_first_message(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -2430,14 +2448,19 @@ mod tests {
         let session_id = thread.read_with(&vcx, |t, _| t.session_id().clone());
         let thread_id = crate::test_support::active_thread_id(&panel, &vcx);
 
-        // Draft threads no longer create metadata entries.
+        // Empty (draft) threads are persisted with `session_id: None`.
         cx.read(|cx| {
             let store = ThreadMetadataStore::global(cx).read(cx);
-            assert_eq!(store.entry_ids().count(), 0);
+            assert_eq!(store.entry_ids().count(), 1);
+            let entry = store.entry(thread_id).expect("draft metadata row");
+            assert!(
+                entry.is_draft(),
+                "expected draft row to have session_id=None, got {:?}",
+                entry.session_id
+            );
         });
 
-        // Setting a title on an empty thread should be ignored by the
-        // event handler (entries are empty), so no metadata is created.
+        // Updating the title while still a draft keeps the row as a draft.
         thread.update_in(&mut vcx, |thread, _window, cx| {
             thread.set_title("Draft Thread".into(), cx).detach();
         });
@@ -2445,15 +2468,15 @@ mod tests {
 
         cx.read(|cx| {
             let store = ThreadMetadataStore::global(cx).read(cx);
+            let entry = store.entry(thread_id).expect("draft metadata row");
+            assert!(entry.is_draft(), "still a draft after title update");
             assert_eq!(
-                store.entry_ids().count(),
-                0,
-                "expected title updates on empty thread to not create metadata"
+                entry.title.as_ref().map(|t| t.as_ref()),
+                Some("Draft Thread")
             );
         });
 
-        // Pushing content makes entries non-empty, so the event handler
-        // should now update metadata with the real session_id.
+        // Pushing content promotes the draft: session_id is now populated.
         thread.update_in(&mut vcx, |thread, _window, cx| {
             thread.push_user_content_block(None, "Hello".into(), cx);
         });

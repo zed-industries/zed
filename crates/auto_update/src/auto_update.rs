@@ -81,6 +81,11 @@ fn linux_rsync_install_hint() -> &'static str {
             || distribution_id == "almalinux"
     }) {
         Some("Install it with: sudo dnf install rsync")
+    } else if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "nixos")
+    {
+        Some("Install pkgs.rsync from nixpkgs")
     } else {
         None
     };
@@ -1104,8 +1109,7 @@ async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<P
     let mut cmd = new_command(downloaded_installer);
     cmd.arg("/verysilent")
         .arg("/update=true")
-        .arg("!desktopicon")
-        .arg("!quicklaunchicon");
+        .arg("/MERGETASKS=!desktopicon");
     let output = cmd.output().await?;
     anyhow::ensure!(
         output.status.success(),
