@@ -12,6 +12,8 @@ pub struct Request {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
     pub store: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<ResponseIncludable>,
     #[serde(default)]
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,12 +34,20 @@ pub struct Request {
     pub reasoning: Option<ReasoningConfig>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseIncludable {
+    #[serde(rename = "reasoning.encrypted_content")]
+    ReasoningEncryptedContent,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseInputItem {
     Message(ResponseMessageItem),
     FunctionCall(ResponseFunctionCallItem),
     FunctionCallOutput(ResponseFunctionCallOutputItem),
+    Reasoning(ResponseReasoningInputItem),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,6 +67,23 @@ pub struct ResponseFunctionCallItem {
 pub struct ResponseFunctionCallOutputItem {
     pub call_id: String,
     pub output: ResponseFunctionCallOutputContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponseReasoningInputItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub summary: Vec<ResponseReasoningSummaryPart>,
+    pub encrypted_content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseReasoningSummaryPart {
+    SummaryText { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -272,6 +299,10 @@ pub struct ResponseReasoningItem {
     pub id: Option<String>,
     #[serde(default)]
     pub summary: Vec<ReasoningSummaryPart>,
+    #[serde(default)]
+    pub encrypted_content: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

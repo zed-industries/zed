@@ -13,9 +13,10 @@ use std::sync::Arc;
 
 use crate::responses::{
     Request as ResponseRequest, ResponseFunctionCallItem, ResponseFunctionCallOutputContent,
-    ResponseFunctionCallOutputItem, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
-    ResponseOutputItem, ResponseSummary as ResponsesSummary, ResponseUsage as ResponsesUsage,
-    StreamEvent as ResponsesStreamEvent,
+    ResponseFunctionCallOutputItem, ResponseIncludable, ResponseInputContent, ResponseInputItem,
+    ResponseMessageItem, ResponseOutputItem, ResponseReasoningInputItem, ResponseReasoningItem,
+    ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
+    ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
 };
 use crate::{
     FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
@@ -210,10 +211,34 @@ pub fn into_open_ai_response(
         })
         .collect();
 
+    let reasoning = if thinking_allowed {
+        thinking_effort
+            .as_deref()
+            .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
+            .or(reasoning_effort)
+            .map(|effort| crate::responses::ReasoningConfig {
+                effort,
+                summary: Some(crate::responses::ReasoningSummaryMode::Auto),
+            })
+    } else {
+        None
+    };
+
+    let include = if reasoning.is_some()
+        || input_items
+            .iter()
+            .any(|item| matches!(item, ResponseInputItem::Reasoning(_)))
+    {
+        vec![ResponseIncludable::ReasoningEncryptedContent]
+    } else {
+        Vec::new()
+    };
+
     ResponseRequest {
         model: model_id.into(),
         input: input_items,
         store: false,
+        include,
         stream,
         temperature,
         top_p: None,
@@ -234,18 +259,7 @@ pub fn into_open_ai_response(
         } else {
             None
         },
-        reasoning: if thinking_allowed {
-            thinking_effort
-                .as_deref()
-                .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
-                .or(reasoning_effort)
-                .map(|effort| crate::responses::ReasoningConfig {
-                    effort,
-                    summary: Some(crate::responses::ReasoningSummaryMode::Auto),
-                })
-        } else {
-            None
-        },
+        reasoning,
     }
 }
 
@@ -256,20 +270,31 @@ fn append_message_to_response_items(
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
-    for content in message.content {
+    let LanguageModelRequestMessage {
+        role,
+        content,
+        reasoning_details,
+        ..
+    } = message;
+
+    if role == Role::Assistant {
+        append_reasoning_details_to_response_items(reasoning_details, input_items);
+    }
+
+    for content in content {
         match content {
             MessageContent::Text(text) => {
-                push_response_text_part(&message.role, text, &mut content_parts);
+                push_response_text_part(&role, text, &mut content_parts);
             }
             MessageContent::Thinking { text, .. } => {
-                push_response_text_part(&message.role, text, &mut content_parts);
+                push_response_text_part(&role, text, &mut content_parts);
             }
             MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {
-                push_response_image_part(&message.role, image, &mut content_parts);
+                push_response_image_part(&role, image, &mut content_parts);
             }
             MessageContent::ToolUse(tool_use) => {
-                flush_response_parts(&message.role, index, &mut content_parts, input_items);
+                flush_response_parts(&role, index, &mut content_parts, input_items);
                 let call_id = tool_use.id.to_string();
                 input_items.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
                     call_id,
@@ -278,7 +303,7 @@ fn append_message_to_response_items(
                 }));
             }
             MessageContent::ToolResult(tool_result) => {
-                flush_response_parts(&message.role, index, &mut content_parts, input_items);
+                flush_response_parts(&role, index, &mut content_parts, input_items);
                 let output = match tool_result.content.as_slice() {
                     [LanguageModelToolResultContent::Text(text)] => {
                         ResponseFunctionCallOutputContent::Text(text.to_string())
@@ -313,7 +338,34 @@ fn append_message_to_response_items(
         }
     }
 
-    flush_response_parts(&message.role, index, &mut content_parts, input_items);
+    flush_response_parts(&role, index, &mut content_parts, input_items);
+}
+
+fn append_reasoning_details_to_response_items(
+    reasoning_details: Option<serde_json::Value>,
+    input_items: &mut Vec<ResponseInputItem>,
+) {
+    let Some(reasoning_details) = reasoning_details else {
+        return;
+    };
+
+    match reasoning_details {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                if let Ok(reasoning_item) =
+                    serde_json::from_value::<ResponseReasoningInputItem>(item)
+                {
+                    input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+                }
+            }
+        }
+        value => {
+            if let Ok(reasoning_item) = serde_json::from_value::<ResponseReasoningInputItem>(value)
+            {
+                input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+            }
+        }
+    }
 }
 
 fn push_response_text_part(
@@ -556,6 +608,7 @@ struct RawToolCall {
 
 pub struct OpenAiResponseEventMapper {
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
+    reasoning_items: Vec<ResponseReasoningInputItem>,
     pending_stop_reason: Option<StopReason>,
 }
 
@@ -570,6 +623,7 @@ impl OpenAiResponseEventMapper {
     pub fn new() -> Self {
         Self {
             function_calls_by_item: HashMap::default(),
+            reasoning_items: Vec::new(),
             pending_stop_reason: None,
         }
     }
@@ -717,6 +771,7 @@ impl OpenAiResponseEventMapper {
                 };
 
                 let mut events = Vec::new();
+                events.extend(self.capture_reasoning_items_from_output(&response.output));
                 if self.pending_stop_reason.is_none() {
                     events.extend(self.emit_tool_calls_from_output(&response.output));
                 }
@@ -752,8 +807,13 @@ impl OpenAiResponseEventMapper {
                     Vec::new()
                 }
             }
+            ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
+                ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
+                ResponseOutputItem::Message(_)
+                | ResponseOutputItem::FunctionCall(_)
+                | ResponseOutputItem::Unknown => Vec::new(),
+            },
             ResponsesStreamEvent::OutputTextDone { .. }
-            | ResponsesStreamEvent::OutputItemDone { .. }
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
@@ -770,6 +830,8 @@ impl OpenAiResponseEventMapper {
         default_reason: StopReason,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
+
+        events.extend(self.capture_reasoning_items_from_output(&response.output));
 
         if self.pending_stop_reason.is_none() {
             events.extend(self.emit_tool_calls_from_output(&response.output));
@@ -833,6 +895,45 @@ impl OpenAiResponseEventMapper {
         }
         events
     }
+
+    fn capture_reasoning_items_from_output(
+        &mut self,
+        output: &[ResponseOutputItem],
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        for item in output {
+            if let ResponseOutputItem::Reasoning(reasoning) = item {
+                events.extend(self.capture_reasoning_item(reasoning));
+            }
+        }
+        events
+    }
+
+    fn capture_reasoning_item(
+        &mut self,
+        reasoning: &ResponseReasoningItem,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(reasoning_item) = response_reasoning_input_item_from_output(reasoning) else {
+            return Vec::new();
+        };
+
+        if self.reasoning_items.contains(&reasoning_item) {
+            return Vec::new();
+        }
+        self.reasoning_items.push(reasoning_item);
+
+        let reasoning_items = self
+            .reasoning_items
+            .iter()
+            .cloned()
+            .map(ResponseInputItem::Reasoning)
+            .collect::<Vec<_>>();
+
+        match serde_json::to_value(reasoning_items) {
+            Ok(details) => vec![Ok(LanguageModelCompletionEvent::ReasoningDetails(details))],
+            Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+        }
+    }
 }
 
 fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
@@ -842,6 +943,33 @@ fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
     }
+}
+
+fn response_reasoning_input_item_from_output(
+    reasoning: &ResponseReasoningItem,
+) -> Option<ResponseReasoningInputItem> {
+    let encrypted_content = reasoning.encrypted_content.clone()?;
+    if encrypted_content.is_empty() {
+        return None;
+    }
+
+    let summary = reasoning
+        .summary
+        .iter()
+        .filter_map(|part| match part {
+            crate::responses::ReasoningSummaryPart::SummaryText { text } => {
+                Some(ResponseReasoningSummaryPart::SummaryText { text: text.clone() })
+            }
+            crate::responses::ReasoningSummaryPart::Unknown => None,
+        })
+        .collect();
+
+    Some(ResponseReasoningInputItem {
+        id: reasoning.id.clone(),
+        summary,
+        encrypted_content,
+        status: reasoning.status.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -1080,6 +1208,7 @@ mod tests {
                 }
             ],
             "store": false,
+            "include": ["reasoning.encrypted_content"],
             "stream": true,
             "max_output_tokens": 2048,
             "parallel_tool_calls": true,
@@ -1097,6 +1226,91 @@ mod tests {
         });
 
         assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn into_open_ai_response_replays_encrypted_reasoning_details() {
+        let tool_call_id = LanguageModelToolUseId::from("call-42");
+        let tool_arguments = "{\"city\":\"Boston\"}".to_string();
+        let tool_use = LanguageModelToolUse {
+            id: tool_call_id,
+            name: Arc::from("get_weather"),
+            raw_input: tool_arguments.clone(),
+            input: json!({ "city": "Boston" }),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::ToolUse(tool_use)],
+                cache: false,
+                reasoning_details: Some(json!([
+                    {
+                        "type": "reasoning",
+                        "id": "rs_123",
+                        "summary": [
+                            {
+                                "type": "summary_text",
+                                "text": "Checked what information is needed."
+                            }
+                        ],
+                        "encrypted_content": "ENC",
+                        "status": "completed"
+                    }
+                ])),
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5",
+            true,
+            true,
+            None,
+            Some(ReasoningEffort::Low),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "Checked what information is needed."
+                        }
+                    ],
+                    "encrypted_content": "ENC",
+                    "status": "completed"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call-42",
+                    "name": "get_weather",
+                    "arguments": tool_arguments
+                }
+            ])
+        );
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+        assert_eq!(serialized.get("reasoning"), None);
     }
 
     #[test]
@@ -1548,6 +1762,8 @@ mod tests {
                 item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
                     id: Some("rs_123".into()),
                     summary: vec![],
+                    encrypted_content: None,
+                    status: None,
                 }),
             },
             ResponsesStreamEvent::ReasoningSummaryPartAdded {
@@ -1608,6 +1824,8 @@ mod tests {
                             text: "Second part".into(),
                         },
                     ],
+                    encrypted_content: None,
+                    status: None,
                 }),
             },
             ResponsesStreamEvent::OutputItemAdded {
@@ -1666,6 +1884,8 @@ mod tests {
                 item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
                     id: Some("rs_789".into()),
                     summary: vec![],
+                    encrypted_content: None,
+                    status: None,
                 }),
             },
             ResponsesStreamEvent::OutputItemDone {
@@ -1676,6 +1896,8 @@ mod tests {
                     summary: vec![ReasoningSummaryPart::SummaryText {
                         text: "Summary without deltas".into(),
                     }],
+                    encrypted_content: None,
+                    status: None,
                 }),
             },
             ResponsesStreamEvent::Completed {
@@ -1689,6 +1911,54 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, LanguageModelCompletionEvent::Thinking { .. })),
             "OutputItemDone reasoning should not produce Thinking events"
+        );
+    }
+
+    #[test]
+    fn responses_stream_preserves_encrypted_reasoning_details() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                    id: Some("rs_123".into()),
+                    summary: vec![ReasoningSummaryPart::SummaryText {
+                        text: "Checked what information is needed.".into(),
+                    }],
+                    encrypted_content: Some("ENC".into()),
+                    status: Some("completed".into()),
+                }),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let details = mapped
+            .iter()
+            .find_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(details) => Some(details),
+                _ => None,
+            })
+            .expect("reasoning details");
+
+        assert_eq!(
+            details,
+            &json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "Checked what information is needed."
+                        }
+                    ],
+                    "encrypted_content": "ENC",
+                    "status": "completed"
+                }
+            ])
         );
     }
 
