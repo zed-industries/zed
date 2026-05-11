@@ -12,11 +12,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    Request as ResponseRequest, ResponseFunctionCallItem, ResponseFunctionCallOutputContent,
-    ResponseFunctionCallOutputItem, ResponseIncludable, ResponseInputContent, ResponseInputItem,
-    ResponseMessageItem, ResponseOutputItem, ResponseReasoningInputItem, ResponseReasoningItem,
-    ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
-    ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
+    Request as ResponseRequest, ResponseError, ResponseFunctionCallItem,
+    ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
+    ResponseReasoningInputItem, ResponseReasoningItem, ResponseReasoningSummaryPart,
+    ResponseSummary as ResponsesSummary, ResponseUsage as ResponsesUsage,
+    StreamEvent as ResponsesStreamEvent,
 };
 use crate::{
     FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
@@ -754,12 +755,9 @@ impl OpenAiResponseEventMapper {
                 self.handle_completion(response, StopReason::EndTurn)
             }
             ResponsesStreamEvent::Incomplete { response } => {
-                let reason = response
-                    .status_details
-                    .as_ref()
-                    .and_then(|details| details.reason.as_deref());
+                let reason = response_incomplete_reason(&response);
                 let stop_reason = match reason {
-                    Some("max_output_tokens") => StopReason::MaxTokens,
+                    Some("max_tokens" | "max_output_tokens") => StopReason::MaxTokens,
                     Some("content_filter") => {
                         self.pending_stop_reason = Some(StopReason::Refusal);
                         StopReason::Refusal
@@ -784,17 +782,27 @@ impl OpenAiResponseEventMapper {
                 events
             }
             ResponsesStreamEvent::Failed { response } => {
-                let message = response
-                    .status_details
-                    .and_then(|details| details.error)
-                    .map(|error| error.to_string())
-                    .unwrap_or_else(|| "response failed".to_string());
+                let message = response_failure_message(&response);
                 vec![Err(LanguageModelCompletionError::Other(anyhow!(message)))]
             }
-            ResponsesStreamEvent::Error { error }
-            | ResponsesStreamEvent::GenericError { error } => {
+            ResponsesStreamEvent::Error { error } => {
                 vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    error.message
+                    response_error_message(&error)
+                )))]
+            }
+            ResponsesStreamEvent::GenericError {
+                code,
+                message,
+                param,
+                sequence_number: _,
+            } => {
+                let error = ResponseError {
+                    code,
+                    message,
+                    param,
+                };
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    response_error_message(&error)
                 )))]
             }
             ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
@@ -936,6 +944,64 @@ impl OpenAiResponseEventMapper {
     }
 }
 
+fn response_incomplete_reason(response: &ResponsesSummary) -> Option<&str> {
+    response
+        .incomplete_details
+        .as_ref()
+        .and_then(|details| details.reason.as_deref())
+        .or_else(|| {
+            response
+                .status_details
+                .as_ref()
+                .and_then(|details| details.reason.as_deref())
+        })
+}
+
+fn response_failure_message(response: &ResponsesSummary) -> String {
+    if let Some(error) = response.error.as_ref() {
+        return response_error_message(error);
+    }
+
+    if let Some(message) = response
+        .status_details
+        .as_ref()
+        .and_then(|details| details.error.as_ref())
+        .map(response_status_details_error_message)
+    {
+        return message;
+    }
+
+    response
+        .status
+        .as_deref()
+        .map(|status| format!("response.{status}"))
+        .unwrap_or_else(|| "response.failed".to_string())
+}
+
+fn response_status_details_error_message(error: &serde_json::Value) -> String {
+    if let Some(message) = error.get("message").and_then(|message| message.as_str()) {
+        return message.to_string();
+    }
+
+    if let Some(message) = error.as_str() {
+        return message.to_string();
+    }
+
+    error.to_string()
+}
+
+fn response_error_message(error: &ResponseError) -> String {
+    let code = error.code.as_deref().filter(|code| !code.trim().is_empty());
+    let message = error.message.trim();
+
+    match (code, message.is_empty()) {
+        (Some(code), false) => format!("{code}: {message}"),
+        (Some(code), true) => code.to_string(),
+        (None, false) => message.to_string(),
+        (None, true) => "response error".to_string(),
+    }
+}
+
 fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
     TokenUsage {
         input_tokens: usage.input_tokens.unwrap_or_default(),
@@ -975,9 +1041,9 @@ fn response_reasoning_input_item_from_output(
 #[cfg(test)]
 mod tests {
     use crate::responses::{
-        ReasoningSummaryPart, ResponseFunctionToolCall, ResponseOutputItem, ResponseOutputMessage,
-        ResponseReasoningItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
-        StreamEvent as ResponsesStreamEvent,
+        ReasoningSummaryPart, ResponseError, ResponseFunctionToolCall, ResponseIncompleteDetails,
+        ResponseOutputItem, ResponseOutputMessage, ResponseReasoningItem, ResponseStatusDetails,
+        ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
     };
     use futures::{StreamExt, executor::block_on};
     use language_model_core::{
@@ -1403,10 +1469,8 @@ mod tests {
     fn responses_stream_uses_max_tokens_stop_reason() {
         let events = vec![ResponsesStreamEvent::Incomplete {
             response: ResponseSummary {
-                status_details: Some(ResponseStatusDetails {
-                    reason: Some("max_output_tokens".into()),
-                    r#type: Some("incomplete".into()),
-                    error: None,
+                incomplete_details: Some(ResponseIncompleteDetails {
+                    reason: Some("max_tokens".into()),
                 }),
                 usage: Some(ResponseUsage {
                     input_tokens: Some(10),
@@ -1430,6 +1494,48 @@ mod tests {
             mapped[1],
             LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
         ));
+    }
+
+    #[test]
+    fn responses_stream_failed_uses_response_error_message() {
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
+            response: ResponseSummary {
+                status: Some("failed".into()),
+                error: Some(ResponseError {
+                    code: Some("server_error".into()),
+                    message: "The model failed to generate a response.".into(),
+                    param: None,
+                }),
+                ..Default::default()
+            },
+        });
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "server_error: The model failed to generate a response."
+        );
+    }
+
+    #[test]
+    fn responses_stream_deserializes_documented_error_event() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "error",
+            "code": "ERR_SOMETHING",
+            "message": "Something went wrong",
+            "param": null,
+            "sequence_number": 1
+        }))
+        .expect("documented error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
     }
 
     #[test]

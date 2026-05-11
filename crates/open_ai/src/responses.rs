@@ -139,9 +139,13 @@ pub enum ToolDefinition {
     },
 }
 
-#[derive(Deserialize, Debug)]
-pub struct Error {
+#[derive(Deserialize, Debug, Clone)]
+pub struct ResponseError {
+    #[serde(default)]
+    pub code: Option<String>,
     pub message: String,
+    #[serde(default)]
+    pub param: Option<Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -242,9 +246,17 @@ pub enum StreamEvent {
     #[serde(rename = "response.failed")]
     Failed { response: ResponseSummary },
     #[serde(rename = "response.error")]
-    Error { error: Error },
+    Error { error: ResponseError },
     #[serde(rename = "error")]
-    GenericError { error: Error },
+    GenericError {
+        #[serde(default)]
+        code: Option<String>,
+        message: String,
+        #[serde(default)]
+        param: Option<Value>,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -256,11 +268,21 @@ pub struct ResponseSummary {
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
+    pub incomplete_details: Option<ResponseIncompleteDetails>,
+    #[serde(default)]
+    pub error: Option<ResponseError>,
+    #[serde(default)]
     pub status_details: Option<ResponseStatusDetails>,
     #[serde(default)]
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
     pub output: Vec<ResponseOutputItem>,
+}
+
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct ResponseIncompleteDetails {
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -473,8 +495,17 @@ pub async fn stream_response(
                         });
                     }
 
-                    all_events.push(StreamEvent::Completed {
-                        response: response_summary,
+                    let status = response_summary.status.clone();
+                    all_events.push(match status.as_deref() {
+                        Some("incomplete") => StreamEvent::Incomplete {
+                            response: response_summary,
+                        },
+                        Some("failed") => StreamEvent::Failed {
+                            response: response_summary,
+                        },
+                        _ => StreamEvent::Completed {
+                            response: response_summary,
+                        },
                     });
 
                     Ok(futures::stream::iter(all_events.into_iter().map(Ok)).boxed())
