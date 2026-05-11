@@ -459,7 +459,14 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     Ok(source.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("error: {error:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     #[cfg(unix)]
     util::prevent_root_execution();
 

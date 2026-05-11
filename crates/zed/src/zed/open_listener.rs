@@ -431,7 +431,7 @@ pub async fn open_paths_with_positions(
 
     for (item, path) in items.iter_mut().zip(&paths) {
         if let Some(Err(error)) = item {
-            *error = anyhow!("error opening {path:?}: {error}");
+            *error = anyhow!("error opening {path:?}: {error:#}");
         }
     }
 
@@ -810,9 +810,15 @@ async fn open_local_workspace(
     {
         Ok(result) => result,
         Err(error) => {
+            let paths = paths_with_position
+                .iter()
+                .map(|p| p.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::error!("failed to open workspace [{paths}]: {error:#}");
             responses
                 .send(CliResponse::Stderr {
-                    message: format!("error opening {paths_with_position:?}: {error}"),
+                    message: format!("error opening [{paths}]: {error:#}"),
                 })
                 .log_err();
             return true;
@@ -863,9 +869,10 @@ async fn open_local_workspace(
                 }
             }
             Some(Err(err)) => {
+                log::error!("{err:#}");
                 responses
                     .send(CliResponse::Stderr {
-                        message: err.to_string(),
+                        message: format!("{err:#}"),
                     })
                     .log_err();
                 errored = true;
