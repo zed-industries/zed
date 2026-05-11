@@ -1336,6 +1336,20 @@ mod mac_os {
                 }
 
                 Self::LocalPath { executable, .. } => {
+                    // Check if a running instance is listening on the socket (like Linux does).
+                    let data_dir = user_data_dir
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| paths::data_dir().clone());
+                    let sock_path = data_dir.join(format!(
+                        "zed-{}.sock",
+                        *release_channel::RELEASE_CHANNEL_NAME
+                    ));
+                    let sock = std::os::unix::net::UnixDatagram::unbound()?;
+                    if sock.connect(&sock_path).is_ok() {
+                        sock.send(url.as_bytes())?;
+                        return Ok(());
+                    }
+
                     let executable_parent = executable
                         .parent()
                         .with_context(|| format!("Executable {executable:?} path has no parent"))?;
