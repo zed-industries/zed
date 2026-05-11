@@ -696,6 +696,11 @@ impl OpenAiResponseEventMapper {
                     vec![Ok(LanguageModelCompletionEvent::Text(delta))]
                 }
             }
+            ResponsesStreamEvent::RefusalDelta { .. }
+            | ResponsesStreamEvent::RefusalDone { .. } => {
+                self.pending_stop_reason = Some(StopReason::Refusal);
+                Vec::new()
+            }
             ResponsesStreamEvent::FunctionCallArgumentsDelta { item_id, delta, .. } => {
                 if let Some(entry) = self.function_calls_by_item.get_mut(&item_id) {
                     entry.arguments.push_str(&delta);
@@ -756,7 +761,7 @@ impl OpenAiResponseEventMapper {
             }
             ResponsesStreamEvent::Incomplete { response } => {
                 let reason = response_incomplete_reason(&response);
-                let stop_reason = match reason {
+                let mut stop_reason = match reason {
                     Some("max_tokens" | "max_output_tokens") => StopReason::MaxTokens,
                     Some("content_filter") => {
                         self.pending_stop_reason = Some(StopReason::Refusal);
@@ -770,6 +775,12 @@ impl OpenAiResponseEventMapper {
 
                 let mut events = Vec::new();
                 events.extend(self.capture_reasoning_items_from_output(&response.output));
+                if response_output_contains_refusal(&response.output)
+                    && !matches!(stop_reason, StopReason::MaxTokens)
+                {
+                    self.pending_stop_reason = Some(StopReason::Refusal);
+                    stop_reason = StopReason::Refusal;
+                }
                 if self.pending_stop_reason.is_none() {
                     events.extend(self.emit_tool_calls_from_output(&response.output));
                 }
@@ -840,6 +851,10 @@ impl OpenAiResponseEventMapper {
         let mut events = Vec::new();
 
         events.extend(self.capture_reasoning_items_from_output(&response.output));
+
+        if response_output_contains_refusal(&response.output) {
+            self.pending_stop_reason = Some(StopReason::Refusal);
+        }
 
         if self.pending_stop_reason.is_none() {
             events.extend(self.emit_tool_calls_from_output(&response.output));
@@ -1000,6 +1015,28 @@ fn response_error_message(error: &ResponseError) -> String {
         (None, false) => message.to_string(),
         (None, true) => "response error".to_string(),
     }
+}
+
+fn response_output_contains_refusal(output: &[ResponseOutputItem]) -> bool {
+    output.iter().any(|item| {
+        if let ResponseOutputItem::Message(message) = item {
+            message.content.iter().any(response_content_is_refusal)
+        } else {
+            false
+        }
+    })
+}
+
+fn response_content_is_refusal(content: &serde_json::Value) -> bool {
+    let content_type = content
+        .get("type")
+        .and_then(|content_type| content_type.as_str());
+    let refusal = content
+        .get("refusal")
+        .and_then(|refusal| refusal.as_str())
+        .unwrap_or_default();
+
+    content_type == Some("refusal") || !refusal.is_empty()
 }
 
 fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
@@ -1536,6 +1573,66 @@ mod tests {
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
+    }
+
+    #[test]
+    fn responses_stream_maps_refusal_events_to_refusal_stop() {
+        let delta = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "response.refusal.delta",
+            "item_id": "msg_123",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "I can't help",
+            "sequence_number": 1
+        }))
+        .expect("documented refusal delta event");
+        let done = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "response.refusal.done",
+            "item_id": "msg_123",
+            "output_index": 0,
+            "content_index": 0,
+            "refusal": "I can't help with that.",
+            "sequence_number": 2
+        }))
+        .expect("documented refusal done event");
+
+        let mapped = map_response_events(vec![
+            delta,
+            done,
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ]);
+
+        assert_eq!(mapped.len(), 1);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_refusal_output_to_refusal_stop() {
+        let mapped = map_response_events(vec![ResponsesStreamEvent::Completed {
+            response: ResponseSummary {
+                output: vec![ResponseOutputItem::Message(ResponseOutputMessage {
+                    id: Some("msg_123".into()),
+                    role: Some("assistant".into()),
+                    status: Some("completed".into()),
+                    content: vec![json!({
+                        "type": "refusal",
+                        "refusal": "I can't help with that."
+                    })],
+                })],
+                ..Default::default()
+            },
+        }]);
+
+        assert_eq!(mapped.len(), 1);
+        assert!(matches!(
+            mapped[0],
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal)
+        ));
     }
 
     #[test]

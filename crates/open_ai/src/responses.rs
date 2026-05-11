@@ -199,6 +199,24 @@ pub enum StreamEvent {
         content_index: Option<usize>,
         text: String,
     },
+    #[serde(rename = "response.refusal.delta")]
+    RefusalDelta {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        delta: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
+    #[serde(rename = "response.refusal.done")]
+    RefusalDone {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        refusal: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
     #[serde(rename = "response.reasoning_summary_part.added")]
     ReasoningSummaryPartAdded {
         item_id: String,
