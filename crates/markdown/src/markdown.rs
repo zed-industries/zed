@@ -541,8 +541,7 @@ impl Markdown {
 
     /// Used in the agent panel to force a re-render when the theme changes
     pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
-        if self.options.render_mermaid_diagrams
-            && !self.parsed_markdown.mermaid_diagrams.is_empty()
+        if self.options.render_mermaid_diagrams && !self.parsed_markdown.mermaid_diagrams.is_empty()
         {
             self.mermaid_state.clear();
             let parsed_markdown = self.parsed_markdown.clone();
@@ -1794,10 +1793,8 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
-                                let showing_code = self
-                                    .markdown
-                                    .read(cx)
-                                    .is_mermaid_showing_code(range.start);
+                                let showing_code =
+                                    self.markdown.read(cx).is_mermaid_showing_code(range.start);
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(

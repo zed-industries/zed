@@ -1,7 +1,7 @@
 use collections::HashMap;
 use gpui::{
     Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity, Hsla,
-    ImageSource, Rgba, RenderImage, StyledText, Task, img, pulsating_between,
+    ImageSource, RenderImage, Rgba, StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -112,10 +112,8 @@ impl CachedMermaidDiagram {
                         theme: mermaid_theme,
                         layout: mermaid_rs_renderer::LayoutConfig::default(),
                     };
-                    let svg_string = mermaid_rs_renderer::render_with_options(
-                        &contents.contents,
-                        options,
-                    )?;
+                    let svg_string =
+                        mermaid_rs_renderer::render_with_options(&contents.contents, options)?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale)
@@ -258,20 +256,13 @@ pub(crate) fn render_mermaid_diagram(
     let code = parsed.contents.contents.clone();
     let copy_button = render_mermaid_copy_button(source_offset, code.to_string(), markdown.clone());
 
-    let mut container = div()
-        .group("code_block")
-        .relative()
-        .w_full()
-        .rounded_lg();
+    let mut container = div().group("code_block").relative().w_full().rounded_lg();
     container.style().refine(&style.code_block);
 
     match render_result {
         Some(Ok(render_image)) => {
-            let tab_header = render_mermaid_tab_header(
-                source_offset,
-                showing_code,
-                markdown.clone(),
-            );
+            let tab_header =
+                render_mermaid_tab_header(source_offset, showing_code, markdown.clone());
 
             let body = if showing_code {
                 render_mermaid_code_view(&parsed.contents.contents)
@@ -410,9 +401,7 @@ fn render_mermaid_tab_button(
         .py_0p5()
         .rounded_md()
         .text_size(rems(0.75))
-        .when(is_selected, |this| {
-            this.bg(gpui::hsla(0., 0., 0.5, 0.15))
-        })
+        .when(is_selected, |this| this.bg(gpui::hsla(0., 0., 0.5, 0.15)))
         .when(!is_selected, |this| {
             this.hover(|this| this.bg(gpui::hsla(0., 0., 0.5, 0.08)))
         })
@@ -434,30 +423,26 @@ fn render_mermaid_copy_button(
         .right_0()
         .justify_end()
         .visible_on_hover("code_block")
-        .child(
-            CopyButton::new(id.clone(), code.clone()).custom_on_click({
-                move |_window, cx| {
-                    let id = id.clone();
-                    markdown.update(cx, |this, cx| {
-                        this.copied_code_blocks.insert(id.clone());
-                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
-                        cx.spawn(async move |this, cx| {
-                            cx.background_executor()
-                                .timer(Duration::from_secs(2))
-                                .await;
-                            cx.update(|cx| {
-                                this.update(cx, |this, cx| {
-                                    this.copied_code_blocks.remove(&id);
-                                    cx.notify();
-                                })
+        .child(CopyButton::new(id.clone(), code.clone()).custom_on_click({
+            move |_window, cx| {
+                let id = id.clone();
+                markdown.update(cx, |this, cx| {
+                    this.copied_code_blocks.insert(id.clone());
+                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(Duration::from_secs(2)).await;
+                        cx.update(|cx| {
+                            this.update(cx, |this, cx| {
+                                this.copied_code_blocks.remove(&id);
+                                cx.notify();
                             })
-                            .ok();
                         })
-                        .detach();
-                    });
-                }
-            }),
-        )
+                        .ok();
+                    })
+                    .detach();
+                });
+            }
+        }))
 }
 
 fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
