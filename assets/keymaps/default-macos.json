@@ -304,8 +304,7 @@
     "context": "AcpThread",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "agent::NewExternalAgentThread",
-      "cmd-alt-t": "agent::NewThread",
+      "cmd-n": "agent::NewThread",
       "ctrl--": "pane::GoBack",
       "cmd-alt-l": "agent::OpenRulesLibrary",
       "cmd-alt-p": "agent::ManageProfiles",

@@ -3550,7 +3550,7 @@ impl AgentPanel {
                         .item(
                             ContextMenuEntry::new("Zed Agent")
                                 .when(is_agent_selected(Agent::NativeAgent), |this| {
-                                    this.action(Box::new(NewExternalAgentThread { agent: None }))
+                                    this.action(Box::new(NewThread))
                                 })
                                 .icon(IconName::ZedAgent)
                                 .icon_color(Color::Muted)
@@ -3659,11 +3659,7 @@ impl AgentPanel {
                                         is_agent_selected(Agent::Custom {
                                             id: item.id.clone(),
                                         }),
-                                        |this| {
-                                            this.action(Box::new(NewExternalAgentThread {
-                                                agent: None,
-                                            }))
-                                        },
+                                        |this| this.action(Box::new(NewThread)),
                                     )
                                     .icon_color(Color::Muted)
                                     .disabled(is_via_collab)
@@ -6601,7 +6597,7 @@ mod tests {
         });
 
         // Press cmd-n (activate_draft again with the same agent).
-        cx.dispatch_action(NewExternalAgentThread { agent: None });
+        cx.dispatch_action(NewThread);
         cx.run_until_parked();
 
         // The draft entity should not have changed.
