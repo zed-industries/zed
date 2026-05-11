@@ -343,8 +343,10 @@ impl HeadlessProject {
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
-        // handle_close_buffer moved to Project / HeadlessProject in BufferStore Phase 1.
+        // handle_close_buffer / handle_reload_buffers moved to Project /
+        // HeadlessProject in BufferStore Phase 1.
         session.add_entity_message_handler(Self::handle_close_buffer);
+        session.add_entity_request_handler(Self::handle_reload_buffers);
 
         session.add_request_handler(
             extensions.downgrade(),
@@ -403,17 +405,34 @@ impl HeadlessProject {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        if let BufferEvent::Operation {
-            operation,
-            is_local: true,
-        } = event
-        {
-            cx.background_spawn(self.session.request(proto::UpdateBuffer {
-                project_id: REMOTE_SERVER_PROJECT_ID,
-                buffer_id: buffer.read(cx).remote_id().to_proto(),
-                operations: vec![serialize_operation(operation)],
-            }))
-            .detach()
+        match event {
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx
+                .background_spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(operation)],
+                }))
+                .detach(),
+            BufferEvent::ReloadNeeded => {
+                // The server's worktree scanner observed a content
+                // change for this buffer; reload from disk. Mirrors
+                // `Project::on_buffer_event`'s ReloadNeeded branch.
+                // Without this the buffer's contents stay frozen at
+                // the load-time text even though `file_updated` ran
+                // and emitted `ReloadNeeded` — manifesting as
+                // `test_remote_reload` seeing the old buffer text.
+                self.buffer_store.update(cx, |buffer_store, cx| {
+                    let mut buffers = HashSet::default();
+                    buffers.insert(buffer);
+                    buffer_store
+                        .reload_buffers(buffers, true, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+            _ => {}
         }
     }
 
@@ -922,6 +941,39 @@ impl HeadlessProject {
             return;
         }
         debug_panic!("tried to register shared lsp handle, but buffer was not shared")
+    }
+
+    /// Mirrors `Project::handle_reload_buffers` for the headless side.
+    /// The handler was moved off `BufferStore` in BufferStore Phase 1,
+    /// but the headless half of that move was missed — the remote
+    /// server had no `ReloadBuffers` handler registered, so explicit
+    /// `project.reload_buffers(...)` calls from the client failed with
+    /// "no handler registered for ReloadBuffers" (and any consumer that
+    /// went through this RPC path silently broke after the move).
+    async fn handle_reload_buffers(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ReloadBuffers>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ReloadBuffersResponse> {
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let reload = this.update(&mut cx, |this, cx| {
+            let mut buffers = HashSet::default();
+            for buffer_id in &envelope.payload.buffer_ids {
+                let buffer_id = BufferId::new(*buffer_id)?;
+                buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
+            }
+            anyhow::Ok(this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.reload_buffers(buffers, false, cx)
+            }))
+        })?;
+
+        let project_transaction = reload.await?;
+        let project_transaction = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+        });
+        Ok(proto::ReloadBuffersResponse {
+            transaction: Some(project_transaction),
+        })
     }
 
     async fn handle_close_buffer(
