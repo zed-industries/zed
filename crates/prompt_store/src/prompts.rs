@@ -44,18 +44,11 @@ pub struct ProjectContext {
     pub os: String,
     pub arch: String,
     pub shell: String,
-    // `skills` and `has_skills` are kept in sync as a pair: `has_skills` is
-    // a derived flag exposed to the handlebars template (which can't do
-    // `!skills.is_empty()`). They're `pub(crate)` so the only way to set
-    // them from outside is via `with_skills`, which preserves the
-    // invariant. Read access is via the `skills()` / `has_skills()`
-    // getters below. Field names are preserved for the handlebars
-    // template, which renders via `Serialize`.
-    //
-    // NOTE: `has_rules` / `has_user_rules` above have the same
-    // shape (derived `pub` flags paired with `pub` source fields) and
-    // share the same hazard. They're left alone here to keep this change
-    // scoped; consider giving them the same treatment in a follow-up.
+    // Similarly to `has_rules` / `has_user_rules`, `has_skills` is a
+    // derived flag exposed to the handlebars template (which can't do
+    // `!skills.is_empty()`). These are `pub(crate)` so the only way to
+    // set them from outside is via `with_skills`, which keeps the two
+    // fields in sync.
     pub(crate) skills: Vec<SkillSummary>,
     pub(crate) has_skills: bool,
 }
@@ -65,7 +58,6 @@ impl ProjectContext {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
-
         Self {
             worktrees,
             has_rules,
