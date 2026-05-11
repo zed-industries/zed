@@ -30,7 +30,8 @@ use std::time::Duration;
 
 use collections::{HashMap, HashSet};
 use gpui::{
-    AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
+    AnyElement, App, BorderStyle, Bounds, ClipboardEntry, ClipboardItem, CursorStyle,
+    DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
@@ -736,8 +737,16 @@ impl Markdown {
         if self.selection.end <= self.selection.start {
             return;
         }
-        let text = text.text_for_range(self.selection.start..self.selection.end);
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let plain_text = text.text_for_range(self.selection.start..self.selection.end);
+        let selected_source = &self.source[self.selection.start..self.selection.end];
+
+        let mut html = String::new();
+        let parser = pulldown_cmark::Parser::new(selected_source);
+        pulldown_cmark::html::push_html(&mut html, parser);
+
+        let mut item = ClipboardItem::new_string(plain_text);
+        item.entries.push(ClipboardEntry::Html(html));
+        cx.write_to_clipboard(item);
     }
 
     fn copy_as_markdown(&mut self, _: &mut Window, cx: &mut Context<Self>) {
