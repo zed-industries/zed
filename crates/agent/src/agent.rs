@@ -567,13 +567,13 @@ impl NativeAgent {
                 }) as _,
                 cx,
             );
-            // The `SkillsLookup` closure resolves `state.skills` at
-            // invocation time, so skills added or removed by the SKILL.md
-            // watcher after the thread is constructed are still visible to
-            // the model — without this, the catalog and tool would drift
-            // out of sync until the session was reopened.
+            // The resolver closure reads `state.skills` at invocation
+            // time, so skills added or removed by the SKILL.md watcher
+            // after the thread is constructed are still visible to the
+            // model — without this, the catalog and tool would drift out
+            // of sync until the session was reopened.
             if cx.has_flag::<SkillsFeatureFlag>() {
-                thread.add_tool(SkillTool::new(skills_lookup_for_project(
+                thread.add_tool(SkillTool::new(skills_resolver_for_project(
                     weak.clone(),
                     project_id,
                 )));
@@ -2775,16 +2775,16 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
     (kept, errors)
 }
 
-/// Build a `SkillsLookup` that, when invoked, reads the latest
-/// `state.skills` for the given project from the `NativeAgent`. This is
-/// the production lookup used by `register_session`; tests can also use
-/// it to verify that skill changes after thread construction are visible
-/// to the `SkillTool`.
-pub(crate) fn skills_lookup_for_project(
+/// Build a closure that, when called, reads the latest `state.skills`
+/// for the given project from the `NativeAgent`. This is the resolver
+/// the `SkillTool` consults at invocation time so that skill changes
+/// after thread construction become visible without re-registering the
+/// tool.
+pub(crate) fn skills_resolver_for_project(
     weak_agent: WeakEntity<NativeAgent>,
     project_id: EntityId,
-) -> SkillsLookup {
-    SkillsLookup::new(move |cx: &App| {
+) -> impl Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static {
+    move |cx: &App| {
         weak_agent
             .upgrade()
             .and_then(|agent| {
@@ -2795,7 +2795,7 @@ pub(crate) fn skills_lookup_for_project(
                     .map(|state| state.skills.clone())
             })
             .unwrap_or_else(|| Arc::new(Vec::new()))
-    })
+    }
 }
 
 /// Merge global and project-local skills.
@@ -3330,8 +3330,8 @@ mod internal_tests {
     /// thread used to hold a stale snapshot of `state.skills` taken at
     /// thread-construction time, which meant the model would see the new
     /// skill in `<available_skills>` but get "not found" when it tried to
-    /// invoke it. The fix wires the tool to a dynamic `SkillsLookup` that
-    /// re-reads `state.skills` for the project on every invocation.
+    /// invoke it. The fix wires the tool to a dynamic resolver closure
+    /// that re-reads `state.skills` for the project on every invocation.
     #[gpui::test]
     async fn test_skills_added_after_session_visible_to_skill_tool(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3376,19 +3376,19 @@ mod internal_tests {
             );
         });
 
-        // Build the same dynamic lookup that `register_session` uses.
-        // This is the production lookup factored into a helper so the
-        // test can verify the lookup behavior directly without setting
+        // Build the same resolver closure that `register_session` uses.
+        // This is the production resolver factored into a helper so the
+        // test can verify resolution behavior directly without setting
         // up the full tool-call plumbing (`ToolInput`,
         // `ToolCallEventStream`, authorization channel, ...).
-        let lookup =
-            cx.update(|_cx| super::skills_lookup_for_project(agent.downgrade(), project_id));
+        let resolve =
+            cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
 
-        // Sanity check: before any skills exist, the lookup returns an
+        // Sanity check: before any skills exist, the resolver returns an
         // empty list — NOT the snapshot that `Thread::new` would have
         // captured.
         cx.update(|cx| {
-            assert!(lookup.current(cx).is_empty());
+            assert!(resolve(cx).is_empty());
         });
 
         // Now create a SKILL.md AFTER the session was registered. With
@@ -3417,12 +3417,16 @@ mod internal_tests {
             assert_eq!(state.skills[0].name, "my-skill");
         });
 
-        // The lookup the `SkillTool` uses must see it too. This is the
+        // The resolver the `SkillTool` uses must see it too. This is the
         // crux of the regression test: the tool's view of skills is
         // resolved at invocation time, not at thread-construction time.
         cx.update(|cx| {
-            let snapshot = lookup.current(cx);
-            assert_eq!(snapshot.len(), 1, "dynamic lookup should see the new skill");
+            let snapshot = resolve(cx);
+            assert_eq!(
+                snapshot.len(),
+                1,
+                "dynamic resolver should see the new skill"
+            );
             assert_eq!(snapshot[0].name, "my-skill");
             assert_eq!(snapshot[0].description, "Created after session");
         });
@@ -3431,7 +3435,7 @@ mod internal_tests {
         // produces a `<skill_content name="my-skill">` block, confirming
         // the model would see the new skill if it invoked the tool.
         cx.update(|cx| {
-            let snapshot = lookup.current(cx);
+            let snapshot = resolve(cx);
             let skill = snapshot
                 .iter()
                 .find(|s| s.name == "my-skill" && !s.disable_model_invocation)
@@ -3448,16 +3452,16 @@ mod internal_tests {
     /// Production wires this up in `NativeThreadEnvironment::create_subagent_thread`,
     /// which calls `agent.register_session(subagent, project_id, ...)` —
     /// `register_session` is what installs the `SkillTool` on the thread
-    /// using a `SkillsLookup` keyed on `project_id`. Because the subagent
-    /// shares its parent's `project_id`, both threads end up resolving
-    /// skills through the same lookup against the same `state.skills`.
+    /// using a resolver closure keyed on `project_id`. Because the
+    /// subagent shares its parent's `project_id`, both threads end up
+    /// resolving skills against the same `state.skills`.
     ///
     /// This test exercises that production path directly: it creates a
     /// parent session via the agent connection, builds a subagent thread
     /// the same way `create_subagent_thread` does, and runs it through
     /// `register_session`. It then asserts that the `SkillTool` is
-    /// registered on the subagent thread and that its lookup sees the
-    /// same skill the parent does.
+    /// registered on the subagent thread and that resolving against the
+    /// same `project_id` produces the same skill set the parent sees.
     #[gpui::test]
     async fn test_subagent_skills_lookup_matches_parent(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3497,11 +3501,11 @@ mod internal_tests {
 
         let project_id = project.entity_id();
 
-        // Sanity check: the parent's lookup sees the skill.
-        let parent_lookup =
-            cx.update(|_cx| super::skills_lookup_for_project(agent.downgrade(), project_id));
+        // Sanity check: resolving against the parent's project sees the skill.
+        let parent_resolve =
+            cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
         cx.update(|cx| {
-            let parent_skills = parent_lookup.current(cx);
+            let parent_skills = parent_resolve(cx);
             assert_eq!(parent_skills.len(), 1);
             assert_eq!(parent_skills[0].name, "shared-skill");
         });
@@ -3540,14 +3544,14 @@ mod internal_tests {
             );
         });
 
-        // The subagent's `SkillTool` is wired to a `SkillsLookup` keyed
+        // The subagent's `SkillTool` is wired to a resolver closure keyed
         // on the same `project_id` the parent used, so it sees the same
-        // skill set. We check this by constructing an equivalent lookup
+        // skill set. We check this by constructing an equivalent resolver
         // against the same project_id and asserting it matches.
-        let subagent_lookup =
-            cx.update(|_cx| super::skills_lookup_for_project(agent.downgrade(), parent_project_id));
+        let subagent_resolve = cx
+            .update(|_cx| super::skills_resolver_for_project(agent.downgrade(), parent_project_id));
         cx.update(|cx| {
-            let subagent_skills = subagent_lookup.current(cx);
+            let subagent_skills = subagent_resolve(cx);
             assert_eq!(subagent_skills.len(), 1);
             assert_eq!(subagent_skills[0].name, "shared-skill");
         });
