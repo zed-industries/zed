@@ -3415,6 +3415,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             editable_region_a.clone(),
             &edit_preview_a,
             None,
+            None,
             Duration::from_secs(0),
             cx,
         );
@@ -3480,6 +3481,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &snapshot_b2,
             editable_region_b.clone(),
             &edit_preview_b,
+            None,
             None,
             Duration::from_secs(0),
             cx,

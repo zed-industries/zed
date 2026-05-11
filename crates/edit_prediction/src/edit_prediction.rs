@@ -497,6 +497,7 @@ struct PendingSettledPrediction {
     ts_error_count_before_prediction: usize,
     ts_error_count_after_prediction: usize,
     example: Option<ExampleSpec>,
+    model_version: Option<String>,
     enqueued_at: Instant,
     last_edit_at: Instant,
     e2e_latency: std::time::Duration,
@@ -1667,6 +1668,7 @@ impl EditPredictionStore {
                     ts_error_count_before_prediction,
                     ts_error_count_after_prediction,
                     example,
+                    model_version,
                     e2e_latency,
                     ..
                 } = pending_prediction;
@@ -1709,6 +1711,7 @@ impl EditPredictionStore {
                     edit_bytes_kept_rate = kept_rate_result.kept_rate,
                     edit_bytes_recall_rate = kept_rate_result.recall_rate,
                     example,
+                    model_version,
                     e2e_latency = e2e_latency.as_millis(),
                 );
             }
@@ -1726,6 +1729,7 @@ impl EditPredictionStore {
         editable_offset_range: Range<usize>,
         edit_preview: &EditPreview,
         example: Option<ExampleSpec>,
+        model_version: Option<String>,
         e2e_latency: std::time::Duration,
         cx: &mut Context<Self>,
     ) {
@@ -1771,6 +1775,7 @@ impl EditPredictionStore {
                 ts_error_count_before_prediction,
                 ts_error_count_after_prediction,
                 example,
+                model_version,
                 e2e_latency,
                 enqueued_at: now,
                 last_edit_at: now,
