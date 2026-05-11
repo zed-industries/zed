@@ -1116,37 +1116,31 @@ mod tests {
             env: HashMap::from_iter([("COMMIT".to_string(), "$ZED_GIT_SHA".to_string())]),
             ..TaskTemplate::default()
         };
+        let sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
+        let sha_short = "0123456".to_string();
+        let repo_name = "zed".to_string();
+        let repo_path = format!("/Users/example/{repo_name}").to_string();
+
         let context = TaskContext {
             task_variables: TaskVariables::from_iter([
-                (
-                    VariableName::GitSha,
-                    "abcdef1234567890abcdef1234567890abcdef12".to_string(),
-                ),
-                (VariableName::GitShaShort, "abcdef1".to_string()),
-                (VariableName::GitRepositoryName, "zed".to_string()),
-                (
-                    VariableName::GitRepositoryPath,
-                    "/Users/example/zed".to_string(),
-                ),
+                (VariableName::GitSha, sha.clone()),
+                (VariableName::GitShaShort, sha_short.clone()),
+                (VariableName::GitRepositoryName, repo_name.clone()),
+                (VariableName::GitRepositoryPath, repo_path.clone()),
             ]),
             ..TaskContext::default()
         };
 
         let task = task.resolve_task(TEST_ID_BASE, &context).unwrap();
-        assert_eq!(task.resolved_label, "Show abcdef1 in zed");
+        assert_eq!(
+            task.resolved_label,
+            format!("Show {sha_short} in {repo_name}")
+        );
         assert_eq!(task.resolved.command, Some("git".to_string()));
-        assert_eq!(
-            task.resolved.args,
-            vec![
-                "show".to_string(),
-                "abcdef1234567890abcdef1234567890abcdef12".to_string(),
-            ]
-        );
-        assert_eq!(task.resolved.cwd, Some(PathBuf::from("/Users/example/zed")));
-        assert_eq!(
-            task.resolved.env.get("COMMIT"),
-            Some(&"abcdef1234567890abcdef1234567890abcdef12".to_string())
-        );
+        assert_eq!(task.resolved.args, vec!["show".to_string(), sha.clone()]);
+        assert_eq!(task.resolved.cwd, Some(PathBuf::from(repo_path)));
+        assert_eq!(task.resolved.env.get("COMMIT"), Some(&sha));
+
         assert_substituted_variables(
             &task,
             vec![
