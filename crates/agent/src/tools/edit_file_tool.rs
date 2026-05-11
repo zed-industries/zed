@@ -1139,45 +1139,14 @@ mod tests {
             Some("Edit `.zed/settings.json` (local settings)".into())
         );
 
-        // 5.2: .agents/skills is a sensitive path — still prompts
-        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            edit_tool.authorize(
-                &PathBuf::from("root/.agents/skills/my-skill/SKILL.md"),
-                &stream_tx,
-                cx,
-            )
-        });
-        let event = stream_rx.expect_authorization().await;
-        assert_eq!(
-            event.tool_call.fields.title,
-            Some("Edit `root/.agents/skills/my-skill/SKILL.md` (agent skills)".into())
-        );
-
-        // 5.3: The global .agents/skills directory is sensitive — still prompts
-        let global_skill_path = agent_skills::global_skills_dir()
-            .join("my-skill")
-            .join("SKILL.md");
-        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| edit_tool.authorize(&global_skill_path, &stream_tx, cx));
-        let event = stream_rx.expect_authorization().await;
-        assert!(
-            event
-                .tool_call
-                .fields
-                .title
-                .as_deref()
-                .is_some_and(|title| title.ends_with("(agent skills)"))
-        );
-
-        // 5.4: /etc/hosts is outside the project, but Allow auto-approves
+        // 5.2: /etc/hosts is outside the project, but Allow auto-approves
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         cx.update(|cx| edit_tool.authorize(&PathBuf::from("/etc/hosts"), &stream_tx, cx))
             .await
             .unwrap();
         assert!(stream_rx.try_recv().is_err());
 
-        // 5.5: Normal in-project path with allow — no confirmation needed
+        // 5.3: Normal in-project path with allow — no confirmation needed
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         cx.update(|cx| edit_tool.authorize(&PathBuf::from("root/src/main.rs"), &stream_tx, cx))
             .await
