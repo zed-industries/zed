@@ -693,7 +693,7 @@ pub struct GitPanel {
     active_tab: GitPanelTab,
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history_shas: Vec<Oid>,
-    selected_history_entry: Option<usize>,
+    focused_history_entry: Option<usize>,
     _repo_subscriptions: Vec<Subscription>,
 
     _settings_subscription: Subscription,
@@ -889,7 +889,7 @@ impl GitPanel {
                 active_tab: GitPanelTab::Changes,
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history_shas: Vec::new(),
-                selected_history_entry: None,
+                focused_history_entry: None,
                 _repo_subscriptions: Vec::new(),
                 _settings_subscription,
                 git_access: GitAccess::Yes,
@@ -5000,11 +5000,11 @@ impl GitPanel {
         if count == 0 {
             return;
         }
-        let new_index = match self.selected_history_entry {
+        let new_index = match self.focused_history_entry {
             None => 0,
             Some(i) => (i + 1).min(count - 1),
         };
-        self.selected_history_entry = Some(new_index);
+        self.focused_history_entry = Some(new_index);
         self.commit_history_scroll_handle
             .scroll_to_item(new_index, ScrollStrategy::Top);
         cx.notify();
@@ -5015,18 +5015,18 @@ impl GitPanel {
         if count == 0 {
             return;
         }
-        let new_index = match self.selected_history_entry {
+        let new_index = match self.focused_history_entry {
             None => 0,
             Some(i) => i.saturating_sub(1),
         };
-        self.selected_history_entry = Some(new_index);
+        self.focused_history_entry = Some(new_index);
         self.commit_history_scroll_handle
             .scroll_to_item(new_index, ScrollStrategy::Top);
         cx.notify();
     }
 
     fn open_selected_history_commit(&self, window: &mut Window, cx: &mut App) {
-        let Some(index) = self.selected_history_entry else {
+        let Some(index) = self.focused_history_entry else {
             return;
         };
         let Some(sha) = self.commit_history_shas.get(index) else {
@@ -5052,10 +5052,13 @@ impl GitPanel {
         }
         self.active_tab = tab;
         match tab {
-            GitPanelTab::History => self.load_commit_history(cx),
+            GitPanelTab::History => {
+                self.load_commit_history(cx);
+                self.focused_history_entry = Some(0);
+            }
             GitPanelTab::Changes => {
                 self.commit_history_shas.clear();
-                self.selected_history_entry = None;
+                self.focused_history_entry = None;
                 self._repo_subscriptions.clear();
             }
         }
@@ -5155,7 +5158,8 @@ impl GitPanel {
         let commit_history_scroll_handle = self.commit_history_scroll_handle.clone();
         let remote = self.git_remote(cx);
 
-        let selected_history_entry = self.selected_history_entry;
+        let focused_history_entry = self.focused_history_entry;
+        let is_panel_focused = self.focus_handle.is_focused(window);
 
         let ahead_count = active_repository
             .read(cx)
@@ -5244,7 +5248,7 @@ impl GitPanel {
                                     .render(window, cx);
 
                                     let is_unpushed = index < ahead_count;
-                                    let is_selected = selected_history_entry == Some(index);
+                                    let is_focused = focused_history_entry == Some(index);
                                     let workspace = workspace.clone();
                                     let repo = repo_weak.clone();
                                     let sha_for_click = sha_string;
@@ -5263,8 +5267,12 @@ impl GitPanel {
                                         .py_1()
                                         .px_2()
                                         .gap_0p5()
-                                        .when(is_selected, |this| {
-                                            this.bg(cx.theme().colors().element_selected)
+                                        .border_1()
+                                        .border_color(gpui::transparent_black())
+                                        .when(is_focused && is_panel_focused, |this| {
+                                            this.border_color(
+                                                cx.theme().colors().panel_focused_border,
+                                            )
                                         })
                                         .hover(|s| s.bg(cx.theme().colors().element_hover))
                                         .child(
