@@ -536,10 +536,9 @@ mod test {
         );
     }
 
-    // Regression test for https://github.com/zed-industries/zed/issues/56225
     // When a worktree is named "foo" and contains a subdirectory also named "foo",
     // read_file({"path": "foo/test.txt"}) should return the file at the worktree
-    // root (as the tool schema promises), not the one inside the foo/ subdirectory.
+    // root, not the one inside the foo/ subdirectory.
     #[gpui::test]
     async fn test_read_file_worktree_root_not_shadowed_by_subdir(cx: &mut TestAppContext) {
         init_test(cx);

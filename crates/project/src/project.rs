@@ -4979,11 +4979,7 @@ impl Project {
         } else {
             // First pass: for each worktree, try two interpretations of the path and
             // return whichever finds an existing entry first:
-            //   (a) Strip the worktree root name as a prefix. Tool definitions instruct
-            //       the model that "the first component of the path should always be a
-            //       root directory in a project", so e.g. "foo/file.txt" means file.txt
-            //       at the root of the "foo" worktree. This takes priority so that a
-            //       subdirectory that shares the worktree's name doesn't shadow root files.
+            //   (a) Strip the worktree root name as a prefix.
             //   (b) Treat the path as a literal worktree-relative path.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
