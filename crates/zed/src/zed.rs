@@ -2356,12 +2356,12 @@ fn open_settings_file(
     cx: &mut Context<Workspace>,
 ) {
     cx.spawn_in(window, async move |workspace, cx| {
-        let (worktree_creation_task, settings_open_task) = workspace
+        workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.with_local_or_wsl_workspace(window, cx, move |workspace, window, cx| {
                     let project = workspace.project().clone();
 
-                    let worktree_creation_task = cx.spawn_in(window, async move |_, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
                         let config_dir = project
                             .update(cx, |project, cx| {
                                 project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx)
@@ -2376,20 +2376,23 @@ fn open_settings_file(
                         // drag and drop from OS) still have their worktrees
                         // released on file close, causing LSP servers'
                         // restarts.
-                        project
+                        let (_worktree, _) = project
                             .update(cx, |project, cx| {
                                 project.find_or_create_worktree(&config_dir, false, cx)
                             })
-                            .await
-                    });
-                    let settings_open_task =
-                        create_and_open_local_file(abs_path, window, cx, default_content);
-                    (worktree_creation_task, settings_open_task)
+                            .await?;
+
+                        workspace
+                            .update_in(cx, |_, window, cx| {
+                                create_and_open_local_file(abs_path, window, cx, default_content)
+                            })?
+                            .await?;
+                        anyhow::Ok(())
+                    })
                 })
             })?
+            .await?
             .await?;
-        let _ = worktree_creation_task.await?;
-        let _ = settings_open_task.await?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
