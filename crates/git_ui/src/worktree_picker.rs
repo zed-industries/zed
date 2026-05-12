@@ -301,10 +301,41 @@ fn remove_worktree_command(path: &Path, force: bool) -> String {
     }
 }
 
-fn is_dirty_worktree_remove_error(error: &anyhow::Error) -> bool {
-    let message = error.to_string().to_lowercase();
-    message.contains("contains modified or untracked files")
-        && message.contains("use --force to delete it")
+struct WorktreeRemoveForceDeletePrompt {
+    required_error_substrings: &'static [&'static str],
+    message: fn(&str) -> String,
+}
+
+impl WorktreeRemoveForceDeletePrompt {
+    fn matches(&self, normalized_error_message: &str) -> bool {
+        self.required_error_substrings
+            .iter()
+            .all(|substring| normalized_error_message.contains(substring))
+    }
+}
+
+const WORKTREE_REMOVE_FORCE_DELETE_PROMPTS: &[WorktreeRemoveForceDeletePrompt] =
+    &[WorktreeRemoveForceDeletePrompt {
+        required_error_substrings: &[
+            "contains modified or untracked files",
+            "use --force to delete it",
+        ],
+        message: dirty_worktree_force_delete_prompt,
+    }];
+
+fn dirty_worktree_force_delete_prompt(display_name: &str) -> String {
+    format!("Worktree \"{display_name}\" contains modified or untracked files. Force delete it?")
+}
+
+fn force_delete_prompt_for_worktree_remove_error(
+    error: &anyhow::Error,
+    display_name: &str,
+) -> Option<String> {
+    let normalized_error_message = error.to_string().to_lowercase();
+    WORKTREE_REMOVE_FORCE_DELETE_PROMPTS
+        .iter()
+        .find(|prompt| prompt.matches(&normalized_error_message))
+        .map(|prompt| (prompt.message)(display_name))
 }
 
 struct DeleteWorktreeTooltip {
@@ -449,15 +480,17 @@ impl WorktreePickerDelegate {
                 Err(error) => {
                     log::error!("Failed to remove worktree: {}", error);
 
-                    if force || !is_dirty_worktree_remove_error(&error) {
-                        (Err(error), force)
-                    } else {
+                    let force_delete_prompt = (!force)
+                        .then(|| {
+                            force_delete_prompt_for_worktree_remove_error(&error, &display_name)
+                        })
+                        .flatten();
+
+                    if let Some(prompt_message) = force_delete_prompt {
                         let answer = cx.update(|window, cx| {
                             window.prompt(
                                 PromptLevel::Warning,
-                                &format!(
-                                    "Worktree \"{display_name}\" contains modified or untracked files. Force delete it?"
-                                ),
+                                &prompt_message,
                                 None,
                                 &["Force Delete", "Cancel"],
                                 cx,
@@ -477,6 +510,8 @@ impl WorktreePickerDelegate {
                         }
 
                         (retry, true)
+                    } else {
+                        (Err(error), force)
                     }
                 }
             };
