@@ -12,12 +12,16 @@ workspace = true
 path = "agent_skills.rs"
 
 [dependencies]
+anyhow.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 paths.workspace = true
+serde.workspace = true
+serde_yaml_ng.workspace = true
 util.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
