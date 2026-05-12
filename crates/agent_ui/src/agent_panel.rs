@@ -6371,6 +6371,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> (Entity<Workspace>, Entity<AgentPanel>, VisualTestContext) {
         init_test(cx);
+        cx.executor().allow_parking();
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
