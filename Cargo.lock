@@ -189,6 +189,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
  "reqwest_client",
@@ -13642,6 +13643,7 @@ dependencies = [
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
+ "agent_skills",
  "anyhow",
  "assets",
  "chrono",
