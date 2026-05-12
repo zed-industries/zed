@@ -333,7 +333,6 @@ impl Model {
                 ReasoningEffort::XHigh,
             ],
             Self::FivePointFivePro => &[
-                ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
