@@ -207,9 +207,7 @@ impl WorktreePicker {
             _subscriptions: subscriptions,
         }
     }
-}
 
-impl WorktreePicker {
     fn handle_modifiers_changed(
         &mut self,
         ev: &ModifiersChangedEvent,
