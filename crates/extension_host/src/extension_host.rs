@@ -1788,7 +1788,7 @@ impl ExtensionStore {
                 .extensions
                 .iter()
                 .filter_map(|(id, entry)| {
-                    if !entry.manifest.allow_remote_load() {
+                    if !entry.manifest.should_sync_to_remote() {
                         return None;
                     }
                     Some(proto::Extension {
