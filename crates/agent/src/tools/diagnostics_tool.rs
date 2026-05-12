@@ -111,6 +111,26 @@ impl AgentTool for DiagnosticsTool {
                             return Err("Diagnostics cancelled by user".to_string());
                         }
                     };
+
+                    // Attempt to pull fresh diagnostics from the LSP before reading.
+                    // This is a best-effort operation: if the LSP doesn't support
+                    // pull diagnostics (returns Ok(None) internally) or the request
+                    // fails, we fall through to read whatever cached diagnostics
+                    // the buffer already has.
+                    let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store());
+                    let pull_task = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store.pull_diagnostics_for_buffer(buffer.clone(), cx)
+                    });
+                    let pull_result = futures::select! {
+                        result = pull_task.fuse() => result,
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            return Err("Diagnostics cancelled by user".to_string());
+                        }
+                    };
+                    if let Err(error) = pull_result {
+                        log::warn!("Failed to pull diagnostics, using cached: {error:#}");
+                    }
+
                     let mut output = String::new();
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
