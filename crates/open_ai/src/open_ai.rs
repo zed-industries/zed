@@ -58,26 +58,14 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo")]
-    ThreePointFiveTurbo,
     #[serde(rename = "gpt-4")]
     Four,
-    #[serde(rename = "gpt-4-turbo")]
-    FourTurbo,
     #[serde(rename = "gpt-4o-mini")]
     FourOmniMini,
-    #[serde(rename = "gpt-4.1-nano")]
-    FourPointOneNano,
-    #[serde(rename = "o1")]
-    O1,
-    #[serde(rename = "o3-mini")]
-    O3Mini,
     #[serde(rename = "o3")]
     O3,
     #[serde(rename = "gpt-5")]
     Five,
-    #[serde(rename = "gpt-5-codex")]
-    FiveCodex,
     #[serde(rename = "gpt-5-mini")]
     #[default]
     FiveMini,
@@ -87,8 +75,6 @@ pub enum Model {
     FivePointOne,
     #[serde(rename = "gpt-5.2")]
     FivePointTwo,
-    #[serde(rename = "gpt-5.2-codex")]
-    FivePointTwoCodex,
     #[serde(rename = "gpt-5.3-codex")]
     FivePointThreeCodex,
     #[serde(rename = "gpt-5.4")]
@@ -130,21 +116,14 @@ impl Model {
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
             "gpt-4" => Ok(Self::Four),
-            "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
-            "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
-            "o1" => Ok(Self::O1),
-            "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
             "gpt-5" => Ok(Self::Five),
-            "gpt-5-codex" => Ok(Self::FiveCodex),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
             "gpt-5.1" => Ok(Self::FivePointOne),
             "gpt-5.2" => Ok(Self::FivePointTwo),
-            "gpt-5.2-codex" => Ok(Self::FivePointTwoCodex),
             "gpt-5.3-codex" => Ok(Self::FivePointThreeCodex),
             "gpt-5.4" => Ok(Self::FivePointFour),
             "gpt-5.4-pro" => Ok(Self::FivePointFourPro),
@@ -156,21 +135,14 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
-            Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::FourPointOneNano => "gpt-4.1-nano",
-            Self::O1 => "o1",
-            Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::Five => "gpt-5",
-            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
-            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::FivePointThreeCodex => "gpt-5.3-codex",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
@@ -182,21 +154,14 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
-            Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::FourPointOneNano => "gpt-4.1-nano",
-            Self::O1 => "o1",
-            Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::Five => "gpt-5",
-            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
-            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::FivePointThreeCodex => "gpt-5.3-codex",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
@@ -208,21 +173,14 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
-            Self::FourTurbo => 128_000,
             Self::FourOmniMini => 128_000,
-            Self::FourPointOneNano => 1_047_576,
-            Self::O1 => 200_000,
-            Self::O3Mini => 200_000,
             Self::O3 => 200_000,
             Self::Five => 272_000,
-            Self::FiveCodex => 272_000,
             Self::FiveMini => 400_000,
             Self::FiveNano => 400_000,
             Self::FivePointOne => 400_000,
             Self::FivePointTwo => 400_000,
-            Self::FivePointTwoCodex => 400_000,
             Self::FivePointThreeCodex => 400_000,
             Self::FivePointFour => 1_050_000,
             Self::FivePointFourPro => 1_050_000,
@@ -237,21 +195,14 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
-            Self::ThreePointFiveTurbo => Some(4_096),
             Self::Four => Some(8_192),
-            Self::FourTurbo => Some(4_096),
             Self::FourOmniMini => Some(16_384),
-            Self::FourPointOneNano => Some(32_768),
-            Self::O1 => Some(100_000),
-            Self::O3Mini => Some(100_000),
             Self::O3 => Some(100_000),
             Self::Five => Some(128_000),
-            Self::FiveCodex => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
             Self::FivePointOne => Some(128_000),
             Self::FivePointTwo => Some(128_000),
-            Self::FivePointTwoCodex => Some(128_000),
             Self::FivePointThreeCodex => Some(128_000),
             Self::FivePointFour => Some(128_000),
             Self::FivePointFourPro => Some(128_000),
@@ -268,14 +219,10 @@ impl Model {
             Self::FivePointOne | Self::FivePointTwo | Self::FivePointFour => {
                 Some(ReasoningEffort::None)
             }
-            Self::O1
-            | Self::O3
-            | Self::O3Mini
+            Self::O3
             | Self::Five
-            | Self::FiveCodex
             | Self::FiveMini
             | Self::FiveNano
-            | Self::FivePointTwoCodex
             | Self::FivePointThreeCodex
             | Self::FivePointFourPro
             | Self::FivePointFive
@@ -297,7 +244,7 @@ impl Model {
                 ReasoningEffort::High => &[ReasoningEffort::High],
                 ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
             },
-            Self::O1 | Self::O3 | Self::O3Mini => &[
+            Self::O3 => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -314,12 +261,12 @@ impl Model {
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
             ],
-            Self::FiveCodex | Self::FivePointFourPro => &[
+            Self::FivePointFourPro | Self::FivePointFivePro => &[
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
-            Self::FivePointTwoCodex | Self::FivePointThreeCodex => &[
+            Self::FivePointThreeCodex => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -328,11 +275,6 @@ impl Model {
             Self::FivePointTwo | Self::FivePointFour | Self::FivePointFive => &[
                 ReasoningEffort::None,
                 ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-                ReasoningEffort::XHigh,
-            ],
-            Self::FivePointFivePro => &[
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
@@ -356,24 +298,19 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::ThreePointFiveTurbo
-            | Self::Four
-            | Self::FourTurbo
+            Self::Four
             | Self::FourOmniMini
-            | Self::FourPointOneNano
             | Self::Five
-            | Self::FiveCodex
             | Self::FiveMini
             | Self::FivePointOne
             | Self::FivePointTwo
-            | Self::FivePointTwoCodex
             | Self::FivePointThreeCodex
             | Self::FivePointFour
             | Self::FivePointFourPro
             | Self::FivePointFive
             | Self::FivePointFivePro
             | Self::FiveNano => true,
-            Self::O1 | Self::O3 | Self::O3Mini | Model::Custom { .. } => false,
+            Self::O3 | Model::Custom { .. } => false,
         }
     }
 
@@ -453,10 +390,6 @@ mod tests {
             ReasoningEffort::XHigh,
         ];
 
-        assert_eq!(
-            Model::FivePointTwoCodex.supported_reasoning_efforts(),
-            expected_efforts.as_slice()
-        );
         assert_eq!(
             Model::FivePointThreeCodex.supported_reasoning_efforts(),
             expected_efforts.as_slice()

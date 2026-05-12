@@ -417,22 +417,18 @@ impl LanguageModel for OpenAiLanguageModel {
         use open_ai::Model;
         match &self.model {
             Model::FourOmniMini
-            | Model::FourPointOneNano
             | Model::Five
-            | Model::FiveCodex
             | Model::FiveMini
             | Model::FiveNano
             | Model::FivePointOne
             | Model::FivePointTwo
-            | Model::FivePointTwoCodex
             | Model::FivePointThreeCodex
             | Model::FivePointFour
             | Model::FivePointFourPro
             | Model::FivePointFive
             | Model::FivePointFivePro
-            | Model::O1
             | Model::O3 => true,
-            Model::ThreePointFiveTurbo | Model::Four | Model::FourTurbo | Model::O3Mini => false,
+            Model::Four => false,
             Model::Custom {
                 supports_images, ..
             } => *supports_images,
