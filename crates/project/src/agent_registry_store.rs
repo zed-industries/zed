@@ -8,7 +8,7 @@ use fs::Fs;
 use futures::{AsyncReadExt, future::join_all};
 use gpui::{
     App, AppContext as _, BackgroundExecutor, Context, Entity, FutureExt as _, Global,
-    SharedString, Task,
+    SharedString, Task, TaskExt,
 };
 use http_client::{AsyncBody, HttpClient, StatusCode};
 use serde::Deserialize;
@@ -377,9 +377,7 @@ async fn build_registry_agents(
     }
 
     let current_platform = current_platform_key();
-    // Icons are decorative, so a blocked icon CDN should not delay registry
-    // availability by one timeout per agent.
-    let icon_paths = resolve_icon_paths(
+    let mut icon_paths = resolve_icon_paths(
         &index.agents,
         &icons_dir,
         update_cache,
@@ -391,7 +389,7 @@ async fn build_registry_agents(
 
     let mut agents = Vec::new();
     for entry in index.agents {
-        let icon_path = icon_paths.get(&entry.id).cloned().flatten();
+        let icon_path = icon_paths.remove(&entry.id);
 
         let metadata = RegistryAgentMetadata {
             id: AgentId::new(entry.id),
@@ -466,7 +464,7 @@ async fn resolve_icon_paths(
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     executor: &BackgroundExecutor,
-) -> HashMap<String, Option<SharedString>> {
+) -> HashMap<String, SharedString> {
     join_all(entries.iter().map(|entry| {
         let fs = fs.clone();
         let http_client = http_client.clone();
@@ -482,6 +480,7 @@ async fn resolve_icon_paths(
     }))
     .await
     .into_iter()
+    .filter_map(|(id, icon)| icon.map(|icon| (id, icon)))
     .collect()
 }
 
