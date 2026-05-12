@@ -255,8 +255,6 @@
       "g ~": "vim::PushOppositeCase",
       "g ?": "vim::PushRot13",
       // "g ?": "vim::PushRot47",
-      // Keep Vim's existing g w rewrap binding until jump-to-word has settled.
-      "g z": "vim::HelixJumpToWord",
       "g w": "vim::PushRewrap",
       "g q": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
@@ -324,8 +322,6 @@
       "g c": "vim::ToggleComments",
       "g b": "vim::ToggleBlockComments",
       "g q": "vim::Rewrap",
-      // Keep Vim's existing g w rewrap binding until jump-to-word has settled.
-      "g z": "vim::HelixJumpToWord",
       "g w": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
       // "g ?": "vim::ConvertToRot47",

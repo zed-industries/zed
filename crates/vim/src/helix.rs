@@ -1725,7 +1725,7 @@ mod test {
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use super::HELIX_JUMP_LABEL_LIMIT;
+    use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
     use crate::{
         HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
         state::{Mode, Operator},
@@ -1791,6 +1791,16 @@ mod test {
         let first = chars.next().expect("jump labels are two characters long");
         let second = chars.next().expect("jump labels are two characters long");
         cx.simulate_keystrokes(&format!("{first} {second}"));
+    }
+
+    fn bind_vim_jump_to_word(cx: &mut VimTestContext, keystrokes: &'static str) {
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                keystrokes,
+                HelixJumpToWord,
+                Some("vim_mode == normal || vim_mode == visual"),
+            )])
+        });
     }
 
     fn active_helix_jump_overlay_counts(cx: &mut VimTestContext) -> (usize, usize) {
@@ -3482,6 +3492,7 @@ mod test {
     #[gpui::test]
     async fn test_vim_jump_moves_to_target_word_start(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
         cx.set_state("ˇone two three", Mode::Normal);
 
         jump_to_word_with_keystrokes(&mut cx, "g z", "two");
@@ -3493,6 +3504,7 @@ mod test {
     #[gpui::test]
     async fn test_vim_jump_keeps_normal_cursor_shape(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
@@ -3520,6 +3532,7 @@ mod test {
     #[gpui::test]
     async fn test_vim_visual_jump_extends_selection(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
         cx.set_state("one «twoˇ» three four", Mode::Visual);
 
         jump_to_word_with_keystrokes(&mut cx, "g z", "three");
@@ -3531,6 +3544,7 @@ mod test {
     #[gpui::test]
     async fn test_vim_visual_jump_extends_selection_backward(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
         cx.set_state("one two «threeˇ» four", Mode::Visual);
 
         jump_to_word_with_keystrokes(&mut cx, "g z", "one");
