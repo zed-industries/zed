@@ -1047,6 +1047,7 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
+            let has_git_changes = self.has_git_changes(entry_id);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1135,9 +1136,9 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
-                            .when(has_git_repo, |menu| {
-                                menu.separator()
-                                    .when(!is_dir && self.has_git_changes(entry_id), |menu| {
+                            .when(has_git_repo && !is_dir, |menu| {
+                                menu.separator().submenu("Git", move |menu, _, _| {
+                                    menu.when(has_git_changes, |menu| {
                                         menu.action(
                                             "Restore File",
                                             Box::new(git::RestoreFile { skip_prompt: false }),
@@ -1145,8 +1146,19 @@ impl ProjectPanel {
                                     })
                                     .action("Add to .gitignore", Box::new(git::AddToGitignore))
                                     .when(has_history, |menu| {
-                                        menu.action("View History", Box::new(git::FileHistory))
+                                        menu.separator()
+                                            .action("File History", Box::new(git::FileHistory))
                                     })
+                                    .when(!has_history, |menu| menu.separator())
+                                    .action(
+                                        "Compare with Branch...",
+                                        Box::new(git::CompareWithBranch),
+                                    )
+                                    .action(
+                                        "Compare with Commit...",
+                                        Box::new(git::CompareWithCommit),
+                                    )
+                                })
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
@@ -3510,6 +3522,38 @@ impl ProjectPanel {
                 })
                 .ok();
         }
+    }
+
+    fn compare_with_branch(
+        &mut self,
+        _: &git::CompareWithBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_entry_project_path(cx) else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                git_ui::compare_file_with_branch_at_path(workspace, project_path, window, cx);
+            })
+            .ok();
+    }
+
+    fn compare_with_commit(
+        &mut self,
+        _: &git::CompareWithCommit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_entry_project_path(cx) else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                git_ui::compare_file_with_commit_at_path(workspace, project_path, window, cx);
+            })
+            .ok();
     }
 
     fn open_system(&mut self, _: &OpenWithSystem, _: &mut Window, cx: &mut Context<Self>) {
@@ -6676,6 +6720,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
                 .on_action(cx.listener(Self::compare_marked_files))
+                .on_action(cx.listener(Self::compare_with_branch))
+                .on_action(cx.listener(Self::compare_with_commit))
                 .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |el| {
                     el.on_action(cx.listener(Self::undo))
                         .on_action(cx.listener(Self::redo))

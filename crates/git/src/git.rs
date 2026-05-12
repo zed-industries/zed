@@ -49,6 +49,10 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Compares the current file with a branch.
+        CompareWithBranch,
+        /// Compares the current file with a commit.
+        CompareWithCommit,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.

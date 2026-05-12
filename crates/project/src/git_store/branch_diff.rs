@@ -24,7 +24,13 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DiffBase {
     Head,
-    Merge { base_ref: SharedString },
+    Merge {
+        base_ref: SharedString,
+    },
+    Compare {
+        base_ref: SharedString,
+        base_label: SharedString,
+    },
 }
 
 impl DiffBase {
@@ -33,8 +39,18 @@ impl DiffBase {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffScope {
+    All,
+    File {
+        project_path: crate::ProjectPath,
+        repo_path: RepoPath,
+    },
+}
+
 pub struct BranchDiff {
     diff_base: DiffBase,
+    scope: DiffScope,
     repo: Option<Entity<Repository>>,
     project: Entity<Project>,
     base_commit: Option<SharedString>,
@@ -58,8 +74,19 @@ impl BranchDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_scope(source, DiffScope::All, None, project, window, cx)
+    }
+
+    pub fn new_with_scope(
+        source: DiffBase,
+        scope: DiffScope,
+        repo: Option<Entity<Repository>>,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let git_store = project.read(cx).git_store().clone();
-        let repo = git_store.read(cx).active_repository();
+        let repo = repo.or_else(|| git_store.read(cx).active_repository());
         let git_store_subscription = cx.subscribe_in(
             &git_store,
             window,
@@ -95,6 +122,7 @@ impl BranchDiff {
 
         Self {
             diff_base: source,
+            scope,
             repo,
             project,
             tree_diff: None,
@@ -108,6 +136,10 @@ impl BranchDiff {
 
     pub fn diff_base(&self) -> &DiffBase {
         &self.diff_base
+    }
+
+    pub fn scope(&self) -> &DiffScope {
+        &self.scope
     }
 
     pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
@@ -228,7 +260,7 @@ impl BranchDiff {
             (Some(FileStatus::Tracked(_)), Some(tree_status)) => {
                 Some(FileStatus::Tracked(TrackedStatus {
                     index_status: match tree_status {
-                        TreeDiffStatus::Added { .. } => StatusCode::Added,
+                        TreeDiffStatus::Added => StatusCode::Added,
                         _ => StatusCode::Modified,
                     },
                     worktree_status: match tree_status {
@@ -249,22 +281,22 @@ impl BranchDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         let task = this.update(cx, |this, cx| {
-            let DiffBase::Merge { base_ref } = this.diff_base.clone() else {
-                return None;
+            let diff_type = match this.diff_base.clone() {
+                DiffBase::Head => return None,
+                DiffBase::Merge { base_ref } => DiffTreeType::MergeBase {
+                    base: base_ref,
+                    head: "HEAD".into(),
+                },
+                DiffBase::Compare { base_ref, .. } => DiffTreeType::Since {
+                    base: base_ref,
+                    head: "HEAD".into(),
+                },
             };
             let Some(repo) = this.repo.as_ref() else {
                 this.tree_diff.take();
                 return None;
             };
-            repo.update(cx, |repo, cx| {
-                Some(repo.diff_tree(
-                    DiffTreeType::MergeBase {
-                        base: base_ref,
-                        head: "HEAD".into(),
-                    },
-                    cx,
-                ))
-            })
+            repo.update(cx, |repo, cx| Some(repo.diff_tree(diff_type, cx)))
         })?;
         let Some(task) = task else { return Ok(()) };
 
@@ -288,6 +320,36 @@ impl BranchDiff {
         };
 
         self.project.update(cx, |_project, cx| {
+            if let DiffScope::File {
+                project_path,
+                repo_path,
+            } = &self.scope
+            {
+                let diff_from_head = repo
+                    .read(cx)
+                    .status_for_path(repo_path)
+                    .map(|entry| entry.status);
+                let branch_diff = self
+                    .tree_diff
+                    .as_ref()
+                    .and_then(|tree_diff| tree_diff.entries.get(repo_path))
+                    .cloned();
+                let Some(status) = self.merge_statuses(diff_from_head, branch_diff.as_ref()) else {
+                    return;
+                };
+                if !status.has_changes() {
+                    return;
+                }
+
+                let task = Self::load_buffer(branch_diff, project_path.clone(), repo.clone(), cx);
+                output.push(DiffBuffer {
+                    repo_path: repo_path.clone(),
+                    load: task,
+                    file_status: status,
+                });
+                return;
+            }
+
             let mut seen = HashSet::default();
 
             for item in repo.read(cx).cached_status() {
@@ -359,8 +421,8 @@ impl BranchDiff {
 
             let changes = if let Some(entry) = branch_diff {
                 let oid = match entry {
-                    git::status::TreeDiffStatus::Added { .. } => None,
-                    git::status::TreeDiffStatus::Modified { old, .. }
+                    git::status::TreeDiffStatus::Added => None,
+                    git::status::TreeDiffStatus::Modified { old }
                     | git::status::TreeDiffStatus::Deleted { old } => Some(old),
                 };
                 project
@@ -385,7 +447,7 @@ impl BranchDiff {
 
 fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> FileStatus {
     let file_status = match branch_diff {
-        git::status::TreeDiffStatus::Added { .. } => FileStatus::Tracked(TrackedStatus {
+        git::status::TreeDiffStatus::Added => FileStatus::Tracked(TrackedStatus {
             index_status: StatusCode::Added,
             worktree_status: StatusCode::Added,
         }),

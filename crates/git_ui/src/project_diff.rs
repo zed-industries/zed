@@ -30,7 +30,7 @@ use project::{
     Project, ProjectPath,
     git_store::{
         Repository,
-        branch_diff::{self, BranchDiffEvent, DiffBase},
+        branch_diff::{self, BranchDiffEvent, DiffBase, DiffScope},
     },
 };
 use settings::{Settings, SettingsStore};
@@ -142,6 +142,60 @@ impl ProjectDiff {
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
+    }
+
+    pub fn deploy_file_compare(
+        workspace: &mut Workspace,
+        repository: Entity<Repository>,
+        project_path: ProjectPath,
+        repo_path: RepoPath,
+        base_ref: SharedString,
+        base_label: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        telemetry::event!("Git File Compare Opened");
+        let project = workspace.project().clone();
+        let workspace_handle = cx.entity();
+        let diff_base = DiffBase::Compare {
+            base_ref,
+            base_label,
+        };
+        let scope = DiffScope::File {
+            project_path,
+            repo_path,
+        };
+
+        let existing = workspace.items_of_type::<Self>(cx).find(|item| {
+            let project_diff = item.read(cx);
+            project_diff.diff_base(cx) == &diff_base && project_diff.scope(cx) == &scope
+        });
+        if let Some(existing) = existing {
+            workspace.activate_item(&existing, true, true, window, cx);
+            existing.update(cx, |project_diff, cx| {
+                let project_path = match project_diff.scope(cx) {
+                    DiffScope::File { project_path, .. } => project_path.clone(),
+                    DiffScope::All => return,
+                };
+                project_diff.move_to_project_path(&project_path, window, cx);
+            });
+            return;
+        }
+
+        let project_diff = cx.new(|cx| {
+            let branch_diff = cx.new(|cx| {
+                branch_diff::BranchDiff::new_with_scope(
+                    diff_base,
+                    scope,
+                    Some(repository),
+                    project.clone(),
+                    window,
+                    cx,
+                )
+            });
+            Self::new_impl(branch_diff, project, workspace_handle, window, cx)
+        });
+        workspace.add_item_to_active_pane(Box::new(project_diff), None, true, window, cx);
     }
 
     fn review_diff(&mut self, _: &ReviewDiff, window: &mut Window, cx: &mut Context<Self>) {
@@ -359,7 +413,9 @@ impl ProjectDiff {
             );
             match branch_diff.read(cx).diff_base() {
                 DiffBase::Head => {}
-                DiffBase::Merge { .. } => diff_display_editor.disable_diff_hunk_controls(cx),
+                DiffBase::Merge { .. } | DiffBase::Compare { .. } => {
+                    diff_display_editor.disable_diff_hunk_controls(cx)
+                }
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_diff_review_button(true, cx);
@@ -370,7 +426,7 @@ impl ProjectDiff {
                             workspace: workspace.downgrade(),
                         });
                     }
-                    DiffBase::Merge { .. } => {
+                    DiffBase::Merge { .. } | DiffBase::Compare { .. } => {
                         editor.register_addon(BranchDiffAddon {
                             branch_diff: branch_diff.clone(),
                         });
@@ -450,6 +506,10 @@ impl ProjectDiff {
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    pub fn scope<'a>(&'a self, cx: &'a App) -> &'a DiffScope {
+        self.branch_diff.read(cx).scope()
     }
 
     pub fn move_to_entry(
@@ -539,6 +599,20 @@ impl ProjectDiff {
 
     pub fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
         self.multibuffer.read(cx).snapshot(cx).total_changed_lines()
+    }
+
+    fn compare_details(&self, cx: &App) -> Option<(SharedString, SharedString, SharedString)> {
+        let DiffBase::Compare { base_label, .. } = self.diff_base(cx) else {
+            return None;
+        };
+        let DiffScope::File { repo_path, .. } = self.scope(cx) else {
+            return None;
+        };
+        Some((
+            base_label.clone(),
+            "HEAD / Working Tree".into(),
+            repo_path.as_ref().as_unix_str().into(),
+        ))
     }
 
     /// Returns the total count of review comments across all hunks/files.
@@ -957,6 +1031,9 @@ impl Item for ProjectDiff {
         match self.diff_base(cx) {
             DiffBase::Head => Some("Project Diff".into()),
             DiffBase::Merge { .. } => Some("Branch Diff".into()),
+            DiffBase::Compare { base_label, .. } => {
+                Some(format!("Compare with {}", base_label).into())
+            }
         }
     }
 
@@ -974,6 +1051,12 @@ impl Item for ProjectDiff {
         match self.branch_diff.read(cx).diff_base() {
             DiffBase::Head => "Uncommitted Changes".into(),
             DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
+            DiffBase::Compare { .. } => match self.scope(cx) {
+                DiffScope::File { repo_path, .. } => {
+                    format!("Compare {}", repo_path.as_ref().as_unix_str()).into()
+                }
+                DiffScope::All => "Compare".into(),
+            },
         }
     }
 
@@ -1026,8 +1109,21 @@ impl Item for ProjectDiff {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(None);
         };
+        let diff_base = self.diff_base(cx).clone();
+        let scope = self.scope(cx).clone();
+        let repo = self.branch_diff.read(cx).repo().cloned();
         Task::ready(Some(cx.new(|cx| {
-            ProjectDiff::new(self.project.clone(), workspace, window, cx)
+            let branch_diff = cx.new(|cx| {
+                branch_diff::BranchDiff::new_with_scope(
+                    diff_base,
+                    scope,
+                    repo,
+                    self.project.clone(),
+                    window,
+                    cx,
+                )
+            });
+            ProjectDiff::new_impl(branch_diff, self.project.clone(), workspace, window, cx)
         })))
     }
 
@@ -1113,6 +1209,7 @@ impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
         let is_branch_diff_view = matches!(self.diff_base(cx), DiffBase::Merge { .. });
+        let compare_path = self.compare_details(cx).map(|(_, _, path)| path);
 
         div()
             .track_focus(&self.focus_handle)
@@ -1136,15 +1233,15 @@ impl Render for ProjectDiff {
                     None
                 };
                 let keybinding_focus_handle = self.focus_handle(cx);
+                let empty_label = compare_path
+                    .as_ref()
+                    .map(|path| format!("No changes in {path}"))
+                    .unwrap_or_else(|| "No uncommitted changes".to_string());
                 el.child(
                     v_flex()
                         .gap_1()
-                        .child(
-                            h_flex()
-                                .justify_around()
-                                .child(Label::new("No uncommitted changes")),
-                        )
-                        .map(|el| match remote_button {
+                        .child(h_flex().justify_around().child(Label::new(empty_label)))
+                        .when(compare_path.is_none(), |el| match remote_button {
                             Some(button) => el.child(h_flex().justify_around().child(button)),
                             None => el.child(
                                 h_flex()
@@ -1619,7 +1716,12 @@ impl ToolbarItemView for BranchDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+            .filter(|item| {
+                matches!(
+                    item.read(cx).diff_base(cx),
+                    DiffBase::Merge { .. } | DiffBase::Compare { .. }
+                )
+            })
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
@@ -1645,6 +1747,7 @@ impl Render for BranchDiffToolbar {
         let focus_handle = project_diff.focus_handle(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
         let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
+        let compare_details = project_diff.read(cx).compare_details(cx);
 
         let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
         let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
@@ -1658,6 +1761,19 @@ impl Render for BranchDiffToolbar {
             .flex_wrap()
             .justify_end()
             .gap_2()
+            .when_some(
+                compare_details,
+                |this, (base_label, current_label, repo_path)| {
+                    this.child(
+                        h_group_sm()
+                            .child(Label::new(format!("Base: {base_label}")).color(Color::Muted))
+                            .child(
+                                Label::new(format!("Current: {current_label}")).color(Color::Muted),
+                            )
+                            .child(Label::new(repo_path).color(Color::Muted)),
+                    )
+                },
+            )
             .when(!is_multibuffer_empty, |this| {
                 this.child(DiffStat::new(
                     "branch-diff-stat",

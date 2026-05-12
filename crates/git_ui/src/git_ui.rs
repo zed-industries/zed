@@ -12,15 +12,17 @@ mod blame_ui;
 pub mod clone;
 
 use git::{
-    repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{
+        Branch, CommitDetails, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    },
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Task, TaskExt, Window,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm};
-use project::git_store::Repository;
+use project::{ProjectPath, git_store::Repository};
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::prelude::*;
@@ -272,6 +274,8 @@ pub fn init(cx: &mut App) {
             copy_branch_name(workspace, cx);
         });
         workspace.register_action(show_ref_picker);
+        workspace.register_action(compare_file_with_branch);
+        workspace.register_action(compare_file_with_commit);
         workspace.register_action(
             |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
                 if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
@@ -445,10 +449,215 @@ fn copy_branch_name(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     }
 }
 
+#[derive(Clone)]
+struct FileCompareTarget {
+    project_path: ProjectPath,
+    repo_path: RepoPath,
+    repository: Entity<Repository>,
+}
+
+#[derive(Clone)]
+enum RefPickerMode {
+    ViewCommit,
+    CompareFile(FileCompareTarget),
+}
+
+fn resolve_file_compare_target(workspace: &Workspace, cx: &App) -> Option<FileCompareTarget> {
+    let editor = workspace.active_item_as::<Editor>(cx)?;
+    let editor = editor.read(cx);
+    let file = editor.file_at(editor.selections.newest_anchor().head(), cx)?;
+    let project_path = ProjectPath {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().clone(),
+    };
+
+    file_compare_target_for_project_path(workspace, project_path, cx)
+}
+
+fn file_compare_target_for_project_path(
+    workspace: &Workspace,
+    project_path: ProjectPath,
+    cx: &App,
+) -> Option<FileCompareTarget> {
+    let git_store = workspace.project().read(cx).git_store();
+    let (repository, repo_path) = git_store
+        .read(cx)
+        .repository_and_path_for_project_path(&project_path, cx)?;
+    if repo_path.is_empty() {
+        return None;
+    }
+
+    Some(FileCompareTarget {
+        project_path,
+        repo_path,
+        repository,
+    })
+}
+
+fn compare_file_with_branch(
+    workspace: &mut Workspace,
+    _: &git::CompareWithBranch,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(target) = resolve_file_compare_target(workspace, cx) else {
+        return;
+    };
+    compare_file_with_branch_for_target(target, workspace.weak_handle(), window, cx);
+}
+
+pub fn compare_file_with_branch_at_path(
+    workspace: &mut Workspace,
+    project_path: ProjectPath,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(target) = file_compare_target_for_project_path(workspace, project_path, cx) else {
+        return;
+    };
+    compare_file_with_branch_for_target(target, workspace.weak_handle(), window, cx);
+}
+
+fn compare_file_with_branch_for_target(
+    target: FileCompareTarget,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let repo = target.repository.clone();
+    window
+        .spawn(cx, async move |cx| -> anyhow::Result<()> {
+            let mut branches = repo.update(cx, |repo, _| repo.branches()).await??;
+            branches.sort_by_key(|branch| (branch.is_remote(), branch.name().to_string()));
+            branches.dedup_by(|left, right| left.ref_name == right.ref_name);
+
+            let options = branches
+                .iter()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+                .collect::<Vec<_>>();
+            let Some(selection) = cx
+                .update(|window, cx| {
+                    picker_prompt::prompt(
+                        "Compare with branch...",
+                        options,
+                        workspace.clone(),
+                        window,
+                        cx,
+                    )
+                })?
+                .await
+            else {
+                return Ok(());
+            };
+            let Some(branch) = branches.get(selection) else {
+                return Ok(());
+            };
+
+            cx.update(|window, cx| {
+                deploy_compare_file_with_ref(
+                    target,
+                    branch.ref_name.to_string(),
+                    branch.name().to_string(),
+                    workspace,
+                    window,
+                    cx,
+                );
+            })?;
+
+            Ok(())
+        })
+        .detach_and_log_err(cx);
+}
+
+fn compare_file_with_commit(
+    workspace: &mut Workspace,
+    _: &git::CompareWithCommit,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(target) = resolve_file_compare_target(workspace, cx) else {
+        return;
+    };
+    compare_file_with_commit_for_target(target, workspace, window, cx);
+}
+
+pub fn compare_file_with_commit_at_path(
+    workspace: &mut Workspace,
+    project_path: ProjectPath,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(target) = file_compare_target_for_project_path(workspace, project_path, cx) else {
+        return;
+    };
+    compare_file_with_commit_for_target(target, workspace, window, cx);
+}
+
+fn compare_file_with_commit_for_target(
+    target: FileCompareTarget,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace_entity = cx.entity();
+    let repo = target.repository.clone();
+
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RefPickerModal::new(
+            repo,
+            workspace_entity,
+            RefPickerMode::CompareFile(target),
+            window,
+            cx,
+        )
+    });
+}
+
+fn deploy_compare_file_with_ref(
+    target: FileCompareTarget,
+    git_ref: String,
+    base_label: String,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    workspace
+        .update(cx, |workspace, cx| {
+            ProjectDiff::deploy_file_compare(
+                workspace,
+                target.repository,
+                target.project_path,
+                target.repo_path,
+                git_ref.into(),
+                base_label.into(),
+                window,
+                cx,
+            );
+        })
+        .ok();
+}
+
+fn show_git_error_toast(
+    title: &str,
+    git_ref: Option<&str>,
+    error: anyhow::Error,
+    workspace: &mut Workspace,
+    cx: &mut Context<Workspace>,
+) {
+    let message = if let Some(git_ref) = git_ref {
+        format!("{title}: {git_ref}: {error}")
+    } else {
+        format!("{title}: {error}")
+    };
+    let toast = Toast::new(NotificationId::unique::<()>(), message);
+    workspace.show_toast(toast, cx);
+}
+
 struct RefPickerModal {
     editor: Entity<Editor>,
     repo: Entity<Repository>,
     workspace: Entity<Workspace>,
+    mode: RefPickerMode,
     commit_details: Option<CommitDetails>,
     lookup_task: Option<Task<()>>,
     _editor_subscription: Subscription,
@@ -458,6 +667,7 @@ impl RefPickerModal {
     fn new(
         repo: Entity<Repository>,
         workspace: Entity<Workspace>,
+        mode: RefPickerMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -481,6 +691,7 @@ impl RefPickerModal {
             editor,
             repo,
             workspace,
+            mode,
             commit_details: None,
             lookup_task: None,
             _editor_subscription,
@@ -543,6 +754,7 @@ impl RefPickerModal {
 
         let repo = self.repo.clone();
         let workspace = self.workspace.clone();
+        let mode = self.mode.clone();
 
         window
             .spawn(cx, async move |cx| -> anyhow::Result<()> {
@@ -550,23 +762,49 @@ impl RefPickerModal {
                 let show_result = show_future.await;
 
                 match show_result {
-                    Ok(Ok(details)) => {
-                        workspace.update_in(cx, |workspace, window, cx| {
-                            CommitView::open(
-                                details.sha.to_string(),
-                                repo.downgrade(),
-                                workspace.weak_handle(),
-                                None,
-                                None,
-                                window,
-                                cx,
-                            );
-                        })?;
-                    }
+                    Ok(Ok(details)) => match mode {
+                        RefPickerMode::ViewCommit => {
+                            workspace.update_in(cx, |workspace, window, cx| {
+                                CommitView::open(
+                                    details.sha.to_string(),
+                                    repo.downgrade(),
+                                    workspace.weak_handle(),
+                                    None,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            })?;
+                        }
+                        RefPickerMode::CompareFile(target) => {
+                            workspace.update_in(cx, |workspace, window, cx| {
+                                ProjectDiff::deploy_file_compare(
+                                    workspace,
+                                    target.repository,
+                                    target.project_path,
+                                    target.repo_path,
+                                    details.sha.to_string().into(),
+                                    details.sha.to_string().into(),
+                                    window,
+                                    cx,
+                                );
+                            })?;
+                        }
+                    },
                     Ok(Err(_)) | Err(_) => {
                         workspace.update(cx, |workspace, cx| {
-                            let error = anyhow::anyhow!("View commit failed");
-                            Self::show_git_error_toast(&git_ref_string, error, workspace, cx);
+                            let title = match mode {
+                                RefPickerMode::ViewCommit => "View commit failed",
+                                RefPickerMode::CompareFile(_) => "Compare file failed",
+                            };
+                            let error = anyhow::anyhow!("invalid git ref");
+                            show_git_error_toast(
+                                title,
+                                Some(&git_ref_string),
+                                error,
+                                workspace,
+                                cx,
+                            );
                         });
                     }
                 }
@@ -575,16 +813,6 @@ impl RefPickerModal {
             })
             .detach();
         cx.emit(DismissEvent);
-    }
-
-    fn show_git_error_toast(
-        _git_ref: &str,
-        error: anyhow::Error,
-        workspace: &mut Workspace,
-        cx: &mut Context<Workspace>,
-    ) {
-        let toast = Toast::new(NotificationId::unique::<()>(), error.to_string());
-        workspace.show_toast(toast, cx);
     }
 }
 
@@ -599,6 +827,10 @@ impl Focusable for RefPickerModal {
 impl Render for RefPickerModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_commit_details = self.commit_details.is_some();
+        let title = match self.mode {
+            RefPickerMode::ViewCommit => "View Commit",
+            RefPickerMode::CompareFile(_) => "Compare with Commit",
+        };
         let commit_preview = self.commit_details.as_ref().map(|details| {
             let commit_time = OffsetDateTime::from_unix_timestamp(details.commit_timestamp)
                 .unwrap_or_else(|_| OffsetDateTime::now_utc());
@@ -648,7 +880,7 @@ impl Render for RefPickerModal {
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::Hash).size(IconSize::XSmall))
-                    .child(Headline::new("View Commit").size(HeadlineSize::XSmall)),
+                    .child(Headline::new(title).size(HeadlineSize::XSmall)),
             )
             .child(div().px_3().w_full().child(self.editor.clone()))
             .when_some(commit_preview, |el, preview| {
@@ -670,7 +902,13 @@ fn show_ref_picker(
 
     let workspace_entity = cx.entity();
     workspace.toggle_modal(window, cx, |window, cx| {
-        RefPickerModal::new(repo, workspace_entity, window, cx)
+        RefPickerModal::new(
+            repo,
+            workspace_entity,
+            RefPickerMode::ViewCommit,
+            window,
+            cx,
+        )
     });
 }
 
@@ -1148,6 +1386,7 @@ mod view_commit_tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
     use language::language_settings::AllLanguageSettings;
+    use project::git_store::branch_diff::{DiffBase, DiffScope};
     use project::project_settings::ProjectSettings;
     use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
@@ -1156,6 +1395,7 @@ mod view_commit_tests {
     use std::sync::Arc;
     use theme::LoadThemes;
     use util::path;
+    use util::rel_path::RelPath;
     use workspace::WorkspaceSettings;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1166,6 +1406,7 @@ mod view_commit_tests {
             theme_settings::init(LoadThemes::JustBase, cx);
             AllLanguageSettings::register(cx);
             editor::init(cx);
+            crate::init(cx);
             ProjectSettings::register(cx);
             WorktreeSettings::register(cx);
             WorkspaceSettings::register(cx);
@@ -1242,5 +1483,99 @@ mod view_commit_tests {
 
         assert!(!initial_modal_state);
         assert!(final_modal_state);
+    }
+
+    #[gpui::test]
+    async fn test_compare_file_with_commit_opens_ref_picker(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = setup_git_repo(cx).await;
+        let (project, workspace) = create_test_workspace(fs, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let project_path = ProjectPath {
+            worktree_id,
+            path: RelPath::unix("src/main.rs").unwrap().into_arc(),
+        };
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                compare_file_with_commit_at_path(workspace, project_path, window, cx);
+            })
+            .unwrap();
+
+        let modal_is_compare = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .active_modal::<RefPickerModal>(cx)
+                    .is_some_and(|modal| {
+                        matches!(&modal.read(cx).mode, RefPickerMode::CompareFile(_))
+                    })
+            })
+            .unwrap_or(false);
+
+        assert!(modal_is_compare);
+    }
+
+    #[gpui::test]
+    async fn test_file_compare_deploys_project_diff_for_selected_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = setup_git_repo(cx).await;
+        let (project, workspace) = create_test_workspace(fs, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let project_path = ProjectPath {
+            worktree_id,
+            path: RelPath::unix("src/main.rs").unwrap().into_arc(),
+        };
+        let target = workspace
+            .read_with(cx, |workspace, cx| {
+                file_compare_target_for_project_path(workspace, project_path.clone(), cx)
+            })
+            .unwrap()
+            .unwrap();
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                ProjectDiff::deploy_file_compare(
+                    workspace,
+                    target.repository,
+                    target.project_path,
+                    target.repo_path.clone(),
+                    "refs/heads/feature".into(),
+                    "feature".into(),
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+
+        let project_diff = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_item_as::<ProjectDiff>(cx)
+            })
+            .unwrap()
+            .unwrap();
+        project_diff.read_with(cx, |project_diff, cx| {
+            assert_eq!(
+                project_diff.diff_base(cx),
+                &DiffBase::Compare {
+                    base_ref: "refs/heads/feature".into(),
+                    base_label: "feature".into(),
+                }
+            );
+            assert_eq!(
+                project_diff.scope(cx),
+                &DiffScope::File {
+                    project_path,
+                    repo_path: target.repo_path,
+                }
+            );
+        });
     }
 }
