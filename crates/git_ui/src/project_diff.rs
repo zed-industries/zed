@@ -821,8 +821,6 @@ impl ProjectDiff {
         reason: RefreshReason,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let start = std::time::Instant::now();
-        dbg!(reason, start);
         let mut path_keys = Vec::new();
         let buffers_to_load = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
@@ -1165,6 +1163,8 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+        let is_loading = self.branch_diff.read(cx).is_tree_base_loading() || !self._task.is_ready();
+
         let is_branch_diff_view = matches!(self.diff_base(cx), DiffBase::Merge { .. });
 
         div()
@@ -1178,7 +1178,7 @@ impl Render for ProjectDiff {
             .items_center()
             .justify_center()
             .size_full()
-            .when(is_empty && !self._task.is_ready(), |el| {
+            .when(is_empty && is_loading, |el| {
                 let rems = TextSize::Large.rems(cx);
                 el.child(
                     Icon::new(IconName::LoadCircle)
@@ -1188,7 +1188,7 @@ impl Render for ProjectDiff {
                         .into_any_element(),
                 )
             })
-            .when(is_empty && self._task.is_ready(), |el| {
+            .when(is_empty && !is_loading, |el| {
                 let remote_button = if let Some(panel) = self
                     .workspace
                     .upgrade()
