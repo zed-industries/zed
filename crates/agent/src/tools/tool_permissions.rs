@@ -2,6 +2,7 @@ use crate::{
     Thread, ToolCallEventStream, ToolPermissionContext, ToolPermissionDecision,
     decide_permission_for_path,
 };
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
@@ -517,6 +518,91 @@ pub fn authorize_file_edit(
                 });
                 authorize.await
             }
+        }
+    })
+}
+
+/// The user's choice when prompted about how to handle unsaved changes
+/// in a buffer that the agent wants to edit or overwrite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirtyBufferDecision {
+    /// Save the buffer's pending edits to disk, then proceed.
+    /// (Edit-mode prompt only.)
+    Save,
+    /// Discard the buffer's pending edits (reload from disk), then proceed.
+    Discard,
+    /// Keep the buffer's pending edits and cancel the agent's operation.
+    /// (Overwrite-mode prompt only.)
+    Keep,
+}
+
+/// Which prompt to show when the agent encounters a dirty buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirtyBufferPromptKind {
+    /// The agent wants to apply targeted edits on top of the current
+    /// content. Offers Save (persist edits, then edit on top) vs Discard
+    /// (revert to disk, then edit).
+    Edit,
+    /// The agent wants to overwrite the file's entire contents. Offers
+    /// Keep (cancel the overwrite to preserve the user's work) vs
+    /// Discard (reload from disk and let the agent overwrite).
+    Overwrite,
+}
+
+/// Prompts the user about how to handle a dirty buffer that the agent
+/// wants to edit or overwrite. Returns the chosen action; the caller is
+/// responsible for actually performing the corresponding side effect
+/// (save / reload / cancel) before continuing.
+pub fn authorize_dirty_buffer(
+    kind: DirtyBufferPromptKind,
+    event_stream: &ToolCallEventStream,
+    cx: &mut App,
+) -> Task<Result<DirtyBufferDecision>> {
+    let (message, options) = match kind {
+        DirtyBufferPromptKind::Edit => (
+            "This file has unsaved changes. Do you want to save or discard them \
+             before the agent continues editing?"
+                .to_string(),
+            vec![
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("save"),
+                    "Save",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("discard"),
+                    "Discard",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        ),
+        DirtyBufferPromptKind::Overwrite => (
+            "This file has unsaved changes and the agent wants to overwrite it.".to_string(),
+            vec![
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("discard"),
+                    "Overwrite",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("keep"),
+                    "Cancel",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        ),
+    };
+
+    let prompt = event_stream.prompt_for_decision(None, Some(message), options, cx);
+    cx.spawn(async move |_cx| {
+        let option_id = prompt.await?;
+        match option_id.0.as_ref() {
+            "save" => Ok(DirtyBufferDecision::Save),
+            "discard" => Ok(DirtyBufferDecision::Discard),
+            "keep" => Ok(DirtyBufferDecision::Keep),
+            other => Err(anyhow!(
+                "Unexpected dirty-buffer decision option_id: {other}"
+            )),
         }
     })
 }

@@ -149,7 +149,7 @@ windows = { version = "0.61", features = ["Win32_Foundation"] }
 backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui_platform = { workspace = true, features = ["font-kit"] }
+gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 gpui_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
 proptest = { workspace = true }

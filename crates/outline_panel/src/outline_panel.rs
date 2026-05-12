@@ -4963,6 +4963,12 @@ impl Panel for OutlinePanel {
     fn activation_priority(&self) -> u32 {
         6
     }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.outline_panel.get_or_insert_default().button = Some(false);
+        }))
+    }
 }
 
 impl Focusable for OutlinePanel {

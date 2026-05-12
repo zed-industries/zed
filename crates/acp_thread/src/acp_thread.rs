@@ -570,6 +570,22 @@ impl From<RequestPermissionOutcome> for acp::RequestPermissionOutcome {
     }
 }
 
+/// What a `WaitingForConfirmation` prompt represents semantically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorizationKind {
+    /// The user is granting or denying permission for the tool call to
+    /// proceed. The selected `PermissionOptionKind` determines whether the
+    /// tool call transitions to `InProgress` (allow) or `Rejected` (reject).
+    /// This is the default for tool authorization prompts.
+    PermissionGrant,
+    /// The user is choosing between actions for the tool to take next
+    /// (for example, "Save" vs "Discard" before editing a dirty buffer).
+    /// The tool call always transitions to `InProgress` regardless of the
+    /// selected `PermissionOptionKind`; the caller interprets the chosen
+    /// `option_id` to decide what to do.
+    ActionChoice,
+}
+
 #[derive(Debug)]
 pub enum ToolCallStatus {
     /// The tool call hasn't started running yet, but we start showing it to
@@ -579,6 +595,7 @@ pub enum ToolCallStatus {
     WaitingForConfirmation {
         options: PermissionOptions,
         respond_tx: oneshot::Sender<SelectedPermissionOutcome>,
+        kind: AuthorizationKind,
     },
     /// The tool call is currently running.
     InProgress,
@@ -2080,6 +2097,7 @@ impl AcpThread {
         &mut self,
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
+        kind: AuthorizationKind,
         cx: &mut Context<Self>,
     ) -> Result<Task<RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
@@ -2087,6 +2105,7 @@ impl AcpThread {
         let status = ToolCallStatus::WaitingForConfirmation {
             options,
             respond_tx: tx,
+            kind,
         };
 
         let tool_call_id = tool_call.tool_call_id.clone();
@@ -2118,15 +2137,25 @@ impl AcpThread {
             return;
         };
 
-        let new_status = match outcome.option_kind {
-            acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways => {
-                ToolCallStatus::Rejected
+        let is_action_choice = matches!(
+            call.status,
+            ToolCallStatus::WaitingForConfirmation {
+                kind: AuthorizationKind::ActionChoice,
+                ..
             }
-            acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways => {
+        );
+        let new_status =
+            if is_action_choice {
                 ToolCallStatus::InProgress
-            }
-            _ => ToolCallStatus::InProgress,
-        };
+            } else {
+                match outcome.option_kind {
+                    acp::PermissionOptionKind::RejectOnce
+                    | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                    acp::PermissionOptionKind::AllowOnce
+                    | acp::PermissionOptionKind::AllowAlways => ToolCallStatus::InProgress,
+                    _ => ToolCallStatus::InProgress,
+                }
+            };
 
         let curr_status = mem::replace(&mut call.status, new_status);
 

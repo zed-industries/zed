@@ -324,12 +324,15 @@ impl MultiWorkspace {
         });
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
         let settings_subscription = cx.observe_global_in::<settings::SettingsStore>(window, {
-            let mut previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+            let mut previous_multi_workspace_enabled = !DisableAiSettings::get_global(cx)
+                .disable_ai
+                && AgentSettings::get_global(cx).enabled;
             move |this, window, cx| {
-                if DisableAiSettings::get_global(cx).disable_ai != previous_disable_ai {
+                let multi_workspace_enabled = this.multi_workspace_enabled(cx);
+                if previous_multi_workspace_enabled && !multi_workspace_enabled {
                     this.collapse_to_single_workspace(window, cx);
-                    previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
                 }
+                previous_multi_workspace_enabled = multi_workspace_enabled;
             }
         });
         Self::subscribe_to_workspace(&workspace, window, cx);
@@ -1428,11 +1431,17 @@ impl MultiWorkspace {
         let old_active_workspace = self.active_workspace.clone();
         let old_active_was_retained = self.active_workspace_is_retained();
         let workspace_was_retained = self.is_workspace_retained(&workspace);
+        let should_retain_workspaces = self.multi_workspace_enabled(cx);
+
+        if should_retain_workspaces && !old_active_was_retained {
+            let key = old_active_workspace.read(cx).project_group_key(cx);
+            self.retain_workspace(old_active_workspace.clone(), key, cx);
+        }
 
         if !workspace_was_retained {
             self.register_workspace(&workspace, window, cx);
 
-            if self.sidebar_open {
+            if should_retain_workspaces {
                 let key = workspace.read(cx).project_group_key(cx);
                 self.retain_workspace(workspace.clone(), key, cx);
             }
@@ -1445,7 +1454,7 @@ impl MultiWorkspace {
             group.last_active_workspace = Some(self.active_workspace.downgrade());
         }
 
-        if !self.sidebar_open && !old_active_was_retained {
+        if !should_retain_workspaces && !old_active_was_retained {
             self.detach_workspace(&old_active_workspace, cx);
         }
 
@@ -1471,7 +1480,7 @@ impl MultiWorkspace {
     }
 
     /// Collapses to a single workspace, discarding all groups.
-    /// Used when multi-workspace is disabled (e.g. disable_ai).
+    /// Used when multi-workspace is disabled by settings.
     fn collapse_to_single_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sidebar_open {
             self.close_sidebar(window, cx);
