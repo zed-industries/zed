@@ -102,24 +102,30 @@ impl TimeBucket {
     }
 }
 
-fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
-    let mut positions = Vec::new();
-    let mut query_chars = query.chars().peekable();
-    for (byte_idx, candidate_char) in text.char_indices() {
-        if let Some(&query_char) = query_chars.peek() {
-            if candidate_char.eq_ignore_ascii_case(&query_char) {
-                positions.push(byte_idx);
-                query_chars.next();
+pub fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>> {
+    let query_chars: Vec<char> = query.chars().collect();
+    if query_chars.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let candidate_chars: Vec<(usize, char)> = candidate.char_indices().collect();
+    let window_count = candidate_chars.len().checked_sub(query_chars.len() - 1)?;
+
+    'outer: for window_start in 0..window_count {
+        for (qi, &query_char) in query_chars.iter().enumerate() {
+            let (_, cand_char) = candidate_chars[window_start + qi];
+            if !cand_char.eq_ignore_ascii_case(&query_char) {
+                continue 'outer;
             }
-        } else {
-            break;
         }
+        return Some(
+            (0..query_chars.len())
+                .map(|qi| candidate_chars[window_start + qi].0)
+                .collect(),
+        );
     }
-    if query_chars.peek().is_none() {
-        Some(positions)
-    } else {
-        None
-    }
+
+    None
 }
 
 pub enum ThreadsArchiveViewEvent {

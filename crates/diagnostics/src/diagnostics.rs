@@ -981,24 +981,26 @@ async fn context_range_for_entry(
     snapshot: BufferSnapshot,
     cx: &mut AsyncApp,
 ) -> Range<text::Anchor> {
-    let range = if let Some(rows) = heuristic_syntactic_expand(
+    let expanded_range = heuristic_syntactic_expand(
         range.clone(),
         DIAGNOSTIC_EXPANSION_ROW_LIMIT,
         snapshot.clone(),
         cx,
     )
-    .await
-    .filter(|rows| rows.start() != rows.end())
-    {
-        Range {
-            start: Point::new(*rows.start(), 0),
-            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-        }
+    .await;
+    let row_range = expanded_range.unwrap_or_else(|| range.start.row..=range.end.row);
+    let row_count = row_range.end().saturating_sub(*row_range.start()) + 1;
+    let target_row_count = context.saturating_mul(2).saturating_add(1);
+    let row_range = if let Some(rows_to_add) = target_row_count.checked_sub(row_count) {
+        let rows_before = rows_to_add.div_ceil(2);
+        let rows_after = rows_to_add / 2;
+        row_range.start().saturating_sub(rows_before)..=row_range.end().saturating_add(rows_after)
     } else {
-        Range {
-            start: Point::new(range.start.row.saturating_sub(context), 0),
-            end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
-        }
+        row_range
+    };
+    let range = Range {
+        start: Point::new(*row_range.start(), 0),
+        end: snapshot.clip_point(Point::new(*row_range.end(), u32::MAX), Bias::Left),
     };
     snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end)
 }
@@ -1133,6 +1135,7 @@ async fn heuristic_syntactic_expand(
             return None;
         };
         node = parent;
+        futures_lite::future::yield_now().await;
     }
 }
 

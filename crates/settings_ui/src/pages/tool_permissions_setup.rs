@@ -1404,7 +1404,6 @@ mod tests {
             "go_to_definition",
             "grep",
             "list_directory",
-            "now",
             "open",
             "read_file",
             "rename_symbol",

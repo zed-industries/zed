@@ -694,6 +694,16 @@ impl ListState {
         self.0.borrow_mut().scrollbar_drag_start_height.take();
     }
 
+    /// Returns `true` if the scrollbar is currently being dragged.
+    ///
+    /// This is set between [`scrollbar_drag_started`](Self::scrollbar_drag_started)
+    /// and [`scrollbar_drag_ended`](Self::scrollbar_drag_ended) calls. Useful for
+    /// consumers that need to distinguish scrollbar drags from wheel/trackpad scrolls,
+    /// e.g. to suppress auto-scroll behavior during manual positioning.
+    pub fn is_scrollbar_dragging(&self) -> bool {
+        self.0.borrow().scrollbar_drag_start_height.is_some()
+    }
+
     /// Set the offset from the scrollbar
     pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
         self.0.borrow_mut().set_offset_from_scrollbar(point);

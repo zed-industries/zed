@@ -40,10 +40,6 @@ pub struct AgentPanelTerminalFeatureFlag;
 impl FeatureFlag for AgentPanelTerminalFeatureFlag {
     const NAME: &'static str = "agent-panel-terminal";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 register_feature_flag!(AgentPanelTerminalFeatureFlag);
 
@@ -82,6 +78,18 @@ impl FeatureFlag for LspToolFeatureFlag {
     }
 }
 register_feature_flag!(LspToolFeatureFlag);
+
+pub struct RenameToolFeatureFlag;
+
+impl FeatureFlag for RenameToolFeatureFlag {
+    const NAME: &'static str = "rename-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(RenameToolFeatureFlag);
 
 pub struct ProjectPanelUndoRedoFeatureFlag;
 

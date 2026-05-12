@@ -370,6 +370,7 @@ impl EditToolTest {
                 project: &project_context,
                 available_tools: tool_names,
                 model_name: None,
+                date: chrono::Local::now().format("%Y-%m-%d").to_string(),
             };
             let templates = Templates::new();
             template.render(&templates)?
