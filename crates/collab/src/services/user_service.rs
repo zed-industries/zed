@@ -45,55 +45,6 @@ pub trait UserService: Send + Sync + 'static {
     }
 }
 
-/// A [`UserService`] implementation for transitioning from reading from the database to reading from Cloud.
-pub struct TransitionalUserService {
-    cloud_user_service: CloudUserService,
-    #[expect(dead_code)]
-    database_user_service: DatabaseUserService,
-}
-
-impl TransitionalUserService {
-    pub fn new(
-        cloud_user_service: CloudUserService,
-        database_user_service: DatabaseUserService,
-    ) -> Self {
-        Self {
-            cloud_user_service,
-            database_user_service,
-        }
-    }
-}
-
-#[async_trait]
-impl UserService for TransitionalUserService {
-    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-        self.cloud_user_service.get_users_by_ids(ids).await
-    }
-
-    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        self.cloud_user_service
-            .get_user_by_github_login(github_login)
-            .await
-    }
-
-    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
-        self.cloud_user_service
-            .fuzzy_search_users(query, limit)
-            .await
-    }
-
-    async fn search_channel_members(
-        &self,
-        channel: &Channel,
-        query: &str,
-        limit: u32,
-    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
-        self.cloud_user_service
-            .search_channel_members(channel, query, limit)
-            .await
-    }
-}
-
 /// A [`UserService`] implementation backed by Cloud.
 pub struct CloudUserService {
     http_client: reqwest::Client,
