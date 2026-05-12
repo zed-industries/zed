@@ -936,6 +936,19 @@ impl RulesLibrary {
     }
 
     fn focus_picker(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_rule_picker(window, cx);
+    }
+
+    fn focus_picker_from_editor_cancel(
+        &mut self,
+        _: &editor::actions::Cancel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_rule_picker(window, cx);
+    }
+
+    fn focus_rule_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.picker
             .update(cx, |picker, cx| picker.focus(window, cx));
     }
@@ -1140,6 +1153,7 @@ impl RulesLibrary {
                 })
             })
             .on_action(cx.listener(Self::focus_picker))
+            .on_action(cx.listener(Self::focus_picker_from_editor_cancel))
             .on_action(cx.listener(Self::move_down_from_title))
             .child(EditorElement::new(
                 &editor,
@@ -1277,6 +1291,7 @@ impl RulesLibrary {
                         .child(
                             div()
                                 .on_action(cx.listener(Self::focus_picker))
+                                .on_action(cx.listener(Self::focus_picker_from_editor_cancel))
                                 .on_action(cx.listener(Self::inline_assist))
                                 .on_action(cx.listener(Self::move_up_from_body))
                                 .h_full()
