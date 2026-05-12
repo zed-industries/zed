@@ -27,6 +27,7 @@
 
 # Working with Code
 
+- [Windows & Projects](./windows-and-projects.md)
 - [Editing Code](./editing-code.md)
   - [Code Completions](./completions.md)
   - [Snippets](./snippets.md)
