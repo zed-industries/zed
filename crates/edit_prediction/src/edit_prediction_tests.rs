@@ -2241,17 +2241,46 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
     let search_range = snapshot.offset_to_point(search_ranges[0].start)
         ..snapshot.offset_to_point(search_ranges[0].end);
 
-    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(&snapshot, search_range, 100);
+    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(&snapshot, search_range, 5, 0);
 
     assert_eq!(
         active_buffer_diagnostics,
         vec![zeta_prompt::ActiveBufferDiagnostic {
             severity: Some(1),
             message: "second error".to_string(),
-            snippet: text,
+            snippet: "    let second_value = 2;".to_string(),
             snippet_buffer_row_range: 5..5,
-            diagnostic_range_in_snippet: 61..73,
+            diagnostic_range_in_snippet: 8..20,
         }]
+    );
+
+    let active_buffer_diagnostics =
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(0, 0)..snapshot.max_point(), 5, 100);
+    assert_eq!(
+        active_buffer_diagnostics,
+        vec![
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(1),
+                message: "second error".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 5..5,
+                diagnostic_range_in_snippet: 0..0,
+            },
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(2),
+                message: "first warning".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 1..1,
+                diagnostic_range_in_snippet: 0..0,
+            },
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(4),
+                message: "third hint".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 10..10,
+                diagnostic_range_in_snippet: 0..0,
+            },
+        ]
     );
 
     let buffer = cx.new(|cx| {
@@ -2313,7 +2342,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
     let active_buffer_diagnostics =
-        zeta::active_buffer_diagnostics(&snapshot, Point::new(2, 0)..Point::new(4, 0), 100);
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(2, 0)..Point::new(4, 0), 3, 0);
 
     assert_eq!(
         active_buffer_diagnostics
@@ -2330,19 +2359,100 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
             (
                 Some(2),
                 "row two".to_string(),
-                "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                "three".to_string(),
                 2..2,
-                8..13,
+                0..5,
             ),
             (
                 Some(3),
                 "row four".to_string(),
-                "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                "five".to_string(),
                 4..4,
-                19..23,
+                0..4,
             ),
         ]
     );
+}
+
+#[gpui::test]
+fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
+    let text = (0..25)
+        .map(|row| format!("line {row}\n"))
+        .collect::<String>();
+    let buffer = cx.new(|cx| Buffer::local(&text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let snapshot = buffer.snapshot();
+        let diagnostics = DiagnosticSet::new(
+            (0..25)
+                .map(|row| DiagnosticEntry {
+                    range: text::PointUtf16::new(row, 0)..text::PointUtf16::new(row, 4),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: format!("row {row}"),
+                        group_id: row as usize,
+                        is_primary: true,
+                        source_kind: language::DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
+                    },
+                })
+                .collect::<Vec<_>>(),
+            &snapshot,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let active_buffer_diagnostics =
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(0, 0)..Point::new(25, 0), 12, 0);
+
+    assert_eq!(active_buffer_diagnostics.len(), 20);
+    assert!(
+        active_buffer_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "row 12")
+    );
+    assert!(
+        active_buffer_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.message != "row 0" && diagnostic.message != "row 24")
+    );
+
+    let text = (0..300)
+        .map(|row| format!("line {row} has some diagnostic context\n"))
+        .collect::<String>();
+    let buffer = cx.new(|cx| Buffer::local(&text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let snapshot = buffer.snapshot();
+        let diagnostics = DiagnosticSet::new(
+            vec![DiagnosticEntry {
+                range: text::PointUtf16::new(150, 0)..text::PointUtf16::new(150, 4),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "long snippet".to_string(),
+                    group_id: 1,
+                    is_primary: true,
+                    source_kind: language::DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
+                },
+            }],
+            &snapshot,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(
+        &snapshot,
+        Point::new(100, 0)..Point::new(200, 0),
+        150,
+        2000,
+    );
+
+    assert_eq!(active_buffer_diagnostics.len(), 1);
+    assert!(active_buffer_diagnostics[0].snippet.len() <= 512 * 3 + 2);
+    assert!(active_buffer_diagnostics[0].snippet.len() < text.len());
 }
 
 // Generate a model response that would apply the given diff to the active file.
