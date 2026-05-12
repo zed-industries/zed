@@ -2,21 +2,23 @@ use crate::{
     ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool, RenameTool,
-    SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ToolPermissionDecision, UpdatePlanTool, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
+    SystemPromptTemplate, Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool,
+    WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, LspToolFeatureFlag, UpdatePlanToolFeatureFlag};
+use feature_flags::{
+    ExperimentalSystemPromptFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag,
+    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
 use collections::{HashMap, HashSet, IndexMap};
@@ -1605,8 +1607,6 @@ impl Thread {
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(MovePathTool::new(self.project.clone()));
-        self.add_tool(NowTool);
-        self.add_tool(OpenTool::new(self.project.clone()));
         if cx.has_flag::<UpdatePlanToolFeatureFlag>() {
             self.add_tool(UpdatePlanTool);
         }
@@ -2935,16 +2935,13 @@ impl Thread {
                     None
                 }
             })
-            .filter(|(tool_name, _)| {
-                cx.has_flag::<LspToolFeatureFlag>()
-                    || !matches!(
-                        tool_name.as_ref(),
-                        FindReferencesTool::NAME
-                            | GetCodeActionsTool::NAME
-                            | ApplyCodeActionTool::NAME
-                            | GoToDefinitionTool::NAME
-                            | RenameTool::NAME
-                    )
+            .filter(|(tool_name, _)| match tool_name.as_ref() {
+                RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
+                FindReferencesTool::NAME
+                | GetCodeActionsTool::NAME
+                | ApplyCodeActionTool::NAME
+                | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+                _ => true,
             })
             .collect::<BTreeMap<_, _>>();
 
@@ -3065,12 +3062,14 @@ impl Thread {
             self.messages.len()
         );
 
+        let use_experimental_prompt = cx.has_flag::<ExperimentalSystemPromptFeatureFlag>();
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
+            date: Local::now().format("%Y-%m-%d").to_string(),
         }
-        .render(&self.templates)
+        .render_with_prompt_variant(&self.templates, use_experimental_prompt)
         .context("failed to build system prompt")
         .expect("Invalid template");
         let mut messages = vec![LanguageModelRequestMessage {

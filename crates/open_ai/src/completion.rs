@@ -190,8 +190,8 @@ pub fn into_open_ai_response(
         tool_choice,
         stop: _,
         temperature,
-        thinking_allowed: _,
-        thinking_effort: _,
+        thinking_allowed,
+        thinking_effort,
         speed: _,
     } = request;
 
@@ -233,10 +233,18 @@ pub fn into_open_ai_response(
         } else {
             None
         },
-        reasoning: reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
-            effort,
-            summary: Some(crate::responses::ReasoningSummaryMode::Auto),
-        }),
+        reasoning: if thinking_allowed {
+            thinking_effort
+                .as_deref()
+                .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
+                .or(reasoning_effort)
+                .map(|effort| crate::responses::ReasoningConfig {
+                    effort,
+                    summary: Some(crate::responses::ReasoningSummaryMode::Auto),
+                })
+        } else {
+            None
+        },
     }
 }
 
@@ -461,12 +469,16 @@ impl OpenAiEventMapper {
                 for tool_call in tool_calls {
                     let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                    if let Some(tool_id) = tool_call.id.clone() {
+                    if let Some(tool_id) = tool_call.id.clone()
+                        && !tool_id.is_empty()
+                    {
                         entry.id = tool_id;
                     }
 
                     if let Some(function) = tool_call.function.as_ref() {
-                        if let Some(name) = function.name.clone() {
+                        if let Some(name) = function.name.clone()
+                            && !name.is_empty()
+                        {
                             entry.name = name;
                         }
 
@@ -848,6 +860,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::{
+        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
+    };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -859,6 +874,17 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
+    }
+
+    fn map_completion_events(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        let mut mapper = OpenAiEventMapper::new();
+        let mut all_events = Vec::new();
+        for event in events {
+            all_events.extend(mapper.map_event(event));
+        }
+        all_events.into_iter().filter_map(|e| e.ok()).collect()
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
@@ -1000,8 +1026,8 @@ mod tests {
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
-            thinking_allowed: false,
-            thinking_effort: None,
+            thinking_allowed: true,
+            thinking_effort: Some("high".into()),
             speed: None,
         };
 
@@ -1065,10 +1091,44 @@ mod tests {
                 }
             ],
             "prompt_cache_key": "thread-123",
-            "reasoning": { "effort": "low", "summary": "auto" }
+            "reasoning": { "effort": "high", "summary": "auto" }
         });
 
         assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: Some("high".into()),
+            speed: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5",
+            true,
+            true,
+            None,
+            Some(ReasoningEffort::Medium),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized.get("reasoning"), None);
     }
 
     #[test]
@@ -1721,5 +1781,133 @@ mod tests {
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
         );
+    }
+
+    #[test]
+    fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
+        // DashScope sends id="" and name="" in subsequent tool_calls delta
+        // chunks after the first chunk. OpenAiEventMapper must not overwrite
+        // the accumulated id and name with these empty strings.
+
+        let events = vec![
+            // First chunk: id and name are present
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("call_dashscope_test".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("list_directory".into()),
+                                arguments: Some("".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Subsequent chunks: DashScope sends id="" and name=""
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("".into()),
+                                arguments: Some("{\"path\": \"".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("".into()),
+                                arguments: Some("blog-scraper\"}".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Final chunk: finish_reason = "tool_calls"
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("tool_calls".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        let mapped = map_completion_events(events);
+
+        // Events emitted:
+        //   1. Partial ToolUse from chunk 1 (fix_json("") → "{}", parseable)
+        //   2. Partial ToolUse from chunk 3 (arguments fully assembled)
+        //   3. Complete ToolUse from finish_reason="tool_calls" drain
+        //   4. Stop(ToolUse)
+        assert_eq!(mapped.len(), 4);
+
+        // Verify the complete ToolUse event (from finish_reason drain)
+        // has the correct id, name, and accumulated arguments.
+        let complete_tool_use = mapped.iter().find_map(|event| {
+            if let LanguageModelCompletionEvent::ToolUse(tool_use) = event {
+                if tool_use.is_input_complete {
+                    return Some(tool_use);
+                }
+            }
+            None
+        });
+        assert!(
+            complete_tool_use.is_some(),
+            "expected a completed ToolUse event"
+        );
+        let tool_use = complete_tool_use.unwrap();
+        assert_eq!(
+            tool_use.id.to_string(),
+            "call_dashscope_test",
+            "id must survive empty-string overwrites"
+        );
+        assert_eq!(
+            tool_use.name.as_ref(),
+            "list_directory",
+            "name must survive empty-string overwrites"
+        );
+        assert_eq!(
+            tool_use.raw_input, "{\"path\": \"blog-scraper\"}",
+            "arguments should accumulate across chunks"
+        );
+
+        // Verify the Stop event
+        assert!(mapped.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
+            )
+        }));
     }
 }
