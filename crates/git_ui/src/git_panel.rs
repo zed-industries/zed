@@ -4138,7 +4138,7 @@ impl GitPanel {
         path + file_name + depth * 2
     }
 
-    fn render_overflow_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
+    fn render_ellipsis_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
@@ -4149,8 +4149,7 @@ impl GitPanel {
         PopoverMenu::new(id.into())
             .trigger(
                 IconButton::new("overflow-menu-trigger", IconName::Ellipsis)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted),
+                    .icon_size(IconSize::Small),
             )
             .menu(move |window, cx| {
                 Some(git_panel_context_menu(
@@ -4421,7 +4420,7 @@ impl GitPanel {
         })
     }
 
-    fn render_panel_header(
+    fn render_changes_header(
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -4447,13 +4446,16 @@ impl GitPanel {
                 .flex_none()
                 .justify_between()
                 .child(
-                    Button::new("changes", "Open Diff")
+                    Button::new("changes", "View Diff")
                         .label_size(LabelSize::Small)
-                        .layer(ElevationIndex::ModalSurface)
-                        .size(ButtonSize::Compact)
                         .color(Color::Muted)
+                        .start_icon(
+                            Icon::new(IconName::Diff)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .tooltip(Tooltip::for_action_title_in(
-                            "Open Diff",
+                            "View Diff",
                             &Diff,
                             &self.focus_handle,
                         ))
@@ -4466,12 +4468,11 @@ impl GitPanel {
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(self.render_overflow_menu("overflow_menu"))
+                        .child(self.render_ellipsis_menu("overflow_menu"))
                         .child(
                             Button::new("stage_unstage_all", text)
                                 .label_size(LabelSize::Small)
                                 .layer(ElevationIndex::ModalSurface)
-                                .size(ButtonSize::Compact)
                                 .style(ButtonStyle::Filled)
                                 .tooltip(Tooltip::for_action_title_in(
                                     tooltip,
@@ -4940,23 +4941,17 @@ impl GitPanel {
                 .flex_1()
                 .justify_center()
                 .hover(|s| s.bg(cx.theme().colors().element_hover))
+                .border_b_1()
+                .when(!active, |s| {
+                    s.bg(cx.theme().colors().editor_background.opacity(0.6))
+                        .border_color(cx.theme().colors().border.opacity(0.6))
+                })
                 .child(Label::new(label).when(!active, |this| this.color(Color::Muted)))
                 .when(show_changes && self.changes_count > 0, |this| {
                     this.child(
                         Label::new(format!("({})", self.changes_count))
                             .size(LabelSize::Small)
                             .color(Color::Muted),
-                    )
-                })
-                .when(active, |this| {
-                    this.child(
-                        div()
-                            .h_px()
-                            .w_full()
-                            .absolute()
-                            .bottom_neg_px()
-                            .left_0()
-                            .bg(cx.theme().colors().panel_focused_border),
                     )
                 })
                 .on_click(
@@ -4968,8 +4963,6 @@ impl GitPanel {
             .relative()
             .h(Tab::container_height(cx))
             .w_full()
-            .border_b_1()
-            .border_color(cx.theme().colors().border.opacity(0.8))
             .child(tab(
                 ElementId::Name("changes-tab".into()),
                 active_tab == GitPanelTab::Changes,
@@ -4977,7 +4970,7 @@ impl GitPanel {
                 "Changes".into(),
                 GitPanelTab::Changes,
             ))
-            .child(Divider::vertical())
+            .child(Divider::vertical().color(ui::DividerColor::BorderFaded))
             .child(tab(
                 ElementId::Name("history-tab".into()),
                 active_tab != GitPanelTab::Changes,
@@ -6539,7 +6532,7 @@ impl Render for GitPanel {
                     })
                     .map(|this| match self.active_tab {
                         GitPanelTab::Changes => this
-                            .children(self.render_panel_header(window, cx))
+                            .children(self.render_changes_header(window, cx))
                             .when(!self.commit_editor_expanded, |this| {
                                 this.map(|this| {
                                     if let Some(repo) = self.active_repository.clone()
