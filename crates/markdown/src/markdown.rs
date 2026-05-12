@@ -2340,10 +2340,7 @@ fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>
         .tooltip(Tooltip::text(
             "Image failed to load. Open `zed: log` for more details.",
         ))
-        .on_click({
-            let url = dest_url.clone();
-            move |_, _, cx| cx.open_url(url.as_ref())
-        })
+        .on_click(move |_, _, cx| cx.open_url(&dest_url))
         .into_any_element()
 }
 
