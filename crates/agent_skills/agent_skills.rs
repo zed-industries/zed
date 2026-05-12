@@ -65,6 +65,40 @@ pub enum SkillSource {
     },
 }
 
+/// Scope qualifier used in `/global.<name>` slash-command syntax to
+/// unambiguously target the global version of a same-named skill.
+pub const SKILL_SCOPE_GLOBAL: &str = "global";
+
+/// Scope qualifier used in `/local.<name>` slash-command syntax to
+/// unambiguously target the project-local version of a same-named
+/// skill.
+pub const SKILL_SCOPE_LOCAL: &str = "local";
+
+impl SkillSource {
+    /// Returns the scope label that identifies this source in user-
+    /// visible places: the autocomplete popup's source column, and the
+    /// `<scope>.<name>` slash-command prefix that the popup inserts so
+    /// the resolver can route `/global.foo` and `/local.foo` to the
+    /// correct entry. The two uses MUST stay in sync — if the popup
+    /// shows "local" the inserted text has to start with `/local.` or
+    /// the resolver won't find the skill.
+    pub fn scope_label(&self) -> &'static str {
+        match self {
+            Self::Global => SKILL_SCOPE_GLOBAL,
+            Self::ProjectLocal { .. } => SKILL_SCOPE_LOCAL,
+        }
+    }
+
+    /// Whether this source matches the given scope qualifier from a
+    /// `/<scope>.<name>` slash command. Unknown scopes never match — in
+    /// that case the resolver falls through to MCP, preserving the
+    /// existing MCP-server-prefix grammar for any prefix that isn't a
+    /// known skill scope.
+    pub fn matches_scope(&self, scope: &str) -> bool {
+        self.scope_label() == scope
+    }
+}
+
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {

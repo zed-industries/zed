@@ -1269,14 +1269,13 @@ impl NativeAgent {
         // for the model, not user-driven invocation — that's the whole
         // point of marking a skill model-disabled.
         let skill_commands = state.skills.iter().map(|skill| {
-            let source_label = match &skill.source {
-                SkillSource::Global => "global".to_string(),
-                SkillSource::ProjectLocal {
-                    worktree_root_name, ..
-                } => worktree_root_name.to_string(),
-            };
-            acp::AvailableCommand::new(skill.name.clone(), skill.description.clone())
-                .meta(acp_thread::meta_with_skill_source(&source_label))
+            // `scope_label` doubles as the popup source label and the
+            // `/<scope>.<name>` prefix the completion inserts — see the
+            // doc on `SkillSource::scope_label` for why these have to
+            // stay equal.
+            acp::AvailableCommand::new(skill.name.clone(), skill.description.clone()).meta(
+                acp_thread::meta_with_skill_source(skill.source.scope_label()),
+            )
         });
 
         mcp_commands.chain(skill_commands).collect()
@@ -2117,6 +2116,26 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
+            // Skill scope qualifiers (`/global.<name>` and `/local.<name>`)
+            // are checked BEFORE MCP. The autocomplete popup inserts a
+            // qualified form for every skill so picking the global row
+            // unambiguously runs the global skill even when a same-named
+            // project-local one exists. An MCP server literally named
+            // `global` or `local` would collide here, but the qualified
+            // form remains usable as long as no skill with that name
+            // exists in the matching scope — we fall through to the MCP
+            // path below if the scope lookup misses.
+            if let Some(scope) = parsed_command.explicit_server_id
+                && let Some(skill) = project_state.skills.iter().find(|skill| {
+                    skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
+                })
+            {
+                let skill = skill.clone();
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_skill_invocation(id, session_id.clone(), skill, params.prompt, cx)
+                });
+            }
+
             // MCP prompts and skills both register slash commands. MCP
             // prompts are checked first — if a user has both an MCP prompt
             // and a skill with the same name, the MCP prompt wins (matching
@@ -2159,17 +2178,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 });
             }
 
-            // Skill match. Slash commands work for *all* skills regardless
+            // Unqualified skill match (`/skill-name` with no scope
+            // prefix). Slash commands work for *all* skills regardless
             // of `disable_model_invocation` — that flag only hides the
             // skill from the model's catalog. The user explicitly typed
-            // the name, so they get to invoke it.
-            //
-            // The autocomplete popup shows every skill (with source
-            // labels for same-named entries), but the underlying
-            // `/<name>` text is the same regardless of which row the
-            // user picked. To stay consistent with what the model sees,
-            // we resolve the typed name against the override-applied
-            // view so project-local wins over a same-named global.
+            // the name, so they get to invoke it. Resolves against the
+            // override-applied view so that `/skill-name` runs the same
+            // entry the model would see in its catalog (project-local
+            // wins over global).
             if parsed_command.explicit_server_id.is_none() {
                 let resolved = apply_skill_overrides(&project_state.skills);
                 if let Some(skill) = resolved
@@ -3048,6 +3064,29 @@ mod internal_tests {
         assert_eq!(resolved.len(), 3);
         let names: Vec<&str> = resolved.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn test_skill_source_scope_label_and_matches_scope() {
+        // The popup's source label and the `/<scope>.<name>` prefix it
+        // inserts come from the same place; this test pins that
+        // contract so the two can't drift apart.
+        let global = SkillSource::Global;
+        assert_eq!(global.scope_label(), "global");
+        assert!(global.matches_scope("global"));
+        assert!(!global.matches_scope("local"));
+        assert!(!global.matches_scope("some-mcp-server"));
+
+        let project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(1),
+            worktree_root_name: "zed".into(),
+        };
+        assert_eq!(project.scope_label(), "local");
+        assert!(project.matches_scope("local"));
+        assert!(!project.matches_scope("global"));
+        // The worktree root name isn't a valid scope qualifier — only
+        // the literal `global` / `local` strings are.
+        assert!(!project.matches_scope("zed"));
     }
 
     #[test]
