@@ -2747,7 +2747,7 @@ mod tests {
                 LanguageModelCompletionEvent::ReasoningDetails(details) => Some(details),
                 _ => None,
             })
-            .last()
+            .next_back()
             .expect("reasoning details");
 
         assert_eq!(
