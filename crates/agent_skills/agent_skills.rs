@@ -65,7 +65,7 @@ pub enum SkillSource {
     },
 }
 
-/// Scope qualifier used in `/global.<name>` slash-command syntax to
+/// Scope qualifier used in `/global:<name>` slash-command syntax to
 /// unambiguously target the global version of a same-named skill.
 /// Project-local skills use their worktree root name (e.g. `zed` for a
 /// worktree rooted at `~/code/zed`) as their scope qualifier instead
@@ -76,10 +76,10 @@ pub const SKILL_SCOPE_GLOBAL: &str = "global";
 impl SkillSource {
     /// Returns the scope label that identifies this source in user-
     /// visible places: the autocomplete popup's source column, and the
-    /// `<scope>.<name>` slash-command prefix that the popup inserts so
-    /// the resolver can route `/global.foo` and `/<worktree>.foo` to
+    /// `<scope>:<name>` slash-command prefix that the popup inserts so
+    /// the resolver can route `/global:foo` and `/<worktree>:foo` to
     /// the correct entry. The two uses MUST stay in sync — if the
-    /// popup shows `zed` the inserted text has to start with `/zed.`
+    /// popup shows `zed` the inserted text has to start with `/zed:`
     /// or the resolver won't find the skill.
     ///
     /// Edge case: a worktree literally named `global` collides with
@@ -97,12 +97,12 @@ impl SkillSource {
     }
 
     /// Whether this source matches the given scope qualifier from a
-    /// `/<scope>.<name>` slash command. Unknown scopes never match — in
-    /// that case the resolver falls through to MCP, preserving the
-    /// existing MCP-server-prefix grammar for any prefix that isn't a
-    /// known skill scope.
+    /// `/<scope>:<name>` slash command. Unknown scopes never match —
+    /// in that case the resolver leaves the prompt alone so unknown
+    /// scopes surface as a validation error rather than silently
+    /// being treated as plain text.
     ///
-    /// `/global.<name>` is reserved for the global source even when a
+    /// `/global:<name>` is reserved for the global source even when a
     /// project-local skill comes from a worktree named `global`, so
     /// the literal global scope can never be shadowed by a worktree's
     /// name.

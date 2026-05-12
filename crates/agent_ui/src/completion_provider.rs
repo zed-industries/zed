@@ -1261,8 +1261,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         .into_iter()
                         .map(|command| {
                             // Qualify the inserted text with the skill's
-                            // source as `/.<scope>.<name>` when the
-                            // command carries one. The leading dot
+                            // source as `/<scope>:<name>` when the
+                            // command carries one. The `:` separator
                             // namespaces skill scopes away from MCP
                             // server prefixes (`/<server>.<name>`), so
                             // a worktree literally named after an MCP
@@ -1274,7 +1274,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                             // they keep the bare `/<name>` form.
                             let qualified_name: std::borrow::Cow<'_, str> =
                                 if let Some(source) = command.source.as_ref() {
-                                    format!(".{}.{}", source, command.name).into()
+                                    format!("{}:{}", source, command.name).into()
                                 } else {
                                     command.name.as_ref().into()
                                 };

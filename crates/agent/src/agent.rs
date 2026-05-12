@@ -1860,14 +1860,15 @@ struct Command<'a> {
     prompt_name: &'a str,
     arg_value: &'a str,
     /// MCP server prefix from `/<server>.<prompt>` syntax. Mutually
-    /// exclusive with `skill_scope` — the two grammars are
-    /// distinguished by the leading dot of the skill form.
+    /// exclusive with `skill_scope` — the two grammars use different
+    /// delimiters (`.` for MCP, `:` for skill scopes) so they can't
+    /// collide.
     explicit_server_id: Option<&'a str>,
-    /// Skill scope qualifier from `/.<scope>.<name>` syntax, where
+    /// Skill scope qualifier from `/<scope>:<name>` syntax, where
     /// `<scope>` is either the literal `global` or a worktree root
-    /// name. The leading dot namespaces these against MCP server
-    /// prefixes so an MCP server literally named `global` (or named
-    /// after a worktree) can still be addressed unambiguously.
+    /// name. The `:` separator namespaces these against MCP server
+    /// prefixes (which use `.`) so an MCP server literally named
+    /// `global` or named after a worktree still parses unambiguously.
     skill_scope: Option<&'a str>,
 }
 
@@ -1882,31 +1883,20 @@ impl<'a> Command<'a> {
             .split_once(char::is_whitespace)
             .unwrap_or((command, ""));
 
-        // Skill scope qualifier: `/.<scope>.<name>`. The leading dot
-        // namespaces these away from MCP's `/<server>.<name>` grammar.
-        // Skill names are restricted to `[a-z0-9-]+` (no dots), so
-        // `rsplit_once('.')` cleanly separates the (possibly-dotted)
-        // scope from the skill name even when a worktree's root name
-        // contains dots (e.g. `my.cool.project`).
-        if let Some(rest) = command.strip_prefix('.') {
-            if let Some((scope, prompt_name)) = rest.rsplit_once('.')
-                && !scope.is_empty()
-                && !prompt_name.is_empty()
-            {
-                return Some(Self {
-                    prompt_name,
-                    arg_value,
-                    explicit_server_id: None,
-                    skill_scope: Some(scope),
-                });
-            }
-            // Malformed `/.something` — fall through as a bare command
-            // so validation downstream produces a useful error.
+        // Skill scope qualifier: `/<scope>:<name>`. Checked before the
+        // MCP `.` grammar because `:` and `.` are different delimiters
+        // — the two namespaces can't collide. Skill names are
+        // restricted to `[a-z0-9-]+` (no colons), so `split_once(':')`
+        // is unambiguous.
+        if let Some((scope, prompt_name)) = command.split_once(':')
+            && !scope.is_empty()
+            && !prompt_name.is_empty()
+        {
             return Some(Self {
-                prompt_name: command,
+                prompt_name,
                 arg_value,
                 explicit_server_id: None,
-                skill_scope: None,
+                skill_scope: Some(scope),
             });
         }
 
@@ -2155,9 +2145,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
-            // Skill scope qualifiers (`/.global.<name>` and
-            // `/.<worktree>.<name>`) are namespaced by a leading dot so
-            // they can't collide with MCP server prefixes. The popup
+            // Skill scope qualifiers (`/global:<name>` and
+            // `/<worktree>:<name>`) use a colon separator that can't
+            // collide with MCP's `/<server>.<name>` grammar. The popup
             // inserts a qualified form for every skill so picking the
             // global row unambiguously runs the global skill even when
             // a same-named project-local one exists.
