@@ -27,6 +27,8 @@ zed ~/projects/my-app
 
 Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Zed.
 
+By default, new projects open in your current window's threads sidebar. To open in a new window instead, use `zed -n ~/projects/my-app` or press `Cmd+Enter` when selecting from Open Recent. See [Windows & Projects](./windows-and-projects.md) for more details.
+
 ### 2. Learn the Essential Commands
 
 | Action          | macOS         | Linux/Windows  |
