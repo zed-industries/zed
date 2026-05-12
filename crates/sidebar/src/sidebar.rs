@@ -1407,14 +1407,13 @@ impl Sidebar {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace),
                         ThreadEntryWorkspace::Closed { .. } => None,
                     };
-                    if let Some(text) = agent_ui::draft_prompt_store::display_label_for_draft(
+                    thread.metadata.title = agent_ui::draft_prompt_store::display_label_for_draft(
                         workspace,
                         thread.metadata.thread_id,
                         cx,
-                    ) {
-                        thread.metadata.title = Some(text);
-                    }
+                    );
                 }
+                threads.retain(|thread| !thread.is_draft || thread.metadata.title.is_some());
 
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
@@ -1659,15 +1658,14 @@ impl Sidebar {
                 subscriptions.push(cx.observe(&editor, |this, _editor, cx| {
                     this.update_entries(cx);
                 }));
-            } else {
-                // Editor hasn't been constructed yet (still Loading). Observe
-                // the ConversationView and re-run this wiring once it flips
-                // to Connected.
-                subscriptions.push(cx.observe(&cv, |this, _cv, cx| {
-                    this.refresh_draft_editor_observations(cx);
-                    this.update_entries(cx);
-                }));
             }
+            // Also observe the ConversationView itself so that editor
+            // replacements during lifecycle transitions (Loading →
+            // Connected) re-wire the editor observation above.
+            subscriptions.push(cx.observe(&cv, |this, _cv, cx| {
+                this.refresh_draft_editor_observations(cx);
+                this.update_entries(cx);
+            }));
         }
         self._draft_editor_observations = subscriptions;
     }
@@ -4063,7 +4061,6 @@ impl Sidebar {
                     None
                 }
                 ListEntry::Thread(thread) => {
-                    let session_id = thread.metadata.session_id.clone()?;
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
                         ThreadEntryWorkspace::Closed { .. } => {
@@ -4083,7 +4080,6 @@ impl Sidebar {
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
                             .into();
                     Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
-                        session_id,
                         title: thread.metadata.display_title(),
                         icon: thread.icon,
                         icon_from_external_svg: thread.icon_from_external_svg.clone(),
@@ -4101,6 +4097,7 @@ impl Sidebar {
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
+                        is_draft: thread.is_draft,
                         is_title_generating: thread.is_title_generating,
                         notified,
                         timestamp,
@@ -4434,20 +4431,18 @@ impl Sidebar {
             cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
         );
 
-        let icon = if is_draft {
-            IconName::Plus
+        let (icon, icon_svg) = if is_draft {
+            (IconName::Circle, None)
         } else {
-            thread.icon
-        };
-        let icon_svg = if is_draft {
-            None
-        } else {
-            thread.icon_from_external_svg.clone()
+            (thread.icon, thread.icon_from_external_svg.clone())
         };
 
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
             .icon(icon)
+            .when(is_draft, |this| {
+                this.icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.2)))
+            })
             .status(thread.status)
             .is_remote(is_remote)
             .when_some(icon_svg, |this, svg| {
@@ -4517,10 +4512,10 @@ impl Sidebar {
             })
             .when(is_hovered && !is_running && is_draft, |this| {
                 this.action_slot(
-                    IconButton::new("close-draft", IconName::Close)
+                    IconButton::new("discard_thread", IconName::Close)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Remove Draft"))
+                        .tooltip(Tooltip::text("Discard Draft"))
                         .on_click({
                             let thread_workspace = thread_workspace.clone();
                             cx.listener(move |this, _, window, cx| {
