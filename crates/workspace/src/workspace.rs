@@ -9631,6 +9631,28 @@ pub async fn find_existing_workspace(
     (existing, open_visible)
 }
 
+pub fn find_open_workspace_by_id(
+    workspace_id: WorkspaceId,
+    excluded_workspace: Option<&Entity<Workspace>>,
+    cx: &App,
+) -> Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
+    cx.windows().into_iter().find_map(|window| {
+        let multi_workspace = window.downcast::<MultiWorkspace>()?;
+
+        let workspace = multi_workspace
+            .read(cx)
+            .ok()?
+            .workspaces()
+            .find(|workspace| {
+                excluded_workspace != Some(*workspace)
+                    && workspace.read(cx).database_id() == Some(workspace_id)
+            })?
+            .clone();
+
+        Some((multi_workspace, workspace))
+    })
+}
+
 /// Controls whether to reuse an existing workspace whose worktrees contain the
 /// given paths, and how broadly to match.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

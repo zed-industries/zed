@@ -2054,24 +2054,13 @@ impl RecentProjectsDelegate {
                         return;
                     }
 
-                    let existing_workspace = cx.windows().into_iter().find_map(|window| {
-                        let multi_workspace = window.downcast::<MultiWorkspace>()?;
-
-                        let workspace = multi_workspace
-                            .read(cx)
-                            .ok()?
-                            .workspaces()
-                            .find(|workspace| {
-                                *workspace != &current_workspace
-                                    && workspace.read(cx).database_id()
-                                        == Some(candidate_workspace_id)
-                            })?
-                            .clone();
-
-                        Some((multi_workspace, workspace))
-                    });
-
-                    if let Some((existing_window, existing_workspace)) = existing_workspace {
+                    if let Some((existing_window, existing_workspace)) =
+                        workspace::find_open_workspace_by_id(
+                            candidate_workspace_id,
+                            Some(&current_workspace),
+                            cx,
+                        )
+                    {
                         cx.defer(move |cx| {
                             existing_window
                                 .update(cx, |multi_workspace, window, cx| {
