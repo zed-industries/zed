@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use cloud_api_types::internal_api::{
-    self, LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody,
-    LookUpUsersByLegacyIdResponse,
+    self, FuzzySearchUsersBody, FuzzySearchUsersResponse, LookUpUserByGithubLoginBody,
+    LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
 };
 use reqwest::RequestBuilder;
 use rpc::proto;
@@ -74,7 +74,7 @@ impl UserService for TransitionalUserService {
     }
 
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
-        self.database_user_service
+        self.cloud_user_service
             .fuzzy_search_users(query, limit)
             .await
     }
@@ -182,10 +182,21 @@ impl UserService for CloudUserService {
     }
 
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
-        let _ = query;
-        let _ = limit;
+        let response_body: FuzzySearchUsersResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/fuzzy_search",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&FuzzySearchUsersBody {
+                        query: query.to_string(),
+                        limit,
+                    }),
+            )
+            .await?;
 
-        unimplemented!("not yet implemented in Cloud")
+        Ok(response_body.users.into_iter().map(User::from).collect())
     }
 
     async fn search_channel_members(
