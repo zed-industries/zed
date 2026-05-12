@@ -1539,7 +1539,7 @@ impl Client {
         })
     }
 
-    pub async fn acquire_llm_token(
+    pub async fn cached_llm_token(
         &self,
         llm_token: &LlmApiToken,
         organization_id: Option<OrganizationId>,
@@ -1571,7 +1571,7 @@ impl Client {
     ) -> Result<http_client::Response<http_client::AsyncBody>> {
         let http_client = self.http_client();
         let token = self
-            .acquire_llm_token(llm_token, organization_id.clone())
+            .cached_llm_token(llm_token, organization_id.clone())
             .await?;
         let response = http_client.send(build_request(&token)?).await?;
         if !response.needs_llm_token_refresh()

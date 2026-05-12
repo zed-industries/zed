@@ -53,7 +53,7 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     type AuthContext: Clone + Send + 'static;
 
     fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext;
-    fn acquire_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+    fn cached_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
     fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
 }
 
@@ -67,7 +67,7 @@ pub async fn authenticated_llm_request<TP: CloudLlmTokenProvider>(
     auth_context: TP::AuthContext,
     build_request: impl Fn(&str) -> Result<http_client::Request<AsyncBody>>,
 ) -> Result<Response<AsyncBody>> {
-    let token = token_provider.acquire_token(auth_context.clone()).await?;
+    let token = token_provider.cached_token(auth_context.clone()).await?;
     let response = http_client.send(build_request(&token)?).await?;
     if !needs_llm_token_refresh(&response) && response.status() != StatusCode::UNAUTHORIZED {
         return Ok(response);
