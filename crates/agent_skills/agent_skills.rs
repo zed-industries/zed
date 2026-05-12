@@ -283,8 +283,8 @@ pub async fn load_skills_from_directory(
         .collect()
         .await;
 
-    // Sort by path so name-conflict resolution in `merge_skills` is
-    // deterministic — `fs.read_dir` order is filesystem-dependent.
+    // Sort by path so name-conflict resolution in `apply_skill_overrides`
+    // is deterministic — `fs.read_dir` order is filesystem-dependent.
     results.sort_by(|a, b| {
         let path_a: &Path = match a {
             Ok(skill) => &skill.skill_file_path,
@@ -1045,11 +1045,12 @@ description: A skill with no body content
 
     #[gpui::test]
     async fn test_load_skills_returns_results_sorted_by_path(cx: &mut TestAppContext) {
-        // `merge_skills` resolves name conflicts by keeping the first
-        // entry in iteration order. Without a stable sort here, the
-        // result depends on `fs.read_dir`, which is OS/filesystem-
-        // dependent. Assert the contract: results come back sorted by
-        // skill file path regardless of insertion order.
+        // `apply_skill_overrides` resolves same-source name collisions
+        // by keeping the first entry in iteration order. Without a
+        // stable sort here, the result depends on `fs.read_dir`, which
+        // is OS/filesystem-dependent. Assert the contract: results
+        // come back sorted by skill file path regardless of insertion
+        // order.
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/skills",

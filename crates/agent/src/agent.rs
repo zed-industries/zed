@@ -922,16 +922,27 @@ impl NativeAgent {
                 })
                 .collect::<Vec<_>>();
 
-            // Load and merge skills
+            // Load and combine skills. `combine_skills` deliberately
+            // does NOT deduplicate — the autocomplete popup needs to
+            // see every entry so users can disambiguate same-named
+            // global vs. project-local skills via the source label.
+            // Project-overrides-global is applied below, only for the
+            // model-facing catalog.
             let global_skills = global_skills_task.await;
             let project_skills_results = project_skills_task.await;
             let (skills, mut skill_errors) =
-                merge_skills(global_skills, project_skills_results.into_iter().flatten());
+                combine_skills(global_skills, project_skills_results.into_iter().flatten());
+
+            // Apply project-overrides-global before catalog selection
+            // so the model sees at most one entry per name. The full
+            // `skills` list is still stored on `ProjectState` and used
+            // by the autocomplete popup.
+            let overridden = apply_skill_overrides(&skills);
 
             // Enforce the catalog size budget here so that skills which
             // don't fit produce a load error in the UI rather than being
             // silently swallowed by ProjectContext.
-            let (catalog_skills, budget_errors) = select_catalog_skills(&skills);
+            let (catalog_skills, budget_errors) = select_catalog_skills(&overridden);
             skill_errors.extend(budget_errors);
 
             let project_context =
@@ -2152,16 +2163,30 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             // of `disable_model_invocation` — that flag only hides the
             // skill from the model's catalog. The user explicitly typed
             // the name, so they get to invoke it.
-            if parsed_command.explicit_server_id.is_none()
-                && let Some(skill) = project_state
-                    .skills
+            //
+            // The autocomplete popup shows every skill (with source
+            // labels for same-named entries), but the underlying
+            // `/<name>` text is the same regardless of which row the
+            // user picked. To stay consistent with what the model sees,
+            // we resolve the typed name against the override-applied
+            // view so project-local wins over a same-named global.
+            if parsed_command.explicit_server_id.is_none() {
+                let resolved = apply_skill_overrides(&project_state.skills);
+                if let Some(skill) = resolved
                     .iter()
                     .find(|skill| skill.name == parsed_command.prompt_name)
-            {
-                let skill = skill.clone();
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_skill_invocation(id, session_id.clone(), skill, params.prompt, cx)
-                });
+                {
+                    let skill = skill.clone();
+                    return self.0.update(cx, |agent, cx| {
+                        agent.send_skill_invocation(
+                            id,
+                            session_id.clone(),
+                            skill,
+                            params.prompt,
+                            cx,
+                        )
+                    });
+                }
             }
         };
 
@@ -2807,10 +2832,11 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
 }
 
 /// Build a closure that, when called, reads the latest `state.skills`
-/// for the given project from the `NativeAgent`. This is the resolver
-/// the `SkillTool` consults at invocation time so that skill changes
-/// after thread construction become visible without re-registering the
-/// tool.
+/// for the given project from the `NativeAgent` and applies
+/// project-overrides-global so the `SkillTool` resolves a name to the
+/// same entry the model sees in its catalog. Run at invocation time
+/// (not thread-build time) so skill changes after thread construction
+/// become visible without re-registering the tool.
 pub(crate) fn skills_resolver_for_project(
     weak_agent: WeakEntity<NativeAgent>,
     project_id: EntityId,
@@ -2823,72 +2849,101 @@ pub(crate) fn skills_resolver_for_project(
                     .read(cx)
                     .projects
                     .get(&project_id)
-                    .map(|state| state.skills.clone())
+                    .map(|state| Arc::new(apply_skill_overrides(&state.skills)))
             })
             .unwrap_or_else(|| Arc::new(Vec::new()))
     }
 }
 
-/// Merge global and project-local skills.
-/// Project-local skills override global skills with the same name.
-fn merge_skills(
+/// Collect successfully-loaded global and project-local skills into a
+/// single list, preserving every entry — even when two skills share a
+/// name. The autocomplete popup shows the full list with origin labels
+/// so users can tell same-named skills apart; override resolution
+/// (project-local wins over global) happens later via
+/// [`apply_skill_overrides`] at the boundaries where the model
+/// interacts with skills (system-prompt catalog, `SkillTool` lookup,
+/// slash-command invocation).
+///
+/// Globals come first so that `apply_skill_overrides` can rely on a
+/// stable iteration order when picking the winner of a name collision.
+fn combine_skills(
     global: Vec<Result<Skill, SkillLoadError>>,
     project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
 ) -> (Vec<Skill>, Vec<SkillLoadError>) {
     let mut skills = Vec::new();
     let mut errors = Vec::new();
-    let mut seen_names: HashMap<String, (usize, SkillSource, PathBuf)> = HashMap::default();
-
     for result in global.into_iter().chain(project) {
         match result {
-            Ok(skill) => {
-                if let Some((existing_index, existing_source, existing_path)) =
-                    seen_names.get(&skill.name).cloned()
-                {
-                    match (&existing_source, &skill.source) {
-                        (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
-                            log::warn!(
-                                "Project skill '{}' at '{}' overrides global skill at '{}'",
-                                skill.name,
-                                skill.skill_file_path.display(),
-                                existing_path.display()
-                            );
-                            seen_names.insert(
-                                skill.name.clone(),
-                                (
-                                    existing_index,
-                                    skill.source.clone(),
-                                    skill.skill_file_path.clone(),
-                                ),
-                            );
-                            skills[existing_index] = skill;
-                        }
-                        _ => {
-                            log::warn!(
-                                "Skill '{}' at '{}' conflicts with skill at '{}'; keeping the first one",
-                                skill.name,
-                                skill.skill_file_path.display(),
-                                existing_path.display()
-                            );
-                        }
-                    }
-                } else {
-                    seen_names.insert(
-                        skill.name.clone(),
-                        (
-                            skills.len(),
-                            skill.source.clone(),
-                            skill.skill_file_path.clone(),
-                        ),
-                    );
-                    skills.push(skill);
-                }
-            }
+            Ok(skill) => skills.push(skill),
             Err(e) => errors.push(e),
         }
     }
-
+    log_skill_conflicts(&skills);
     (skills, errors)
+}
+
+/// Emit a warning for each name collision between skills. Called once
+/// per skill load (not per query), so the log isn't spammed by repeated
+/// catalog rebuilds.
+fn log_skill_conflicts(skills: &[Skill]) {
+    let mut by_name: HashMap<&str, &Skill> = HashMap::default();
+    for skill in skills {
+        match by_name.get(skill.name.as_str()) {
+            Some(existing) => match (&existing.source, &skill.source) {
+                (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
+                    log::warn!(
+                        "Project skill '{}' at '{}' overrides global skill at '{}' for the model; both appear in the slash-command popup with their source",
+                        skill.name,
+                        skill.skill_file_path.display(),
+                        existing.skill_file_path.display(),
+                    );
+                    by_name.insert(skill.name.as_str(), skill);
+                }
+                _ => {
+                    log::warn!(
+                        "Skill '{}' at '{}' conflicts with skill at '{}'; the model will see the first one, but both appear in the slash-command popup with their source",
+                        skill.name,
+                        skill.skill_file_path.display(),
+                        existing.skill_file_path.display(),
+                    );
+                }
+            },
+            None => {
+                by_name.insert(skill.name.as_str(), skill);
+            }
+        }
+    }
+}
+
+/// Project-local skills override same-named global skills. Returns a
+/// new list with at most one entry per name. Two skills of the same
+/// source colliding (e.g. two globals or two project-locals) keep the
+/// first one to match the historical behavior.
+///
+/// This is the projection of `state.skills` used by everything the
+/// model interacts with: the system-prompt catalog, the `SkillTool`'s
+/// name resolver, and slash-command invocation. The autocomplete popup
+/// deliberately does *not* go through this — it shows the full list so
+/// users can see what's shadowed.
+fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
+    let mut result: Vec<Skill> = Vec::new();
+    let mut indices: HashMap<String, usize> = HashMap::default();
+    for skill in skills {
+        match indices.get(&skill.name).copied() {
+            Some(idx) => {
+                if matches!(result[idx].source, SkillSource::Global)
+                    && matches!(skill.source, SkillSource::ProjectLocal { .. })
+                {
+                    result[idx] = skill.clone();
+                }
+            }
+            None => {
+                indices.insert(skill.name.clone(), result.len());
+                result.push(skill.clone());
+            }
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -2908,35 +2963,91 @@ mod internal_tests {
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
 
-    #[test]
-    fn test_project_skills_override_global_skills() {
-        let global_skill = Skill {
-            name: "review".to_string(),
-            description: "Global review".to_string(),
+    fn make_global_skill(name: &str, description: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: description.to_string(),
             source: SkillSource::Global,
-            directory_path: PathBuf::from("/home/user/.agents/skills/review"),
-            skill_file_path: PathBuf::from("/home/user/.agents/skills/review/SKILL.md"),
+            directory_path: PathBuf::from(format!("/home/user/.agents/skills/{name}")),
+            skill_file_path: PathBuf::from(format!("/home/user/.agents/skills/{name}/SKILL.md")),
             disable_model_invocation: false,
-        };
-        let project_skill = Skill {
-            name: "review".to_string(),
-            description: "Project review".to_string(),
+        }
+    }
+
+    fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: description.to_string(),
             source: SkillSource::ProjectLocal {
                 worktree_id: SkillScopeId(1),
-                worktree_root_name: "project".into(),
+                worktree_root_name: worktree.into(),
             },
-            directory_path: PathBuf::from("/project/.agents/skills/review"),
-            skill_file_path: PathBuf::from("/project/.agents/skills/review/SKILL.md"),
+            directory_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}")),
+            skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
             disable_model_invocation: false,
-        };
+        }
+    }
 
-        let (skills, errors) =
-            merge_skills(vec![Ok(global_skill)], vec![Ok(project_skill)].into_iter());
+    #[test]
+    fn test_combine_skills_keeps_every_entry_for_autocomplete() {
+        // The autocomplete popup needs both same-named entries so the
+        // source label can disambiguate them. `combine_skills` must not
+        // drop the global when a project-local shares its name.
+        let global = make_global_skill("review", "Global review");
+        let project = make_project_skill("review", "Project review", "project");
+
+        let (skills, errors) = combine_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
 
         assert!(errors.is_empty());
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].description, "Project review");
-        assert!(matches!(skills[0].source, SkillSource::ProjectLocal { .. }));
+        assert_eq!(skills.len(), 2);
+        assert!(matches!(skills[0].source, SkillSource::Global));
+        assert!(matches!(skills[1].source, SkillSource::ProjectLocal { .. }));
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_global() {
+        // The model-facing projection collapses the same name to a
+        // single entry, with the project-local winning. This is what
+        // `select_catalog_skills`, `SkillTool`, and the slash-command
+        // resolver all see.
+        let global = make_global_skill("review", "Global review");
+        let project = make_project_skill("review", "Project review", "project");
+
+        let resolved = apply_skill_overrides(&[global, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Project review");
+        assert!(matches!(
+            resolved[0].source,
+            SkillSource::ProjectLocal { .. }
+        ));
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_same_source_collision_keeps_first() {
+        // Two globals (or two project-locals from different worktrees)
+        // colliding don't have a clear winner; preserve the historical
+        // "first one wins" behavior.
+        let first = make_global_skill("review", "First");
+        let second = make_global_skill("review", "Second");
+
+        let resolved = apply_skill_overrides(&[first, second]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "First");
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_preserves_unique_skills() {
+        let global_a = make_global_skill("alpha", "a");
+        let global_b = make_global_skill("beta", "b");
+        let project_c = make_project_skill("gamma", "c", "project");
+
+        let resolved = apply_skill_overrides(&[global_a, global_b, project_c]);
+
+        assert_eq!(resolved.len(), 3);
+        let names: Vec<&str> = resolved.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
     }
 
     #[test]
