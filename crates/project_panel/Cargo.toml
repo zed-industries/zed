@@ -20,6 +20,7 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
+db.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 futures.workspace = true
