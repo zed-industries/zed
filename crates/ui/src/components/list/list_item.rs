@@ -350,31 +350,50 @@ impl RenderOnce for ListItem {
                             .children(self.start_slot)
                             .children(self.children),
                     )
-                    .when(self.end_slot.is_some(), |this| this.justify_between())
-                    .when_some(self.end_slot, |this, end_slot| {
-                        this.child(match self.end_slot_visibility {
-                            EndSlotVisibility::Always => {
-                                h_flex().flex_shrink().overflow_hidden().child(end_slot)
+                    .map(|this| {
+                        let end_section = match (self.end_slot, self.end_slot_visibility) {
+                            (None, EndSlotVisibility::Always | EndSlotVisibility::OnHover) => {
+                                None
                             }
-                            EndSlotVisibility::OnHover => h_flex()
-                                .flex_shrink()
-                                .overflow_hidden()
-                                .visible_on_hover("list_item")
-                                .child(end_slot),
-                            EndSlotVisibility::SwapOnHover(hover_slot) => h_flex()
-                                .relative()
-                                .flex_shrink()
-                                .child(h_flex().visible_on_hover("list_item").child(hover_slot))
-                                .child(
-                                    h_flex()
-                                        .absolute()
-                                        .inset_0()
-                                        .justify_end()
-                                        .overflow_hidden()
-                                        .group_hover("list_item", |this| this.invisible())
-                                        .child(end_slot),
-                                ),
-                        })
+                            (Some(end_slot), EndSlotVisibility::Always) => {
+                                Some(h_flex().flex_shrink().overflow_hidden().child(end_slot))
+                            }
+                            (Some(end_slot), EndSlotVisibility::OnHover) => Some(
+                                h_flex()
+                                    .flex_shrink()
+                                    .overflow_hidden()
+                                    .visible_on_hover("list_item")
+                                    .child(end_slot),
+                            ),
+                            (Some(end_slot), EndSlotVisibility::SwapOnHover(hover_slot)) => Some(
+                                h_flex()
+                                    .relative()
+                                    .flex_shrink()
+                                    .child(
+                                        h_flex().visible_on_hover("list_item").child(hover_slot),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .absolute()
+                                            .inset_0()
+                                            .justify_end()
+                                            .overflow_hidden()
+                                            .group_hover("list_item", |this| this.invisible())
+                                            .child(end_slot),
+                                    ),
+                            ),
+                            (None, EndSlotVisibility::SwapOnHover(hover_slot)) => Some(
+                                h_flex()
+                                    .flex_shrink()
+                                    .overflow_hidden()
+                                    .visible_on_hover("list_item")
+                                    .child(hover_slot),
+                            ),
+                        };
+                        match end_section {
+                            Some(end_section) => this.justify_between().child(end_section),
+                            None => this,
+                        }
                     }),
             )
     }
