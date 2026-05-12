@@ -79,8 +79,8 @@ use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
-    Tooltip, prelude::*, utils::WithRemSize,
+    Button, ContextMenu, ContextMenuEntry, GradientFade, IconButton, PopoverMenu,
+    PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -3665,7 +3665,22 @@ impl AgentPanel {
         true
     }
 
-    fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
+    fn is_title_editor_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
+        match self.visible_surface() {
+            VisibleSurface::AgentThread(conversation_view) => conversation_view
+                .read(cx)
+                .root_thread_view()
+                .is_some_and(|view| view.read(cx).title_editor.read(cx).is_focused(window)),
+            VisibleSurface::Terminal(_) => self
+                .active_terminal_id()
+                .and_then(|id| self.terminals.get(&id))
+                .and_then(|terminal| terminal.title_editor.as_ref())
+                .is_some_and(|editor| editor.read(cx).is_focused(window)),
+            _ => false,
+        }
+    }
+
+    fn render_title_view(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
         let content = match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => {
                 let server_view_ref = conversation_view.read(cx);
@@ -3718,7 +3733,6 @@ impl AgentPanel {
                             h_flex()
                                 .w_full()
                                 .gap_1()
-                                .items_center()
                                 .child(editable_title)
                                 .child(
                                     IconButton::new("retry-thread-title", IconName::XCircle)
@@ -3777,17 +3791,15 @@ impl AgentPanel {
                             .id("terminal-title")
                             .flex_1()
                             .cursor_text()
+                            .overflow_x_scroll()
+                            .child(Label::new(title).color(Color::Muted).single_line())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.edit_terminal_title(terminal_id, window, cx);
                             }))
-                            .child(Label::new(title).truncate())
                             .into_any_element()
                     }
                 } else {
-                    Label::new("Terminal")
-                        .color(Color::Muted)
-                        .truncate()
-                        .into_any_element()
+                    Label::new("Terminal").into_any_element()
                 }
             }
             VisibleSurface::Configuration(_) => {
@@ -3796,14 +3808,36 @@ impl AgentPanel {
             VisibleSurface::Uninitialized => Label::new("Agent").truncate().into_any_element(),
         };
 
+        let toolbar_bg = cx.theme().colors().tab_bar_background;
+        let gradient_overlay = GradientFade::new(toolbar_bg, toolbar_bg, toolbar_bg)
+            .width(px(64.0))
+            .right(px(0.0))
+            .gradient_stop(0.75);
+
         h_flex()
             .key_context("TitleEditor")
-            .id("TitleEditor")
+            .group("title_editor")
             .flex_grow()
             .w_full()
+            .min_w_0()
             .max_w_full()
-            .overflow_x_scroll()
+            .overflow_x_hidden()
             .child(content)
+            .when(!self.is_title_editor_focused(window, cx), |this| {
+                this.child(gradient_overlay).child(
+                    h_flex()
+                        .visible_on_hover("title_editor")
+                        .absolute()
+                        .right_0()
+                        .h_full()
+                        .bg(cx.theme().colors().tab_bar_background)
+                        .child(
+                            IconButton::new("edit_tile", IconName::Pencil)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Edit Thread Title")),
+                        ),
+                )
+            })
             .into_any()
     }
 
@@ -3903,8 +3937,7 @@ impl AgentPanel {
                                 .action("Add Custom Server…", Box::new(AddContextServer))
                                 .separator()
                                 .action("Rules", Box::new(OpenRulesLibrary::default()))
-                                .action("Profiles", Box::new(ManageProfiles::default()))
-                                .separator();
+                                .action("Profiles", Box::new(ManageProfiles::default()));
                         }
 
                         menu = menu
@@ -3941,9 +3974,10 @@ impl AgentPanel {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
-        let supports_terminal = self.supports_terminal(cx);
 
+        let supports_terminal = self.supports_terminal(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
+
         let (selected_agent_custom_icon, selected_agent_label) = if showing_terminal {
             (None, SharedString::from("Terminal"))
         } else if let Agent::Custom { id, .. } = &self.selected_agent {
@@ -4187,8 +4221,9 @@ impl AgentPanel {
 
         let selected_agent = div()
             .id("selected_agent_icon")
+            .px_0p5()
             .when_some(selected_agent_custom_icon, |this, icon_path| {
-                this.px_1().child(
+                this.child(
                     Icon::from_external_svg(icon_path)
                         .color(Color::Muted)
                         .size(IconSize::Small),
@@ -4196,7 +4231,7 @@ impl AgentPanel {
             })
             .when(!has_custom_icon, |this| {
                 this.when_some(selected_agent_builtin_icon, |this, icon| {
-                    this.px_1().child(Icon::new(icon).color(Color::Muted))
+                    this.child(Icon::new(icon).color(Color::Muted))
                 })
             })
             .tooltip(move |_, cx| {
@@ -4240,21 +4275,25 @@ impl AgentPanel {
         };
 
         let is_full_screen = self.is_zoomed(window, cx);
-        let full_screen_button = if is_full_screen {
-            IconButton::new("disable-full-screen", IconName::Minimize)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.toggle_zoom(&ToggleZoom, window, cx);
-                }))
+        let (icon_id, icon_name, tooltip_text) = if is_full_screen {
+            (
+                "disable-full-screen",
+                IconName::Minimize,
+                "Disable Full Screen",
+            )
         } else {
-            IconButton::new("enable-full-screen", IconName::Maximize)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| Tooltip::for_action("Enable Full Screen", &ToggleZoom, cx))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.toggle_zoom(&ToggleZoom, window, cx);
-                }))
+            (
+                "enable-full-screen",
+                IconName::Maximize,
+                "Enable Full Screen",
+            )
         };
+        let full_screen_button = IconButton::new(icon_id, icon_name)
+            .icon_size(IconSize::Small)
+            .tooltip(move |_, cx| Tooltip::for_action(tooltip_text, &ToggleZoom, cx))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_zoom(&ToggleZoom, window, cx);
+            }));
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -4265,8 +4304,7 @@ impl AgentPanel {
                 |this| this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto()),
             )
             .flex_none()
-            .justify_between()
-            .gap_2();
+            .justify_between();
 
         let toolbar_content = if matches!(mode, ToolbarMode::EmptyThread) {
             let (chevron_icon, icon_color, label_color) =
@@ -4358,7 +4396,11 @@ impl AgentPanel {
             base_container
                 .child(
                     h_flex()
-                        .size_full()
+                        .relative()
+                        .h_full()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(if matches!(mode, ToolbarMode::Overlay) {
