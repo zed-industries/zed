@@ -3,7 +3,6 @@ use collections::HashMap;
 use db::sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
 use db::sqlez_macros::sql;
 use std::{path::Path, sync::Arc};
-use util::ResultExt as _;
 use workspace::{WorkspaceDb, WorkspaceId};
 
 pub struct ProjectPanelDb(ThreadSafeConnection);
@@ -86,7 +85,11 @@ impl ProjectPanelDb {
                         worktree_root_str.as_ref(),
                         serialized.as_str(),
                     ))
-                    .log_err();
+                    .with_context(|| {
+                        format!(
+                            "saving collapse state for worktree {worktree_root_str}"
+                        )
+                    })?;
                 }
                 Ok(())
             })
