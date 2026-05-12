@@ -729,26 +729,34 @@ impl MessageEditor {
                 //    (`/github.create_pr`), and skills (whose bare name
                 //    is registered for the unqualified `/<name>` form).
                 //
-                // 2. Skill scope qualifier. The popup inserts
-                //    `/global.<name>` or `/local.<name>` to disambiguate
-                //    same-named skills, so the validator has to look
-                //    inside the meta tag on each available command to
-                //    confirm that a skill with the bare name exists in
-                //    the requested scope. Without this branch, every
-                //    autocomplete pick of a same-named skill would be
-                //    rejected as "not supported" before reaching the
-                //    resolver.
+                // 2. Skill scope qualifier `/.<scope>.<name>`. The
+                //    popup inserts this leading-dot form to
+                //    disambiguate same-named skills, so the validator
+                //    strips the leading dot and rsplits on `.` (skill
+                //    names can't contain dots, so this safely handles
+                //    worktrees whose root names are themselves dotted)
+                //    to recover scope + bare name. The validator then
+                //    confirms an available command with that bare name
+                //    has a matching `zed.skill_source` meta tag.
+                //    Without this branch, every autocomplete pick of a
+                //    same-named skill would be rejected as "not
+                //    supported" before reaching the resolver.
                 let direct_match = available_commands
                     .iter()
                     .any(|cmd| cmd.name == command_name);
                 let scope_match = !direct_match
-                    && command_name.split_once('.').is_some_and(|(scope, bare)| {
-                        available_commands.iter().any(|cmd| {
-                            cmd.name == bare
-                                && acp_thread::skill_source_from_meta(&cmd.meta).as_deref()
-                                    == Some(scope)
-                        })
-                    });
+                    && command_name
+                        .strip_prefix('.')
+                        .and_then(|rest| rest.rsplit_once('.'))
+                        .is_some_and(|(scope, bare)| {
+                            !scope.is_empty()
+                                && !bare.is_empty()
+                                && available_commands.iter().any(|cmd| {
+                                    cmd.name == bare
+                                        && acp_thread::skill_source_from_meta(&cmd.meta).as_deref()
+                                            == Some(scope)
+                                })
+                        });
 
                 if !direct_match && !scope_match {
                     return Err(anyhow!(
@@ -764,10 +772,10 @@ impl MessageEditor {
     }
 
     /// Render the available-commands list for error messages. Skills
-    /// are shown in their qualified `/<scope>.<name>` form so users see
-    /// the exact text the popup would insert — otherwise the listing
-    /// would contain confusing duplicates like `/foo, /foo` when both a
-    /// global and a project-local skill share a name.
+    /// are shown in their qualified `/.<scope>.<name>` form so users
+    /// see the exact text the popup would insert — otherwise the
+    /// listing would contain confusing duplicates like `/foo, /foo`
+    /// when both a global and a project-local skill share a name.
     fn format_available_commands(commands: &[acp::AvailableCommand]) -> String {
         if commands.is_empty() {
             return "none".to_string();
@@ -776,7 +784,7 @@ impl MessageEditor {
             .iter()
             .map(|cmd| {
                 if let Some(scope) = acp_thread::skill_source_from_meta(&cmd.meta) {
-                    format!("/{}.{}", scope, cmd.name)
+                    format!("/.{}.{}", scope, cmd.name)
                 } else {
                     format!("/{}", cmd.name)
                 }
@@ -2118,9 +2126,13 @@ mod tests {
             acp::AvailableCommand::new(name, "desc").meta(acp_thread::meta_with_skill_source(scope))
         };
 
+        // Project-local skills are tagged with their worktree root
+        // name (here `zed`), not a fixed literal, so the same skill
+        // name in two different worktrees can be addressed
+        // unambiguously.
         let commands = vec![
             make_skill_command("deploy", "global"),
-            make_skill_command("deploy", "local"),
+            make_skill_command("deploy", "zed"),
             acp::AvailableCommand::new("help", "Get help"),
         ];
 
@@ -2130,30 +2142,41 @@ mod tests {
             .expect("bare /deploy should validate when a skill named `deploy` exists");
 
         // Scope-qualified forms both validate, each pointing at the
-        // matching source.
-        MessageEditor::validate_slash_commands("/global.deploy", &commands, &agent_id)
-            .expect("/global.deploy should validate when a global skill named `deploy` exists");
-        MessageEditor::validate_slash_commands("/local.deploy", &commands, &agent_id)
-            .expect("/local.deploy should validate when a project skill named `deploy` exists");
+        // matching source. The leading dot namespaces these against
+        // MCP server prefixes.
+        MessageEditor::validate_slash_commands("/.global.deploy", &commands, &agent_id)
+            .expect("/.global.deploy should validate when a global skill named `deploy` exists");
+        MessageEditor::validate_slash_commands("/.zed.deploy", &commands, &agent_id).expect(
+            "/.zed.deploy should validate when a project skill named `deploy` exists in the `zed` worktree",
+        );
+
+        // The leading dot is what distinguishes a skill scope from an
+        // MCP server prefix — without it, the validator treats
+        // `zed.deploy` as a literal command name lookup, which fails.
+        MessageEditor::validate_slash_commands("/zed.deploy", &commands, &agent_id).expect_err(
+            "/zed.deploy (without leading dot) should be treated as an MCP-style prefix and fail",
+        );
 
         // Wrong scope is rejected so the resolver doesn't silently
-        // fall through to MCP when the user meant a skill.
-        let err = MessageEditor::validate_slash_commands("/local.help", &commands, &agent_id)
-            .expect_err("/local.help should fail — `help` is an MCP command, not a local skill");
+        // fall through when the user meant a skill. `.zed.help` looks
+        // like a skill scope qualifier but no skill named `help`
+        // exists in the `zed` worktree (it's an MCP command).
+        let err = MessageEditor::validate_slash_commands("/.zed.help", &commands, &agent_id)
+            .expect_err("/.zed.help should fail — `help` is an MCP command, not a worktree skill");
         let err_message = err.to_string();
         assert!(
-            err_message.contains("/local.help"),
+            err_message.contains("/.zed.help"),
             "error should mention the typed command: {err_message}"
         );
         // Error listing shows qualified forms for skills so users see
         // the exact text the popup would have inserted.
         assert!(
-            err_message.contains("/global.deploy"),
+            err_message.contains("/.global.deploy"),
             "error listing should show qualified global form: {err_message}"
         );
         assert!(
-            err_message.contains("/local.deploy"),
-            "error listing should show qualified local form: {err_message}"
+            err_message.contains("/.zed.deploy"),
+            "error listing should show qualified worktree form: {err_message}"
         );
         assert!(
             err_message.contains("/help"),

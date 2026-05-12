@@ -67,25 +67,32 @@ pub enum SkillSource {
 
 /// Scope qualifier used in `/global.<name>` slash-command syntax to
 /// unambiguously target the global version of a same-named skill.
+/// Project-local skills use their worktree root name (e.g. `zed` for a
+/// worktree rooted at `~/code/zed`) as their scope qualifier instead
+/// of a fixed literal, so multiple open worktrees with same-named
+/// skills can each be addressed unambiguously.
 pub const SKILL_SCOPE_GLOBAL: &str = "global";
-
-/// Scope qualifier used in `/local.<name>` slash-command syntax to
-/// unambiguously target the project-local version of a same-named
-/// skill.
-pub const SKILL_SCOPE_LOCAL: &str = "local";
 
 impl SkillSource {
     /// Returns the scope label that identifies this source in user-
     /// visible places: the autocomplete popup's source column, and the
     /// `<scope>.<name>` slash-command prefix that the popup inserts so
-    /// the resolver can route `/global.foo` and `/local.foo` to the
-    /// correct entry. The two uses MUST stay in sync — if the popup
-    /// shows "local" the inserted text has to start with `/local.` or
-    /// the resolver won't find the skill.
-    pub fn scope_label(&self) -> &'static str {
+    /// the resolver can route `/global.foo` and `/<worktree>.foo` to
+    /// the correct entry. The two uses MUST stay in sync — if the
+    /// popup shows `zed` the inserted text has to start with `/zed.`
+    /// or the resolver won't find the skill.
+    ///
+    /// Edge case: a worktree literally named `global` collides with
+    /// the global scope qualifier. `matches_scope` resolves the
+    /// ambiguity in favor of the global source; the project-local
+    /// skill in such a worktree can still be invoked unqualified as
+    /// `/<name>`.
+    pub fn scope_label(&self) -> &str {
         match self {
             Self::Global => SKILL_SCOPE_GLOBAL,
-            Self::ProjectLocal { .. } => SKILL_SCOPE_LOCAL,
+            Self::ProjectLocal {
+                worktree_root_name, ..
+            } => worktree_root_name.as_ref(),
         }
     }
 
@@ -94,8 +101,18 @@ impl SkillSource {
     /// that case the resolver falls through to MCP, preserving the
     /// existing MCP-server-prefix grammar for any prefix that isn't a
     /// known skill scope.
+    ///
+    /// `/global.<name>` is reserved for the global source even when a
+    /// project-local skill comes from a worktree named `global`, so
+    /// the literal global scope can never be shadowed by a worktree's
+    /// name.
     pub fn matches_scope(&self, scope: &str) -> bool {
-        self.scope_label() == scope
+        match self {
+            Self::Global => scope == SKILL_SCOPE_GLOBAL,
+            Self::ProjectLocal {
+                worktree_root_name, ..
+            } => scope != SKILL_SCOPE_GLOBAL && worktree_root_name.as_ref() == scope,
+        }
     }
 }
 

@@ -1859,7 +1859,16 @@ impl NativeAgentConnection {
 struct Command<'a> {
     prompt_name: &'a str,
     arg_value: &'a str,
+    /// MCP server prefix from `/<server>.<prompt>` syntax. Mutually
+    /// exclusive with `skill_scope` — the two grammars are
+    /// distinguished by the leading dot of the skill form.
     explicit_server_id: Option<&'a str>,
+    /// Skill scope qualifier from `/.<scope>.<name>` syntax, where
+    /// `<scope>` is either the literal `global` or a worktree root
+    /// name. The leading dot namespaces these against MCP server
+    /// prefixes so an MCP server literally named `global` (or named
+    /// after a worktree) can still be addressed unambiguously.
+    skill_scope: Option<&'a str>,
 }
 
 impl<'a> Command<'a> {
@@ -1873,17 +1882,47 @@ impl<'a> Command<'a> {
             .split_once(char::is_whitespace)
             .unwrap_or((command, ""));
 
+        // Skill scope qualifier: `/.<scope>.<name>`. The leading dot
+        // namespaces these away from MCP's `/<server>.<name>` grammar.
+        // Skill names are restricted to `[a-z0-9-]+` (no dots), so
+        // `rsplit_once('.')` cleanly separates the (possibly-dotted)
+        // scope from the skill name even when a worktree's root name
+        // contains dots (e.g. `my.cool.project`).
+        if let Some(rest) = command.strip_prefix('.') {
+            if let Some((scope, prompt_name)) = rest.rsplit_once('.')
+                && !scope.is_empty()
+                && !prompt_name.is_empty()
+            {
+                return Some(Self {
+                    prompt_name,
+                    arg_value,
+                    explicit_server_id: None,
+                    skill_scope: Some(scope),
+                });
+            }
+            // Malformed `/.something` — fall through as a bare command
+            // so validation downstream produces a useful error.
+            return Some(Self {
+                prompt_name: command,
+                arg_value,
+                explicit_server_id: None,
+                skill_scope: None,
+            });
+        }
+
         if let Some((server_id, prompt_name)) = command.split_once('.') {
             Some(Self {
                 prompt_name,
                 arg_value,
                 explicit_server_id: Some(server_id),
+                skill_scope: None,
             })
         } else {
             Some(Self {
                 prompt_name: command,
                 arg_value,
                 explicit_server_id: None,
+                skill_scope: None,
             })
         }
     }
@@ -2116,16 +2155,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         };
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
-            // Skill scope qualifiers (`/global.<name>` and `/local.<name>`)
-            // are checked BEFORE MCP. The autocomplete popup inserts a
-            // qualified form for every skill so picking the global row
-            // unambiguously runs the global skill even when a same-named
-            // project-local one exists. An MCP server literally named
-            // `global` or `local` would collide here, but the qualified
-            // form remains usable as long as no skill with that name
-            // exists in the matching scope — we fall through to the MCP
-            // path below if the scope lookup misses.
-            if let Some(scope) = parsed_command.explicit_server_id
+            // Skill scope qualifiers (`/.global.<name>` and
+            // `/.<worktree>.<name>`) are namespaced by a leading dot so
+            // they can't collide with MCP server prefixes. The popup
+            // inserts a qualified form for every skill so picking the
+            // global row unambiguously runs the global skill even when
+            // a same-named project-local one exists.
+            if let Some(scope) = parsed_command.skill_scope
                 && let Some(skill) = project_state.skills.iter().find(|skill| {
                     skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
                 })
@@ -2179,14 +2215,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             }
 
             // Unqualified skill match (`/skill-name` with no scope
-            // prefix). Slash commands work for *all* skills regardless
-            // of `disable_model_invocation` — that flag only hides the
-            // skill from the model's catalog. The user explicitly typed
-            // the name, so they get to invoke it. Resolves against the
-            // override-applied view so that `/skill-name` runs the same
-            // entry the model would see in its catalog (project-local
-            // wins over global).
-            if parsed_command.explicit_server_id.is_none() {
+            // prefix and no MCP server prefix). Slash commands work
+            // for *all* skills regardless of `disable_model_invocation`
+            // — that flag only hides the skill from the model's catalog.
+            // The user explicitly typed the name, so they get to invoke
+            // it. Resolves against the override-applied view so that
+            // `/skill-name` runs the same entry the model would see in
+            // its catalog (project-local wins over global).
+            if parsed_command.explicit_server_id.is_none() && parsed_command.skill_scope.is_none() {
                 let resolved = apply_skill_overrides(&project_state.skills);
                 if let Some(skill) = resolved
                     .iter()
@@ -3074,19 +3110,31 @@ mod internal_tests {
         let global = SkillSource::Global;
         assert_eq!(global.scope_label(), "global");
         assert!(global.matches_scope("global"));
-        assert!(!global.matches_scope("local"));
+        assert!(!global.matches_scope("zed"));
         assert!(!global.matches_scope("some-mcp-server"));
 
         let project = SkillSource::ProjectLocal {
             worktree_id: SkillScopeId(1),
             worktree_root_name: "zed".into(),
         };
-        assert_eq!(project.scope_label(), "local");
-        assert!(project.matches_scope("local"));
+        // Project-local skills are scoped by their worktree root name
+        // so multiple open worktrees with same-named skills can each
+        // be addressed unambiguously.
+        assert_eq!(project.scope_label(), "zed");
+        assert!(project.matches_scope("zed"));
         assert!(!project.matches_scope("global"));
-        // The worktree root name isn't a valid scope qualifier — only
-        // the literal `global` / `local` strings are.
-        assert!(!project.matches_scope("zed"));
+        // An unrelated worktree name (or MCP server name) must not
+        // match a project skill from a different worktree.
+        assert!(!project.matches_scope("extensions"));
+
+        // Edge case: a worktree literally named `global` cannot
+        // shadow the global scope qualifier, so `/global.<name>`
+        // always resolves to a global skill.
+        let project_named_global = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(2),
+            worktree_root_name: "global".into(),
+        };
+        assert!(!project_named_global.matches_scope("global"));
     }
 
     #[test]

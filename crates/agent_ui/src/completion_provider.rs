@@ -1261,16 +1261,20 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         .into_iter()
                         .map(|command| {
                             // Qualify the inserted text with the skill's
-                            // source (`/global.<name>` or `/local.<name>`)
-                            // when the command carries a source. Without
-                            // this, picking the global row and the local
+                            // source as `/.<scope>.<name>` when the
+                            // command carries one. The leading dot
+                            // namespaces skill scopes away from MCP
+                            // server prefixes (`/<server>.<name>`), so
+                            // a worktree literally named after an MCP
+                            // server doesn't collide. Without this,
+                            // picking the global row and the project
                             // row would both insert `/<name>` and the
                             // resolver couldn't tell which the user
-                            // intended. MCP commands have no source, so
+                            // intended. MCP commands have no source so
                             // they keep the bare `/<name>` form.
                             let qualified_name: std::borrow::Cow<'_, str> =
                                 if let Some(source) = command.source.as_ref() {
-                                    format!("{}.{}", source, command.name).into()
+                                    format!(".{}.{}", source, command.name).into()
                                 } else {
                                     command.name.as_ref().into()
                                 };
