@@ -198,7 +198,7 @@ async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
 
 async fn handle_liveness_probe(app_state: Option<Extension<Arc<AppState>>>) -> Result<String> {
     if let Some(state) = app_state {
-        state.db.get_all_users(0, 1).await?;
+        state.db.project_count_excluding_admins().await?;
     }
 
     Ok("ok".to_string())
