@@ -21,7 +21,7 @@ use ui::SharedString;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
-use std::{env, ops::Range, path::Path, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
     ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
@@ -632,15 +632,13 @@ pub(crate) fn edit_prediction_accepted(
     current_prediction: CurrentEditPrediction,
     cx: &App,
 ) {
-    let custom_accept_url = env::var("ZED_ACCEPT_PREDICTION_URL").ok();
-    if store.zeta2_raw_config().is_some() && custom_accept_url.is_none() {
+    if store.zeta2_raw_config().is_some() {
         return;
     }
 
     let request_id = current_prediction.prediction.id.to_string();
     let model_version = current_prediction.prediction.model_version;
     let e2e_latency = current_prediction.e2e_latency;
-    let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store
@@ -651,35 +649,23 @@ pub(crate) fn edit_prediction_accepted(
     let app_version = AppVersion::global(cx);
 
     cx.background_spawn(async move {
-        let url = if let Some(accept_edits_url) = custom_accept_url {
-            gpui::http_client::Url::parse(&accept_edits_url)?
-        } else {
-            client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/accept", &[])?
-        };
+        let body = serde_json::to_string(&AcceptEditPredictionBody {
+            request_id,
+            model_version,
+            e2e_latency_ms: Some(e2e_latency.as_millis()),
+        })?;
 
-        let response = EditPredictionStore::send_api_request::<()>(
-            move |builder| {
-                let req = builder.uri(url.as_ref()).body(
-                    serde_json::to_string(&AcceptEditPredictionBody {
-                        request_id: request_id.clone(),
-                        model_version: model_version.clone(),
-                        e2e_latency_ms: Some(e2e_latency.as_millis()),
-                    })?
-                    .into(),
-                );
-                Ok(req?)
-            },
+        let url = client
+            .http_client()
+            .build_zed_llm_url("/predict_edits/accept", &[])?;
+        EditPredictionStore::send_api_request::<()>(
+            move |builder| Ok(builder.uri(url.as_ref()).body(body.clone().into())?),
             client,
             llm_token,
             organization_id,
             app_version,
-            require_auth,
         )
-        .await;
-
-        response?;
+        .await?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);

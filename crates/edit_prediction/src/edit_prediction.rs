@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, global_llm_token};
+use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
@@ -889,18 +889,19 @@ impl EditPredictionStore {
         cx.spawn(async move |this, cx| {
             let experiments = cx
                 .background_spawn(async move {
-                    let http_client = client.http_client();
-                    let token = client
-                        .acquire_llm_token(&llm_token, organization_id.clone())
+                    let url = client
+                        .http_client()
+                        .build_zed_llm_url("/edit_prediction_experiments", &[])?;
+                    let mut response = client
+                        .authenticated_llm_request(&llm_token, organization_id, |token| {
+                            Ok(http_client::Request::builder()
+                                .method(Method::GET)
+                                .uri(url.as_ref())
+                                .header("Authorization", format!("Bearer {token}"))
+                                .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                                .body(Default::default())?)
+                        })
                         .await?;
-                    let url = http_client.build_zed_llm_url("/edit_prediction_experiments", &[])?;
-                    let request = http_client::Request::builder()
-                        .method(Method::GET)
-                        .uri(url.as_ref())
-                        .header("Authorization", format!("Bearer {}", token))
-                        .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
-                        .body(Default::default())?;
-                    let mut response = http_client.send(request).await?;
                     if response.status().is_success() {
                         let mut body = Vec::new();
                         response.body_mut().read_to_end(&mut body).await?;
@@ -1580,7 +1581,6 @@ impl EditPredictionStore {
                 llm_token.clone(),
                 organization_id,
                 app_version.clone(),
-                true,
             )
             .await;
 
@@ -2582,7 +2582,6 @@ impl EditPredictionStore {
             llm_token,
             organization_id,
             app_version,
-            true,
         )
         .await
     }
@@ -2627,7 +2626,6 @@ impl EditPredictionStore {
             llm_token,
             organization_id,
             app_version,
-            true,
         )
         .await
     }
@@ -2638,78 +2636,55 @@ impl EditPredictionStore {
         llm_token: LlmApiToken,
         organization_id: Option<OrganizationId>,
         app_version: Version,
-        require_auth: bool,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
     where
         Res: DeserializeOwned,
     {
-        let http_client = client.http_client();
-        let mut token = if require_auth {
-            Some(
-                client
-                    .acquire_llm_token(&llm_token, organization_id.clone())
-                    .await?,
-            )
+        let response = client
+            .authenticated_llm_request(&llm_token, organization_id, |token| {
+                build(
+                    http_client::Request::builder()
+                        .method(Method::POST)
+                        .header("Content-Type", "application/json")
+                        .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                        .header("Authorization", format!("Bearer {token}")),
+                )
+            })
+            .await?;
+
+        Self::process_api_response(response, &app_version).await
+    }
+
+    async fn process_api_response<Res>(
+        mut response: http_client::Response<AsyncBody>,
+        app_version: &Version,
+    ) -> Result<(Res, Option<EditPredictionUsage>)>
+    where
+        Res: DeserializeOwned,
+    {
+        if let Some(minimum_required_version) = response
+            .headers()
+            .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
+            .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
+        {
+            anyhow::ensure!(
+                *app_version >= minimum_required_version,
+                ZedUpdateRequiredError {
+                    minimum_version: minimum_required_version
+                }
+            );
+        }
+
+        if response.status().is_success() {
+            let usage = EditPredictionUsage::from_headers(response.headers()).ok();
+            let mut body = Vec::new();
+            response.body_mut().read_to_end(&mut body).await?;
+            Ok((serde_json::from_slice(&body)?, usage))
         } else {
-            client
-                .acquire_llm_token(&llm_token, organization_id.clone())
-                .await
-                .ok()
-        };
-        let mut did_retry = false;
-
-        loop {
-            let request_builder = http_client::Request::builder().method(Method::POST);
-
-            let mut request_builder = request_builder
-                .header("Content-Type", "application/json")
-                .header(ZED_VERSION_HEADER_NAME, app_version.to_string());
-
-            // Only add Authorization header if we have a token
-            if let Some(ref token_value) = token {
-                request_builder =
-                    request_builder.header("Authorization", format!("Bearer {}", token_value));
-            }
-
-            let request = build(request_builder)?;
-
-            let mut response = http_client.send(request).await?;
-
-            if let Some(minimum_required_version) = response
-                .headers()
-                .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
-            {
-                anyhow::ensure!(
-                    app_version >= minimum_required_version,
-                    ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }
-                );
-            }
-
-            if response.status().is_success() {
-                let usage = EditPredictionUsage::from_headers(response.headers()).ok();
-
-                let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await?;
-                return Ok((serde_json::from_slice(&body)?, usage));
-            } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
-                did_retry = true;
-                token = Some(
-                    client
-                        .refresh_llm_token(&llm_token, organization_id.clone())
-                        .await?,
-                );
-            } else {
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-                anyhow::bail!(
-                    "Request failed with status: {:?}\nBody: {}",
-                    response.status(),
-                    body
-                );
-            }
+            let status = response.status();
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            anyhow::bail!("Request failed with status: {status:?}\nBody: {body}");
         }
     }
 

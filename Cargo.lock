@@ -9696,6 +9696,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
+ "log",
  "open_ai",
  "schemars 1.0.4",
  "semver",
