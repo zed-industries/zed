@@ -424,6 +424,8 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointTwo
             | Model::FivePointThreeCodex
             | Model::FivePointFour
+            | Model::FivePointFourMini
+            | Model::FivePointFourNano
             | Model::FivePointFourPro
             | Model::FivePointFive
             | Model::FivePointFivePro

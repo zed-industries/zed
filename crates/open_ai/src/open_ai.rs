@@ -77,6 +77,10 @@ pub enum Model {
     FivePointTwo,
     #[serde(rename = "gpt-5.3-codex")]
     FivePointThreeCodex,
+    #[serde(rename = "gpt-5.4-nano")]
+    FivePointFourNano,
+    #[serde(rename = "gpt-5.4-mini")]
+    FivePointFourMini,
     #[serde(rename = "gpt-5.4")]
     FivePointFour,
     #[serde(rename = "gpt-5.4-pro")]
@@ -125,6 +129,8 @@ impl Model {
             "gpt-5.1" => Ok(Self::FivePointOne),
             "gpt-5.2" => Ok(Self::FivePointTwo),
             "gpt-5.3-codex" => Ok(Self::FivePointThreeCodex),
+            "gpt-5.4-nano" => Ok(Self::FivePointFourNano),
+            "gpt-5.4-mini" => Ok(Self::FivePointFourMini),
             "gpt-5.4" => Ok(Self::FivePointFour),
             "gpt-5.4-pro" => Ok(Self::FivePointFourPro),
             "gpt-5.5" => Ok(Self::FivePointFive),
@@ -144,6 +150,8 @@ impl Model {
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
             Self::FivePointThreeCodex => "gpt-5.3-codex",
+            Self::FivePointFourNano => "gpt-5.4-nano",
+            Self::FivePointFourMini => "gpt-5.4-mini",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
             Self::FivePointFive => "gpt-5.5",
@@ -163,6 +171,8 @@ impl Model {
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
             Self::FivePointThreeCodex => "gpt-5.3-codex",
+            Self::FivePointFourNano => "gpt-5.4-nano",
+            Self::FivePointFourMini => "gpt-5.4-mini",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
             Self::FivePointFive => "gpt-5.5",
@@ -182,6 +192,8 @@ impl Model {
             Self::FivePointOne => 400_000,
             Self::FivePointTwo => 400_000,
             Self::FivePointThreeCodex => 400_000,
+            Self::FivePointFourNano => 400_000,
+            Self::FivePointFourMini => 400_000,
             Self::FivePointFour => 1_050_000,
             Self::FivePointFourPro => 1_050_000,
             Self::FivePointFive => 1_050_000,
@@ -204,6 +216,8 @@ impl Model {
             Self::FivePointOne => Some(128_000),
             Self::FivePointTwo => Some(128_000),
             Self::FivePointThreeCodex => Some(128_000),
+            Self::FivePointFourNano => Some(128_000),
+            Self::FivePointFourMini => Some(128_000),
             Self::FivePointFour => Some(128_000),
             Self::FivePointFourPro => Some(128_000),
             Self::FivePointFive => Some(128_000),
@@ -216,9 +230,11 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
-            Self::FivePointOne | Self::FivePointTwo | Self::FivePointFour => {
-                Some(ReasoningEffort::None)
-            }
+            Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointFour
+            | Self::FivePointFourMini
+            | Self::FivePointFourNano => Some(ReasoningEffort::None),
             Self::O3
             | Self::Five
             | Self::FiveMini
@@ -272,7 +288,11 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
-            Self::FivePointTwo | Self::FivePointFour | Self::FivePointFive => &[
+            Self::FivePointTwo
+            | Self::FivePointFour
+            | Self::FivePointFive
+            | Self::FivePointFourMini
+            | Self::FivePointFourNano => &[
                 ReasoningEffort::None,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
@@ -306,6 +326,8 @@ impl Model {
             | Self::FivePointTwo
             | Self::FivePointThreeCodex
             | Self::FivePointFour
+            | Self::FivePointFourMini
+            | Self::FivePointFourNano
             | Self::FivePointFourPro
             | Self::FivePointFive
             | Self::FivePointFivePro
