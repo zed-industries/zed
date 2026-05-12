@@ -15,7 +15,7 @@ use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{Markdown, MarkdownStyle, ParsedMarkdown};
+use super::{CopyButtonVisibility, Markdown, MarkdownStyle, ParsedMarkdown};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -250,20 +250,19 @@ pub(crate) fn render_mermaid_diagram(
     markdown: Entity<Markdown>,
     source_offset: usize,
     showing_code: bool,
+    copy_button_visibility: CopyButtonVisibility,
 ) -> AnyElement {
     let cached = mermaid_state.cache.get(&parsed.contents);
     let render_result = cached.and_then(|cached| cached.render_image.get());
+    let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
 
     let code = parsed.contents.contents.clone();
-    let copy_button = render_mermaid_copy_button(source_offset, code.to_string(), markdown.clone());
 
     let mut container = div().group("code_block").relative().w_full().rounded_lg();
     container.style().refine(&style.code_block);
 
     match render_result {
         Some(Ok(render_image)) => {
-            let tab_header = render_mermaid_tab_header(source_offset, showing_code, markdown);
-
             let body = if showing_code {
                 render_mermaid_code_view(&parsed.contents.contents)
             } else {
@@ -282,16 +281,34 @@ pub(crate) fn render_mermaid_diagram(
             };
 
             container
-                .child(tab_header)
+                .when(show_interactive, |container| {
+                    container.child(render_mermaid_tab_header(
+                        source_offset,
+                        showing_code,
+                        markdown.clone(),
+                    ))
+                })
                 .child(body)
-                .child(copy_button)
+                .when(show_interactive, |container| {
+                    container.child(render_mermaid_copy_button(
+                        source_offset,
+                        code.to_string(),
+                        markdown,
+                    ))
+                })
                 .into_any_element()
         }
         Some(Err(_)) => {
             // Render failed — show the source code without tabs
             container
                 .child(render_mermaid_code_view(&parsed.contents.contents))
-                .child(copy_button)
+                .when(show_interactive, |container| {
+                    container.child(render_mermaid_copy_button(
+                        source_offset,
+                        code.to_string(),
+                        markdown,
+                    ))
+                })
                 .into_any_element()
         }
         None => {
@@ -318,7 +335,13 @@ pub(crate) fn render_mermaid_diagram(
                                 |element, delta| element.opacity(delta),
                             ),
                     )
-                    .child(copy_button)
+                    .when(show_interactive, |container| {
+                        container.child(render_mermaid_copy_button(
+                            source_offset,
+                            code.to_string(),
+                            markdown,
+                        ))
+                    })
                     .into_any_element()
             } else {
                 // No fallback — show the code so the user has something to look at
@@ -338,7 +361,13 @@ pub(crate) fn render_mermaid_diagram(
                                 ),
                         ),
                     )
-                    .child(copy_button)
+                    .when(show_interactive, |container| {
+                        container.child(render_mermaid_copy_button(
+                            source_offset,
+                            code.to_string(),
+                            markdown,
+                        ))
+                    })
                     .into_any_element()
             }
         }

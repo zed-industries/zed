@@ -1795,6 +1795,13 @@ impl Element for MarkdownElement {
                             {
                                 let showing_code =
                                     self.markdown.read(cx).is_mermaid_showing_code(range.start);
+                                let copy_button_visibility = match &self.code_block_renderer {
+                                    CodeBlockRenderer::Default {
+                                        copy_button_visibility,
+                                        ..
+                                    } => *copy_button_visibility,
+                                    _ => CopyButtonVisibility::VisibleOnHover,
+                                };
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(
@@ -1804,6 +1811,7 @@ impl Element for MarkdownElement {
                                         self.markdown.clone(),
                                         range.start,
                                         showing_code,
+                                        copy_button_visibility,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
