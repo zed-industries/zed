@@ -111,13 +111,13 @@ pub fn display_label_for_draft(
     thread_id: ThreadId,
     cx: &App,
 ) -> Option<SharedString> {
-    let from_editor = workspace
+    let in_memory = workspace
         .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-        .and_then(|panel| panel.read(cx).editor_text(thread_id, cx));
-    if let Some(raw) = from_editor
-        && let Some(label) = truncate_draft_label(&raw)
-    {
-        return Some(label);
+        .and_then(|panel| panel.read(cx).editor_text_if_in_memory(thread_id, cx));
+    match in_memory {
+        Some(Some(raw)) => return truncate_draft_label(&raw),
+        Some(None) => return None,
+        None => {}
     }
 
     let blocks = read(thread_id, cx)?;

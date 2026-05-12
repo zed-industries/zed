@@ -377,6 +377,7 @@ fn save_thread_metadata(
             session_id: Some(session_id),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title,
+            title_override: None,
             updated_at,
             created_at,
             interacted_at,
@@ -412,6 +413,7 @@ fn save_thread_metadata_with_main_paths(
         session_id: Some(session_id),
         agent_id: agent::ZED_AGENT_ID.clone(),
         title: Some(title),
+        title_override: None,
         updated_at,
         created_at: None,
         interacted_at: None,
@@ -891,6 +893,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     agent_id: AgentId::new("zed-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Completed thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
                     interacted_at: None,
@@ -917,6 +920,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     agent_id: AgentId::new("zed-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Running thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
                     interacted_at: None,
@@ -943,6 +947,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     agent_id: AgentId::new("zed-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Error thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
                     interacted_at: None,
@@ -970,6 +975,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     agent_id: AgentId::new("zed-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Waiting thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
                     interacted_at: None,
@@ -997,6 +1003,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     agent_id: AgentId::new("zed-agent"),
                     worktree_paths: WorktreePaths::default(),
                     title: Some("Notified thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
                     interacted_at: None,
@@ -3241,6 +3248,58 @@ async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_thread_switcher_includes_parked_draft(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-existing")),
+        Some("Existing Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &project,
+        cx,
+    );
+
+    let connection = StubAgentConnection::new();
+    agent_ui::test_support::open_draft_with_connection(&panel, connection, cx);
+    cx.run_until_parked();
+    let draft_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+    agent_ui::test_support::type_draft_prompt(&panel, "Fix the login bug", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_thread(&NewThread, window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(sidebar.contents.entries.iter().any(|entry| {
+            matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == draft_id)
+        }));
+    });
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open");
+        assert!(switcher.read(cx).entries().iter().any(|entry| {
+            matches!(entry.thread_id(), Some(thread_id) if thread_id == draft_id)
+        }));
+    });
+}
+
+#[gpui::test]
 async fn test_plus_button_reuses_empty_draft(cx: &mut TestAppContext) {
     // Clicking `+` when an empty draft is already active should focus it
     // instead of creating and parking a new one.
@@ -4986,6 +5045,7 @@ async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut Tes
                     session_id: Some(session_id.clone()),
                     agent_id: agent::ZED_AGENT_ID.clone(),
                     title: Some("Stale Multi-Root Thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: None,
                     interacted_at: None,
@@ -5066,6 +5126,7 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
                 session_id: Some(session_id.clone()),
                 agent_id: agent::ZED_AGENT_ID.clone(),
                 title: Some("Archived Thread".into()),
+                title_override: None,
                 updated_at: Utc::now(),
                 created_at: None,
                 interacted_at: None,
@@ -5135,6 +5196,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
                 session_id: Some(acp::SessionId::new(Arc::from("unknown-session"))),
                 agent_id: agent::ZED_AGENT_ID.clone(),
                 title: Some("CWD Thread".into()),
+                title_override: None,
                 updated_at: Utc::now(),
                 created_at: None,
                 interacted_at: None,
@@ -5202,6 +5264,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
                 session_id: Some(acp::SessionId::new(Arc::from("no-context-session"))),
                 agent_id: agent::ZED_AGENT_ID.clone(),
                 title: Some("Contextless Thread".into()),
+                title_override: None,
                 updated_at: Utc::now(),
                 created_at: None,
                 interacted_at: None,
@@ -5259,6 +5322,7 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
                 session_id: Some(session_id.clone()),
                 agent_id: agent::ZED_AGENT_ID.clone(),
                 title: Some("New WS Thread".into()),
+                title_override: None,
                 updated_at: Utc::now(),
                 created_at: None,
                 interacted_at: None,
@@ -5315,6 +5379,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
                 session_id: Some(session_id.clone()),
                 agent_id: agent::ZED_AGENT_ID.clone(),
                 title: Some("Cross Window Thread".into()),
+                title_override: None,
                 updated_at: Utc::now(),
                 created_at: None,
                 interacted_at: None,
@@ -5393,6 +5458,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
         session_id: Some(session_id.clone()),
         agent_id: agent::ZED_AGENT_ID.clone(),
         title: Some("Cross Window Thread".into()),
+        title_override: None,
         updated_at: Utc::now(),
         created_at: None,
         interacted_at: None,
@@ -5475,6 +5541,7 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
         session_id: Some(session_id.clone()),
         agent_id: agent::ZED_AGENT_ID.clone(),
         title: Some("Current Window Thread".into()),
+        title_override: None,
         updated_at: Utc::now(),
         created_at: None,
         interacted_at: None,
@@ -6412,6 +6479,7 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
             session_id: Some(acp::SessionId::new(Arc::from("remote-wt-thread"))),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Remote Worktree Thread".into()),
+            title_override: None,
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
             created_at: None,
             interacted_at: None,
@@ -7226,6 +7294,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
                     session_id: Some(session_id.clone()),
                     agent_id: agent::ZED_AGENT_ID.clone(),
                     title: Some("Unarchived Thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: None,
                     interacted_at: None,
@@ -7319,6 +7388,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
                     session_id: Some(session_id.clone()),
                     agent_id: agent::ZED_AGENT_ID.clone(),
                     title: Some("Unarchived Thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: None,
                     interacted_at: None,
@@ -7545,6 +7615,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
                     session_id: Some(session_id.clone()),
                     agent_id: agent::ZED_AGENT_ID.clone(),
                     title: Some("Restored In Inactive Workspace".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: None,
                     interacted_at: None,
@@ -8395,6 +8466,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
                     session_id: Some(session_id.clone()),
                     agent_id: agent::ZED_AGENT_ID.clone(),
                     title: Some("Unarchived Linked Thread".into()),
+                    title_override: None,
                     updated_at: Utc::now(),
                     created_at: None,
                     interacted_at: None,
@@ -8945,6 +9017,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             session_id: Some(legacy_session.clone()),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Legacy Main Thread".into()),
+            title_override: None,
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
             created_at: None,
             interacted_at: None,
@@ -9934,6 +10007,7 @@ mod property_test {
             session_id: Some(session_id),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some(title),
+            title_override: None,
             updated_at,
             created_at: None,
             interacted_at: None,
@@ -10846,6 +10920,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             session_id: Some(remote_thread_id.clone()),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Worktree Thread".into()),
+            title_override: None,
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
             created_at: None,
             interacted_at: None,
@@ -11567,6 +11642,7 @@ async fn test_remote_archive_thread_with_active_connection(
             session_id: Some(wt_thread_id.clone()),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Worktree Thread".into()),
+            title_override: None,
             updated_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
                 .unwrap(),
             created_at: None,

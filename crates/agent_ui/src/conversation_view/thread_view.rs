@@ -1,6 +1,7 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     agent_configuration::configure_context_server_modal::default_markdown_style,
+    thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
@@ -265,6 +266,7 @@ impl PermissionSelection {
 }
 
 pub struct ThreadView {
+    pub(crate) root_thread_id: ThreadId,
     pub session_id: acp::SessionId,
     pub parent_session_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
@@ -363,6 +365,7 @@ pub struct TurnFields {
 
 impl ThreadView {
     pub(crate) fn new(
+        root_thread_id: ThreadId,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
         server_view: WeakEntity<ConversationView>,
@@ -448,15 +451,17 @@ impl ThreadView {
             && agent_id.as_ref() == "Codex";
 
         let title_editor = {
-            let can_edit = thread.update(cx, |thread, cx| thread.can_set_title(cx));
+            let metadata = ThreadMetadataStore::try_global(cx)
+                .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
+            let initial_title = if parent_session_id.is_none() {
+                metadata.as_ref().and_then(|m| m.title())
+            } else {
+                thread.read(cx).title()
+            }
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                if let Some(title) = thread.read(cx).title() {
-                    editor.set_text(title, window, cx);
-                } else {
-                    editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
-                }
-                editor.set_read_only(!can_edit);
+                editor.set_text(initial_title, window, cx);
                 editor
             });
             subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
@@ -536,6 +541,7 @@ impl ThreadView {
         }));
 
         let mut this = Self {
+            root_thread_id,
             session_id,
             parent_session_id,
             focus_handle: cx.focus_handle(),
@@ -1716,11 +1722,23 @@ impl ThreadView {
                 }
 
                 let new_title = title_editor.read(cx).text(cx);
+                if new_title.is_empty() {
+                    return;
+                }
+                let title = SharedString::from(new_title);
+                if let Some(store) = ThreadMetadataStore::try_global(cx)
+                    && !self.is_subagent()
+                {
+                    let thread_id = self.root_thread_id;
+                    store.update(cx, |store, cx| {
+                        store.set_title_override(thread_id, title.clone(), cx);
+                    });
+                }
                 thread.update(cx, |thread, cx| {
-                    thread
-                        .set_title(new_title.into(), cx)
-                        .detach_and_log_err(cx);
-                })
+                    if thread.can_set_title(cx) {
+                        thread.set_title(title, cx).detach_and_log_err(cx);
+                    }
+                });
             }
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
@@ -4746,7 +4764,7 @@ impl ThreadView {
                                     }
 
                                     Some(
-                                        self.render_markdown(md.clone(), style.clone())
+                                        self.render_markdown(md.clone(), style.clone(), cx)
                                             .into_any_element(),
                                     )
                                 })
@@ -5707,6 +5725,7 @@ impl ThreadView {
                                 .child(self.render_markdown(
                                     chunk,
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    cx,
                                 )),
                         )
                         .when(is_constrained, |this| {
@@ -5972,12 +5991,12 @@ impl ThreadView {
         // Suppress the code block's built-in copy button so we don't stack two
         // copy buttons on top of each other; the outer button below is the one
         // we want, because it copies the unfenced command text.
-        let markdown_element =
-            self.render_markdown(command, style)
-                .code_block_renderer(CodeBlockRenderer::Default {
-                    copy_button_visibility: CopyButtonVisibility::Hidden,
-                    border: false,
-                });
+        let markdown_element = self
+            .render_markdown(command, style, cx)
+            .code_block_renderer(CodeBlockRenderer::Default {
+                copy_button_visibility: CopyButtonVisibility::Hidden,
+                border: false,
+            });
         let copy_button = CopyButton::new("copy-command", command_text)
             .tooltip_label("Copy Command")
             .visible_on_hover(group.clone());
@@ -6496,6 +6515,7 @@ impl ThreadView {
                                                     window,
                                                     cx,
                                                 ),
+                                                cx,
                                             )
                                         },
                                     ))
@@ -6539,6 +6559,7 @@ impl ThreadView {
                                         self.render_markdown(
                                             input,
                                             MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                            cx,
                                         ),
                                     )
                                 }))
@@ -7465,6 +7486,7 @@ impl ThreadView {
                                 ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
                                     .with_muted_text(cx)
                             },
+                            cx,
                         ),
                     )
                     .tooltip(Tooltip::text("Go to File"))
@@ -7478,6 +7500,7 @@ impl ThreadView {
                     .child(self.render_markdown(
                         tool_call.label.clone(),
                         MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
+                        cx,
                     ))
                     .into_any()
             })
@@ -7734,6 +7757,7 @@ impl ThreadView {
             .child(self.render_markdown(
                 markdown,
                 MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                cx,
             ))
             .when(!card_layout, |this| {
                 this.child(
@@ -8630,7 +8654,7 @@ impl ThreadView {
         let markdown_style =
             MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx);
         let description = self
-            .render_markdown(markdown, markdown_style)
+            .render_markdown(markdown, markdown_style, cx)
             .into_any_element();
 
         Callout::new()
@@ -8656,11 +8680,13 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            open_link(text, &workspace, window, cx);
-        })
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
+        render_agent_markdown(markdown, style, &self.workspace, &self.project, cx)
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
