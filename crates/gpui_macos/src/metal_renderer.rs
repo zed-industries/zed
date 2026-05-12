@@ -1469,7 +1469,7 @@ impl MetalRenderer {
                     buffer_contents,
                     SurfaceBounds {
                         bounds: surface.bounds,
-                        content_mask: surface.content_mask.clone(),
+                        content_mask: surface.content_mask,
                     },
                 );
             }

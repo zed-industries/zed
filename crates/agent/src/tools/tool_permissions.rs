@@ -2,6 +2,7 @@ use crate::{
     Thread, ToolCallEventStream, ToolPermissionContext, ToolPermissionDecision,
     decide_permission_for_path,
 };
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
@@ -251,7 +252,25 @@ pub fn authorize_symlink_access(
         vec![canonical_target.display().to_string()],
     );
 
-    event_stream.authorize(title, context, cx)
+    event_stream.authorize_always_prompt(title, context, cx)
+}
+
+pub fn authorize_with_sensitive_settings(
+    kind: Option<SensitiveSettingsKind>,
+    context: ToolPermissionContext,
+    title: &str,
+    event_stream: &ToolCallEventStream,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    match kind {
+        Some(SensitiveSettingsKind::Local) => {
+            event_stream.authorize_always_prompt(format!("{title} (local settings)"), context, cx)
+        }
+        Some(SensitiveSettingsKind::Global) => {
+            event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
+        }
+        None => event_stream.authorize(title, context, cx),
+    }
 }
 
 /// Creates a single authorization prompt for multiple symlink escapes.
@@ -287,7 +306,7 @@ pub fn authorize_symlink_escapes(
             .collect(),
     );
 
-    event_stream.authorize(title, context, cx)
+    event_stream.authorize_always_prompt(title, context, cx)
 }
 
 /// Checks whether a path escapes the project via symlink, without creating
@@ -363,7 +382,6 @@ pub fn collect_symlink_escapes<'a>(
 pub fn authorize_file_edit(
     tool_name: &str,
     path: &Path,
-    display_description: &str,
     thread: &WeakEntity<Thread>,
     event_stream: &ToolCallEventStream,
     cx: &mut App,
@@ -378,7 +396,7 @@ pub fn authorize_file_edit(
     }
 
     let path_owned = path.to_path_buf();
-    let display_description = display_description.to_string();
+    let title = format!("Edit {}", util::markdown::MarkdownInlineCode(&path_str));
     let tool_name = tool_name.to_string();
     let thread = thread.clone();
     let event_stream = event_stream.clone();
@@ -467,8 +485,8 @@ pub fn authorize_file_edit(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
                     );
-                    event_stream.authorize(
-                        format!("{} (local settings)", display_description),
+                    event_stream.authorize_always_prompt(
+                        format!("{title} (local settings)"),
                         context,
                         cx,
                     )
@@ -481,11 +499,7 @@ pub fn authorize_file_edit(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
                     );
-                    event_stream.authorize(
-                        format!("{} (settings)", display_description),
-                        context,
-                        cx,
-                    )
+                    event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
                 });
                 return authorize.await;
             }
@@ -500,10 +514,95 @@ pub fn authorize_file_edit(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
                     );
-                    event_stream.authorize(&display_description, context, cx)
+                    event_stream.authorize(&title, context, cx)
                 });
                 authorize.await
             }
+        }
+    })
+}
+
+/// The user's choice when prompted about how to handle unsaved changes
+/// in a buffer that the agent wants to edit or overwrite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirtyBufferDecision {
+    /// Save the buffer's pending edits to disk, then proceed.
+    /// (Edit-mode prompt only.)
+    Save,
+    /// Discard the buffer's pending edits (reload from disk), then proceed.
+    Discard,
+    /// Keep the buffer's pending edits and cancel the agent's operation.
+    /// (Overwrite-mode prompt only.)
+    Keep,
+}
+
+/// Which prompt to show when the agent encounters a dirty buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirtyBufferPromptKind {
+    /// The agent wants to apply targeted edits on top of the current
+    /// content. Offers Save (persist edits, then edit on top) vs Discard
+    /// (revert to disk, then edit).
+    Edit,
+    /// The agent wants to overwrite the file's entire contents. Offers
+    /// Keep (cancel the overwrite to preserve the user's work) vs
+    /// Discard (reload from disk and let the agent overwrite).
+    Overwrite,
+}
+
+/// Prompts the user about how to handle a dirty buffer that the agent
+/// wants to edit or overwrite. Returns the chosen action; the caller is
+/// responsible for actually performing the corresponding side effect
+/// (save / reload / cancel) before continuing.
+pub fn authorize_dirty_buffer(
+    kind: DirtyBufferPromptKind,
+    event_stream: &ToolCallEventStream,
+    cx: &mut App,
+) -> Task<Result<DirtyBufferDecision>> {
+    let (message, options) = match kind {
+        DirtyBufferPromptKind::Edit => (
+            "This file has unsaved changes. Do you want to save or discard them \
+             before the agent continues editing?"
+                .to_string(),
+            vec![
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("save"),
+                    "Save",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("discard"),
+                    "Discard",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        ),
+        DirtyBufferPromptKind::Overwrite => (
+            "This file has unsaved changes and the agent wants to overwrite it.".to_string(),
+            vec![
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("discard"),
+                    "Overwrite",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("keep"),
+                    "Cancel",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        ),
+    };
+
+    let prompt = event_stream.prompt_for_decision(None, Some(message), options, cx);
+    cx.spawn(async move |_cx| {
+        let option_id = prompt.await?;
+        match option_id.0.as_ref() {
+            "save" => Ok(DirtyBufferDecision::Save),
+            "discard" => Ok(DirtyBufferDecision::Discard),
+            "keep" => Ok(DirtyBufferDecision::Keep),
+            other => Err(anyhow!(
+                "Unexpected dirty-buffer decision option_id: {other}"
+            )),
         }
     })
 }

@@ -192,7 +192,7 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
-/// Expands all excerpts in the editor.
+/// Expands all excerpts with selections.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -460,6 +460,10 @@ actions!(
         ConvertToRot13,
         /// Applies ROT47 cipher to selected text.
         ConvertToRot47,
+        /// Base64-encodes the selected text or word under cursor.
+        ConvertToBase64,
+        /// Base64-decodes the selected text or word under cursor.
+        ConvertFromBase64,
         /// Copies selected text to the clipboard.
         Copy,
         /// Copies selected text to the clipboard with leading/trailing whitespace trimmed.
@@ -576,10 +580,14 @@ actions!(
         GoToImplementation,
         /// Goes to implementation in a split pane.
         GoToImplementationSplit,
+        /// Goes to the next bookmark in the file.
+        GoToNextBookmark,
         /// Goes to the next change in the file.
         GoToNextChange,
         /// Goes to the parent module of the current file.
         GoToParentModule,
+        /// Goes to the previous bookmark in the file.
+        GoToPreviousBookmark,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
         /// Goes to the next symbol.
@@ -670,6 +678,8 @@ actions!(
         NextScreen,
         /// Goes to the next snippet tabstop if one exists.
         NextSnippetTabstop,
+        /// Opens a view of all bookmarks in the project.
+        ViewBookmarks,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
         /// Opens excerpts from the current file.
@@ -819,6 +829,8 @@ actions!(
         Tab,
         /// Removes a tab character or outdents.
         Backtab,
+        /// Toggles a bookmark at the current line.
+        ToggleBookmark,
         /// Toggles a breakpoint at the current line.
         ToggleBreakpoint,
         /// Toggles the case of selected text.
@@ -841,6 +853,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles code lens display.
+        ToggleCodeLens,
         /// Toggles semantic highlights display.
         ToggleSemanticHighlights,
         /// Toggles inline values display.
@@ -897,6 +911,8 @@ actions!(
         WrapSelectionsInTag,
         /// Aligns selections from different rows into the same column
         AlignSelections,
+        /// Saves the current location to navigation history.
+        SaveLocation,
     ]
 );
 

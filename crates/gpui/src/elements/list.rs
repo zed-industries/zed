@@ -71,17 +71,41 @@ struct StateInner {
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
-    pending_scroll: Option<PendingScrollFraction>,
+    pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
+}
+
+/// Deferred scroll adjustment applied after the scroll-top item has been remeasured.
+///
+/// An absolute pending scroll preserves the same pixel offset into the item, which keeps
+/// visible text stable while content is appended to or removed from that item. A
+/// proportional pending scroll preserves the same fractional position within the item,
+/// which is useful when the whole list is being resized and each item scales similarly.
+#[derive(Clone)]
+enum PendingScroll {
+    /// Preserve the same pixel offset into the item after it is remeasured.
+    Absolute { item_ix: usize, offset: Pixels },
+    /// Preserve the same fractional offset into the item after it is remeasured.
+    Proportional(PendingScrollFraction),
 }
 
 /// Keeps track of a fractional scroll position within an item for restoration
 /// after remeasurement.
+#[derive(Clone)]
 struct PendingScrollFraction {
     /// The index of the item to scroll within.
     item_ix: usize,
     /// Fractional offset (0.0 to 1.0) within the item's height.
     fraction: f32,
+}
+
+/// Determines how remeasurement preserves the scroll position when the scroll-top item
+/// changes height.
+enum ScrollAnchor {
+    /// Preserve the same pixel offset into the scroll-top item.
+    Absolute,
+    /// Preserve the same fractional position within the scroll-top item.
+    Proportional,
 }
 
 /// Controls whether the list automatically follows new content at the end.
@@ -123,6 +147,14 @@ impl FollowState {
         } = self
         {
             *self = FollowState::Tail { is_following: true };
+        }
+    }
+
+    fn stop_following(&mut self) {
+        if let FollowState::Tail { is_following: true } = self {
+            *self = FollowState::Tail {
+                is_following: false,
+            };
         }
     }
 }
@@ -263,6 +295,7 @@ struct ListItemSummary {
     unrendered_count: usize,
     height: Pixels,
     has_focus_handles: bool,
+    has_unknown_height: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -327,7 +360,7 @@ impl ListState {
     /// but the number and identity of items remains the same.
     pub fn remeasure(&self) {
         let count = self.item_count();
-        self.remeasure_items(0..count);
+        self.remeasure_items_with_scroll_anchor(0..count, ScrollAnchor::Proportional);
     }
 
     /// Mark items in `range` as needing remeasurement while preserving
@@ -338,31 +371,47 @@ impl ListState {
     /// height may be different (e.g., streaming text, tool results
     /// loading), but the item itself still exists at the same index.
     pub fn remeasure_items(&self, range: Range<usize>) {
+        self.remeasure_items_with_scroll_anchor(range, ScrollAnchor::Absolute);
+    }
+
+    fn remeasure_items_with_scroll_anchor(&self, range: Range<usize>, scroll_anchor: ScrollAnchor) {
         let state = &mut *self.0.borrow_mut();
 
-        // If the scroll-top item falls within the remeasured range,
-        // store a fractional offset so the layout can restore the
-        // proportional scroll position after the item is re-rendered
-        // at its new height.
         if let Some(scroll_top) = state.logical_scroll_top {
             if range.contains(&scroll_top.item_ix) {
-                let mut cursor = state.items.cursor::<Count>(());
-                cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+                state.pending_scroll = match scroll_anchor {
+                    ScrollAnchor::Absolute => Some(PendingScroll::Absolute {
+                        item_ix: scroll_top.item_ix,
+                        offset: scroll_top.offset_in_item,
+                    }),
+                    ScrollAnchor::Proportional => {
+                        // If the scroll-top item falls within the remeasured range,
+                        // store a fractional offset so the layout can restore the
+                        // proportional scroll position after the item is re-rendered
+                        // at its new height.
+                        let mut cursor = state.items.cursor::<Count>(());
+                        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
 
-                if let Some(item) = cursor.item() {
-                    if let Some(size) = item.size() {
-                        let fraction = if size.height.0 > 0.0 {
-                            (scroll_top.offset_in_item.0 / size.height.0).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
+                        cursor
+                            .item()
+                            .and_then(|item| {
+                                item.size().map(|size| {
+                                    let fraction = if size.height.0 > 0.0 {
+                                        (scroll_top.offset_in_item.0 / size.height.0)
+                                            .clamp(0.0, 1.0)
+                                    } else {
+                                        0.0
+                                    };
 
-                        state.pending_scroll = Some(PendingScrollFraction {
-                            item_ix: scroll_top.item_ix,
-                            fraction,
-                        });
+                                    PendingScroll::Proportional(PendingScrollFraction {
+                                        item_ix: scroll_top.item_ix,
+                                        fraction,
+                                    })
+                                })
+                            })
+                            .or_else(|| state.pending_scroll.clone())
                     }
-                }
+                };
             }
         }
 
@@ -389,6 +438,25 @@ impl ListState {
     /// The number of items in this list.
     pub fn item_count(&self) -> usize {
         self.0.borrow().items.summary().count
+    }
+
+    /// Whether the list is scrolled to the end, or `None` if the list is
+    /// not scrollable or the total content height is not yet known.
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        let state = self.0.borrow();
+        let bounds = state.last_layout_bounds?;
+        let summary = state.items.summary();
+        if summary.has_unknown_height {
+            return None;
+        }
+        let padding = state.last_padding.unwrap_or_default();
+        let content_height = summary.height + padding.top + padding.bottom;
+        let scroll_max = (content_height - bounds.size.height).max(px(0.));
+        if scroll_max <= px(0.) {
+            return None;
+        }
+        let scroll_top = state.scroll_top(&state.logical_scroll_top());
+        Some(scroll_top >= scroll_max)
     }
 
     /// Inform the list state that the items in `old_range` have been replaced
@@ -464,9 +532,7 @@ impl ListState {
         let state = &mut *self.0.borrow_mut();
 
         if distance < px(0.) {
-            if let FollowState::Tail { is_following } = &mut state.follow_state {
-                *is_following = false;
-            }
+            state.follow_state.stop_following();
         }
 
         let mut cursor = state.items.cursor::<ListItemSummary>(());
@@ -544,9 +610,7 @@ impl ListState {
         }
 
         if scroll_top.item_ix < item_count {
-            if let FollowState::Tail { is_following } = &mut state.follow_state {
-                *is_following = false;
-            }
+            state.follow_state.stop_following();
         }
 
         state.logical_scroll_top = Some(scroll_top);
@@ -727,10 +791,8 @@ impl StateInner {
             });
         }
 
-        if let FollowState::Tail { is_following } = &mut self.follow_state {
-            if delta.y > px(0.) {
-                *is_following = false;
-            }
+        if delta.y > px(0.) {
+            self.follow_state.stop_following();
         }
 
         if let Some(handler) = self.scroll_handler.as_mut() {
@@ -872,14 +934,26 @@ impl StateInner {
                 size = Some(element_size);
 
                 // If there's a pending scroll adjustment for the scroll-top
-                // item, apply it, ensuring proportional scroll position is
-                // maintained after re-measuring.
+                // item, apply it.
                 if ix == 0 {
                     if let Some(pending_scroll) = self.pending_scroll.take() {
-                        if pending_scroll.item_ix == scroll_top.item_ix {
-                            scroll_top.offset_in_item =
-                                Pixels(pending_scroll.fraction * element_size.height.0);
-                            self.logical_scroll_top = Some(scroll_top);
+                        match pending_scroll {
+                            PendingScroll::Absolute { item_ix, offset }
+                                if item_ix == scroll_top.item_ix =>
+                            {
+                                scroll_top.offset_in_item = offset.min(element_size.height);
+                                self.logical_scroll_top = Some(scroll_top);
+                            }
+                            PendingScroll::Proportional(pending_scroll)
+                                if pending_scroll.item_ix == scroll_top.item_ix =>
+                            {
+                                // Ensuring proportional scroll position is
+                                // maintained after re-measuring.
+                                scroll_top.offset_in_item =
+                                    Pixels(pending_scroll.fraction * element_size.height.0);
+                                self.logical_scroll_top = Some(scroll_top);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -1135,7 +1209,7 @@ impl StateInner {
             content_height - self.scrollbar_drag_start_height.unwrap_or(content_height);
         let new_scroll_top = (point.y - drag_offset).abs().max(px(0.)).min(scroll_max);
 
-        self.follow_state = FollowState::Normal;
+        self.follow_state.stop_following();
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
@@ -1383,6 +1457,7 @@ impl sum_tree::Item for ListItem {
                     px(0.)
                 },
                 has_focus_handles: focus_handle.is_some(),
+                has_unknown_height: size_hint.is_none(),
             },
             ListItem::Measured {
                 size, focus_handle, ..
@@ -1392,6 +1467,7 @@ impl sum_tree::Item for ListItem {
                 unrendered_count: 0,
                 height: size.height,
                 has_focus_handles: focus_handle.is_some(),
+                has_unknown_height: false,
             },
         }
     }
@@ -1408,6 +1484,7 @@ impl sum_tree::ContextLessSummary for ListItemSummary {
         self.unrendered_count += summary.unrendered_count;
         self.height += summary.height;
         self.has_focus_handles |= summary.has_focus_handles;
+        self.has_unknown_height |= summary.has_unknown_height;
     }
 }
 
@@ -1642,6 +1719,60 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 2);
         assert_eq!(offset.offset_in_item, px(20.));
+    }
+
+    #[gpui::test]
+    fn test_remeasure_item_preserves_scroll_offset(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let item_height = Rc::new(Cell::new(100usize));
+        let state = ListState::new(20, crate::ListAlignment::Top, px(10.));
+
+        struct TestView {
+            state: ListState,
+            item_height: Rc<Cell<usize>>,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let height = self.item_height.get();
+                list(self.state.clone(), move |index, _, _| {
+                    let height = if index == 5 { height } else { 100 };
+                    div().h(px(height as f32)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let state_clone = state.clone();
+        let item_height_clone = item_height.clone();
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state_clone,
+                item_height: item_height_clone,
+            })
+        });
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 5,
+            offset_in_item: px(40.),
+        });
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        item_height.set(200);
+        state.remeasure_items(5..6);
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 5);
+        assert_eq!(offset.offset_in_item, px(40.));
     }
 
     #[gpui::test]
@@ -2014,14 +2145,11 @@ mod test {
         );
     }
 
-    /// Calling `set_follow_mode(FollowState::Normal)` or dragging the scrollbar should
-    /// fully disengage follow_tail — clearing any suspended state so
-    /// follow_tail won’t auto-re-engage.
     #[gpui::test]
-    fn test_follow_tail_suspended_state_cleared_by_explicit_actions(cx: &mut TestAppContext) {
+    fn test_follow_tail_reengages_after_scrollbar_disengagement(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50px = 500px total, 200px viewport.
+        // 10 items × 50px = 500px total, 200px viewport, scroll_max = 300px.
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
 
         struct TestView(ListState);
@@ -2038,59 +2166,24 @@ mod test {
         let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
 
         state.set_follow_mode(FollowMode::Tail);
-        // --- Part 1: set_follow_mode(FollowState::Normal) clears suspended state ---
-
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.clone().into_any_element()
         });
+        assert!(state.is_following_tail());
 
-        // Scroll up — suspends follow_tail.
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(100.)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(50.))),
-            ..Default::default()
-        });
+        // Drag the scrollbar up to the middle — follow_tail should suspend.
+        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
         assert!(!state.is_following_tail());
 
-        // Scroll back to the bottom — should re-engage follow_tail.
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(100.)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(-10000.))),
-            ..Default::default()
-        });
-
+        // Drag the scrollbar back to the bottom — follow_tail should re-engage
+        // on the next paint.
+        state.set_offset_from_scrollbar(point(px(0.), px(300.)));
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
+            view.into_any_element()
         });
         assert!(
             state.is_following_tail(),
-            "follow_tail should re-engage after scrolling back to the bottom"
-        );
-
-        // --- Part 2: scrollbar drag clears suspended state ---
-
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
-        });
-
-        // Drag the scrollbar to the middle — should clear suspended state.
-        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
-
-        // Scroll to the bottom.
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(100.)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(-10000.))),
-            ..Default::default()
-        });
-
-        // Paint — should NOT re-engage because the scrollbar drag
-        // cleared the suspended state.
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
-        });
-        assert!(
-            !state.is_following_tail(),
-            "follow_tail should not re-engage after scrollbar drag cleared the suspended state"
+            "follow_tail should re-engage after scrolling back to the bottom via the scrollbar"
         );
     }
 }

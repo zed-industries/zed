@@ -9,7 +9,7 @@ use collections::HashSet;
 use futures::{Future, FutureExt, channel::oneshot, future::Shared};
 use gpui::{
     AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
-    WeakEntity, Window,
+    TaskExt, WeakEntity, Window,
 };
 use postage::watch;
 use project::Project;
@@ -40,7 +40,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             &cx.entity(),
             window,
             move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
-                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged)
+                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
                     && window.is_window_active()
                 {
                     return;
@@ -110,6 +110,13 @@ impl AnyActiveCall for ActiveCallEntity {
             .read(cx)
             .room()
             .map_or(false, |room| room.read(cx).is_sharing_project())
+    }
+
+    fn is_sharing_screen(&self, cx: &App) -> bool {
+        self.0
+            .read(cx)
+            .room()
+            .map_or(false, |room| room.read(cx).is_sharing_screen())
     }
 
     fn has_remote_participants(&self, cx: &App) -> bool {
@@ -182,7 +189,7 @@ impl AnyActiveCall for ActiveCallEntity {
         let room = self.0.read(cx).room()?.read(cx);
         room.remote_participants()
             .values()
-            .find(|p| p.user.id == user_id)
+            .find(|p| p.user.legacy_id == user_id)
             .map(|p| p.peer_id)
     }
 
@@ -208,6 +215,12 @@ impl AnyActiveCall for ActiveCallEntity {
                         Some(ActiveCallEvent::RemoteVideoTracksChanged {
                             participant_id: *participant_id,
                         })
+                    }
+                    room::Event::LocalScreenShareStarted => {
+                        Some(ActiveCallEvent::LocalScreenShareStarted)
+                    }
+                    room::Event::LocalScreenShareStopped => {
+                        Some(ActiveCallEvent::LocalScreenShareStopped)
                     }
                     _ => None,
                 };
@@ -296,6 +309,18 @@ impl AnyActiveCall for ActiveCallEntity {
                 cx,
             )
         }))
+    }
+
+    fn peer_ids_with_video_tracks(&self, cx: &App) -> Vec<proto::PeerId> {
+        let Some(room) = self.0.read(cx).room() else {
+            return Vec::new();
+        };
+        room.read(cx)
+            .remote_participants()
+            .values()
+            .filter(|p| p.has_video_tracks())
+            .map(|p| p.peer_id)
+            .collect()
     }
 }
 

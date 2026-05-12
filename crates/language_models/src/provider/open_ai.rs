@@ -2,14 +2,14 @@ use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    RateLimiter, env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
+    OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
@@ -25,8 +25,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 pub use open_ai::completion::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, collect_tiktoken_messages, count_open_ai_tokens,
-    into_open_ai, into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = OPEN_AI_PROVIDER_ID;
@@ -183,6 +182,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     max_completion_tokens: model.max_completion_tokens,
                     reasoning_effort: model.reasoning_effort,
                     supports_chat_completions: model.capabilities.chat_completions,
+                    supports_images: model.capabilities.images,
                 },
             );
         }
@@ -327,13 +327,14 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointThreeCodex
             | Model::FivePointFour
             | Model::FivePointFourPro
+            | Model::FivePointFive
+            | Model::FivePointFivePro
             | Model::O1
             | Model::O3 => true,
-            Model::ThreePointFiveTurbo
-            | Model::Four
-            | Model::FourTurbo
-            | Model::O3Mini
-            | Model::Custom { .. } => false,
+            Model::ThreePointFiveTurbo | Model::Four | Model::FourTurbo | Model::O3Mini => false,
+            Model::Custom {
+                supports_images, ..
+            } => *supports_images,
         }
     }
 
@@ -350,7 +351,34 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.reasoning_effort().is_some()
+        self.model.uses_responses_api() && self.model.reasoning_effort().is_some()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        if !self.supports_thinking() {
+            return Vec::new();
+        }
+
+        let default_effort = self.model.reasoning_effort();
+        self.model
+            .supported_reasoning_efforts()
+            .iter()
+            .map(|effort| {
+                let (name, value) = match effort {
+                    open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                    open_ai::ReasoningEffort::Low => ("Low", "low"),
+                    open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
+                    open_ai::ReasoningEffort::High => ("High", "high"),
+                    open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                };
+
+                LanguageModelEffortLevel {
+                    name: name.into(),
+                    value: value.into(),
+                    is_default: Some(*effort) == default_effort,
+                }
+            })
+            .collect()
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -369,16 +397,6 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let model = self.model.clone();
-        cx.background_spawn(async move { count_open_ai_tokens(request, model) })
-            .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -393,22 +411,7 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        if self.model.supports_chat_completions() {
-            let request = into_open_ai(
-                request,
-                self.model.id(),
-                self.model.supports_parallel_tool_calls(),
-                self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
-                self.model.reasoning_effort(),
-            );
-            let completions = self.stream_completion(request, cx);
-            async move {
-                let mapper = OpenAiEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
-            }
-            .boxed()
-        } else {
+        if self.model.uses_responses_api() {
             let request = into_open_ai_response(
                 request,
                 self.model.id(),
@@ -420,6 +423,22 @@ impl LanguageModel for OpenAiLanguageModel {
             let completions = self.stream_response(request, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
+        } else {
+            let request = into_open_ai(
+                request,
+                self.model.id(),
+                self.model.supports_parallel_tool_calls(),
+                self.model.supports_prompt_cache_key(),
+                self.max_output_tokens(),
+                None,
+                false,
+            );
+            let completions = self.stream_completion(request, cx);
+            async move {
+                let mapper = OpenAiEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()

@@ -18,7 +18,7 @@ use crate::responses::{
     StreamEvent as ResponsesStreamEvent,
 };
 use crate::{
-    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, Model, ReasoningEffort,
+    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
     ResponseStreamEvent, ToolCall, ToolCallContent,
 };
 
@@ -29,13 +29,18 @@ pub fn into_open_ai(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
+    interleaved_reasoning: bool,
 ) -> crate::Request {
     let stream = !model_id.starts_with("o1-");
 
     let mut messages = Vec::new();
+    let mut current_reasoning: Option<String> = None;
     for message in request.messages {
         for content in message.content {
             match content {
+                MessageContent::Thinking { text, .. } if interleaved_reasoning => {
+                    current_reasoning.get_or_insert_default().push_str(&text);
+                }
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     let should_add = if message.role == Role::User {
                         // Including whitespace-only user messages can cause error with OpenAI compatible APIs
@@ -50,6 +55,15 @@ pub fn into_open_ai(
                             message.role,
                             &mut messages,
                         );
+                        if let Some(reasoning) = current_reasoning.take() {
+                            if let Some(crate::RequestMessage::Assistant {
+                                reasoning_content,
+                                ..
+                            }) = messages.last_mut()
+                            {
+                                *reasoning_content = Some(reasoning);
+                            }
+                        }
                     }
                 }
                 MessageContent::RedactedThinking(_) => {}
@@ -85,25 +99,26 @@ pub fn into_open_ai(
                         messages.push(crate::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_content: current_reasoning.take(),
                         });
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            vec![MessagePart::Text {
+                    let content: Vec<MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => MessagePart::Text {
                                 text: text.to_string(),
-                            }]
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            vec![MessagePart::Image {
+                            },
+                            LanguageModelToolResultContent::Image(image) => MessagePart::Image {
                                 image_url: ImageUrl {
                                     url: image.to_base64_url(),
                                     detail: None,
                                 },
-                            }]
-                        }
-                    };
+                            },
+                        })
+                        .collect();
 
                     messages.push(crate::RequestMessage::Tool {
                         content: content.into(),
@@ -175,8 +190,8 @@ pub fn into_open_ai_response(
         tool_choice,
         stop: _,
         temperature,
-        thinking_allowed: _,
-        thinking_effort: _,
+        thinking_allowed,
+        thinking_effort,
         speed: _,
     } = request;
 
@@ -218,10 +233,18 @@ pub fn into_open_ai_response(
         } else {
             None
         },
-        reasoning: reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
-            effort,
-            summary: Some(crate::responses::ReasoningSummaryMode::Auto),
-        }),
+        reasoning: if thinking_allowed {
+            thinking_effort
+                .as_deref()
+                .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
+                .or(reasoning_effort)
+                .map(|effort| crate::responses::ReasoningConfig {
+                    effort,
+                    summary: Some(crate::responses::ReasoningSummaryMode::Auto),
+                })
+        } else {
+            None
+        },
     }
 }
 
@@ -255,21 +278,34 @@ fn append_message_to_response_items(
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(&message.role, index, &mut content_parts, input_items);
+                let output = match tool_result.content.as_slice() {
+                    [LanguageModelToolResultContent::Text(text)] => {
+                        ResponseFunctionCallOutputContent::Text(text.to_string())
+                    }
+                    _ => {
+                        let parts = tool_result
+                            .content
+                            .into_iter()
+                            .map(|part| match part {
+                                LanguageModelToolResultContent::Text(text) => {
+                                    ResponseInputContent::Text {
+                                        text: text.to_string(),
+                                    }
+                                }
+                                LanguageModelToolResultContent::Image(image) => {
+                                    ResponseInputContent::Image {
+                                        image_url: image.to_base64_url(),
+                                    }
+                                }
+                            })
+                            .collect();
+                        ResponseFunctionCallOutputContent::List(parts)
+                    }
+                };
                 input_items.push(ResponseInputItem::FunctionCallOutput(
                     ResponseFunctionCallOutputItem {
                         call_id: tool_result.tool_use_id.to_string(),
-                        output: match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                ResponseFunctionCallOutputContent::Text(text.to_string())
-                            }
-                            LanguageModelToolResultContent::Image(image) => {
-                                ResponseFunctionCallOutputContent::List(vec![
-                                    ResponseInputContent::Image {
-                                        image_url: image.to_base64_url(),
-                                    },
-                                ])
-                            }
-                        },
+                        output,
                     },
                 ));
             }
@@ -362,6 +398,7 @@ fn add_message_content_part(
                 Role::Assistant => crate::RequestMessage::Assistant {
                     content: Some(crate::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
+                    reasoning_content: None,
                 },
                 Role::System => crate::RequestMessage::System {
                     content: crate::MessageContent::from(vec![new_part]),
@@ -432,12 +469,16 @@ impl OpenAiEventMapper {
                 for tool_call in tool_calls {
                     let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                    if let Some(tool_id) = tool_call.id.clone() {
+                    if let Some(tool_id) = tool_call.id.clone()
+                        && !tool_id.is_empty()
+                    {
                         entry.id = tool_id;
                     }
 
                     if let Some(function) = tool_call.function.as_ref() {
-                        if let Some(name) = function.name.clone() {
+                        if let Some(name) = function.name.clone()
+                            && !name.is_empty()
+                        {
                             entry.name = name;
                         }
 
@@ -802,68 +843,6 @@ fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
     }
 }
 
-pub fn collect_tiktoken_messages(
-    request: LanguageModelRequest,
-) -> Vec<tiktoken_rs::ChatCompletionRequestMessage> {
-    request
-        .messages
-        .into_iter()
-        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-            role: match message.role {
-                Role::User => "user".into(),
-                Role::Assistant => "assistant".into(),
-                Role::System => "system".into(),
-            },
-            content: Some(message.string_contents()),
-            name: None,
-            function_call: None,
-        })
-        .collect::<Vec<_>>()
-}
-
-/// Count tokens for an OpenAI model. This is synchronous; callers should spawn
-/// it on a background thread if needed.
-pub fn count_open_ai_tokens(request: LanguageModelRequest, model: Model) -> Result<u64> {
-    let messages = collect_tiktoken_messages(request);
-    match model {
-        Model::Custom { max_tokens, .. } => {
-            let model = if max_tokens >= 100_000 {
-                // If the max tokens is 100k or more, it likely uses the o200k_base tokenizer
-                "gpt-4o"
-            } else {
-                // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
-                // supported with this tiktoken method
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages)
-        }
-        // Currently supported by tiktoken_rs
-        // Sometimes tiktoken-rs is behind on model support. If that is the case, make a new branch
-        // arm with an override. We enumerate all supported models here so that we can check if new
-        // models are supported yet or not.
-        Model::ThreePointFiveTurbo
-        | Model::Four
-        | Model::FourTurbo
-        | Model::FourOmniMini
-        | Model::FourPointOneNano
-        | Model::O1
-        | Model::O3
-        | Model::O3Mini
-        | Model::Five
-        | Model::FiveCodex
-        | Model::FiveMini
-        | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-        // GPT-5.1, 5.2, 5.2-codex, 5.3-codex, 5.4, and 5.4-pro don't have dedicated tiktoken support; use gpt-5 tokenizer
-        Model::FivePointOne
-        | Model::FivePointTwo
-        | Model::FivePointTwoCodex
-        | Model::FivePointThreeCodex
-        | Model::FivePointFour
-        | Model::FivePointFourPro => tiktoken_rs::num_tokens_from_messages("gpt-5", &messages),
-    }
-    .map(|tokens| tokens as u64)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::responses::{
@@ -881,6 +860,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::{
+        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
+    };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -892,6 +874,17 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
+    }
+
+    fn map_completion_events(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        let mut mapper = OpenAiEventMapper::new();
+        let mut all_events = Vec::new();
+        for event in events {
+            all_events.extend(mapper.map_event(event));
+        }
+        all_events.into_iter().filter_map(|e| e.ok()).collect()
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
@@ -911,34 +904,6 @@ mod tests {
             call_id: Some("call_123".to_string()),
             arguments: args.map(|s| s.to_string()).unwrap_or_default(),
         })
-    }
-
-    #[test]
-    fn tiktoken_rs_support() {
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("message".into())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            tools: vec![],
-            tool_choice: None,
-            stop: vec![],
-            temperature: None,
-            thinking_allowed: true,
-            thinking_effort: None,
-            speed: None,
-        };
-
-        // Validate that all models are supported by tiktoken-rs
-        for model in <Model as strum::IntoEnumIterator>::iter() {
-            let count = count_open_ai_tokens(request.clone(), model).unwrap();
-            assert!(count > 0);
-        }
     }
 
     #[test]
@@ -1007,7 +972,7 @@ mod tests {
             tool_use_id: tool_call_id,
             tool_name: Arc::from("get_weather"),
             is_error: false,
-            content: LanguageModelToolResultContent::Text(Arc::from("Sunny")),
+            content: vec![LanguageModelToolResultContent::Text(Arc::from("Sunny"))],
             output: Some(json!({ "forecast": "Sunny" })),
         };
         let user_image = LanguageModelImage {
@@ -1061,8 +1026,8 @@ mod tests {
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
-            thinking_allowed: false,
-            thinking_effort: None,
+            thinking_allowed: true,
+            thinking_effort: Some("high".into()),
             speed: None,
         };
 
@@ -1126,10 +1091,44 @@ mod tests {
                 }
             ],
             "prompt_cache_key": "thread-123",
-            "reasoning": { "effort": "low", "summary": "auto" }
+            "reasoning": { "effort": "high", "summary": "auto" }
         });
 
         assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: Some("high".into()),
+            speed: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5",
+            true,
+            true,
+            None,
+            Some(ReasoningEffort::Medium),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized.get("reasoning"), None);
     }
 
     #[test]
@@ -1689,5 +1688,226 @@ mod tests {
                 .any(|e| matches!(e, LanguageModelCompletionEvent::Thinking { .. })),
             "OutputItemDone reasoning should not produce Thinking events"
         );
+    }
+
+    #[test]
+    fn into_open_ai_interleaved_reasoning() {
+        let tool_use_id = LanguageModelToolUseId::from("call-1");
+        let tool_input = json!({"query": "foo"});
+        let tool_arguments = serde_json::to_string(&tool_input).unwrap();
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: Arc::from("search"),
+            raw_input: tool_arguments.clone(),
+            input: tool_input,
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: tool_use_id,
+            tool_name: Arc::from("search"),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from("result"))],
+            output: None,
+        };
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("search for something".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Thinking {
+                            text: "I should search".into(),
+                            signature: None,
+                        },
+                        MessageContent::Text("Searching now.".into()),
+                        MessageContent::ToolUse(tool_use),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::ToolResult(tool_result)],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let result = into_open_ai(request.clone(), "model", false, false, None, None, true);
+        assert_eq!(
+            serde_json::to_value(&result).unwrap()["messages"],
+            json!([
+                {"role": "user", "content": "search for something"},
+                {
+                    "role": "assistant",
+                    "content": "Searching now.",
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}],
+                    "reasoning_content": "I should search"
+                },
+                {"role": "tool", "content": "result", "tool_call_id": "call-1"}
+            ])
+        );
+
+        let result = into_open_ai(request, "model", false, false, None, None, false);
+        assert_eq!(
+            serde_json::to_value(&result).unwrap()["messages"],
+            json!([
+                {"role": "user", "content": "search for something"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I should search"},
+                        {"type": "text", "text": "Searching now."}
+                    ],
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}]
+                },
+                {"role": "tool", "content": "result", "tool_call_id": "call-1"}
+            ])
+        );
+    }
+
+    #[test]
+    fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
+        // DashScope sends id="" and name="" in subsequent tool_calls delta
+        // chunks after the first chunk. OpenAiEventMapper must not overwrite
+        // the accumulated id and name with these empty strings.
+
+        let events = vec![
+            // First chunk: id and name are present
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("call_dashscope_test".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("list_directory".into()),
+                                arguments: Some("".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Subsequent chunks: DashScope sends id="" and name=""
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("".into()),
+                                arguments: Some("{\"path\": \"".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("".into()),
+                                arguments: Some("blog-scraper\"}".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Final chunk: finish_reason = "tool_calls"
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("tool_calls".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        let mapped = map_completion_events(events);
+
+        // Events emitted:
+        //   1. Partial ToolUse from chunk 1 (fix_json("") → "{}", parseable)
+        //   2. Partial ToolUse from chunk 3 (arguments fully assembled)
+        //   3. Complete ToolUse from finish_reason="tool_calls" drain
+        //   4. Stop(ToolUse)
+        assert_eq!(mapped.len(), 4);
+
+        // Verify the complete ToolUse event (from finish_reason drain)
+        // has the correct id, name, and accumulated arguments.
+        let complete_tool_use = mapped.iter().find_map(|event| {
+            if let LanguageModelCompletionEvent::ToolUse(tool_use) = event {
+                if tool_use.is_input_complete {
+                    return Some(tool_use);
+                }
+            }
+            None
+        });
+        assert!(
+            complete_tool_use.is_some(),
+            "expected a completed ToolUse event"
+        );
+        let tool_use = complete_tool_use.unwrap();
+        assert_eq!(
+            tool_use.id.to_string(),
+            "call_dashscope_test",
+            "id must survive empty-string overwrites"
+        );
+        assert_eq!(
+            tool_use.name.as_ref(),
+            "list_directory",
+            "name must survive empty-string overwrites"
+        );
+        assert_eq!(
+            tool_use.raw_input, "{\"path\": \"blog-scraper\"}",
+            "arguments should accumulate across chunks"
+        );
+
+        // Verify the Stop event
+        assert!(mapped.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
+            )
+        }));
     }
 }

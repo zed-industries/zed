@@ -19,6 +19,7 @@ use smol::fs;
 use std::{
     borrow::Cow,
     ffi::{OsStr, OsString},
+    future::Future,
     ops::Range,
     path::{Path, PathBuf},
     process::Output,
@@ -117,75 +118,79 @@ impl LspInstaller for GoLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         version: Option<String>,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
-        let go_version_output = util::command::new_command(&go)
-            .args(["version"])
-            .output()
-            .await
-            .context("failed to get go version via `go version` command`")?;
-        let go_version = parse_version_output(&go_version_output)?;
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        if let Some(version) = version {
-            let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
-            if let Ok(metadata) = fs::metadata(&binary_path).await
-                && metadata.is_file()
-            {
-                remove_matching(&container_dir, |entry| {
-                    entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
-                })
-                .await;
+        async move {
+            let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
+            let go_version_output = util::command::new_command(&go)
+                .args(["version"])
+                .output()
+                .await
+                .context("failed to get go version via `go version` command`")?;
+            let go_version = parse_version_output(&go_version_output)?;
 
-                return Ok(LanguageServerBinary {
-                    path: binary_path.to_path_buf(),
-                    arguments: server_binary_arguments(),
-                    env: None,
-                });
+            if let Some(version) = version {
+                let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
+                if let Ok(metadata) = fs::metadata(&binary_path).await
+                    && metadata.is_file()
+                {
+                    remove_matching(&container_dir, |entry| {
+                        entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
+                    })
+                    .await;
+
+                    return Ok(LanguageServerBinary {
+                        path: binary_path.to_path_buf(),
+                        arguments: server_binary_arguments(),
+                        env: None,
+                    });
+                }
+            } else if let Some(path) = get_cached_server_binary(&container_dir).await {
+                return Ok(path);
             }
-        } else if let Some(path) = get_cached_server_binary(&container_dir).await {
-            return Ok(path);
+
+            let gobin_dir = container_dir.join("gobin");
+            fs::create_dir_all(&gobin_dir).await?;
+            let install_output = util::command::new_command(go)
+                .env("GO111MODULE", "on")
+                .env("GOBIN", &gobin_dir)
+                .args(["install", "golang.org/x/tools/gopls@latest"])
+                .output()
+                .await?;
+
+            if !install_output.status.success() {
+                log::error!(
+                    "failed to install gopls via `go install`. stdout: {:?}, stderr: {:?}",
+                    String::from_utf8_lossy(&install_output.stdout),
+                    String::from_utf8_lossy(&install_output.stderr)
+                );
+                anyhow::bail!(
+                    "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
+                );
+            }
+
+            let installed_binary_path = gobin_dir.join(BINARY);
+            let version_output = util::command::new_command(&installed_binary_path)
+                .arg("version")
+                .output()
+                .await
+                .context("failed to run installed gopls binary")?;
+            let gopls_version = parse_version_output(&version_output)?;
+            let binary_path = container_dir.join(format!("gopls_{gopls_version}_go_{go_version}"));
+            fs::rename(&installed_binary_path, &binary_path).await?;
+
+            Ok(LanguageServerBinary {
+                path: binary_path.to_path_buf(),
+                arguments: server_binary_arguments(),
+                env: None,
+            })
         }
-
-        let gobin_dir = container_dir.join("gobin");
-        fs::create_dir_all(&gobin_dir).await?;
-        let install_output = util::command::new_command(go)
-            .env("GO111MODULE", "on")
-            .env("GOBIN", &gobin_dir)
-            .args(["install", "golang.org/x/tools/gopls@latest"])
-            .output()
-            .await?;
-
-        if !install_output.status.success() {
-            log::error!(
-                "failed to install gopls via `go install`. stdout: {:?}, stderr: {:?}",
-                String::from_utf8_lossy(&install_output.stdout),
-                String::from_utf8_lossy(&install_output.stderr)
-            );
-            anyhow::bail!(
-                "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
-            );
-        }
-
-        let installed_binary_path = gobin_dir.join(BINARY);
-        let version_output = util::command::new_command(&installed_binary_path)
-            .arg("version")
-            .output()
-            .await
-            .context("failed to run installed gopls binary")?;
-        let gopls_version = parse_version_output(&version_output)?;
-        let binary_path = container_dir.join(format!("gopls_{gopls_version}_go_{go_version}"));
-        fs::rename(&installed_binary_path, &binary_path).await?;
-
-        Ok(LanguageServerBinary {
-            path: binary_path.to_path_buf(),
-            arguments: server_binary_arguments(),
-            env: None,
-        })
     }
 
     async fn cached_server_binary(
@@ -224,6 +229,9 @@ impl LspAdapter for GoLspAdapter {
                 "functionTypeParameters": true,
                 "parameterNames": true,
                 "rangeVariableTypes": true
+            },
+            "codelenses": {
+                "test": true
             },
             "semanticTokens": semantic_tokens_enabled
         });
@@ -438,11 +446,92 @@ impl LspAdapter for GoLspAdapter {
         ))
     }
 
+    fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        if let "gopls.run_tests" = command_name {
+            let template = go_test_task_template(arguments.first()?)?;
+            Some(ClientCommand::ScheduleTask(template))
+        } else {
+            None
+        }
+    }
+
     fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)\n\s*").expect("Failed to create REGEX"));
         Some(REGEX.replace_all(message, "\n\n").to_string())
     }
+}
+
+fn json_string_array(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> {
+    let tests = json_string_array(arg, "Tests");
+    let benchmarks = json_string_array(arg, "Benchmarks");
+    if tests.is_empty() && benchmarks.is_empty() {
+        return None;
+    }
+
+    let mut go_args = vec!["test".to_string(), "-test.fullpath=true".to_string()];
+
+    if tests.is_empty() {
+        go_args.push("-benchmem".to_string());
+        go_args.push("-run=^$".to_string());
+    } else {
+        go_args.push("-timeout".to_string());
+        go_args.push("30s".to_string());
+        go_args.push("-run".to_string());
+        if tests.len() == 1 {
+            go_args.push(format!("^{}$", tests[0]));
+        } else {
+            go_args.push(format!("^({})$", tests.join("|")));
+        }
+    }
+
+    if !benchmarks.is_empty() {
+        go_args.push("-bench".to_string());
+        if benchmarks.len() == 1 {
+            go_args.push(format!("^{}$", benchmarks[0]));
+        } else {
+            go_args.push(format!("^({})$", benchmarks.join("|")));
+        }
+    }
+
+    go_args.push(".".to_string());
+
+    let label = if !tests.is_empty() {
+        format!("go test {}", tests.join(", "))
+    } else {
+        format!("go bench {}", benchmarks.join(", "))
+    };
+
+    let cwd = arg
+        .get("URI")
+        .and_then(|v| v.as_str())
+        .and_then(|uri| uri.strip_prefix("file://"))
+        .and_then(|path| std::path::Path::new(path).parent())
+        .map(|p| p.to_string_lossy().into_owned());
+
+    Some(task::TaskTemplate {
+        label,
+        command: "go".to_string(),
+        args: go_args,
+        cwd,
+        ..task::TaskTemplate::default()
+    })
 }
 
 fn parse_version_output(output: &Output) -> Result<&str> {

@@ -26,6 +26,7 @@ use alacritty_terminal::{
     },
 };
 use anyhow::{Context as _, Result, bail};
+use futures_lite::future::yield_now;
 use log::trace;
 
 use futures::{
@@ -39,12 +40,12 @@ use mappings::mouse::{
     scroll_report,
 };
 
+use async_channel::{Receiver, Sender};
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, SpawnInTerminal};
 use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
@@ -83,6 +84,8 @@ actions!(
         Copy,
         /// Pastes from the clipboard.
         Paste,
+        /// Pastes the text from the clipboard.
+        PasteText,
         /// Shows the character palette for special characters.
         ShowCharacterPalette,
         /// Searches for text in the terminal.
@@ -736,7 +739,7 @@ impl TerminalBuilder {
                     }
 
                     if events.is_empty() && !wakeup {
-                        smol::future::yield_now().await;
+                        yield_now().await;
                         break 'outer;
                     }
 
@@ -749,7 +752,7 @@ impl TerminalBuilder {
                             this.process_event(event, cx);
                         }
                     })?;
-                    smol::future::yield_now().await;
+                    yield_now().await;
                 }
             }
             anyhow::Ok(())
@@ -1439,8 +1442,27 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
-        if self.last_content.terminal_bounds != new_bounds {
-            self.events.push_back(InternalEvent::Resize(new_bounds))
+        let mut new_bounds = new_bounds;
+        new_bounds.bounds.size.height = cmp::max(new_bounds.line_height, new_bounds.height());
+        new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
+
+        let old_bounds = self.last_content.terminal_bounds;
+        self.last_content.terminal_bounds = new_bounds;
+
+        // Avoid spamming PTY resizes on pixel-level size changes (e.g. while dragging edges),
+        // since those can generate excessive SIGWINCH/reflows and cause visible flicker.
+        let requires_resize = old_bounds.num_lines() != new_bounds.num_lines()
+            || old_bounds.num_columns() != new_bounds.num_columns()
+            || old_bounds.cell_width != new_bounds.cell_width
+            || old_bounds.line_height != new_bounds.line_height;
+
+        if !requires_resize {
+            return;
+        }
+
+        match self.events.back_mut() {
+            Some(InternalEvent::Resize(pending_bounds)) => *pending_bounds = new_bounds,
+            _ => self.events.push_back(InternalEvent::Resize(new_bounds)),
         }
     }
 
@@ -2424,6 +2446,7 @@ impl Drop for Terminal {
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
             pty_tx.0.send(Msg::Shutdown).ok();
+            info.terminate_child_process();
 
             let timer = self.background_executor.timer(Duration::from_millis(100));
             self.background_executor
@@ -2564,6 +2587,7 @@ mod tests {
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
+    use async_channel::Receiver;
     use collections::HashMap;
     use gpui::{
         Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
@@ -2571,7 +2595,6 @@ mod tests {
     };
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
-    use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
 
     #[cfg(not(target_os = "windows"))]
@@ -2590,7 +2613,7 @@ mod tests {
         command: &str,
         args: &[&str],
     ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
             ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
@@ -2743,7 +2766,7 @@ mod tests {
 
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2769,7 +2792,7 @@ mod tests {
         // Build an empty command, which will result in a tty shell spawned.
         let terminal = cx.new(|cx| builder.subscribe(cx));
 
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
         cx.update(|cx| {
             cx.subscribe(&terminal, move |_, e, _| {
                 event_tx.send_blocking(e.clone()).unwrap();
@@ -2840,7 +2863,7 @@ mod tests {
             .unwrap();
         let terminal = cx.new(|cx| builder.subscribe(cx));
 
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
         cx.update(|cx| {
             cx.subscribe(&terminal, move |_, e, _| {
                 event_tx.send_blocking(e.clone()).unwrap();
@@ -2875,7 +2898,7 @@ mod tests {
     async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let builder = cx
@@ -3032,6 +3055,51 @@ mod tests {
             .c,
             cells[9][9]
         );
+    }
+
+    #[gpui::test]
+    async fn test_set_size_coalesces_pixel_only_changes(cx: &mut TestAppContext) {
+        let builder = cx.update(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::Block,
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+        });
+        let mut terminal = builder.terminal;
+
+        let base_bounds = TerminalBounds {
+            cell_width: Pixels::from(10.),
+            line_height: Pixels::from(10.),
+            bounds: bounds(
+                Point::default(),
+                size(Pixels::from(100.), Pixels::from(100.)),
+            ),
+        };
+
+        terminal.set_size(base_bounds);
+        terminal.events.clear();
+        assert_eq!(terminal.last_content.terminal_bounds, base_bounds);
+
+        // Pixel-only change: height grows by 1px but still the same number of rows/cols.
+        let mut pixel_changed = base_bounds;
+        pixel_changed.bounds.size.height = Pixels::from(101.);
+        terminal.set_size(pixel_changed);
+        assert!(terminal.events.is_empty());
+        assert_eq!(terminal.last_content.terminal_bounds, pixel_changed);
+
+        // Grid change: height increases enough to add a row.
+        let mut grid_changed = base_bounds;
+        grid_changed.bounds.size.height = Pixels::from(110.);
+        terminal.set_size(grid_changed);
+        assert!(matches!(
+            terminal.events.back(),
+            Some(InternalEvent::Resize(_))
+        ));
     }
 
     fn get_cells(size: TerminalBounds, rng: &mut StdRng) -> Vec<Vec<char>> {
@@ -3273,6 +3341,27 @@ mod tests {
         });
     }
 
+    /// Polls the terminal content until `expected` appears, or panics after ~1s.
+    /// The PTY IO thread writes into the terminal grid independently of the
+    /// GPUI executor, so we need a real-time polling loop to synchronize.
+    async fn assert_content_eventually(
+        terminal: &Entity<Terminal>,
+        expected: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let mut content = String::new();
+        for _ in 0..100 {
+            content = terminal.update(cx, |term, _| term.get_content());
+            if content.contains(expected) {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        panic!("Expected terminal content to contain {expected:?}, got: {content}");
+    }
+
     /// Test that kill_active_task properly terminates both the foreground process
     /// and the shell, allowing wait_for_completed_task to complete and output to be captured.
     #[cfg(unix)]
@@ -3285,10 +3374,7 @@ mod tests {
         let (terminal, completion_rx) =
             build_test_terminal(cx, "echo", &["test_output_before_kill; sleep 60"]).await;
 
-        // Wait a bit for the echo to execute and produce output
-        cx.background_executor
-            .timer(Duration::from_millis(200))
-            .await;
+        assert_content_eventually(&terminal, "test_output_before_kill", cx).await;
 
         // Kill the active task
         terminal.update(cx, |term, _cx| {
@@ -3331,6 +3417,8 @@ mod tests {
             .await
             .expect("Should receive exit status");
         assert_eq!(exit_status, Some(ExitStatus::default()));
+
+        assert_content_eventually(&terminal, "done", cx).await;
 
         // Now try to kill - should be a no-op since task already completed
         terminal.update(cx, |term, _cx| {

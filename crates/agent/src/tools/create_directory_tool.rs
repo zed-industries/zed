@@ -1,8 +1,8 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
-    detect_symlink_escape, sensitive_settings_kind,
+    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
+    sensitive_settings_kind,
 };
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -14,7 +14,8 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_path,
 };
 use std::path::Path;
 
@@ -52,8 +53,8 @@ impl AgentTool for CreateDirectoryTool {
 
     const NAME: &'static str = "create_directory";
 
-    fn kind() -> ToolKind {
-        ToolKind::Read
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Edit
     }
 
     fn initial_title(
@@ -76,10 +77,7 @@ impl AgentTool for CreateDirectoryTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let decision = cx.update(|cx| {
                 decide_permission_for_path(Self::NAME, &input.path, AgentSettings::get_global(cx))
             });
@@ -126,16 +124,15 @@ impl AgentTool for CreateDirectoryTool {
                     ToolPermissionDecision::Allow => None,
                     ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
                         let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
-                        let title = match &sensitive_kind {
-                            Some(SensitiveSettingsKind::Local) => {
-                                format!("{title} (local settings)")
-                            }
-                            Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                            None => title,
-                        };
                         let context =
                             crate::ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]);
-                        event_stream.authorize(title, context, cx)
+                        authorize_with_sensitive_settings(
+                            sensitive_kind,
+                            context,
+                            &title,
+                            &event_stream,
+                            cx,
+                        )
                     })),
                     ToolPermissionDecision::Deny(_) => None,
                 }
@@ -169,7 +166,6 @@ impl AgentTool for CreateDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};

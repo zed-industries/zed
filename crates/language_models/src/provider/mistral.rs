@@ -3,7 +3,7 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -327,32 +327,6 @@ impl LanguageModel for MistralLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        cx.background_spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -416,14 +390,19 @@ pub fn into_mistral(
                             // Tool use is not supported in User messages for Mistral
                         }
                         MessageContent::ToolResult(tool_result) => {
-                            let tool_content = match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => text.to_string(),
-                                LanguageModelToolResultContent::Image(_) => {
-                                    "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                            let mut text_parts: Vec<String> = Vec::new();
+                            for part in &tool_result.content {
+                                match part {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        text_parts.push(text.to_string());
+                                    }
+                                    LanguageModelToolResultContent::Image(_) => {
+                                        text_parts.push("[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string());
+                                    }
                                 }
-                            };
+                            }
                             messages.push(mistral::RequestMessage::Tool {
-                                content: tool_content,
+                                content: text_parts.join("\n"),
                                 tool_call_id: tool_result.tool_use_id.to_string(),
                             });
                         }
@@ -652,6 +631,7 @@ impl MistralEventMapper {
 
                 if let Some(tool_id) = tool_call.id.clone()
                     && !tool_id.is_empty()
+                    && tool_id != "null"
                 {
                     entry.id = tool_id;
                 }
@@ -905,6 +885,69 @@ mod tests {
     use super::*;
     use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 
+    fn tool_call_chunk(
+        id: Option<&str>,
+        name: Option<&str>,
+        arguments: Option<&str>,
+        finish_reason: Option<&str>,
+    ) -> mistral::StreamResponse {
+        mistral::StreamResponse {
+            id: "resp".into(),
+            object: "chat.completion.chunk".into(),
+            created: 0,
+            model: "test".into(),
+            choices: vec![mistral::StreamChoice {
+                index: 0,
+                delta: mistral::StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: if finish_reason.is_some() {
+                        None
+                    } else {
+                        Some(vec![mistral::ToolCallChunk {
+                            index: 0,
+                            id: id.map(Into::into),
+                            function: Some(mistral::FunctionChunk {
+                                name: name.map(Into::into),
+                                arguments: arguments.map(Into::into),
+                            }),
+                        }])
+                    },
+                },
+                finish_reason: finish_reason.map(Into::into),
+            }],
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn test_streaming_tool_call_ignores_null_id() {
+        // Mistral's streaming API sometimes sends `"id": "null"` in continuation chunks.
+        let mut mapper = MistralEventMapper::new();
+
+        mapper.map_event(tool_call_chunk(
+            Some("real_id_123"),
+            Some("read_file"),
+            Some("{\"path\":"),
+            None,
+        ));
+        mapper.map_event(tool_call_chunk(
+            Some("null"),
+            None,
+            Some("\"a.txt\"}"),
+            None,
+        ));
+        let events = mapper.map_event(tool_call_chunk(None, None, None, Some("tool_calls")));
+
+        let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] else {
+            panic!("Expected first event to be ToolUse, got: {:?}", events[0]);
+        };
+
+        assert_eq!(tool_use.id.to_string(), "real_id_123");
+        assert_eq!(tool_use.name.as_ref(), "read_file");
+        assert_eq!(tool_use.input, serde_json::json!({"path": "a.txt"}));
+    }
+
     #[test]
     fn test_into_mistral_basic_conversion() {
         let request = LanguageModelRequest {
@@ -978,7 +1021,7 @@ mod tests {
             speed: None,
         };
 
-        let (mistral_request, _) = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
+        let (mistral_request, _) = into_mistral(request, mistral::Model::MistralSmallLatest, None);
 
         assert_eq!(mistral_request.messages.len(), 1);
         assert!(matches!(
