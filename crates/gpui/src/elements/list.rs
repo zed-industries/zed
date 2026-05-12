@@ -709,8 +709,7 @@ impl ListState {
     /// Returns the current scroll offset adjusted for the scrollbar.
     ///
     /// The returned offset has a negative `y` component representing
-    /// how far the content has scrolled, consistent with the GPUI
-    /// scroll convention used by [`ScrollableHandle::offset`].
+    /// how far the content has scrolled.
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = &self.0.borrow();
 
@@ -1202,17 +1201,27 @@ impl StateInner {
         let height = bounds.size.height;
 
         let padding = self.last_padding.unwrap_or_default();
-        // Use the frozen content height during scrollbar drag so that the
-        // scroll range stays consistent with `max_offset_for_scrollbar()`,
-        // which also uses `max_scroll_offset()` (frozen during drag).
-        // Previously a `drag_offset` (live − frozen) was subtracted, but
-        // when content grows during a drag the correction overshoots and
-        // inverts the scroll position.
+        // Scrollbar drag positions are computed from the content height
+        // captured at drag start, so map them back using the same height.
         let content_height = self
             .scrollbar_drag_start_height
             .unwrap_or_else(|| self.items.summary().height);
         let scroll_max = (content_height + padding.top + padding.bottom - height).max(px(0.));
         let new_scroll_top = (-point.y).max(px(0.)).min(scroll_max);
+
+        // If content grew during the drag, the frozen bottom is below the
+        // live bottom. Treat dragging to the frozen end as resuming tail follow.
+        let dragged_to_end =
+            scroll_max > px(0.) && new_scroll_top >= (scroll_max - px(1.0)).max(px(0.));
+        if dragged_to_end && matches!(self.follow_state, FollowState::Tail { .. }) {
+            self.follow_state = FollowState::Tail { is_following: true };
+            let item_count = self.items.summary().count;
+            self.logical_scroll_top = Some(ListOffset {
+                item_ix: item_count,
+                offset_in_item: px(0.),
+            });
+            return;
+        }
 
         self.follow_state.stop_following();
 
@@ -1918,7 +1927,6 @@ mod test {
         assert!(state.is_following_tail());
 
         // Simulate the scrollbar moving the viewport to the middle.
-        // The scrollbar passes negative offsets (GPUI scroll convention).
         state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
 
         let offset = state.logical_scroll_top();
@@ -1942,44 +1950,64 @@ mod test {
 
     #[gpui::test]
     fn test_scrollbar_drag_with_growing_content(cx: &mut TestAppContext) {
-        // Regression test: when content grows while the scrollbar is being
-        // dragged, the scroll position must remain correct. Previously the
-        // `drag_offset` correction and `.abs()` call could invert the
-        // position, snapping the viewport to the top instead of following
-        // the thumb.
         let cx = cx.add_empty_window();
 
+        let last_item_height = Rc::new(Cell::new(50usize));
         let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
 
-        struct TestView(ListState);
+        struct TestView {
+            state: ListState,
+            last_item_height: Rc<Cell<usize>>,
+        }
         impl Render for TestView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                list(self.0.clone(), |_, _, _| {
-                    div().h(px(50.)).w_full().into_any()
+                let last_item_height = self.last_item_height.clone();
+                list(self.state.clone(), move |index, _, _| {
+                    let height = if index == 9 {
+                        last_item_height.get()
+                    } else {
+                        50
+                    };
+                    div().h(px(height as f32)).w_full().into_any()
                 })
                 .w_full()
                 .h_full()
             }
         }
 
-        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+                last_item_height: last_item_height.clone(),
+            })
+        });
 
-        // 10 items × 50px = 500px content, 200px viewport → scroll_max = 300px.
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.clone().into_any_element()
         });
 
-        // Begin scrollbar drag (freezes content height at 500px).
         state.scrollbar_drag_started();
 
-        // Simulate content growing (e.g. streaming) while dragging.
-        state.splice(10..10, 10);
-
-        // Drag thumb to 50% of the frozen range → should land at 150px.
-        // scroll_max based on frozen height = (500 + 0 − 200) = 300px.
-        // -(-150) = 150 → item_ix 3, offset 0.
         state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
+        let scrollbar_offset_before_growth = state.scroll_px_offset_for_scrollbar();
 
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 3);
+        assert_eq!(offset.offset_in_item, px(0.));
+
+        last_item_height.set(550);
+        state.remeasure_items(9..10);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        assert_eq!(state.max_offset_for_scrollbar().y, px(300.));
+        assert_eq!(
+            state.scroll_px_offset_for_scrollbar(),
+            scrollbar_offset_before_growth
+        );
+
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 3);
         assert_eq!(offset.offset_in_item, px(0.));
@@ -2222,7 +2250,6 @@ mod test {
         assert!(state.is_following_tail());
 
         // Drag the scrollbar up to the middle — follow_tail should suspend.
-        // The scrollbar passes negative offsets (GPUI scroll convention).
         state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
         assert!(!state.is_following_tail());
 
@@ -2235,6 +2262,55 @@ mod test {
         assert!(
             state.is_following_tail(),
             "follow_tail should re-engage after scrolling back to the bottom via the scrollbar"
+        );
+    }
+
+    #[gpui::test]
+    fn test_follow_tail_reengages_after_scrollbar_drag_to_bottom_while_growing(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        state.set_follow_mode(FollowMode::Tail);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert!(state.is_following_tail());
+
+        state.scrollbar_drag_started();
+
+        state.splice(10..10, 10);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        state.set_offset_from_scrollbar(point(px(0.), px(-300.)));
+        state.scrollbar_drag_ended();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+
+        assert!(
+            state.is_following_tail(),
+            "follow_tail should re-engage when the user drags the scrollbar to \
+             the bottom of its track, even when content has grown during the drag \
+             (so frozen_bottom < live_bottom)"
         );
     }
 }
