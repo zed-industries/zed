@@ -165,30 +165,58 @@ fn expand_changed_word_selection(
             .map(|(c, _)| !classifier.is_whitespace(c))
             .unwrap_or_default()
     };
-    if (times.is_none() || times.unwrap() == 1) && is_in_word() {
-        let next_char = map
-            .buffer_chars_at(
-                motion::next_char(map, selection.end, false).to_offset(map, Bias::Left),
-            )
-            .next();
-        match next_char {
-            Some((' ', _)) => selection.end = motion::next_char(map, selection.end, false),
-            _ => {
-                if use_subword {
-                    selection.end =
-                        motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
-                } else {
-                    selection.end = motion::next_word_end(
-                        map,
-                        selection.end,
-                        ignore_punctuation,
-                        1,
-                        false,
-                        always_advance,
-                    );
+    if is_in_word() {
+        let times = times.unwrap_or(1);
+        if times == 1 {
+            let next_char = map
+                .buffer_chars_at(
+                    motion::next_char(map, selection.end, false).to_offset(map, Bias::Left),
+                )
+                .next();
+            match next_char {
+                Some((' ', _)) => selection.end = motion::next_char(map, selection.end, false),
+                _ => {
+                    if use_subword {
+                        selection.end = motion::next_subword_end(
+                            map,
+                            selection.end,
+                            ignore_punctuation,
+                            1,
+                            false,
+                        );
+                    } else {
+                        selection.end = motion::next_word_end(
+                            map,
+                            selection.end,
+                            ignore_punctuation,
+                            1,
+                            false,
+                            always_advance,
+                        );
+                    }
+                    selection.end = motion::next_char(map, selection.end, false);
                 }
-                selection.end = motion::next_char(map, selection.end, false);
             }
+        } else {
+            if use_subword {
+                selection.end = motion::next_subword_end(
+                    map,
+                    selection.end,
+                    ignore_punctuation,
+                    times,
+                    false,
+                );
+            } else {
+                selection.end = motion::next_word_end(
+                    map,
+                    selection.end,
+                    ignore_punctuation,
+                    times,
+                    false,
+                    true,
+                );
+            }
+            selection.end = motion::next_char(map, selection.end, false);
         }
         Some(MotionKind::Inclusive)
     } else {
@@ -287,6 +315,22 @@ mod test {
         // on last character of word, `cw` doesn't eat subsequent punctuation
         // see https://github.com/zed-industries/zed/issues/35269
         cx.simulate("c w", "tesˇt-test").await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_change_w_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.assert_binding("c 1 w", "ˇone two three", Mode::Normal, "ˇ two three", Mode::Insert);
+        cx.assert_binding("c 2 w", "ˇone two three", Mode::Normal, "ˇ three", Mode::Insert);
+        cx.assert_binding("c 2 w", "oˇne two three", Mode::Normal, "oˇ three", Mode::Insert);
+        cx.assert_binding("c 3 w", "ˇone two three four", Mode::Normal, "ˇ four", Mode::Insert);
+        cx.assert_binding(
+            "c 2 shift-w",
+            "ˇone two-three four",
+            Mode::Normal,
+            "ˇ four",
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
