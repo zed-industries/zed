@@ -77,9 +77,20 @@ pub struct ResponseReasoningInputItem {
     pub id: Option<String>,
     #[serde(default)]
     pub summary: Vec<ResponseReasoningSummaryPart>,
-    pub encrypted_content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+}
+
+impl ResponseReasoningInputItem {
+    pub fn has_encrypted_content(&self) -> bool {
+        self.encrypted_content
+            .as_deref()
+            .is_some_and(|encrypted_content| !encrypted_content.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -357,6 +368,8 @@ pub struct ResponseReasoningItem {
     pub id: Option<String>,
     #[serde(default)]
     pub summary: Vec<ReasoningSummaryPart>,
+    #[serde(default)]
+    pub content: Vec<Value>,
     #[serde(default)]
     pub encrypted_content: Option<String>,
     #[serde(default)]

@@ -1060,7 +1060,17 @@ impl OpenAiResponseEventMapper {
         if self.reasoning_items.contains(&reasoning_item) {
             return Vec::new();
         }
-        self.reasoning_items.push(reasoning_item);
+
+        if let Some(id) = reasoning_item.id.as_ref()
+            && let Some(existing_reasoning_item) = self
+                .reasoning_items
+                .iter_mut()
+                .find(|existing_reasoning_item| existing_reasoning_item.id.as_ref() == Some(id))
+        {
+            *existing_reasoning_item = reasoning_item;
+        } else {
+            self.reasoning_items.push(reasoning_item);
+        }
 
         self.emit_response_message_metadata()
     }
@@ -1226,8 +1236,11 @@ fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
 fn response_reasoning_input_item_from_output(
     reasoning: &ResponseReasoningItem,
 ) -> Option<ResponseReasoningInputItem> {
-    let encrypted_content = reasoning.encrypted_content.clone()?;
-    if encrypted_content.is_empty() {
+    let encrypted_content = reasoning.encrypted_content.clone();
+    if !encrypted_content
+        .as_deref()
+        .is_some_and(|encrypted_content| !encrypted_content.is_empty())
+    {
         return None;
     }
 
@@ -1245,6 +1258,7 @@ fn response_reasoning_input_item_from_output(
     Some(ResponseReasoningInputItem {
         id: reasoning.id.clone(),
         summary,
+        content: reasoning.content.clone(),
         encrypted_content,
         status: reasoning.status.clone(),
     })
@@ -1313,6 +1327,21 @@ mod tests {
             call_id: Some("call_123".to_string()),
             arguments: args.map(|s| s.to_string()).unwrap_or_default(),
         })
+    }
+
+    fn response_reasoning_item(
+        id: &str,
+        summary: Vec<ReasoningSummaryPart>,
+        encrypted_content: Option<&str>,
+        status: Option<String>,
+    ) -> ResponseReasoningItem {
+        ResponseReasoningItem {
+            id: Some(id.to_string()),
+            summary,
+            content: Vec::new(),
+            encrypted_content: encrypted_content.map(str::to_string),
+            status,
+        }
     }
 
     #[test]
@@ -1571,8 +1600,17 @@ mod tests {
                                 "text": "Checked what information is needed."
                             }
                         ],
+                        "content": [
+                            {
+                                "type": "reasoning_text",
+                                "text": "Internal reasoning text."
+                            }
+                        ],
                         "encrypted_content": "ENC",
-                        "status": "completed"
+                        "status": "completed",
+                        "metadata": {
+                            "source": "responses"
+                        }
                     }
                 ])),
             }],
@@ -1608,8 +1646,17 @@ mod tests {
                             "text": "Checked what information is needed."
                         }
                     ],
+                    "content": [
+                        {
+                            "type": "reasoning_text",
+                            "text": "Internal reasoning text."
+                        }
+                    ],
                     "encrypted_content": "ENC",
-                    "status": "completed"
+                    "status": "completed",
+                    "metadata": {
+                        "source": "responses"
+                    }
                 },
                 {
                     "type": "function_call",
@@ -1624,6 +1671,63 @@ mod tests {
             json!(["reasoning.encrypted_content"])
         );
         assert_eq!(serialized.get("reasoning"), None);
+    }
+
+    #[test]
+    fn into_open_ai_response_does_not_replay_reasoning_without_encrypted_content() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("Done.".into())],
+                cache: false,
+                reasoning_details: Some(json!([
+                    {
+                        "type": "reasoning",
+                        "id": "rs_123",
+                        "summary": [],
+                        "status": "completed"
+                    },
+                    {
+                        "type": "reasoning",
+                        "id": "rs_456",
+                        "summary": [],
+                        "encrypted_content": "",
+                        "status": "completed"
+                    }
+                ])),
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let response =
+            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let serialized = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Done.",
+                            "annotations": []
+                        }
+                    ]
+                }
+            ])
+        );
     }
 
     #[test]
@@ -2497,12 +2601,12 @@ mod tests {
             ResponsesStreamEvent::OutputItemAdded {
                 output_index: 0,
                 sequence_number: None,
-                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                    id: Some("rs_123".into()),
-                    summary: vec![],
-                    encrypted_content: None,
-                    status: None,
-                }),
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_123",
+                    vec![],
+                    None,
+                    None,
+                )),
             },
             ResponsesStreamEvent::ReasoningSummaryPartAdded {
                 item_id: "rs_123".into(),
@@ -2552,9 +2656,9 @@ mod tests {
             ResponsesStreamEvent::OutputItemDone {
                 output_index: 0,
                 sequence_number: None,
-                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                    id: Some("rs_123".into()),
-                    summary: vec![
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_123",
+                    vec![
                         ReasoningSummaryPart::SummaryText {
                             text: "Thinking about the answer".into(),
                         },
@@ -2562,9 +2666,9 @@ mod tests {
                             text: "Second part".into(),
                         },
                     ],
-                    encrypted_content: None,
-                    status: None,
-                }),
+                    None,
+                    None,
+                )),
             },
             ResponsesStreamEvent::OutputItemAdded {
                 output_index: 1,
@@ -2619,24 +2723,24 @@ mod tests {
             ResponsesStreamEvent::OutputItemAdded {
                 output_index: 0,
                 sequence_number: None,
-                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                    id: Some("rs_789".into()),
-                    summary: vec![],
-                    encrypted_content: None,
-                    status: None,
-                }),
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_789",
+                    vec![],
+                    None,
+                    None,
+                )),
             },
             ResponsesStreamEvent::OutputItemDone {
                 output_index: 0,
                 sequence_number: None,
-                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                    id: Some("rs_789".into()),
-                    summary: vec![ReasoningSummaryPart::SummaryText {
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_789",
+                    vec![ReasoningSummaryPart::SummaryText {
                         text: "Summary without deltas".into(),
                     }],
-                    encrypted_content: None,
-                    status: None,
-                }),
+                    None,
+                    None,
+                )),
             },
             ResponsesStreamEvent::Completed {
                 response: ResponseSummary::default(),
@@ -2654,18 +2758,24 @@ mod tests {
 
     #[test]
     fn responses_stream_preserves_encrypted_reasoning_details() {
+        let mut reasoning_item = response_reasoning_item(
+            "rs_123",
+            vec![ReasoningSummaryPart::SummaryText {
+                text: "Checked what information is needed.".into(),
+            }],
+            Some("ENC"),
+            Some("completed".into()),
+        );
+        reasoning_item.content = vec![json!({
+            "type": "reasoning_text",
+            "text": "Internal reasoning text."
+        })];
+
         let events = vec![
             ResponsesStreamEvent::OutputItemDone {
                 output_index: 0,
                 sequence_number: None,
-                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                    id: Some("rs_123".into()),
-                    summary: vec![ReasoningSummaryPart::SummaryText {
-                        text: "Checked what information is needed.".into(),
-                    }],
-                    encrypted_content: Some("ENC".into()),
-                    status: Some("completed".into()),
-                }),
+                item: ResponseOutputItem::Reasoning(reasoning_item),
             },
             ResponsesStreamEvent::Completed {
                 response: ResponseSummary::default(),
@@ -2693,7 +2803,72 @@ mod tests {
                             "text": "Checked what information is needed."
                         }
                     ],
+                    "content": [
+                        {
+                            "type": "reasoning_text",
+                            "text": "Internal reasoning text."
+                        }
+                    ],
                     "encrypted_content": "ENC",
+                    "status": "completed",
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_replaces_reasoning_details_with_same_id() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_123",
+                    Vec::new(),
+                    Some("ENC_OLD"),
+                    Some("in_progress".into()),
+                )),
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_123",
+                    vec![ReasoningSummaryPart::SummaryText {
+                        text: "Finished reasoning.".into(),
+                    }],
+                    Some("ENC_NEW"),
+                    Some("completed".into()),
+                )),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let details = mapped
+            .iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(details) => Some(details),
+                _ => None,
+            })
+            .next_back()
+            .expect("reasoning details");
+
+        assert_eq!(
+            details,
+            &json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "Finished reasoning."
+                        }
+                    ],
+                    "encrypted_content": "ENC_NEW",
                     "status": "completed"
                 }
             ])
@@ -2706,12 +2881,12 @@ mod tests {
             ResponsesStreamEvent::OutputItemDone {
                 output_index: 0,
                 sequence_number: None,
-                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                    id: Some("rs_123".into()),
-                    summary: Vec::new(),
-                    encrypted_content: Some("ENC".into()),
-                    status: Some("completed".into()),
-                }),
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_123",
+                    Vec::new(),
+                    Some("ENC"),
+                    Some("completed".into()),
+                )),
             },
             ResponsesStreamEvent::OutputItemAdded {
                 output_index: 1,
@@ -2786,12 +2961,12 @@ mod tests {
             ResponsesStreamEvent::OutputItemDone {
                 output_index: 1,
                 sequence_number: None,
-                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                    id: Some("rs_123".into()),
-                    summary: Vec::new(),
-                    encrypted_content: Some("ENC".into()),
-                    status: Some("completed".into()),
-                }),
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_123",
+                    Vec::new(),
+                    Some("ENC"),
+                    Some("completed".into()),
+                )),
             },
             ResponsesStreamEvent::Completed {
                 response: ResponseSummary::default(),
