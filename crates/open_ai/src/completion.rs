@@ -823,7 +823,10 @@ impl OpenAiResponseEventMapper {
                 self.handle_completion(response, StopReason::EndTurn)
             }
             ResponsesStreamEvent::Incomplete { response } => {
-                let reason = response_incomplete_reason(&response);
+                let reason = response
+                    .incomplete_details
+                    .as_ref()
+                    .and_then(|details| details.reason.as_deref());
                 let mut stop_reason = match reason {
                     Some("max_tokens" | "max_output_tokens") => StopReason::MaxTokens,
                     Some("content_filter") => {
@@ -859,22 +862,8 @@ impl OpenAiResponseEventMapper {
                 let message = response_failure_message(&response);
                 vec![Err(LanguageModelCompletionError::Other(anyhow!(message)))]
             }
-            ResponsesStreamEvent::Error { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_error_message(&error)
-                )))]
-            }
-            ResponsesStreamEvent::GenericError {
-                code,
-                message,
-                param,
-                sequence_number: _,
-            } => {
-                let error = ResponseError {
-                    code,
-                    message,
-                    param,
-                };
+            ResponsesStreamEvent::Error { error }
+            | ResponsesStreamEvent::GenericError { error } => {
                 vec![Err(LanguageModelCompletionError::Other(anyhow!(
                     response_error_message(&error)
                 )))]
@@ -1081,31 +1070,9 @@ fn normalize_response_message_phase(phase: &str) -> Option<&'static str> {
     }
 }
 
-fn response_incomplete_reason(response: &ResponsesSummary) -> Option<&str> {
-    response
-        .incomplete_details
-        .as_ref()
-        .and_then(|details| details.reason.as_deref())
-        .or_else(|| {
-            response
-                .status_details
-                .as_ref()
-                .and_then(|details| details.reason.as_deref())
-        })
-}
-
 fn response_failure_message(response: &ResponsesSummary) -> String {
     if let Some(error) = response.error.as_ref() {
         return response_error_message(error);
-    }
-
-    if let Some(message) = response
-        .status_details
-        .as_ref()
-        .and_then(|details| details.error.as_ref())
-        .map(response_status_details_error_message)
-    {
-        return message;
     }
 
     response
@@ -1113,18 +1080,6 @@ fn response_failure_message(response: &ResponsesSummary) -> String {
         .as_deref()
         .map(|status| format!("response.{status}"))
         .unwrap_or_else(|| "response.failed".to_string())
-}
-
-fn response_status_details_error_message(error: &serde_json::Value) -> String {
-    if let Some(message) = error.get("message").and_then(|message| message.as_str()) {
-        return message.to_string();
-    }
-
-    if let Some(message) = error.as_str() {
-        return message.to_string();
-    }
-
-    error.to_string()
 }
 
 fn response_error_message(error: &ResponseError) -> String {
@@ -1205,8 +1160,7 @@ mod tests {
     use crate::responses::{
         ReasoningSummaryPart, ResponseError, ResponseFunctionToolCall, ResponseIncompleteDetails,
         ResponseInputTokensDetails, ResponseOutputItem, ResponseOutputMessage,
-        ResponseReasoningItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
-        StreamEvent as ResponsesStreamEvent,
+        ResponseReasoningItem, ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
     };
     use futures::{StreamExt, executor::block_on};
     use language_model_core::{
@@ -2159,6 +2113,25 @@ mod tests {
     }
 
     #[test]
+    fn responses_stream_deserializes_response_error_event() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "response.error",
+            "error": {
+                "code": "invalid_request_error",
+                "message": "Invalid request."
+            }
+        }))
+        .expect("response error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert_eq!(error.to_string(), "invalid_request_error: Invalid request.");
+    }
+
+    #[test]
     fn responses_stream_maps_refusal_events_to_refusal_stop() {
         let delta = serde_json::from_value::<ResponsesStreamEvent>(json!({
             "type": "response.refusal.delta",
@@ -2357,10 +2330,8 @@ mod tests {
             },
             ResponsesStreamEvent::Incomplete {
                 response: ResponseSummary {
-                    status_details: Some(ResponseStatusDetails {
-                        reason: Some("max_output_tokens".into()),
-                        r#type: Some("incomplete".into()),
-                        error: None,
+                    incomplete_details: Some(ResponseIncompleteDetails {
+                        reason: Some("max_tokens".into()),
                     }),
                     output: vec![response_item_function_call(
                         "item_fn",
@@ -2405,10 +2376,8 @@ mod tests {
             },
             ResponsesStreamEvent::Incomplete {
                 response: ResponseSummary {
-                    status_details: Some(ResponseStatusDetails {
-                        reason: Some("max_output_tokens".into()),
-                        r#type: Some("incomplete".into()),
-                        error: None,
+                    incomplete_details: Some(ResponseIncompleteDetails {
+                        reason: Some("max_tokens".into()),
                     }),
                     output: vec![response_item_function_call(
                         "item_fn",

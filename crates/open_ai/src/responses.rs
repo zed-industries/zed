@@ -272,13 +272,8 @@ pub enum StreamEvent {
     Error { error: ResponseError },
     #[serde(rename = "error")]
     GenericError {
-        #[serde(default)]
-        code: Option<String>,
-        message: String,
-        #[serde(default)]
-        param: Option<Value>,
-        #[serde(default)]
-        sequence_number: Option<u64>,
+        #[serde(flatten)]
+        error: ResponseError,
     },
     #[serde(other)]
     Unknown,
@@ -295,8 +290,6 @@ pub struct ResponseSummary {
     #[serde(default)]
     pub error: Option<ResponseError>,
     #[serde(default)]
-    pub status_details: Option<ResponseStatusDetails>,
-    #[serde(default)]
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
     pub output: Vec<ResponseOutputItem>,
@@ -306,16 +299,6 @@ pub struct ResponseSummary {
 pub struct ResponseIncompleteDetails {
     #[serde(default)]
     pub reason: Option<String>,
-}
-
-#[derive(Deserialize, Debug, Default, Clone)]
-pub struct ResponseStatusDetails {
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub r#type: Option<String>,
-    #[serde(default)]
-    pub error: Option<Value>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
