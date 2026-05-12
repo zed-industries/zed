@@ -72,6 +72,7 @@
 [
   "$"
   "&&"
+  "||"
   ">"
   "<<"
   ">>"
@@ -86,8 +87,36 @@
   "%%"
   "#"
   "##"
+  "+="
+  "-="
+  "*="
+  "/="
+  "%="
+  "**="
+  "<<="
+  ">>="
+  "&="
+  "^="
+  "|="
   "="
+  "=~"
   "=="
+  "!="
+  "-o"
+  "-a"
+  "^"
+  "&"
+  "<="
+  ">="
+  "+"
+  "-"
+  "*"
+  "**"
+  "!"
+  "++"
+  "--"
+  "~"
+  "?"
 ] @operator
 
 (test_operator) @keyword.operator
@@ -103,6 +132,18 @@
   "]"
 ] @punctuation.bracket
 
+(test_command
+  [
+    "[["
+    "]]"
+  ] @punctuation.bracket)
+
+(compound_statement
+  [
+    "(("
+    "))"
+  ] @punctuation.bracket)
+
 (simple_expansion
   "$" @punctuation.special)
 
@@ -113,6 +154,14 @@
 (command_substitution
   "$(" @punctuation.special
   ")" @punctuation.special)
+
+(arithmetic_expansion
+  [
+    "$(("
+    "$["
+    "))"
+    "]"
+  ] @punctuation.special)
 
 ((command
   (_) @constant)
