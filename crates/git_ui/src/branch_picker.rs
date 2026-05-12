@@ -95,6 +95,32 @@ pub fn popover(
     })
 }
 
+pub fn select_popover(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    selected_branch: Option<SharedString>,
+    on_select: SelectBranchCallback,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<BranchList> {
+    cx.new(|cx| {
+        let list = BranchList::new_select(
+            workspace,
+            repository,
+            BranchListStyle::Modal,
+            rems(34.),
+            selected_branch,
+            on_select,
+            window,
+            cx,
+        );
+        list.focus_handle(cx).focus(window, cx);
+        list
+    })
+}
+
+pub type SelectBranchCallback = Arc<dyn Fn(Branch, &mut App)>;
+
 pub fn create_embedded(
     workspace: WeakEntity<Workspace>,
     repository: Option<Entity<Repository>>,
@@ -146,6 +172,58 @@ impl BranchList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_inner_with_behavior(
+            workspace,
+            repository,
+            style,
+            width,
+            embedded,
+            BranchSelectionBehavior::Checkout,
+            window,
+            cx,
+        )
+    }
+
+    fn new_select(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        style: BranchListStyle,
+        width: Rems,
+        selected_branch: Option<SharedString>,
+        on_select: SelectBranchCallback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner_with_behavior(
+            workspace,
+            repository,
+            style,
+            width,
+            false,
+            BranchSelectionBehavior::Select {
+                selected_branch,
+                on_select,
+            },
+            window,
+            cx,
+        );
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
+        this
+    }
+
+    fn new_inner_with_behavior(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        style: BranchListStyle,
+        width: Rems,
+        embedded: bool,
+        branch_selection_behavior: BranchSelectionBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let all_branches = repository
             .as_ref()
             .map(|repo| process_branches(&repo.read(cx).branch_list))
@@ -155,7 +233,13 @@ impl BranchList {
             repository.update(cx, |repository, _| repository.default_branch(false))
         });
 
-        let mut delegate = BranchListDelegate::new(workspace, repository.clone(), style, cx);
+        let mut delegate = BranchListDelegate::new(
+            workspace,
+            repository.clone(),
+            style,
+            branch_selection_behavior,
+            cx,
+        );
         delegate.all_branches = all_branches;
 
         let picker = cx.new(|cx| {
@@ -167,7 +251,7 @@ impl BranchList {
 
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
-            picker.delegate.show_footer = !embedded;
+            picker.delegate.show_footer = !embedded && !picker.delegate.is_select_only();
         });
 
         let mut subscriptions = Vec::new();
@@ -269,6 +353,9 @@ impl BranchList {
         cx: &mut Context<Self>,
     ) {
         self.picker.update(cx, |picker, cx| {
+            if picker.delegate.is_select_only() {
+                return;
+            }
             picker
                 .delegate
                 .delete_at(picker.delegate.selected_index, false, window, cx)
@@ -282,6 +369,9 @@ impl BranchList {
         cx: &mut Context<Self>,
     ) {
         self.picker.update(cx, |picker, cx| {
+            if picker.delegate.is_select_only() {
+                return;
+            }
             picker
                 .delegate
                 .delete_at(picker.delegate.selected_index, true, window, cx)
@@ -408,10 +498,19 @@ pub struct BranchListDelegate {
     modifiers: Modifiers,
     branch_filter: BranchFilter,
     state: PickerState,
+    branch_selection_behavior: BranchSelectionBehavior,
     focus_handle: FocusHandle,
     restore_selected_branch: Option<SharedString>,
     show_footer: bool,
     hovered_delete_index: Option<usize>,
+}
+
+enum BranchSelectionBehavior {
+    Checkout,
+    Select {
+        selected_branch: Option<SharedString>,
+        on_select: SelectBranchCallback,
+    },
 }
 
 #[derive(Debug)]
@@ -533,8 +632,16 @@ impl BranchListDelegate {
         workspace: WeakEntity<Workspace>,
         repo: Option<Entity<Repository>>,
         style: BranchListStyle,
+        branch_selection_behavior: BranchSelectionBehavior,
         cx: &mut Context<BranchList>,
     ) -> Self {
+        let restore_selected_branch = match &branch_selection_behavior {
+            BranchSelectionBehavior::Checkout => None,
+            BranchSelectionBehavior::Select {
+                selected_branch, ..
+            } => selected_branch.clone(),
+        };
+
         Self {
             workspace,
             matches: vec![],
@@ -547,11 +654,19 @@ impl BranchListDelegate {
             modifiers: Default::default(),
             branch_filter: BranchFilter::All,
             state: PickerState::List,
+            branch_selection_behavior,
             focus_handle: cx.focus_handle(),
-            restore_selected_branch: None,
+            restore_selected_branch,
             show_footer: false,
             hovered_delete_index: None,
         }
+    }
+
+    fn is_select_only(&self) -> bool {
+        matches!(
+            self.branch_selection_behavior,
+            BranchSelectionBehavior::Select { .. }
+        )
     }
 
     fn is_force_delete_hovering_index(&self, index: usize) -> bool {
@@ -729,8 +844,12 @@ impl PickerDelegate for BranchListDelegate {
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
-                match self.branch_filter {
-                    BranchFilter::All | BranchFilter::Remote => "Switch branch…",
+                if self.is_select_only() {
+                    "Select branch…"
+                } else {
+                    match self.branch_filter {
+                        BranchFilter::All | BranchFilter::Remote => "Switch branch…",
+                    }
                 }
             }
             PickerState::CreateRemote(_) => "Enter a name for this remote…",
@@ -907,7 +1026,8 @@ impl PickerDelegate for BranchListDelegate {
                         return;
                     }
 
-                    if !query.is_empty()
+                    if !picker.delegate.is_select_only()
+                        && !query.is_empty()
                         && !matches.first().is_some_and(|entry| entry.name() == query)
                     {
                         let query = query.replace(' ', "-");
@@ -941,7 +1061,10 @@ impl PickerDelegate for BranchListDelegate {
                             .matches
                             .iter()
                             .position(|entry| {
-                                entry.as_branch().is_some_and(|b| b.ref_name == ref_name)
+                                entry.as_branch().is_some_and(|branch| {
+                                    branch.ref_name == ref_name
+                                        || branch.name() == ref_name.as_ref()
+                                })
                             })
                             .unwrap_or(0);
                     } else {
@@ -961,6 +1084,14 @@ impl PickerDelegate for BranchListDelegate {
 
         match entry {
             Entry::Branch { branch, .. } => {
+                if let BranchSelectionBehavior::Select { on_select, .. } =
+                    &self.branch_selection_behavior
+                {
+                    on_select(branch.clone(), cx);
+                    cx.emit(DismissEvent);
+                    return;
+                }
+
                 let current_branch = self.repo.as_ref().map(|repo| {
                     repo.read_with(cx, |repo, _| {
                         repo.branch.as_ref().map(|branch| branch.ref_name.clone())
@@ -1317,10 +1448,13 @@ impl PickerDelegate for BranchListDelegate {
                                 ),
                         ),
                 )
-                .when(!is_new_items && !is_head_branch, |this| {
-                    this.end_slot(deleted_branch_icon(ix))
-                        .show_end_slot_on_hover()
-                })
+                .when(
+                    !self.is_select_only() && !is_new_items && !is_head_branch,
+                    |this| {
+                        this.end_slot(deleted_branch_icon(ix))
+                            .show_end_slot_on_hover()
+                    },
+                )
                 .when_some(
                     if is_new_items {
                         create_from_default_button
@@ -1336,7 +1470,10 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        if !self.show_footer || self.editor_position() == PickerEditorPosition::End {
+        if self.is_select_only()
+            || !self.show_footer
+            || self.editor_position() == PickerEditorPosition::End
+        {
             return None;
         }
         let focus_handle = self.focus_handle.clone();
@@ -1606,6 +1743,7 @@ mod tests {
                         workspace.downgrade(),
                         repository,
                         BranchListStyle::Modal,
+                        BranchSelectionBehavior::Checkout,
                         cx,
                     );
                     delegate.all_branches = branches;

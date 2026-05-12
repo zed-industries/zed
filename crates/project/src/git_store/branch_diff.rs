@@ -40,6 +40,7 @@ pub struct BranchDiff {
     base_commit: Option<SharedString>,
     head_commit: Option<SharedString>,
     tree_diff: Option<TreeDiff>,
+    tree_diff_update_needed: bool,
     _subscription: Subscription,
     update_needed: postage::watch::Sender<()>,
     _task: Task<()>,
@@ -47,6 +48,7 @@ pub struct BranchDiff {
 
 pub enum BranchDiffEvent {
     FileListChanged,
+    DiffBaseChanged,
 }
 
 impl EventEmitter<BranchDiffEvent> for BranchDiff {}
@@ -98,6 +100,7 @@ impl BranchDiff {
             repo,
             project,
             tree_diff: None,
+            tree_diff_update_needed: false,
             base_commit: None,
             head_commit: None,
             _subscription: git_store_subscription,
@@ -113,10 +116,29 @@ impl BranchDiff {
     pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
         self.repo = repo;
         self.tree_diff = None;
+        self.tree_diff_update_needed = self.diff_base.is_merge_base();
         self.base_commit = None;
         self.head_commit = None;
         cx.emit(BranchDiffEvent::FileListChanged);
         *self.update_needed.borrow_mut() = ();
+    }
+
+    pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
+        if self.diff_base == diff_base {
+            return;
+        }
+
+        let should_reload_tree_diff = diff_base.is_merge_base();
+        self.diff_base = diff_base;
+        self.tree_diff_update_needed = should_reload_tree_diff;
+        self.base_commit = None;
+        self.head_commit = None;
+
+        self.tree_diff = None;
+        cx.emit(BranchDiffEvent::DiffBaseChanged);
+        if should_reload_tree_diff {
+            *self.update_needed.borrow_mut() = ();
+        }
     }
 
     pub async fn handle_status_updates(
@@ -127,7 +149,8 @@ impl BranchDiff {
         Self::reload_tree_diff(this.clone(), cx).await.log_err();
         while recv.next().await.is_some() {
             let Ok(needs_update) = this.update(cx, |this, cx| {
-                let mut needs_update = false;
+                let mut needs_update = this.tree_diff_update_needed;
+                this.tree_diff_update_needed = false;
 
                 if this.repo.is_none() {
                     let active_repo = this
@@ -286,6 +309,9 @@ impl BranchDiff {
         let Some(repo) = self.repo.clone() else {
             return output;
         };
+        if self.diff_base.is_merge_base() && self.tree_diff.is_none() {
+            return output;
+        }
 
         self.project.update(cx, |_project, cx| {
             let mut seen = HashSet::default();
