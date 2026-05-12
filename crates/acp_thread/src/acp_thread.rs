@@ -93,12 +93,22 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
 /// disambiguate same-named global vs. project-local skills.
 pub const SKILL_SOURCE_META_KEY: &str = "zed.skill_source";
 
-/// Helper to extract skill source label from ACP meta.
-pub fn skill_source_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+/// Borrowing accessor for the skill source label stored in ACP meta.
+/// Prefer this over [`skill_source_from_meta`] in hot paths (e.g. per-
+/// command iteration during validation), since it avoids allocating
+/// a `SharedString` for callers that only need to compare against a
+/// `&str`.
+pub fn skill_source_str_from_meta(meta: &Option<acp::Meta>) -> Option<&str> {
     meta.as_ref()
         .and_then(|m| m.get(SKILL_SOURCE_META_KEY))
         .and_then(|v| v.as_str())
-        .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to extract skill source label from ACP meta as an owned
+/// `SharedString`. Use this when the value needs to outlive the meta
+/// reference; otherwise prefer [`skill_source_str_from_meta`].
+pub fn skill_source_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    skill_source_str_from_meta(meta).map(|s| SharedString::from(s.to_owned()))
 }
 
 /// Helper to create meta tagging an `AvailableCommand` with a skill source.

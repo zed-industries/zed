@@ -1261,27 +1261,36 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         .into_iter()
                         .map(|command| {
                             // Qualify the inserted text with the skill's
-                            // source as `/<scope>:<name>` when the
-                            // command carries one. The `:` separator
-                            // namespaces skill scopes away from MCP
-                            // server prefixes (`/<server>.<name>`), so
-                            // a worktree literally named after an MCP
-                            // server doesn't collide. Without this,
-                            // picking the global row and the project
-                            // row would both insert `/<name>` and the
-                            // resolver couldn't tell which the user
-                            // intended. MCP commands have no source so
-                            // they keep the bare `/<name>` form.
-                            let qualified_name: std::borrow::Cow<'_, str> =
-                                if let Some(source) = command.source.as_ref() {
-                                    format!("{}:{}", source, command.name).into()
-                                } else {
-                                    command.name.as_ref().into()
-                                };
-                            let new_text = if let Some(argument) = argument.as_ref() {
-                                format!("/{} {}", qualified_name, argument)
-                            } else {
-                                format!("/{} ", qualified_name)
+                            // scope prefix as `/<prefix>:<name>` when the
+                            // command carries one. The prefix is empty
+                            // for global skills (so the inserted text
+                            // is `/:<name>`) and the worktree root name
+                            // for project-locals (so the inserted text
+                            // is `/<worktree>:<name>`). The `:`
+                            // separator namespaces skill scopes away
+                            // from MCP server prefixes
+                            // (`/<server>.<name>`), and the empty
+                            // prefix means a worktree literally named
+                            // `global` no longer collides with the
+                            // global source. MCP commands have no
+                            // source meta and keep the bare `/<name>`
+                            // form.
+                            //
+                            // Composed in a single `format!` to avoid
+                            // building an intermediate `qualified_name`
+                            // string just to splice it into the final
+                            // text.
+                            let new_text = match (command.source.as_ref(), argument.as_ref()) {
+                                (Some(source), Some(argument)) => {
+                                    format!("/{}:{} {}", source, command.name, argument)
+                                }
+                                (Some(source), None) => {
+                                    format!("/{}:{} ", source, command.name)
+                                }
+                                (None, Some(argument)) => {
+                                    format!("/{} {}", command.name, argument)
+                                }
+                                (None, None) => format!("/{} ", command.name),
                             };
 
                             let is_missing_argument =
@@ -2163,15 +2172,22 @@ pub fn extract_file_name_and_directory(
 }
 
 /// Build the autocomplete-popup label for a slash command, appending
-/// the command's origin (e.g. `"global"` or a worktree root name for
-/// skills) after the name when one is present. The suffix is styled
-/// with the muted `variable` highlight and excluded from the fuzzy
-/// filter range so typing the source doesn't match the entry.
+/// the command's origin (a worktree root name for project-local
+/// skills) after the name when one is present and non-empty. The
+/// suffix is styled with the muted `variable` highlight and excluded
+/// from the fuzzy filter range so typing the source doesn't match
+/// the entry.
+///
+/// Global skills carry an empty source (the literal scope prefix is
+/// empty so the popup inserts `/:<name>`), and render with no
+/// subtext — the source column is reserved for project-local skills
+/// where the worktree name disambiguates same-named entries.
 fn build_slash_command_label(
     command: &AvailableCommand,
     source_highlight_id: Option<HighlightId>,
 ) -> CodeLabel {
-    let Some(source) = command.source.as_ref() else {
+    let source = command.source.as_ref().filter(|source| !source.is_empty());
+    let Some(source) = source else {
         return CodeLabel::plain(command.name.to_string(), None);
     };
     let mut builder = CodeLabelBuilder::default();

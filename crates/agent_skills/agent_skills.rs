@@ -65,31 +65,22 @@ pub enum SkillSource {
     },
 }
 
-/// Scope qualifier used in `/global:<name>` slash-command syntax to
-/// unambiguously target the global version of a same-named skill.
-/// Project-local skills use their worktree root name (e.g. `zed` for a
-/// worktree rooted at `~/code/zed`) as their scope qualifier instead
-/// of a fixed literal, so multiple open worktrees with same-named
-/// skills can each be addressed unambiguously.
-pub const SKILL_SCOPE_GLOBAL: &str = "global";
-
 impl SkillSource {
-    /// Returns the scope label that identifies this source in user-
-    /// visible places: the autocomplete popup's source column, and the
-    /// `<scope>:<name>` slash-command prefix that the popup inserts so
-    /// the resolver can route `/global:foo` and `/<worktree>:foo` to
-    /// the correct entry. The two uses MUST stay in sync — if the
-    /// popup shows `zed` the inserted text has to start with `/zed:`
-    /// or the resolver won't find the skill.
+    /// Scope prefix used in the `/<prefix>:<name>` slash-command
+    /// syntax that the autocomplete popup inserts. Global skills use
+    /// an empty prefix (so the inserted text is `/:<name>`), and
+    /// project-local skills use their worktree root name (so the
+    /// inserted text is `/<worktree>:<name>`).
     ///
-    /// Edge case: a worktree literally named `global` collides with
-    /// the global scope qualifier. `matches_scope` resolves the
-    /// ambiguity in favor of the global source; the project-local
-    /// skill in such a worktree can still be invoked unqualified as
-    /// `/<name>`.
-    pub fn scope_label(&self) -> &str {
+    /// Using an empty prefix for globals rather than a literal
+    /// `global` means a worktree literally named `global` is no
+    /// longer ambiguous with the global source: the global skill is
+    /// invoked as `/:<name>`, and the worktree's skill is invoked as
+    /// `/global:<name>`. The two grammars never collide on the
+    /// inserted text.
+    pub fn scope_prefix(&self) -> &str {
         match self {
-            Self::Global => SKILL_SCOPE_GLOBAL,
+            Self::Global => "",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -97,21 +88,21 @@ impl SkillSource {
     }
 
     /// Whether this source matches the given scope qualifier from a
-    /// `/<scope>:<name>` slash command. Unknown scopes never match —
-    /// in that case the resolver leaves the prompt alone so unknown
-    /// scopes surface as a validation error rather than silently
-    /// being treated as plain text.
+    /// `/<scope>:<name>` slash command. The empty scope is reserved
+    /// for global skills; non-empty scopes match a project-local
+    /// skill whose worktree root name equals the scope.
     ///
-    /// `/global:<name>` is reserved for the global source even when a
-    /// project-local skill comes from a worktree named `global`, so
-    /// the literal global scope can never be shadowed by a worktree's
-    /// name.
+    /// Hand-typed `/global:<name>` is NOT treated as an alias for
+    /// `/:<name>`. It looks for a project-local skill from a worktree
+    /// named `global` and fails if none exists. The popup always
+    /// inserts the unambiguous form (`/:<name>` for globals), so this
+    /// strictness only affects users typing by memory.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
-            Self::Global => scope == SKILL_SCOPE_GLOBAL,
+            Self::Global => scope.is_empty(),
             Self::ProjectLocal {
                 worktree_root_name, ..
-            } => scope != SKILL_SCOPE_GLOBAL && worktree_root_name.as_ref() == scope,
+            } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
         }
     }
 }

@@ -732,24 +732,30 @@ impl MessageEditor {
                 // 2. Skill scope qualifier `/<scope>:<name>`. The popup
                 //    inserts this colon-separated form to disambiguate
                 //    same-named skills, so the validator splits on the
-                //    first `:` to recover scope + bare name. Skill
+                //    LAST `:` to recover scope + bare name. Skill
                 //    names are restricted to `[a-z0-9-]+` (no colons),
-                //    so the split is unambiguous. The validator then
-                //    confirms an available command with that bare name
-                //    has a matching `zed.skill_source` meta tag.
-                //    Without this branch, every autocomplete pick of a
-                //    same-named skill would be rejected as "not
-                //    supported" before reaching the resolver.
+                //    so the rightmost colon is always the scope/name
+                //    boundary — this lets scope labels (e.g. worktree
+                //    root names) themselves contain colons. The
+                //    scope is allowed to be empty: `/:<name>` is the
+                //    qualified form for a global skill (see
+                //    `SkillSource::scope_prefix`). The validator then
+                //    confirms an available command with that bare
+                //    name has a `zed.skill_source` meta tag whose
+                //    value equals the typed scope (including empty
+                //    for globals). Without this branch, every
+                //    autocomplete pick of a same-named skill would be
+                //    rejected as "not supported" before reaching the
+                //    resolver.
                 let direct_match = available_commands
                     .iter()
                     .any(|cmd| cmd.name == command_name);
                 let scope_match = !direct_match
-                    && command_name.split_once(':').is_some_and(|(scope, bare)| {
-                        !scope.is_empty()
-                            && !bare.is_empty()
+                    && command_name.rsplit_once(':').is_some_and(|(scope, bare)| {
+                        !bare.is_empty()
                             && available_commands.iter().any(|cmd| {
                                 cmd.name == bare
-                                    && acp_thread::skill_source_from_meta(&cmd.meta).as_deref()
+                                    && acp_thread::skill_source_str_from_meta(&cmd.meta)
                                         == Some(scope)
                             })
                     });
@@ -772,6 +778,7 @@ impl MessageEditor {
     /// see the exact text the popup would insert — otherwise the
     /// listing would contain confusing duplicates like `/foo, /foo`
     /// when both a global and a project-local skill share a name.
+    /// Globals carry an empty scope and so render as `/:<name>`.
     fn format_available_commands(commands: &[acp::AvailableCommand]) -> String {
         if commands.is_empty() {
             return "none".to_string();
@@ -779,7 +786,7 @@ impl MessageEditor {
         commands
             .iter()
             .map(|cmd| {
-                if let Some(scope) = acp_thread::skill_source_from_meta(&cmd.meta) {
+                if let Some(scope) = acp_thread::skill_source_str_from_meta(&cmd.meta) {
                     format!("/{}:{}", scope, cmd.name)
                 } else {
                     format!("/{}", cmd.name)
@@ -2122,12 +2129,12 @@ mod tests {
             acp::AvailableCommand::new(name, "desc").meta(acp_thread::meta_with_skill_source(scope))
         };
 
-        // Project-local skills are tagged with their worktree root
-        // name (here `zed`), not a fixed literal, so the same skill
-        // name in two different worktrees can be addressed
-        // unambiguously.
+        // Global skills carry an empty scope (so the popup inserts
+        // `/:<name>`); project-local skills carry their worktree root
+        // name. The empty-scope encoding means a worktree literally
+        // named `global` no longer collides with the global source.
         let commands = vec![
-            make_skill_command("deploy", "global"),
+            make_skill_command("deploy", ""),
             make_skill_command("deploy", "zed"),
             acp::AvailableCommand::new("help", "Get help"),
         ];
@@ -2138,12 +2145,20 @@ mod tests {
             .expect("bare /deploy should validate when a skill named `deploy` exists");
 
         // Scope-qualified forms both validate, each pointing at the
-        // matching source. The `:` separator namespaces these against
-        // MCP server prefixes (which use `.`).
-        MessageEditor::validate_slash_commands("/global:deploy", &commands, &agent_id)
-            .expect("/global:deploy should validate when a global skill named `deploy` exists");
+        // matching source. `/:<name>` is the qualified form for a
+        // global skill; `/<worktree>:<name>` is the qualified form
+        // for a project-local skill.
+        MessageEditor::validate_slash_commands("/:deploy", &commands, &agent_id)
+            .expect("/:deploy should validate when a global skill named `deploy` exists");
         MessageEditor::validate_slash_commands("/zed:deploy", &commands, &agent_id).expect(
             "/zed:deploy should validate when a project skill named `deploy` exists in the `zed` worktree",
+        );
+
+        // Hand-typed `/global:<name>` is NOT an alias for `/:<name>`.
+        // It looks for a project-local skill from a worktree named
+        // `global`, and fails when no such worktree skill exists.
+        MessageEditor::validate_slash_commands("/global:deploy", &commands, &agent_id).expect_err(
+            "/global:deploy should fail when no worktree named `global` has a `deploy` skill",
         );
 
         // The `:` separator is what distinguishes a skill scope from
@@ -2164,9 +2179,10 @@ mod tests {
             "error should mention the typed command: {err_message}"
         );
         // Error listing shows qualified forms for skills so users see
-        // the exact text the popup would have inserted.
+        // the exact text the popup would have inserted. Globals
+        // render with an empty scope as `/:<name>`.
         assert!(
-            err_message.contains("/global:deploy"),
+            err_message.contains("/:deploy"),
             "error listing should show qualified global form: {err_message}"
         );
         assert!(
