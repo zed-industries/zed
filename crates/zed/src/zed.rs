@@ -1159,6 +1159,11 @@ fn register_actions(
                     cx,
                     |workspace, window, cx| {
                         cx.activate(true);
+                        if WorkspaceSettings::get_global(cx).restore_on_startup
+                            == workspace::RestoreOnStartupBehavior::Launchpad
+                        {
+                            return;
+                        }
                         // Create buffer synchronously to avoid flicker
                         let project = workspace.project().clone();
                         let buffer = project.update(cx, |project, cx| {
@@ -1208,6 +1213,11 @@ fn register_actions(
                                 cx,
                                 |workspace, window, cx| {
                                     cx.activate(true);
+                                    if WorkspaceSettings::get_global(cx).restore_on_startup
+                                        == workspace::RestoreOnStartupBehavior::Launchpad
+                                    {
+                                        return;
+                                    }
                                     let project = workspace.project().clone();
                                     let buffer = project.update(cx, |project, cx| {
                                         project.create_local_buffer("", None, true, cx)
