@@ -36,7 +36,7 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
+    StyleRefinement, StyledImage, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
@@ -1130,6 +1130,7 @@ impl MarkdownElement {
         builder: &mut MarkdownElementBuilder,
         range: &Range<usize>,
         source: ImageSource,
+        alt_text: Option<SharedString>,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
@@ -1148,7 +1149,8 @@ impl MarkdownElement {
                     .id(("markdown-image", range.start))
                     .max_w_full()
                     .when_some(height, |this, height| this.h(height))
-                    .when_some(width, |this, width| this.w(width)),
+                    .when_some(width, |this, width| this.w(width))
+                    .with_fallback(move || image_fallback_element(alt_text.clone())),
             )
         });
     }
@@ -1711,12 +1713,17 @@ impl Element for MarkdownElement {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Image { dest_url, .. } => {
+                            let alt_text = collect_image_alt_text(
+                                &parsed_markdown.events[index..],
+                                &parsed_markdown.source,
+                            );
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
                                     &mut builder,
                                     range,
                                     image.clone().into(),
+                                    alt_text,
                                     None,
                                     None,
                                 );
@@ -1726,7 +1733,14 @@ impl Element for MarkdownElement {
                                 .and_then(|resolve| resolve(dest_url.as_ref()))
                             {
                                 current_img_block_range = Some(range.clone());
-                                self.push_markdown_image(&mut builder, range, source, None, None);
+                                self.push_markdown_image(
+                                    &mut builder,
+                                    range,
+                                    source,
+                                    alt_text,
+                                    None,
+                                    None,
+                                );
                             }
                         }
                         MarkdownTag::Paragraph => {
@@ -2294,6 +2308,47 @@ impl Element for MarkdownElement {
         self.paint_search_highlights(&rendered_markdown.text, window, cx);
         self.paint_selection(&rendered_markdown.text, window, cx);
     }
+}
+
+fn collect_image_alt_text(
+    events_from_image_start: &[(Range<usize>, MarkdownEvent)],
+    source: &str,
+) -> Option<SharedString> {
+    let mut alt_text = String::new();
+    for (range, event) in events_from_image_start.iter().skip(1) {
+        match event {
+            MarkdownEvent::End(MarkdownTagEnd::Image) => break,
+            MarkdownEvent::Text => alt_text.push_str(&source[range.clone()]),
+            _ => {}
+        }
+    }
+    if alt_text.is_empty() {
+        None
+    } else {
+        Some(alt_text.into())
+    }
+}
+
+fn image_fallback_element(alt_text: Option<SharedString>) -> AnyElement {
+    let mut label = "Failed to load image".to_string();
+    if let Some(alt) = &alt_text {
+        if !alt.is_empty() {
+            label.push_str(": ");
+            label.push_str(alt);
+        }
+    }
+
+    div()
+        .px_2()
+        .py_1()
+        .bg(gpui::red().opacity(0.1))
+        .border_1()
+        .border_color(gpui::red().opacity(0.3))
+        .rounded_md()
+        .text_sm()
+        .text_color(gpui::red())
+        .child(label)
+        .into_any_element()
 }
 
 fn apply_heading_style(
