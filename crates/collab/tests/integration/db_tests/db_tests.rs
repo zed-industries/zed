@@ -264,13 +264,6 @@ async fn test_project_count(db: &Arc<Database>) {
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 }
 
-#[test]
-fn test_fuzzy_like_string() {
-    assert_eq!(Database::fuzzy_like_string("abcd"), "%a%b%c%d%");
-    assert_eq!(Database::fuzzy_like_string("x y"), "%x%y%");
-    assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
-}
-
 test_both_dbs!(
     test_upsert_shared_thread,
     test_upsert_shared_thread_postgres,

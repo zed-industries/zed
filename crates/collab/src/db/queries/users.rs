@@ -179,18 +179,4 @@ impl Database {
         })
         .await
     }
-
-    /// fuzzy_like_string creates a string for matching in-order using fuzzy_search_users.
-    /// e.g. "cir" would become "%c%i%r%"
-    pub fn fuzzy_like_string(string: &str) -> String {
-        let mut result = String::with_capacity(string.len() * 2 + 1);
-        for c in string.chars() {
-            if c.is_alphanumeric() {
-                result.push('%');
-                result.push(c);
-            }
-        }
-        result.push('%');
-        result
-    }
 }
