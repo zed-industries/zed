@@ -398,50 +398,12 @@ fn append_reasoning_details_to_response_items(
         return;
     };
 
-    match reasoning_details {
-        serde_json::Value::Object(_) => {
-            if let Some(metadata) = response_message_metadata_from_details(reasoning_details) {
-                for reasoning_item in metadata.reasoning_items {
-                    push_replayed_reasoning_item(
-                        reasoning_item,
-                        replayed_reasoning_item_indexes,
-                        input_items,
-                    );
-                }
-            } else if let Ok(reasoning_item) =
-                serde_json::from_value::<ResponseReasoningInputItem>(reasoning_details.clone())
-            {
-                push_replayed_reasoning_item(
-                    reasoning_item,
-                    replayed_reasoning_item_indexes,
-                    input_items,
-                );
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                if let Ok(reasoning_item) =
-                    serde_json::from_value::<ResponseReasoningInputItem>(item.clone())
-                {
-                    push_replayed_reasoning_item(
-                        reasoning_item,
-                        replayed_reasoning_item_indexes,
-                        input_items,
-                    );
-                }
-            }
-        }
-        value => {
-            if let Ok(reasoning_item) =
-                serde_json::from_value::<ResponseReasoningInputItem>(value.clone())
-            {
-                push_replayed_reasoning_item(
-                    reasoning_item,
-                    replayed_reasoning_item_indexes,
-                    input_items,
-                );
-            }
-        }
+    let Some(metadata) = response_message_metadata_from_details(reasoning_details) else {
+        return;
+    };
+
+    for reasoning_item in metadata.reasoning_items {
+        push_replayed_reasoning_item(reasoning_item, replayed_reasoning_item_indexes, input_items);
     }
 }
 
@@ -1053,9 +1015,7 @@ impl OpenAiResponseEventMapper {
         &mut self,
         reasoning: &ResponseReasoningItem,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(reasoning_item) = response_reasoning_input_item_from_output(reasoning) else {
-            return Vec::new();
-        };
+        let reasoning_item = response_reasoning_input_item_from_output(reasoning);
 
         if self.reasoning_items.contains(&reasoning_item) {
             return Vec::new();
@@ -1078,20 +1038,10 @@ impl OpenAiResponseEventMapper {
     fn emit_response_message_metadata(
         &self,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let details = if self.current_message_phase.is_some() {
-            serde_json::to_value(ResponseMessageMetadata {
-                phase: self.current_message_phase.clone(),
-                reasoning_items: self.reasoning_items.clone(),
-            })
-        } else {
-            serde_json::to_value(
-                self.reasoning_items
-                    .iter()
-                    .cloned()
-                    .map(ResponseInputItem::Reasoning)
-                    .collect::<Vec<_>>(),
-            )
-        };
+        let details = serde_json::to_value(ResponseMessageMetadata {
+            phase: self.current_message_phase.clone(),
+            reasoning_items: self.reasoning_items.clone(),
+        });
 
         match details {
             Ok(details) => vec![Ok(LanguageModelCompletionEvent::ReasoningDetails(details))],
@@ -1111,14 +1061,6 @@ struct ResponseMessageMetadata {
 fn response_message_metadata_from_details(
     details: &serde_json::Value,
 ) -> Option<ResponseMessageMetadata> {
-    let serde_json::Value::Object(object) = details else {
-        return None;
-    };
-
-    if !object.contains_key("phase") && !object.contains_key("reasoning_items") {
-        return None;
-    }
-
     serde_json::from_value::<ResponseMessageMetadata>(details.clone()).ok()
 }
 
@@ -1235,14 +1177,8 @@ fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
 
 fn response_reasoning_input_item_from_output(
     reasoning: &ResponseReasoningItem,
-) -> Option<ResponseReasoningInputItem> {
+) -> ResponseReasoningInputItem {
     let encrypted_content = reasoning.encrypted_content.clone();
-    if !encrypted_content
-        .as_deref()
-        .is_some_and(|encrypted_content| !encrypted_content.is_empty())
-    {
-        return None;
-    }
 
     let summary = reasoning
         .summary
@@ -1255,13 +1191,13 @@ fn response_reasoning_input_item_from_output(
         })
         .collect();
 
-    Some(ResponseReasoningInputItem {
+    ResponseReasoningInputItem {
         id: reasoning.id.clone(),
         summary,
         content: reasoning.content.clone(),
         encrypted_content,
         status: reasoning.status.clone(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -1590,29 +1526,27 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
                 cache: false,
-                reasoning_details: Some(json!([
-                    {
-                        "type": "reasoning",
-                        "id": "rs_123",
-                        "summary": [
-                            {
-                                "type": "summary_text",
-                                "text": "Checked what information is needed."
-                            }
-                        ],
-                        "content": [
-                            {
-                                "type": "reasoning_text",
-                                "text": "Internal reasoning text."
-                            }
-                        ],
-                        "encrypted_content": "ENC",
-                        "status": "completed",
-                        "metadata": {
-                            "source": "responses"
+                reasoning_details: Some(json!({
+                    "reasoning_items": [
+                        {
+                            "id": "rs_123",
+                            "summary": [
+                                {
+                                    "type": "summary_text",
+                                    "text": "Checked what information is needed."
+                                }
+                            ],
+                            "content": [
+                                {
+                                    "type": "reasoning_text",
+                                    "text": "Internal reasoning text."
+                                }
+                            ],
+                            "encrypted_content": "ENC",
+                            "status": "completed",
                         }
-                    }
-                ])),
+                    ]
+                })),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1653,10 +1587,7 @@ mod tests {
                         }
                     ],
                     "encrypted_content": "ENC",
-                    "status": "completed",
-                    "metadata": {
-                        "source": "responses"
-                    }
+                    "status": "completed"
                 },
                 {
                     "type": "function_call",
@@ -1674,7 +1605,7 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_does_not_replay_reasoning_without_encrypted_content() {
+    fn into_open_ai_response_replays_reasoning_without_encrypted_content() {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
@@ -1683,21 +1614,21 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::Text("Done.".into())],
                 cache: false,
-                reasoning_details: Some(json!([
-                    {
-                        "type": "reasoning",
-                        "id": "rs_123",
-                        "summary": [],
-                        "status": "completed"
-                    },
-                    {
-                        "type": "reasoning",
-                        "id": "rs_456",
-                        "summary": [],
-                        "encrypted_content": "",
-                        "status": "completed"
-                    }
-                ])),
+                reasoning_details: Some(json!({
+                    "reasoning_items": [
+                        {
+                            "id": "rs_123",
+                            "summary": [],
+                            "status": "completed"
+                        },
+                        {
+                            "id": "rs_456",
+                            "summary": [],
+                            "encrypted_content": "",
+                            "status": "completed"
+                        }
+                    ]
+                })),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1715,6 +1646,19 @@ mod tests {
         assert_eq!(
             serialized["input"],
             json!([
+                {
+                    "type": "reasoning",
+                    "id": "rs_123",
+                    "summary": [],
+                    "status": "completed"
+                },
+                {
+                    "type": "reasoning",
+                    "id": "rs_456",
+                    "summary": [],
+                    "encrypted_content": "",
+                    "status": "completed"
+                },
                 {
                     "type": "message",
                     "role": "assistant",
@@ -2025,20 +1969,21 @@ mod tests {
                     MessageContent::Text("This is visible assistant output.".into()),
                 ],
                 cache: false,
-                reasoning_details: Some(json!([
-                    {
-                        "type": "reasoning",
-                        "id": "rs_123",
-                        "summary": [
-                            {
-                                "type": "summary_text",
-                                "text": "This is the reasoning summary to preserve."
-                            }
-                        ],
-                        "encrypted_content": "ENC",
-                        "status": "completed"
-                    }
-                ])),
+                reasoning_details: Some(json!({
+                    "reasoning_items": [
+                        {
+                            "id": "rs_123",
+                            "summary": [
+                                {
+                                    "type": "summary_text",
+                                    "text": "This is the reasoning summary to preserve."
+                                }
+                            ],
+                            "encrypted_content": "ENC",
+                            "status": "completed"
+                        }
+                    ]
+                })),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -2793,26 +2738,27 @@ mod tests {
 
         assert_eq!(
             details,
-            &json!([
-                {
-                    "type": "reasoning",
-                    "id": "rs_123",
-                    "summary": [
-                        {
-                            "type": "summary_text",
-                            "text": "Checked what information is needed."
-                        }
-                    ],
-                    "content": [
-                        {
-                            "type": "reasoning_text",
-                            "text": "Internal reasoning text."
-                        }
-                    ],
-                    "encrypted_content": "ENC",
-                    "status": "completed",
-                }
-            ])
+            &json!({
+                "reasoning_items": [
+                    {
+                        "id": "rs_123",
+                        "summary": [
+                            {
+                                "type": "summary_text",
+                                "text": "Checked what information is needed."
+                            }
+                        ],
+                        "content": [
+                            {
+                                "type": "reasoning_text",
+                                "text": "Internal reasoning text."
+                            }
+                        ],
+                        "encrypted_content": "ENC",
+                        "status": "completed",
+                    }
+                ]
+            })
         );
     }
 
@@ -2858,20 +2804,21 @@ mod tests {
 
         assert_eq!(
             details,
-            &json!([
-                {
-                    "type": "reasoning",
-                    "id": "rs_123",
-                    "summary": [
-                        {
-                            "type": "summary_text",
-                            "text": "Finished reasoning."
-                        }
-                    ],
-                    "encrypted_content": "ENC_NEW",
-                    "status": "completed"
-                }
-            ])
+            &json!({
+                "reasoning_items": [
+                    {
+                        "id": "rs_123",
+                        "summary": [
+                            {
+                                "type": "summary_text",
+                                "text": "Finished reasoning."
+                            }
+                        ],
+                        "encrypted_content": "ENC_NEW",
+                        "status": "completed"
+                    }
+                ]
+            })
         );
     }
 
@@ -2926,15 +2873,16 @@ mod tests {
 
         assert_eq!(
             details,
-            &json!([
-                {
-                    "type": "reasoning",
-                    "id": "rs_123",
-                    "summary": [],
-                    "encrypted_content": "ENC",
-                    "status": "completed"
-                }
-            ])
+            &json!({
+                "reasoning_items": [
+                    {
+                        "id": "rs_123",
+                        "summary": [],
+                        "encrypted_content": "ENC",
+                        "status": "completed"
+                    }
+                ]
+            })
         );
     }
 

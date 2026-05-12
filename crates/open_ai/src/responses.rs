@@ -85,14 +85,6 @@ pub struct ResponseReasoningInputItem {
     pub status: Option<String>,
 }
 
-impl ResponseReasoningInputItem {
-    pub fn has_encrypted_content(&self) -> bool {
-        self.encrypted_content
-            .as_deref()
-            .is_some_and(|encrypted_content| !encrypted_content.is_empty())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseReasoningSummaryPart {
