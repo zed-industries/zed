@@ -721,30 +721,68 @@ impl MessageEditor {
     ) -> Result<()> {
         if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
             if let Some(command_name) = parsed_command.command {
-                // Check if this command is in the list of available commands from the server
-                let is_supported = available_commands
+                // Two acceptance paths:
+                //
+                // 1. Direct name match. Covers bare slash commands
+                //    (`/help`), MCP prompts that were prefixed at the
+                //    agent because of a server-name collision
+                //    (`/github.create_pr`), and skills (whose bare name
+                //    is registered for the unqualified `/<name>` form).
+                //
+                // 2. Skill scope qualifier. The popup inserts
+                //    `/global.<name>` or `/local.<name>` to disambiguate
+                //    same-named skills, so the validator has to look
+                //    inside the meta tag on each available command to
+                //    confirm that a skill with the bare name exists in
+                //    the requested scope. Without this branch, every
+                //    autocomplete pick of a same-named skill would be
+                //    rejected as "not supported" before reaching the
+                //    resolver.
+                let direct_match = available_commands
                     .iter()
                     .any(|cmd| cmd.name == command_name);
+                let scope_match = !direct_match
+                    && command_name.split_once('.').is_some_and(|(scope, bare)| {
+                        available_commands.iter().any(|cmd| {
+                            cmd.name == bare
+                                && acp_thread::skill_source_from_meta(&cmd.meta).as_deref()
+                                    == Some(scope)
+                        })
+                    });
 
-                if !is_supported {
+                if !direct_match && !scope_match {
                     return Err(anyhow!(
                         "The /{} command is not supported by {}.\n\nAvailable commands: {}",
                         command_name,
                         agent_id,
-                        if available_commands.is_empty() {
-                            "none".to_string()
-                        } else {
-                            available_commands
-                                .iter()
-                                .map(|cmd| format!("/{}", cmd.name))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
+                        Self::format_available_commands(available_commands),
                     ));
                 }
             }
         }
         Ok(())
+    }
+
+    /// Render the available-commands list for error messages. Skills
+    /// are shown in their qualified `/<scope>.<name>` form so users see
+    /// the exact text the popup would insert — otherwise the listing
+    /// would contain confusing duplicates like `/foo, /foo` when both a
+    /// global and a project-local skill share a name.
+    fn format_available_commands(commands: &[acp::AvailableCommand]) -> String {
+        if commands.is_empty() {
+            return "none".to_string();
+        }
+        commands
+            .iter()
+            .map(|cmd| {
+                if let Some(scope) = acp_thread::skill_source_from_meta(&cmd.meta) {
+                    format!("/{}.{}", scope, cmd.name)
+                } else {
+                    format!("/{}", cmd.name)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn contents(
@@ -2056,7 +2094,7 @@ mod tests {
     use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
     use parking_lot::RwLock;
-    use project::{CompletionIntent, Project, ProjectPath};
+    use project::{AgentId, CompletionIntent, Project, ProjectPath};
     use serde_json::{Value, json};
 
     use text::Point;
@@ -2072,6 +2110,56 @@ mod tests {
             Mention, MessageEditor, MessageEditorEvent, SessionCapabilities, parse_mention_links,
         },
     };
+
+    #[test]
+    fn test_validate_slash_commands_accepts_scope_qualified_skill() {
+        let agent_id = AgentId::from("Zed");
+        let make_skill_command = |name: &str, scope: &str| {
+            acp::AvailableCommand::new(name, "desc").meta(acp_thread::meta_with_skill_source(scope))
+        };
+
+        let commands = vec![
+            make_skill_command("deploy", "global"),
+            make_skill_command("deploy", "local"),
+            acp::AvailableCommand::new("help", "Get help"),
+        ];
+
+        // Bare name still works (current behavior — the resolver
+        // applies project-overrides-global for unqualified commands).
+        MessageEditor::validate_slash_commands("/deploy", &commands, &agent_id)
+            .expect("bare /deploy should validate when a skill named `deploy` exists");
+
+        // Scope-qualified forms both validate, each pointing at the
+        // matching source.
+        MessageEditor::validate_slash_commands("/global.deploy", &commands, &agent_id)
+            .expect("/global.deploy should validate when a global skill named `deploy` exists");
+        MessageEditor::validate_slash_commands("/local.deploy", &commands, &agent_id)
+            .expect("/local.deploy should validate when a project skill named `deploy` exists");
+
+        // Wrong scope is rejected so the resolver doesn't silently
+        // fall through to MCP when the user meant a skill.
+        let err = MessageEditor::validate_slash_commands("/local.help", &commands, &agent_id)
+            .expect_err("/local.help should fail — `help` is an MCP command, not a local skill");
+        let err_message = err.to_string();
+        assert!(
+            err_message.contains("/local.help"),
+            "error should mention the typed command: {err_message}"
+        );
+        // Error listing shows qualified forms for skills so users see
+        // the exact text the popup would have inserted.
+        assert!(
+            err_message.contains("/global.deploy"),
+            "error listing should show qualified global form: {err_message}"
+        );
+        assert!(
+            err_message.contains("/local.deploy"),
+            "error listing should show qualified local form: {err_message}"
+        );
+        assert!(
+            err_message.contains("/help"),
+            "error listing should still show bare MCP commands: {err_message}"
+        );
+    }
 
     #[test]
     fn test_parse_mention_links() {
