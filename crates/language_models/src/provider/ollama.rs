@@ -269,13 +269,15 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         let mut models: HashMap<String, ollama::Model> = HashMap::new();
         let settings = OllamaLanguageModelProvider::settings(cx);
 
-        // Add models from the Ollama API
-        for model in self.state.read(cx).fetched_models.iter() {
-            let mut model = model.clone();
-            if let Some(context_window) = settings.context_window {
-                model.max_tokens = context_window;
+        if settings.auto_discover {
+            // Add models from the Ollama API
+            for model in self.state.read(cx).fetched_models.iter() {
+                let mut model = model.clone();
+                if let Some(context_window) = settings.context_window {
+                    model.max_tokens = context_window;
+                }
+                models.insert(model.name.clone(), model);
             }
-            models.insert(model.name.clone(), model);
         }
 
         // Override with available models from settings

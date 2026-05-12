@@ -8,71 +8,6 @@ use rpc::ConnectionId;
 use std::sync::Arc;
 
 test_both_dbs!(
-    test_get_users,
-    test_get_users_by_ids_postgres,
-    test_get_users_by_ids_sqlite
-);
-
-async fn test_get_users(db: &Arc<Database>) {
-    let mut user_ids = Vec::new();
-    for i in 1..=4 {
-        let user = db
-            .create_user(
-                &format!("user{i}@example.com"),
-                None,
-                false,
-                NewUserParams {
-                    github_login: format!("user{i}"),
-                    github_user_id: i,
-                },
-            )
-            .await
-            .unwrap();
-        user_ids.push(user.user_id);
-    }
-
-    assert_eq!(
-        db.get_users_by_ids(user_ids.clone())
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|user| (
-                user.id,
-                user.github_login,
-                user.github_user_id,
-                user.email_address
-            ))
-            .collect::<Vec<_>>(),
-        vec![
-            (
-                user_ids[0],
-                "user1".to_string(),
-                1,
-                Some("user1@example.com".to_string()),
-            ),
-            (
-                user_ids[1],
-                "user2".to_string(),
-                2,
-                Some("user2@example.com".to_string()),
-            ),
-            (
-                user_ids[2],
-                "user3".to_string(),
-                3,
-                Some("user3@example.com".to_string()),
-            ),
-            (
-                user_ids[3],
-                "user4".to_string(),
-                4,
-                Some("user4@example.com".to_string()),
-            )
-        ]
-    );
-}
-
-test_both_dbs!(
     test_add_contacts,
     test_add_contacts_postgres,
     test_add_contacts_sqlite
@@ -327,66 +262,6 @@ async fn test_project_count(db: &Arc<Database>) {
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
-}
-
-#[test]
-fn test_fuzzy_like_string() {
-    assert_eq!(Database::fuzzy_like_string("abcd"), "%a%b%c%d%");
-    assert_eq!(Database::fuzzy_like_string("x y"), "%x%y%");
-    assert_eq!(Database::fuzzy_like_string(" z  "), "%z%");
-}
-
-#[gpui::test]
-async fn test_fuzzy_search_users(cx: &mut gpui::TestAppContext) {
-    // In CI, only run postgres tests on Linux (where we have the postgres service).
-    // Locally, always run them (assuming postgres is available).
-    if std::env::var("CI").is_ok() && !cfg!(target_os = "linux") {
-        return;
-    }
-    let test_db = TestDb::postgres(cx.executor());
-    let db = test_db.db();
-    for (i, github_login) in [
-        "California",
-        "colorado",
-        "oregon",
-        "washington",
-        "florida",
-        "delaware",
-        "rhode-island",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        db.create_user(
-            &format!("{github_login}@example.com"),
-            None,
-            false,
-            NewUserParams {
-                github_login: github_login.into(),
-                github_user_id: i as i32,
-            },
-        )
-        .await
-        .unwrap();
-    }
-
-    assert_eq!(
-        fuzzy_search_user_names(db, "clr").await,
-        &["colorado", "California"]
-    );
-    assert_eq!(
-        fuzzy_search_user_names(db, "ro").await,
-        &["rhode-island", "colorado", "oregon"],
-    );
-
-    async fn fuzzy_search_user_names(db: &Database, query: &str) -> Vec<String> {
-        db.fuzzy_search_users(query, 10)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|user| user.github_login)
-            .collect::<Vec<_>>()
-    }
 }
 
 test_both_dbs!(

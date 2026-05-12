@@ -11,7 +11,7 @@ use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
 use util::paths::PathMatcher;
 
-/// Fast file path pattern matching tool that works with any codebase size
+/// Find file paths that match a given pattern.
 ///
 /// - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 /// - Returns matching file paths sorted alphabetically
