@@ -1257,15 +1257,38 @@ impl NativeAgent {
         // `disable_model_invocation`. The flag controls catalog visibility
         // for the model, not user-driven invocation — that's the whole
         // point of marking a skill model-disabled.
+        //
+        // When two skills share a name (only possible across scopes when
+        // at least one is `disable_model_invocation: true` — see
+        // `merge_skills`), both entries get prefixed with their scope key
+        // (`global.code-review`, `<worktree>.code-review`) so users have
+        // unambiguous slash-command names. The prefix piggybacks on the
+        // same `<prefix>.<name>` parsing the MCP path already uses.
+        let mut skill_name_counts: HashMap<&str, usize> = HashMap::default();
+        for skill in state.skills.iter() {
+            *skill_name_counts.entry(skill.name.as_str()).or_insert(0) += 1;
+        }
+
         let skill_commands = state.skills.iter().map(|skill| {
-            let source_label = match &skill.source {
-                SkillSource::Global => "global".to_string(),
-                SkillSource::ProjectLocal {
-                    worktree_root_name, ..
-                } => worktree_root_name.to_string(),
+            let has_collision = skill_name_counts
+                .get(skill.name.as_str())
+                .copied()
+                .unwrap_or(0)
+                > 1;
+            let scope_key = skill.source.scope_key();
+            let command_name = if has_collision {
+                format!("{}.{}", scope_key, skill.name)
+            } else {
+                skill.name.clone()
             };
-            acp::AvailableCommand::new(skill.name.clone(), skill.description.clone())
-                .meta(acp_thread::meta_with_skill_source(&source_label))
+            let mut command = acp::AvailableCommand::new(command_name, skill.description.clone());
+            // The muted source suffix in the autocomplete popup is
+            // redundant when the scope prefix is already in the name, so
+            // we only attach the source meta for non-colliding skills.
+            if !has_collision {
+                command = command.meta(acp_thread::meta_with_skill_source(scope_key));
+            }
+            command
         });
 
         mcp_commands.chain(skill_commands).collect()
@@ -2152,12 +2175,25 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             // of `disable_model_invocation` — that flag only hides the
             // skill from the model's catalog. The user explicitly typed
             // the name, so they get to invoke it.
-            if parsed_command.explicit_server_id.is_none()
-                && let Some(skill) = project_state
+            //
+            // When `explicit_server_id` is `Some(prefix)`, the user typed
+            // `/<prefix>.<name>`. The MCP lookup above didn't match (or we
+            // wouldn't be here), so try interpreting the prefix as a skill
+            // scope key (`global` or a worktree root name). When it's
+            // `None`, fall back to a plain-name lookup, which only finds
+            // a unique skill since collisions force the scope prefix in
+            // `build_available_commands_for_project`.
+            let skill_match = if let Some(scope) = parsed_command.explicit_server_id {
+                project_state.skills.iter().find(|skill| {
+                    skill.name == parsed_command.prompt_name && skill.source.scope_key() == scope
+                })
+            } else {
+                project_state
                     .skills
                     .iter()
                     .find(|skill| skill.name == parsed_command.prompt_name)
-            {
+            };
+            if let Some(skill) = skill_match {
                 let skill = skill.clone();
                 return self.0.update(cx, |agent, cx| {
                     agent.send_skill_invocation(id, session_id.clone(), skill, params.prompt, cx)
@@ -2830,61 +2866,89 @@ pub(crate) fn skills_resolver_for_project(
 }
 
 /// Merge global and project-local skills.
-/// Project-local skills override global skills with the same name.
+///
+/// Resolution rules:
+///
+/// 1. Two skills with the same name and the same scope key (e.g. both
+///    global, or both from the same worktree) always conflict, and the
+///    first one wins. There's no way to disambiguate identical scope
+///    prefixes in the slash-command namespace, so keeping both would
+///    just produce two indistinguishable autocomplete entries.
+/// 2. Two skills with the same name in *different* scopes coexist when
+///    either of them has `disable_model_invocation: true`. Such skills
+///    are user-only (the `skill` tool refuses to load them and they're
+///    omitted from the model's catalog), so they don't need a globally
+///    unique name — the user disambiguates them via the
+///    `<scope_key>.<name>` slash-command form. Otherwise, the original
+///    rule applies: a project-local skill overrides a global one, but
+///    a global never overrides a project-local and project-vs-project
+///    cross-worktree collisions keep the first one.
 fn merge_skills(
     global: Vec<Result<Skill, SkillLoadError>>,
     project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
 ) -> (Vec<Skill>, Vec<SkillLoadError>) {
-    let mut skills = Vec::new();
+    let mut skills: Vec<Skill> = Vec::new();
     let mut errors = Vec::new();
-    let mut seen_names: HashMap<String, (usize, SkillSource, PathBuf)> = HashMap::default();
 
     for result in global.into_iter().chain(project) {
-        match result {
-            Ok(skill) => {
-                if let Some((existing_index, existing_source, existing_path)) =
-                    seen_names.get(&skill.name).cloned()
-                {
-                    match (&existing_source, &skill.source) {
-                        (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
-                            log::warn!(
-                                "Project skill '{}' at '{}' overrides global skill at '{}'",
-                                skill.name,
-                                skill.skill_file_path.display(),
-                                existing_path.display()
-                            );
-                            seen_names.insert(
-                                skill.name.clone(),
-                                (
-                                    existing_index,
-                                    skill.source.clone(),
-                                    skill.skill_file_path.clone(),
-                                ),
-                            );
-                            skills[existing_index] = skill;
-                        }
-                        _ => {
-                            log::warn!(
-                                "Skill '{}' at '{}' conflicts with skill at '{}'; keeping the first one",
-                                skill.name,
-                                skill.skill_file_path.display(),
-                                existing_path.display()
-                            );
-                        }
-                    }
-                } else {
-                    seen_names.insert(
-                        skill.name.clone(),
-                        (
-                            skills.len(),
-                            skill.source.clone(),
-                            skill.skill_file_path.clone(),
-                        ),
-                    );
-                    skills.push(skill);
-                }
+        let new_skill = match result {
+            Ok(skill) => skill,
+            Err(e) => {
+                errors.push(e);
+                continue;
             }
-            Err(e) => errors.push(e),
+        };
+
+        if let Some(idx) = skills.iter().position(|existing| {
+            existing.name == new_skill.name
+                && existing.source.scope_key() == new_skill.source.scope_key()
+        }) {
+            log::warn!(
+                "Skill '{}' at '{}' conflicts with skill at '{}' in the same scope; keeping the first one",
+                new_skill.name,
+                new_skill.skill_file_path.display(),
+                skills[idx].skill_file_path.display(),
+            );
+            continue;
+        }
+
+        let Some(idx) = skills
+            .iter()
+            .position(|existing| existing.name == new_skill.name)
+        else {
+            skills.push(new_skill);
+            continue;
+        };
+
+        if skills[idx].disable_model_invocation || new_skill.disable_model_invocation {
+            log::debug!(
+                "Skill '{}' at '{}' coexists with skill at '{}'; at least one has disable-model-invocation enabled",
+                new_skill.name,
+                new_skill.skill_file_path.display(),
+                skills[idx].skill_file_path.display(),
+            );
+            skills.push(new_skill);
+            continue;
+        }
+
+        match (&skills[idx].source, &new_skill.source) {
+            (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
+                log::warn!(
+                    "Project skill '{}' at '{}' overrides global skill at '{}'",
+                    new_skill.name,
+                    new_skill.skill_file_path.display(),
+                    skills[idx].skill_file_path.display(),
+                );
+                skills[idx] = new_skill;
+            }
+            _ => {
+                log::warn!(
+                    "Skill '{}' at '{}' conflicts with skill at '{}'; keeping the first one",
+                    new_skill.name,
+                    new_skill.skill_file_path.display(),
+                    skills[idx].skill_file_path.display(),
+                );
+            }
         }
     }
 
@@ -2937,6 +3001,229 @@ mod internal_tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "Project review");
         assert!(matches!(skills[0].source, SkillSource::ProjectLocal { .. }));
+    }
+
+    fn make_skill(name: &str, source: SkillSource, disable_model_invocation: bool) -> Skill {
+        let dir = match &source {
+            SkillSource::Global => format!("/home/user/.agents/skills/{name}"),
+            SkillSource::ProjectLocal {
+                worktree_root_name, ..
+            } => format!("/{worktree_root_name}/.agents/skills/{name}"),
+        };
+        Skill {
+            name: name.to_string(),
+            description: format!("{name} description"),
+            source,
+            directory_path: PathBuf::from(&dir),
+            skill_file_path: PathBuf::from(format!("{dir}/SKILL.md")),
+            disable_model_invocation,
+        }
+    }
+
+    #[test]
+    fn test_merge_skills_keeps_both_when_either_is_model_disabled() {
+        let global = make_skill("code-review", SkillSource::Global, true);
+        let project = make_skill(
+            "code-review",
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(1),
+                worktree_root_name: "my-project".into(),
+            },
+            false,
+        );
+
+        let (skills, errors) = merge_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
+
+        assert!(errors.is_empty());
+        assert_eq!(skills.len(), 2, "both skills should coexist");
+        assert!(matches!(skills[0].source, SkillSource::Global));
+        assert!(matches!(skills[1].source, SkillSource::ProjectLocal { .. }));
+    }
+
+    #[test]
+    fn test_merge_skills_keeps_both_when_both_are_model_disabled() {
+        let global = make_skill("code-review", SkillSource::Global, true);
+        let project = make_skill(
+            "code-review",
+            SkillSource::ProjectLocal {
+                worktree_id: SkillScopeId(1),
+                worktree_root_name: "my-project".into(),
+            },
+            true,
+        );
+
+        let (skills, errors) = merge_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
+
+        assert!(errors.is_empty());
+        assert_eq!(skills.len(), 2);
+    }
+
+    #[test]
+    fn test_merge_skills_same_scope_conflict_keeps_first_even_when_model_disabled() {
+        // Two globals with the same name can't be disambiguated by
+        // scope prefix — they'd both be `global.code-review`. The
+        // first-wins rule applies regardless of the model-invocation
+        // flag in that case.
+        let first = make_skill("code-review", SkillSource::Global, true);
+        let mut second = make_skill("code-review", SkillSource::Global, true);
+        second.description = "second description".to_string();
+        second.skill_file_path = PathBuf::from("/home/user/.agents/skills/dup/SKILL.md");
+
+        let (skills, errors) = merge_skills(vec![Ok(first), Ok(second)], std::iter::empty());
+
+        assert!(errors.is_empty());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "code-review description");
+    }
+
+    #[gpui::test]
+    async fn test_colliding_skills_get_scope_prefixed_command_names(cx: &mut TestAppContext) {
+        use collections::{HashMap, HashSet};
+        use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
+
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+            trusted_worktrees::init(HashMap::default(), cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let global_dir = global_skills_dir().join("code-review");
+        fs.create_dir(&global_dir).await.unwrap();
+        fs.insert_file(
+            &global_dir.join("SKILL.md"),
+            b"---\nname: code-review\ndescription: Global review\ndisable-model-invocation: true\n---\n\nGlobal body.\n"
+                .to_vec(),
+        )
+        .await;
+        fs.insert_tree(
+            "/my-project",
+            json!({
+                ".agents": { "skills": { "code-review": {
+                    "SKILL.md": "---\nname: code-review\ndescription: Project review\n---\n\nProject body.\n"
+                }}}
+            }),
+        )
+        .await;
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [Path::new("/my-project")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/my-project")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Trust the worktree so its skills load.
+        cx.update(|cx| {
+            let trusted_worktrees = TrustedWorktrees::try_get_global(cx).unwrap();
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert_eq!(
+                state.skills.len(),
+                2,
+                "both skills should coexist in state.skills (one is disable-model-invocation)"
+            );
+
+            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let mut command_names: Vec<&str> = commands
+                .iter()
+                .filter(|c| c.name.ends_with("code-review"))
+                .map(|c| c.name.as_str())
+                .collect();
+            command_names.sort();
+            assert_eq!(
+                command_names,
+                vec!["global.code-review", "my-project.code-review"],
+                "colliding skills should be exposed with scope-prefixed names"
+            );
+
+            // The muted source label is suppressed when the prefix is
+            // already in the name to avoid visual redundancy.
+            for command in commands.iter().filter(|c| c.name.ends_with("code-review")) {
+                assert!(
+                    command.meta.is_none(),
+                    "colliding skill commands should not also carry source meta: {command:?}"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_non_colliding_skill_keeps_plain_command_name_with_source_meta(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| cx.update_flags(true, vec!["skills".to_string()]));
+
+        let fs = FakeFs::new(cx.executor());
+        let global_dir = global_skills_dir().join("only-global");
+        fs.create_dir(&global_dir).await.unwrap();
+        fs.insert_file(
+            &global_dir.join("SKILL.md"),
+            b"---\nname: only-global\ndescription: A global-only skill\n---\n\nBody.\n".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
+            let command = commands
+                .iter()
+                .find(|c| c.name == "only-global")
+                .expect("non-colliding skill keeps its plain name");
+            assert_eq!(
+                acp_thread::skill_source_from_meta(&command.meta).as_deref(),
+                Some("global"),
+                "non-colliding skill should carry its source label in meta"
+            );
+        });
     }
 
     #[test]

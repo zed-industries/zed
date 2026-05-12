@@ -65,6 +65,24 @@ pub enum SkillSource {
     },
 }
 
+pub const GLOBAL_SKILL_SCOPE_KEY: &str = "global";
+
+impl SkillSource {
+    /// Short identifier used to disambiguate same-named skills in the
+    /// slash-command namespace (e.g. `global.code-review` vs
+    /// `my-project.code-review`). For global skills this is the literal
+    /// `"global"`; for project-local skills it's the worktree's root
+    /// name, which is what the user sees in the project panel.
+    pub fn scope_key(&self) -> &str {
+        match self {
+            SkillSource::Global => GLOBAL_SKILL_SCOPE_KEY,
+            SkillSource::ProjectLocal {
+                worktree_root_name, ..
+            } => worktree_root_name.as_ref(),
+        }
+    }
+}
+
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
