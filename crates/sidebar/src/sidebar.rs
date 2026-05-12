@@ -4742,6 +4742,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace_path_list(workspace, cx).paths().is_empty() {
+            return;
+        }
+
         if self.should_create_terminal_for_workspace(workspace, cx) {
             self.create_new_terminal(workspace, window, cx);
         } else {
@@ -4766,6 +4770,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace_path_list(workspace, cx).paths().is_empty() {
+            return;
+        }
+
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -4799,6 +4807,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace_path_list(workspace, cx).paths().is_empty() {
+            return;
+        }
+
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
