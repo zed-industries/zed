@@ -38,12 +38,6 @@ impl Database {
         .await
     }
 
-    /// Returns a user by ID. There are no access checks here, so this should only be used internally.
-    pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<user::Model>> {
-        self.transaction(|tx| async move { Ok(user::Entity::find_by_id(id).one(&*tx).await?) })
-            .await
-    }
-
     pub async fn update_or_create_user_by_github_account(
         &self,
         github_login: &str,
