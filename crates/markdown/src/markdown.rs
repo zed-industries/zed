@@ -16,6 +16,7 @@ use mermaid::{
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
+use theme::Theme;
 use theme_settings::ThemeSettings;
 use ui::Checkbox;
 use ui::CopyButton;
@@ -1133,6 +1134,7 @@ impl MarkdownElement {
         alt_text: Option<SharedString>,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
+        cx: &App,
     ) {
         let align = builder.text_style().text_align;
         builder.modify_current_div(|el| {
@@ -1144,13 +1146,16 @@ impl MarkdownElement {
                 TextAlign::Right => image_container.justify_end(),
             };
 
+            let theme = Arc::clone(cx.theme());
+
             image_container.child(
                 img(source)
                     .id(("markdown-image", range.start))
                     .max_w_full()
+                    .rounded_md()
                     .when_some(height, |this, height| this.h(height))
                     .when_some(width, |this, width| this.w(width))
-                    .with_fallback(move || image_fallback_element(alt_text.clone())),
+                    .with_fallback(move || image_fallback_element(alt_text.clone(), &theme)),
             )
         });
     }
@@ -1726,6 +1731,7 @@ impl Element for MarkdownElement {
                                     alt_text,
                                     None,
                                     None,
+                                    cx,
                                 );
                             } else if let Some(source) = self
                                 .image_resolver
@@ -1740,6 +1746,7 @@ impl Element for MarkdownElement {
                                     alt_text,
                                     None,
                                     None,
+                                    cx,
                                 );
                             }
                         }
@@ -2329,25 +2336,23 @@ fn collect_image_alt_text(
     }
 }
 
-fn image_fallback_element(alt_text: Option<SharedString>) -> AnyElement {
-    let mut label = "Failed to load image".to_string();
-    if let Some(alt) = &alt_text {
-        if !alt.is_empty() {
-            label.push_str(": ");
-            label.push_str(alt);
-        }
-    }
+fn image_fallback_element(alt_text: Option<SharedString>, theme: &Theme) -> AnyElement {
+    let label = match &alt_text {
+        Some(alt) if !alt.is_empty() => format!("Failed to load image: {alt}"),
+        _ => "Failed to load image".to_string(),
+    };
 
-    div()
+    h_flex()
+        .w_full()
         .px_2()
         .py_1()
-        .bg(gpui::red().opacity(0.1))
-        .border_1()
-        .border_color(gpui::red().opacity(0.3))
+        .justify_center()
         .rounded_md()
-        .text_sm()
-        .text_color(gpui::red())
-        .child(label)
+        .border_1()
+        .border_dashed()
+        .border_color(theme.colors().border_variant)
+        .bg(theme.colors().ghost_element_background.opacity(0.2))
+        .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
         .into_any_element()
 }
 
