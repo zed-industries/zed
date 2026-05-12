@@ -433,13 +433,40 @@ fn delete_branch_command(is_remote: bool, branch_name: &str, force: bool) -> Str
     )
 }
 
-// Git only reports "not fully merged" via localized stderr, so this
-// best-effort check may miss some locales and fall back to the raw error toast.
-fn is_unmerged_branch_delete_error(error: &anyhow::Error) -> bool {
-    error
-        .to_string()
-        .to_lowercase()
-        .contains("not fully merged")
+struct BranchDeleteForceDeletePrompt {
+    required_error_substrings: &'static [&'static str],
+    message: fn(&str) -> String,
+}
+
+impl BranchDeleteForceDeletePrompt {
+    fn matches(&self, normalized_error_message: &str) -> bool {
+        self.required_error_substrings
+            .iter()
+            .all(|substring| normalized_error_message.contains(substring))
+    }
+}
+
+const BRANCH_DELETE_FORCE_DELETE_PROMPTS: &[BranchDeleteForceDeletePrompt] =
+    &[BranchDeleteForceDeletePrompt {
+        required_error_substrings: &["not fully merged"],
+        message: unmerged_branch_force_delete_prompt,
+    }];
+
+fn unmerged_branch_force_delete_prompt(branch_name: &str) -> String {
+    format!("Branch \"{branch_name}\" is not fully merged. Force delete it?")
+}
+
+// Git only reports these cases via localized stderr, so this best-effort check
+// may miss some locales and fall back to the raw error toast.
+fn force_delete_prompt_for_branch_delete_error(
+    error: &anyhow::Error,
+    branch_name: &str,
+) -> Option<String> {
+    let normalized_error_message = error.to_string().to_lowercase();
+    BRANCH_DELETE_FORCE_DELETE_PROMPTS
+        .iter()
+        .find(|prompt| prompt.matches(&normalized_error_message))
+        .map(|prompt| (prompt.message)(branch_name))
 }
 
 struct DeleteBranchTooltip {
@@ -647,16 +674,15 @@ impl BranchListDelegate {
                         log::error!("Failed to delete branch: {error}");
                     }
 
-                    if force || !is_unmerged_branch_delete_error(&error) {
-                        (Err(error), force)
-                    } else {
+                    let force_delete_prompt = (!force)
+                        .then(|| force_delete_prompt_for_branch_delete_error(&error, entry.name()))
+                        .flatten();
+
+                    if let Some(prompt_message) = force_delete_prompt {
                         let answer = cx.update(|window, cx| {
                             window.prompt(
                                 PromptLevel::Warning,
-                                &format!(
-                                    "Branch \"{}\" is not fully merged. Force delete it?",
-                                    entry.name()
-                                ),
+                                &prompt_message,
                                 None,
                                 &["Force Delete", "Cancel"],
                                 cx,
@@ -677,6 +703,8 @@ impl BranchListDelegate {
                             log::error!("Failed to force delete branch: {error}");
                         }
                         (retry, true)
+                    } else {
+                        (Err(error), force)
                     }
                 }
             };

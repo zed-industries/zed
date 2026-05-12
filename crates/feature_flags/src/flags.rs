@@ -35,14 +35,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
-pub struct ExperimentalSystemPromptFeatureFlag;
-
-impl FeatureFlag for ExperimentalSystemPromptFeatureFlag {
-    const NAME: &'static str = "experimental-system-prompt";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(ExperimentalSystemPromptFeatureFlag);
-
 pub struct AgentPanelTerminalFeatureFlag;
 
 impl FeatureFlag for AgentPanelTerminalFeatureFlag {
