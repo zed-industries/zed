@@ -5180,8 +5180,8 @@ impl GitPanel {
                 .overflow_hidden()
                 .child(
                     uniform_list("commit_history_list", item_count, {
-                        let workspace = workspace.clone();
-                        let repo_weak = repo_weak.clone();
+                        let workspace = workspace;
+                        let repo_weak = repo_weak;
                         move |range, window, cx| {
                             let local_offset = time::UtcOffset::current_local_offset()
                                 .unwrap_or(time::UtcOffset::UTC);
@@ -5254,7 +5254,7 @@ impl GitPanel {
                                     let is_selected = selected_history_entry == Some(index);
                                     let workspace = workspace.clone();
                                     let repo = repo_weak.clone();
-                                    let sha_for_click = sha_string.clone();
+                                    let sha_for_click = sha_string;
 
                                     let dot_separator = || {
                                         Label::new("•")
