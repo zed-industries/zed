@@ -113,15 +113,6 @@ impl BranchDiff {
         &self.diff_base
     }
 
-    pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
-        self.diff_base = diff_base;
-        self.tree_diff = None;
-        self.base_commit = None;
-        self.head_commit = None;
-        cx.emit(BranchDiffEvent::FileListChanged);
-        *self.update_needed.borrow_mut() = ();
-    }
-
     pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
         self.repo = repo;
         self.tree_diff = None;
@@ -137,15 +128,14 @@ impl BranchDiff {
             return;
         }
 
-        let should_reload_tree_diff = diff_base.is_merge_base();
+        self.tree_diff_update_needed = diff_base.is_merge_base();
+        self.tree_diff = None;
         self.diff_base = diff_base;
-        self.tree_diff_update_needed = should_reload_tree_diff;
         self.base_commit = None;
         self.head_commit = None;
 
-        self.tree_diff = None;
         cx.emit(BranchDiffEvent::DiffBaseChanged);
-        if should_reload_tree_diff {
+        if self.tree_diff_update_needed {
             *self.update_needed.borrow_mut() = ();
         }
     }
