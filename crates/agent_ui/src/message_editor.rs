@@ -95,6 +95,7 @@ impl SessionCapabilities {
                 name: cmd.name.clone().into(),
                 description: cmd.description.clone().into(),
                 requires_argument: cmd.input.is_some(),
+                source: acp_thread::skill_source_from_meta(&cmd.meta),
             })
             .collect()
     }

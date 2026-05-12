@@ -1257,10 +1257,16 @@ impl NativeAgent {
         // `disable_model_invocation`. The flag controls catalog visibility
         // for the model, not user-driven invocation — that's the whole
         // point of marking a skill model-disabled.
-        let skill_commands = state
-            .skills
-            .iter()
-            .map(|skill| acp::AvailableCommand::new(skill.name.clone(), skill.description.clone()));
+        let skill_commands = state.skills.iter().map(|skill| {
+            let source_label = match &skill.source {
+                SkillSource::Global => "global".to_string(),
+                SkillSource::ProjectLocal {
+                    worktree_root_name, ..
+                } => worktree_root_name.to_string(),
+            };
+            acp::AvailableCommand::new(skill.name.clone(), skill.description.clone())
+                .meta(acp_thread::meta_with_skill_source(&source_label))
+        });
 
         mcp_commands.chain(skill_commands).collect()
     }

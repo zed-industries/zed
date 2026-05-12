@@ -302,6 +302,11 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
+    /// Origin label for this command (e.g. `"global"` or a worktree
+    /// root name for skills). When present, it's displayed in the
+    /// autocomplete popup after the command name so users can
+    /// disambiguate same-named commands from different scopes.
+    pub source: Option<SharedString>,
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -1242,6 +1247,14 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 command, argument, ..
             }) => {
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
+                // Resolve the muted-text highlight up front: the
+                // completion build happens on a background thread where
+                // `cx.theme()` isn't available.
+                let source_highlight_id = cx
+                    .theme()
+                    .syntax()
+                    .highlight_id("variable")
+                    .map(HighlightId::new);
                 cx.background_spawn(async move {
                     let completions = search_task
                         .await
@@ -1256,10 +1269,12 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                             let is_missing_argument =
                                 command.requires_argument && argument.is_none();
 
+                            let label = build_slash_command_label(&command, source_highlight_id);
+
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
-                                label: CodeLabel::plain(command.name.to_string(), None),
+                                label,
                                 documentation: Some(CompletionDocumentation::MultiLinePlainText(
                                     command.description.into(),
                                 )),
@@ -2127,6 +2142,35 @@ pub fn extract_file_name_and_directory(
         file_name.to_string().into(),
         Some(SharedString::new(directory)).filter(|dir| !dir.is_empty()),
     )
+}
+
+/// Build the autocomplete-popup label for a slash command, appending
+/// the command's origin (e.g. `"global"` or a worktree root name for
+/// skills) after the name when one is present. The suffix is styled
+/// with the muted `variable` highlight and excluded from the fuzzy
+/// filter range so typing the source doesn't match the entry.
+fn build_slash_command_label(
+    command: &AvailableCommand,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    let Some(source) = command.source.as_ref() else {
+        return CodeLabel::plain(command.name.to_string(), None);
+    };
+    let mut builder = CodeLabelBuilder::default();
+    builder.push_str(&command.name, None);
+    // Two spaces gives a touch of breathing room between the name and
+    // the muted source label.
+    builder.push_str("  ", None);
+    builder.push_str(source, source_highlight_id);
+    // The filter range defaults to the entire label after `build()`,
+    // which would let the source text participate in fuzzy filtering.
+    // Slash commands are matched up-front in `search_slash_commands`
+    // against the command name, and the editor doesn't re-filter
+    // (`filter_completions()` is false), so this is mostly defensive
+    // — but it keeps the displayed filter consistent with what we
+    // actually matched against.
+    builder.respan_filter_range(Some(&command.name));
+    builder.build()
 }
 
 fn build_code_label_for_path(
