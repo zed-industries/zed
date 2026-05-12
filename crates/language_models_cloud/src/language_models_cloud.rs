@@ -461,11 +461,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     .thinking_effort
                     .as_ref()
                     .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
-                    .filter(|effort| effort.enables_reasoning());
+                    .filter(|effort| *effort != open_ai::ReasoningEffort::None);
                 let supports_none_reasoning_effort =
                     self.model.supported_effort_levels.iter().any(|effort| {
                         open_ai::ReasoningEffort::from_str(&effort.value)
-                            .is_ok_and(|effort| effort.disables_reasoning())
+                            .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
                     });
 
                 let mut request = into_open_ai_response(

@@ -551,7 +551,7 @@ impl LanguageModel for OpenCodeLanguageModel {
     fn supports_thinking(&self) -> bool {
         self.model
             .supported_reasoning_effort_levels()
-            .is_some_and(|levels| levels.iter().any(|effort| effort.enables_reasoning()))
+            .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None))
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
@@ -560,7 +560,7 @@ impl LanguageModel for OpenCodeLanguageModel {
             .map(|levels| {
                 let levels = levels
                     .into_iter()
-                    .filter(|effort| effort.enables_reasoning())
+                    .filter(|effort| *effort != ReasoningEffort::None)
                     .collect::<Vec<_>>();
                 if levels.is_empty() {
                     return Vec::new();
@@ -684,7 +684,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let supports_none_reasoning_effort = self
                     .model
                     .supported_reasoning_effort_levels()
-                    .is_some_and(|levels| levels.iter().any(|effort| effort.disables_reasoning()));
+                    .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),

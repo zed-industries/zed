@@ -476,16 +476,6 @@ pub enum ReasoningEffort {
     XHigh,
 }
 
-impl ReasoningEffort {
-    pub fn disables_reasoning(self) -> bool {
-        matches!(self, Self::None)
-    }
-
-    pub fn enables_reasoning(self) -> bool {
-        !self.disables_reasoning()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

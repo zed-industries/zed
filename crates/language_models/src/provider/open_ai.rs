@@ -217,22 +217,51 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 }
 
+fn default_thinking_reasoning_effort(model: &open_ai::Model) -> Option<open_ai::ReasoningEffort> {
+    use open_ai::ReasoningEffort;
+
+    model
+        .reasoning_effort()
+        .filter(|effort| *effort != ReasoningEffort::None)
+        .or_else(|| {
+            let supported_efforts = model.supported_reasoning_efforts();
+            if supported_efforts.contains(&ReasoningEffort::Medium) {
+                Some(ReasoningEffort::Medium)
+            } else {
+                supported_efforts
+                    .iter()
+                    .copied()
+                    .find(|effort| *effort != ReasoningEffort::None)
+            }
+        })
+}
+
+fn supports_selectable_thinking_effort(model: &open_ai::Model) -> bool {
+    model.uses_responses_api()
+        && model
+            .supported_reasoning_efforts()
+            .iter()
+            .any(|effort| *effort != open_ai::ReasoningEffort::None)
+}
+
 fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModelEffortLevel> {
-    if !model.supports_thinking() {
+    if !supports_selectable_thinking_effort(model) {
         return Vec::new();
     }
 
-    let default_effort = model.default_thinking_reasoning_effort();
+    let default_effort = default_thinking_reasoning_effort(model);
     model
-        .supported_thinking_reasoning_efforts()
+        .supported_reasoning_efforts()
+        .iter()
+        .copied()
         .filter_map(|effort| {
             let (name, value) = match effort {
+                open_ai::ReasoningEffort::None => return None,
                 open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
                 open_ai::ReasoningEffort::Low => ("Low", "low"),
                 open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
                 open_ai::ReasoningEffort::High => ("High", "high"),
                 open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-                open_ai::ReasoningEffort::None => return None,
             };
 
             Some(LanguageModelEffortLevel {
@@ -279,9 +308,13 @@ mod tests {
             supports_images: true,
         };
 
-        assert!(!model.supports_thinking());
+        assert!(!supports_selectable_thinking_effort(&model));
         assert!(supported_thinking_effort_levels(&model).is_empty());
-        assert!(model.supports_none_reasoning_effort());
+        assert!(
+            model
+                .supported_reasoning_efforts()
+                .contains(&open_ai::ReasoningEffort::None)
+        );
     }
 }
 
@@ -419,7 +452,7 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking()
+        supports_selectable_thinking_effort(&self.model)
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
@@ -463,8 +496,10 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.supports_parallel_tool_calls(),
                 self.model.supports_prompt_cache_key(),
                 self.max_output_tokens(),
-                self.model.default_thinking_reasoning_effort(),
-                self.model.supports_none_reasoning_effort(),
+                default_thinking_reasoning_effort(&self.model),
+                self.model
+                    .supported_reasoning_efforts()
+                    .contains(&open_ai::ReasoningEffort::None),
             );
             let completions = self.stream_response(request, cx);
             async move {

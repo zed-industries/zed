@@ -399,10 +399,8 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.max_output_tokens(),
                 self.model
                     .reasoning_effort
-                    .filter(|effort| effort.enables_reasoning()),
-                self.model
-                    .reasoning_effort
-                    .is_some_and(|effort| effort.disables_reasoning()),
+                    .filter(|effort| *effort != open_ai::ReasoningEffort::None),
+                self.model.reasoning_effort == Some(open_ai::ReasoningEffort::None),
             );
             let completions = self.stream_response(request, cx);
             async move {

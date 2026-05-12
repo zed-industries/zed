@@ -223,12 +223,12 @@ pub fn into_open_ai_response(
         .collect();
 
     let default_reasoning_effort =
-        default_reasoning_effort.filter(|effort| effort.enables_reasoning());
+        default_reasoning_effort.filter(|effort| *effort != ReasoningEffort::None);
     let reasoning_effort = if thinking_allowed {
         thinking_effort
             .as_deref()
             .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
-            .filter(|effort| effort.enables_reasoning())
+            .filter(|effort| *effort != ReasoningEffort::None)
             .or(default_reasoning_effort)
     } else if supports_none_reasoning_effort {
         Some(ReasoningEffort::None)
@@ -238,7 +238,7 @@ pub fn into_open_ai_response(
 
     let reasoning = reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
         effort,
-        summary: if effort.disables_reasoning() {
+        summary: if effort == ReasoningEffort::None {
             None
         } else {
             Some(crate::responses::ReasoningSummaryMode::Auto)
@@ -247,7 +247,7 @@ pub fn into_open_ai_response(
 
     let include = if reasoning
         .as_ref()
-        .is_some_and(|reasoning| reasoning.effort.enables_reasoning())
+        .is_some_and(|reasoning| reasoning.effort != ReasoningEffort::None)
         || input_items
             .iter()
             .any(|item| matches!(item, ResponseInputItem::Reasoning(_)))
