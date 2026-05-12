@@ -8500,7 +8500,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn completions_section() -> [SettingsPageItem; 7] {
+    fn completions_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Completions"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8607,6 +8607,21 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.completion_detail_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Completion Menu Item Kind",
+                description: "How to display the LSP item kind (function, method, variable, etc.) of each entry in the completions menu.",
+                field: Box::new(SettingField {
+                    json_path: Some("editor.completion_menu_item_kind"),
+                    pick: |settings_content| {
+                        settings_content.editor.completion_menu_item_kind.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.completion_menu_item_kind = value;
                     },
                 }),
                 metadata: None,

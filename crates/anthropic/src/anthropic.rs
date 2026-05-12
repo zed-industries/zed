@@ -2,27 +2,19 @@ use std::io;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{self, HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
 use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString};
+use strum::EnumString;
 use thiserror::Error;
 
 pub mod batches;
 pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct AnthropicModelCacheConfiguration {
-    pub min_total_token: u64,
-    pub should_speculate: bool,
-    pub max_cache_anchors: usize,
-}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -35,343 +27,152 @@ pub enum AnthropicModelMode {
     AdaptiveThinking,
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
-    #[serde(
-        rename = "claude-opus-4",
-        alias = "claude-opus-4-latest",
-        alias = "claude-opus-4-thinking",
-        alias = "claude-opus-4-thinking-latest"
-    )]
-    ClaudeOpus4,
-    #[serde(
-        rename = "claude-opus-4-1",
-        alias = "claude-opus-4-1-latest",
-        alias = "claude-opus-4-1-thinking",
-        alias = "claude-opus-4-1-thinking-latest"
-    )]
-    ClaudeOpus4_1,
-    #[serde(
-        rename = "claude-opus-4-5",
-        alias = "claude-opus-4-5-latest",
-        alias = "claude-opus-4-5-thinking",
-        alias = "claude-opus-4-5-thinking-latest"
-    )]
-    ClaudeOpus4_5,
-    #[serde(
-        rename = "claude-opus-4-6",
-        alias = "claude-opus-4-6-latest",
-        alias = "claude-opus-4-6-1m-context",
-        alias = "claude-opus-4-6-1m-context-latest",
-        alias = "claude-opus-4-6-thinking",
-        alias = "claude-opus-4-6-thinking-latest",
-        alias = "claude-opus-4-6-1m-context-thinking",
-        alias = "claude-opus-4-6-1m-context-thinking-latest"
-    )]
-    ClaudeOpus4_6,
-    #[serde(
-        rename = "claude-opus-4-7",
-        alias = "claude-opus-4-7-latest",
-        alias = "claude-opus-4-7-1m-context",
-        alias = "claude-opus-4-7-1m-context-latest",
-        alias = "claude-opus-4-7-thinking",
-        alias = "claude-opus-4-7-thinking-latest",
-        alias = "claude-opus-4-7-1m-context-thinking",
-        alias = "claude-opus-4-7-1m-context-thinking-latest"
-    )]
-    ClaudeOpus4_7,
-    #[serde(
-        rename = "claude-sonnet-4",
-        alias = "claude-sonnet-4-latest",
-        alias = "claude-sonnet-4-thinking",
-        alias = "claude-sonnet-4-thinking-latest"
-    )]
-    ClaudeSonnet4,
-    #[serde(
-        rename = "claude-sonnet-4-5",
-        alias = "claude-sonnet-4-5-latest",
-        alias = "claude-sonnet-4-5-thinking",
-        alias = "claude-sonnet-4-5-thinking-latest"
-    )]
-    ClaudeSonnet4_5,
-    #[default]
-    #[serde(
-        rename = "claude-sonnet-4-6",
-        alias = "claude-sonnet-4-6-latest",
-        alias = "claude-sonnet-4-6-1m-context",
-        alias = "claude-sonnet-4-6-1m-context-latest",
-        alias = "claude-sonnet-4-6-thinking",
-        alias = "claude-sonnet-4-6-thinking-latest",
-        alias = "claude-sonnet-4-6-1m-context-thinking",
-        alias = "claude-sonnet-4-6-1m-context-thinking-latest"
-    )]
-    ClaudeSonnet4_6,
-    #[serde(
-        rename = "claude-haiku-4-5",
-        alias = "claude-haiku-4-5-latest",
-        alias = "claude-haiku-4-5-thinking",
-        alias = "claude-haiku-4-5-thinking-latest"
-    )]
-    ClaudeHaiku4_5,
-    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-latest")]
-    Claude3Haiku,
-    #[serde(rename = "custom")]
-    Custom {
-        name: String,
-        max_tokens: u64,
-        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
-        display_name: Option<String>,
-        /// Override this model with a different Anthropic model for tool calls.
-        tool_override: Option<String>,
-        /// Indicates whether this custom model supports caching.
-        cache_configuration: Option<AnthropicModelCacheConfiguration>,
-        max_output_tokens: Option<u64>,
-        default_temperature: Option<f32>,
-        #[serde(default)]
-        extra_beta_headers: Vec<String>,
-        #[serde(default)]
-        mode: AnthropicModelMode,
-    },
+/// Capabilities reported by the Anthropic models endpoint for a given model.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ModelCapabilities {
+    #[serde(default)]
+    pub thinking: Option<ThinkingCapability>,
+    #[serde(default)]
+    pub image_input: Option<SupportedCapability>,
+    #[serde(default)]
+    pub effort: Option<EffortCapability>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SupportedCapability {
+    #[serde(default)]
+    pub supported: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ThinkingCapability {
+    #[serde(default)]
+    pub supported: bool,
+    #[serde(default)]
+    pub types: Option<ThinkingTypes>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ThinkingTypes {
+    #[serde(default)]
+    pub adaptive: SupportedCapability,
+    #[serde(default)]
+    pub enabled: SupportedCapability,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct EffortCapability {
+    #[serde(default)]
+    pub supported: bool,
+    #[serde(default)]
+    pub low: Option<SupportedCapability>,
+    #[serde(default)]
+    pub medium: Option<SupportedCapability>,
+    #[serde(default)]
+    pub high: Option<SupportedCapability>,
+    #[serde(default)]
+    pub max: Option<SupportedCapability>,
+    #[serde(default)]
+    pub xhigh: Option<SupportedCapability>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Model {
+    pub id: String,
+    pub display_name: String,
+    pub max_input_tokens: u64,
+    pub max_output_tokens: u64,
+    pub default_temperature: f32,
+    pub mode: AnthropicModelMode,
+    pub supports_thinking: bool,
+    pub supports_adaptive_thinking: bool,
+    pub supports_images: bool,
+    pub supports_speed: bool,
+    pub supported_effort_levels: Vec<Effort>,
+    /// A model id to substitute when invoking tools, used for models that
+    /// don't support tool calling natively.
+    pub tool_override: Option<String>,
+    /// Extra `Anthropic-Beta` header values to send with each request.
+    pub extra_beta_headers: Vec<String>,
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
-        Self::ClaudeHaiku4_5
-    }
+    /// Construct a `Model` from an entry returned by the `/v1/models` listing endpoint.
+    pub fn from_listed(entry: ListModelEntry) -> Self {
+        let supports_thinking = entry
+            .capabilities
+            .as_ref()
+            .and_then(|t| t.thinking.as_ref())
+            .map(|t| t.supported)
+            .unwrap_or(false);
+        let supports_adaptive_thinking = entry
+            .capabilities
+            .as_ref()
+            .and_then(|t| t.thinking.as_ref())
+            .and_then(|t| t.types.as_ref())
+            .map(|types| types.adaptive.supported)
+            .unwrap_or(false);
+        let supports_images = entry
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.image_input.as_ref())
+            .map(|c| c.supported)
+            .unwrap_or(false);
 
-    pub fn from_id(id: &str) -> Result<Self> {
-        if id.starts_with("claude-opus-4-7") {
-            return Ok(Self::ClaudeOpus4_7);
-        }
-
-        if id.starts_with("claude-opus-4-6") {
-            return Ok(Self::ClaudeOpus4_6);
-        }
-
-        if id.starts_with("claude-opus-4-5") {
-            return Ok(Self::ClaudeOpus4_5);
-        }
-
-        if id.starts_with("claude-opus-4-1") {
-            return Ok(Self::ClaudeOpus4_1);
-        }
-
-        if id.starts_with("claude-opus-4") {
-            return Ok(Self::ClaudeOpus4);
-        }
-
-        if id.starts_with("claude-sonnet-4-6") {
-            return Ok(Self::ClaudeSonnet4_6);
-        }
-
-        if id.starts_with("claude-sonnet-4-5") {
-            return Ok(Self::ClaudeSonnet4_5);
-        }
-
-        if id.starts_with("claude-sonnet-4") {
-            return Ok(Self::ClaudeSonnet4);
-        }
-
-        if id.starts_with("claude-haiku-4-5") {
-            return Ok(Self::ClaudeHaiku4_5);
-        }
-
-        if id.starts_with("claude-3-haiku") {
-            return Ok(Self::Claude3Haiku);
-        }
-
-        Err(anyhow!("invalid model ID: {id}"))
-    }
-
-    pub fn id(&self) -> &str {
-        match self {
-            Self::ClaudeOpus4 => "claude-opus-4-latest",
-            Self::ClaudeOpus4_1 => "claude-opus-4-1-latest",
-            Self::ClaudeOpus4_5 => "claude-opus-4-5-latest",
-            Self::ClaudeOpus4_6 => "claude-opus-4-6-latest",
-            Self::ClaudeOpus4_7 => "claude-opus-4-7-latest",
-            Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
-            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
-            Self::ClaudeSonnet4_6 => "claude-sonnet-4-6-latest",
-            Self::ClaudeHaiku4_5 => "claude-haiku-4-5-latest",
-            Self::Claude3Haiku => "claude-3-haiku-20240307",
-            Self::Custom { name, .. } => name,
-        }
-    }
-
-    /// The id of the model that should be used for making API requests
-    pub fn request_id(&self) -> &str {
-        match self {
-            Self::ClaudeOpus4 => "claude-opus-4-20250514",
-            Self::ClaudeOpus4_1 => "claude-opus-4-1-20250805",
-            Self::ClaudeOpus4_5 => "claude-opus-4-5-20251101",
-            Self::ClaudeOpus4_6 => "claude-opus-4-6",
-            Self::ClaudeOpus4_7 => "claude-opus-4-7",
-            Self::ClaudeSonnet4 => "claude-sonnet-4-20250514",
-            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-20250929",
-            Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
-            Self::ClaudeHaiku4_5 => "claude-haiku-4-5-20251001",
-            Self::Claude3Haiku => "claude-3-haiku-20240307",
-            Self::Custom { name, .. } => name,
-        }
-    }
-
-    pub fn display_name(&self) -> &str {
-        match self {
-            Self::ClaudeOpus4 => "Claude Opus 4",
-            Self::ClaudeOpus4_1 => "Claude Opus 4.1",
-            Self::ClaudeOpus4_5 => "Claude Opus 4.5",
-            Self::ClaudeOpus4_6 => "Claude Opus 4.6",
-            Self::ClaudeOpus4_7 => "Claude Opus 4.7",
-            Self::ClaudeSonnet4 => "Claude Sonnet 4",
-            Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
-            Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
-            Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
-            Self::Claude3Haiku => "Claude 3 Haiku",
-            Self::Custom {
-                name, display_name, ..
-            } => display_name.as_ref().unwrap_or(name),
-        }
-    }
-
-    pub fn cache_configuration(&self) -> Option<AnthropicModelCacheConfiguration> {
-        match self {
-            Self::ClaudeOpus4
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_7
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3Haiku => Some(AnthropicModelCacheConfiguration {
-                min_total_token: 2_048,
-                should_speculate: true,
-                max_cache_anchors: 4,
-            }),
-            Self::Custom {
-                cache_configuration,
-                ..
-            } => cache_configuration.clone(),
-        }
-    }
-
-    pub fn max_token_count(&self) -> u64 {
-        match self {
-            Self::ClaudeOpus4
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3Haiku => 200_000,
-            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_7 | Self::ClaudeSonnet4_6 => 1_000_000,
-            Self::Custom { max_tokens, .. } => *max_tokens,
-        }
-    }
-
-    pub fn max_output_tokens(&self) -> u64 {
-        match self {
-            Self::ClaudeOpus4 | Self::ClaudeOpus4_1 => 32_000,
-            Self::ClaudeOpus4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeHaiku4_5 => 64_000,
-            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_7 => 128_000,
-            Self::Claude3Haiku => 4_096,
-            Self::Custom {
-                max_output_tokens, ..
-            } => max_output_tokens.unwrap_or(4_096),
-        }
-    }
-
-    pub fn default_temperature(&self) -> f32 {
-        match self {
-            Self::ClaudeOpus4
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_7
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3Haiku => 1.0,
-            Self::Custom {
-                default_temperature,
-                ..
-            } => default_temperature.unwrap_or(1.0),
-        }
-    }
-
-    pub fn mode(&self) -> AnthropicModelMode {
-        match self {
-            Self::Custom { mode, .. } => mode.clone(),
-            _ if self.supports_adaptive_thinking() => AnthropicModelMode::AdaptiveThinking,
-            _ if self.supports_thinking() => AnthropicModelMode::Thinking {
-                budget_tokens: Some(4_096),
-            },
-            _ => AnthropicModelMode::Default,
-        }
-    }
-
-    pub fn supports_thinking(&self) -> bool {
-        match self {
-            Self::Custom { mode, .. } => {
-                matches!(
-                    mode,
-                    AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
-                )
+        let mut supported_effort_levels = Vec::new();
+        if let Some(effort) = entry.capabilities.as_ref().and_then(|e| e.effort.as_ref()) {
+            // The `xhigh` effort level reported by the API has no
+            // corresponding `Effort` variant in the request enum, so it is
+            // intentionally dropped here.
+            for (level, supported) in [
+                (Effort::Low, effort.low.as_ref()),
+                (Effort::Medium, effort.medium.as_ref()),
+                (Effort::High, effort.high.as_ref()),
+                (Effort::XHigh, effort.xhigh.as_ref()),
+                (Effort::Max, effort.max.as_ref()),
+            ] {
+                if supported.map(|c| c.supported).unwrap_or(false) {
+                    supported_effort_levels.push(level);
+                }
             }
-            _ => matches!(
-                self,
-                Self::ClaudeOpus4
-                    | Self::ClaudeOpus4_1
-                    | Self::ClaudeOpus4_5
-                    | Self::ClaudeOpus4_6
-                    | Self::ClaudeOpus4_7
-                    | Self::ClaudeSonnet4
-                    | Self::ClaudeSonnet4_5
-                    | Self::ClaudeSonnet4_6
-                    | Self::ClaudeHaiku4_5
-            ),
         }
-    }
 
-    pub fn supports_speed(&self) -> bool {
-        matches!(self, Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6)
-    }
+        let mode = if supports_adaptive_thinking {
+            AnthropicModelMode::AdaptiveThinking
+        } else if supports_thinking {
+            AnthropicModelMode::Thinking {
+                budget_tokens: Some(4_096),
+            }
+        } else {
+            AnthropicModelMode::Default
+        };
 
-    pub fn supports_adaptive_thinking(&self) -> bool {
-        match self {
-            Self::Custom { mode, .. } => matches!(mode, AnthropicModelMode::AdaptiveThinking),
-            _ => matches!(
-                self,
-                Self::ClaudeOpus4_6 | Self::ClaudeOpus4_7 | Self::ClaudeSonnet4_6
-            ),
+        let supports_speed = entry.id == "claude-opus-4-6";
+
+        Self {
+            display_name: entry.display_name,
+            id: entry.id,
+            max_input_tokens: entry.max_input_tokens,
+            max_output_tokens: entry.max_tokens,
+            default_temperature: 1.0,
+            mode,
+            supports_thinking,
+            supports_adaptive_thinking,
+            supports_images,
+            supports_speed,
+            supported_effort_levels,
+            tool_override: None,
+            extra_beta_headers: Vec::new(),
         }
     }
 
     pub fn beta_headers(&self) -> Option<String> {
-        let mut headers = vec![];
-
-        match self {
-            Self::Custom {
-                extra_beta_headers, ..
-            } => {
-                headers.extend(
-                    extra_beta_headers
-                        .iter()
-                        .filter(|header| !header.trim().is_empty())
-                        .cloned(),
-                );
-            }
-            _ => {}
-        }
-
+        let headers: Vec<&str> = self
+            .extra_beta_headers
+            .iter()
+            .map(|h| h.trim())
+            .filter(|h| !h.is_empty())
+            .collect();
         if headers.is_empty() {
             None
         } else {
@@ -379,15 +180,11 @@ impl Model {
         }
     }
 
-    pub fn tool_model_id(&self) -> &str {
-        if let Self::Custom {
-            tool_override: Some(tool_override),
-            ..
-        } = self
-        {
-            tool_override
+    pub fn request_id(&self, has_tools: bool) -> &str {
+        if has_tools {
+            self.tool_override.as_deref().unwrap_or(&self.id)
         } else {
-            self.request_id()
+            &self.id
         }
     }
 }
@@ -403,6 +200,73 @@ pub async fn stream_completion(
     stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
         .await
         .map(|output| output.0)
+}
+
+/// A raw model entry returned by the Anthropic models listing endpoint.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ListModelEntry {
+    pub id: String,
+    pub display_name: String,
+    pub max_input_tokens: u64,
+    pub max_tokens: u64,
+    #[serde(default)]
+    pub capabilities: Option<ModelCapabilities>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListModelsResponse {
+    data: Vec<ListModelEntry>,
+}
+
+/// Fetch the list of models available to the current API key. The returned
+/// models are constructed by feeding each raw entry through
+/// [`Model::from_listed`].
+///
+/// See https://docs.claude.com/en/api/models-list.
+pub async fn list_models(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+) -> Result<Vec<Model>> {
+    let uri = format!("{api_url}/v1/models?limit=1000");
+
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Anthropic-Version", "2023-06-01")
+        .header("X-Api-Key", api_key.trim())
+        .header("Accept", "application/json")
+        .body(AsyncBody::default())
+        .context("failed to build Anthropic models list request")?;
+
+    let mut response = client
+        .send(request)
+        .await
+        .context("failed to send Anthropic models list request")?;
+
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .context("failed to read Anthropic models list response")?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "failed to list Anthropic models: {} {}",
+        response.status(),
+        body,
+    );
+
+    let parsed: ListModelsResponse =
+        serde_json::from_str(&body).context("failed to parse Anthropic models list response")?;
+
+    let models = parsed
+        .data
+        .into_iter()
+        .map(Model::from_listed)
+        .collect::<Vec<_>>();
+    Ok(models)
 }
 
 /// Generate completion without streaming.
@@ -780,13 +644,14 @@ pub enum AdaptiveThinkingDisplay {
     Summarized,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum Effort {
     Low,
     Medium,
     High,
+    XHigh,
     Max,
 }
 
@@ -1095,63 +960,93 @@ impl From<ApiError> for language_model_core::LanguageModelCompletionError {
     }
 }
 
-#[test]
-fn custom_mode_thinking_is_preserved() {
-    let model = Model::Custom {
-        name: "my-custom-model".to_string(),
-        max_tokens: 8192,
-        display_name: None,
-        tool_override: None,
-        cache_configuration: None,
-        max_output_tokens: None,
-        default_temperature: None,
-        extra_beta_headers: vec![],
-        mode: AnthropicModelMode::Thinking {
-            budget_tokens: Some(2048),
-        },
-    };
-    assert_eq!(
-        model.mode(),
-        AnthropicModelMode::Thinking {
-            budget_tokens: Some(2048)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listed_entry(id: &str, capabilities: ModelCapabilities) -> ListModelEntry {
+        ListModelEntry {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            max_input_tokens: 200_000,
+            max_tokens: 64_000,
+            capabilities: Some(capabilities),
         }
-    );
-    assert!(model.supports_thinking());
-}
+    }
 
-#[test]
-fn custom_mode_adaptive_is_preserved() {
-    let model = Model::Custom {
-        name: "my-custom-model".to_string(),
-        max_tokens: 8192,
-        display_name: None,
-        tool_override: None,
-        cache_configuration: None,
-        max_output_tokens: None,
-        default_temperature: None,
-        extra_beta_headers: vec![],
-        mode: AnthropicModelMode::AdaptiveThinking,
-    };
-    assert_eq!(model.mode(), AnthropicModelMode::AdaptiveThinking);
-    assert!(model.supports_adaptive_thinking());
-    assert!(model.supports_thinking());
-}
+    #[test]
+    fn from_listed_picks_adaptive_thinking_mode() {
+        let entry = listed_entry(
+            "claude-test-adaptive",
+            ModelCapabilities {
+                thinking: Some(ThinkingCapability {
+                    supported: true,
+                    types: Some(ThinkingTypes {
+                        adaptive: SupportedCapability { supported: true },
+                        enabled: SupportedCapability { supported: true },
+                    }),
+                }),
+                ..Default::default()
+            },
+        );
+        let model = Model::from_listed(entry);
+        assert!(model.supports_thinking);
+        assert!(model.supports_adaptive_thinking);
+        assert_eq!(model.mode, AnthropicModelMode::AdaptiveThinking);
+    }
 
-#[test]
-fn custom_mode_default_disables_thinking() {
-    let model = Model::Custom {
-        name: "my-custom-model".to_string(),
-        max_tokens: 8192,
-        display_name: None,
-        tool_override: None,
-        cache_configuration: None,
-        max_output_tokens: None,
-        default_temperature: None,
-        extra_beta_headers: vec![],
-        mode: AnthropicModelMode::Default,
-    };
-    assert!(!model.supports_thinking());
-    assert!(!model.supports_adaptive_thinking());
+    #[test]
+    fn from_listed_picks_thinking_mode_when_only_enabled_supported() {
+        let entry = listed_entry(
+            "claude-test-thinking",
+            ModelCapabilities {
+                thinking: Some(ThinkingCapability {
+                    supported: true,
+                    types: Some(ThinkingTypes {
+                        adaptive: SupportedCapability { supported: false },
+                        enabled: SupportedCapability { supported: true },
+                    }),
+                }),
+                ..Default::default()
+            },
+        );
+        let model = Model::from_listed(entry);
+        assert!(model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert!(matches!(model.mode, AnthropicModelMode::Thinking { .. }));
+    }
+
+    #[test]
+    fn from_listed_default_mode_when_no_thinking() {
+        let entry = listed_entry("claude-test-default", ModelCapabilities::default());
+        let model = Model::from_listed(entry);
+        assert!(!model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert_eq!(model.mode, AnthropicModelMode::Default);
+    }
+
+    #[test]
+    fn from_listed_collects_supported_effort_levels() {
+        let entry = listed_entry(
+            "claude-test-effort",
+            ModelCapabilities {
+                effort: Some(EffortCapability {
+                    supported: true,
+                    low: Some(SupportedCapability { supported: true }),
+                    medium: Some(SupportedCapability { supported: false }),
+                    high: Some(SupportedCapability { supported: true }),
+                    max: Some(SupportedCapability { supported: true }),
+                    xhigh: Some(SupportedCapability { supported: true }),
+                }),
+                ..Default::default()
+            },
+        );
+        let model = Model::from_listed(entry);
+        assert_eq!(
+            &model.supported_effort_levels,
+            &[Effort::Low, Effort::High, Effort::XHigh, Effort::Max]
+        );
+    }
 }
 
 #[test]

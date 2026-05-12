@@ -51,7 +51,7 @@ use language_model::{
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::StatusToast;
-use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
+use panel::PanelHeader;
 use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
@@ -4412,7 +4412,10 @@ impl GitPanel {
                 .px_2()
                 .justify_between()
                 .child(
-                    panel_button(change_string)
+                    Button::new("changes", change_string)
+                        .label_size(LabelSize::Small)
+                        .layer(ElevationIndex::ModalSurface)
+                        .size(ButtonSize::Compact)
                         .color(Color::Muted)
                         .tooltip(Tooltip::for_action_title_in(
                             "Open Diff",
@@ -4430,7 +4433,11 @@ impl GitPanel {
                         .gap_1()
                         .child(self.render_overflow_menu("overflow_menu"))
                         .child(
-                            panel_filled_button(text)
+                            Button::new("stage_unstage_all", text)
+                                .label_size(LabelSize::Small)
+                                .layer(ElevationIndex::ModalSurface)
+                                .size(ButtonSize::Compact)
+                                .style(ButtonStyle::Filled)
                                 .tooltip(Tooltip::for_action_title_in(
                                     tooltip,
                                     action.as_ref(),
@@ -4616,7 +4623,7 @@ impl GitPanel {
                             .opacity(0.6)
                             .hover(|s| s.opacity(1.0))
                             .child(
-                                panel_icon_button("expand-commit-editor", IconName::MaximizeAlt)
+                                IconButton::new("expand-commit-editor", IconName::MaximizeAlt)
                                     .icon_size(IconSize::Small)
                                     .tooltip({
                                         move |_window, cx| {
@@ -4645,7 +4652,7 @@ impl GitPanel {
                                 };
                                 let focus_handle = self.focus_handle.clone();
 
-                                panel_icon_button("fill-commit-editor", icon)
+                                IconButton::new("fill-commit-editor", icon)
                                     .icon_size(IconSize::Small)
                                     .tooltip({
                                         move |_window, cx| {
@@ -4773,8 +4780,9 @@ impl GitPanel {
                     ),
             )
             .child(
-                panel_button("Cancel")
-                    .size(ButtonSize::Default)
+                Button::new("cancel", "Cancel")
+                    .label_size(LabelSize::Small)
+                    .layer(ElevationIndex::ModalSurface)
                     .on_click(cx.listener(|this, _, _, cx| this.set_amend_pending(false, cx))),
             )
     }
@@ -4845,7 +4853,7 @@ impl GitPanel {
                         .when(commit.has_parent, |this| {
                             let has_unstaged = self.has_unstaged_changes();
                             this.child(
-                                panel_icon_button("undo", IconName::Undo)
+                                IconButton::new("undo", IconName::Undo)
                                     .icon_size(IconSize::Small)
                                     .tooltip(move |_window, cx| {
                                         Tooltip::with_meta(
@@ -4867,7 +4875,7 @@ impl GitPanel {
                             )
                         })
                         .child(
-                            panel_icon_button("git-graph-button", IconName::GitGraph)
+                            IconButton::new("git-graph-button", IconName::GitGraph)
                                 .icon_size(IconSize::Small)
                                 .tooltip(|_window, cx| {
                                     Tooltip::for_action("Open Git Graph", &Open, cx)
@@ -4881,7 +4889,7 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let children = match (self.git_access, &self.active_repository) {
+        let content = match (self.git_access, &self.active_repository) {
             (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
             (_, None) => self.render_uninitialized_ui(cx),
             (_, Some(_)) => self.render_no_changes_ui(cx),
@@ -4892,47 +4900,36 @@ impl GitPanel {
             .flex_1()
             .items_center()
             .justify_center()
-            .text_color(Color::Placeholder.color(cx))
-            .children(children)
+            .child(content)
     }
 
-    fn render_no_changes_ui(&self, cx: &Context<Self>) -> Vec<AnyElement> {
-        let mut elements: Vec<AnyElement> = vec![
-            div()
-                .self_stretch()
-                .text_center()
-                .child("No changes to commit")
-                .into_any_element(),
-        ];
+    fn render_no_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
+        let show_branch_diff = self.changes_count == 0 && !self.is_on_main_branch(cx);
 
-        if self.changes_count == 0 && !self.is_on_main_branch(cx) {
-            elements.push(
-                panel_filled_button("View Branch Diff")
-                    .tooltip(move |_, cx| {
-                        Tooltip::with_meta(
-                            "Branch Diff",
-                            Some(&BranchDiff),
-                            "Show diff between working directory and default branch",
-                            cx,
-                        )
-                    })
-                    .on_click(move |_, _, cx| {
-                        cx.defer(move |cx| {
-                            cx.dispatch_action(&BranchDiff);
-                        })
-                    })
-                    .into_any_element(),
-            );
-        }
-
-        elements
+        v_flex()
+            .gap_1()
+            .items_center()
+            .child(Label::new("No changes to commit").color(Color::Muted))
+            .when(show_branch_diff, |this| {
+                this.child(
+                    Button::new("view_branch_diff", "View Branch Diff")
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .on_click(move |_, _, cx| {
+                            cx.defer(move |cx| {
+                                cx.dispatch_action(&BranchDiff);
+                            })
+                        }),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_unsafe_repo_ui(
         &self,
         active_repository: &Entity<Repository>,
         cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    ) -> AnyElement {
         let directory = active_repository.update(cx, |repository, _cx| {
             repository.snapshot().work_directory_abs_path
         });
@@ -4944,67 +4941,64 @@ impl GitPanel {
             directory.display()
         );
 
-        vec![
-            div()
-                .self_stretch()
+        v_flex()
                 .px_4()
-                .text_center()
+                .gap_1()
                 .child(Label::new(message).color(Color::Muted))
-                .into_any_element(),
-            self.render_unsafe_repo_buttons(directory, cx)
-                .into_any_element(),
-        ]
-    }
-
-    fn render_unsafe_repo_buttons(&self, directory: Arc<Path>, cx: &mut Context<Self>) -> Div {
-        h_flex()
-            .max_w_full()
-            .gap_2()
-            .justify_center()
-            .child(
-                panel_filled_button("Trust Directory")
-                .end_icon(Icon::new(IconName::Check).size(IconSize::Small))
-                .tooltip(Tooltip::text(
-                    format!("git config --global --add safe.directory {}", directory.display())
-                ))
-                .on_click(
-                    cx.listener(|this, _, window, cx| {
-                        this.add_safe_directory(window, cx);
-                    })
+                .child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .child(
+                            Button::new("trust_directory", "Trust Directory")
+                            .label_size(LabelSize::Small)
+                            .layer(ElevationIndex::ModalSurface)
+                            .style(ButtonStyle::Filled)
+                            .tooltip(Tooltip::text(
+                                format!("git config --global --add safe.directory {}", directory.display())
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.add_safe_directory(window, cx);
+                                })
+                            )
+                    )
+                    .child(
+                        Button::new("learn_more", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .style(ButtonStyle::Outlined)
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small).color(Color::Muted))
+                            .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
+                    )
                 )
-        )
-        .child(
-            panel_filled_button("Learn More")
-                .end_icon(Icon::new(IconName::Link).size(IconSize::Small))
-                .tooltip(Tooltip::text("Open https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory in your default browser"))
-                .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
-        )
+                .into_any_element()
     }
 
-    fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> AnyElement {
         let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
         if worktree_count > 0 && self.active_repository.is_none() {
-            vec![
-                div()
-                    .self_stretch()
-                    .text_center()
-                    .child("No Git Repositories")
-                    .into_any_element(),
-                panel_filled_button("Initialize Repository")
-                    .tooltip(Tooltip::for_action_title_in(
-                        "git init",
-                        &git::Init,
-                        &self.focus_handle,
-                    ))
-                    .on_click(move |_, _, cx| {
-                        cx.defer(move |cx| {
-                            cx.dispatch_action(&git::Init);
-                        })
-                    })
-                    .into_any_element(),
-            ]
+            v_flex()
+                .gap_1()
+                .items_center()
+                .child(Label::new("No Git Repositories").color(Color::Muted))
+                .child(
+                    Button::new("initialize_repository", "Initialize Repository")
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "git init",
+                            &git::Init,
+                            &self.focus_handle,
+                        ))
+                        .on_click(move |_, _, cx| {
+                            cx.defer(move |cx| {
+                                cx.dispatch_action(&git::Init);
+                            })
+                        }),
+                )
+                .into_any_element()
         } else {
-            vec![]
+            Empty.into_any_element()
         }
     }
 

@@ -141,6 +141,8 @@ pub enum Model {
     MimoV2_5,
     #[serde(rename = "big-pickle")]
     BigPickle,
+    #[serde(rename = "ring-2.6-1t-free")]
+    Ring2_6_1TFree,
     #[serde(rename = "nemotron-3-super-free")]
     Nemotron3SuperFree,
     #[serde(rename = "qwen3.5-plus")]
@@ -202,9 +204,10 @@ impl Model {
             | Self::DeepSeekV4Flash => &[OpenCodeSubscription::Go],
 
             // Free models
-            Self::MiniMaxM2_5Free | Self::Nemotron3SuperFree | Self::BigPickle => {
-                &[OpenCodeSubscription::Free]
-            }
+            Self::MiniMaxM2_5Free
+            | Self::Nemotron3SuperFree
+            | Self::BigPickle
+            | Self::Ring2_6_1TFree => &[OpenCodeSubscription::Free],
 
             // Custom models get their subscription from settings, not from here
             Self::Custom { .. } => &[],
@@ -260,6 +263,7 @@ impl Model {
             Self::Qwen3_5Plus => "qwen3.5-plus",
             Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::BigPickle => "big-pickle",
+            Self::Ring2_6_1TFree => "ring-2.6-1t-free",
             Self::Nemotron3SuperFree => "nemotron-3-super-free",
 
             Self::Custom { name, .. } => name,
@@ -312,6 +316,7 @@ impl Model {
             Self::Qwen3_5Plus => "Qwen3.5 Plus",
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::BigPickle => "Big Pickle",
+            Self::Ring2_6_1TFree => "Ring 2.6 1T Free",
             Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
 
             Self::Custom {
@@ -373,6 +378,7 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::BigPickle
+            | Self::Ring2_6_1TFree
             | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
 
             Self::Custom { protocol, .. } => *protocol,
@@ -388,7 +394,9 @@ impl Model {
             | Self::MimoV2_5
             | Self::MimoV2_5Pro
             | Self::Glm5
-            | Self::Glm5_1 => true,
+            | Self::Glm5_1
+            | Self::BigPickle
+            | Self::Ring2_6_1TFree => true,
 
             Self::Custom {
                 interleaved_reasoning,
@@ -434,6 +442,7 @@ impl Model {
             Self::MimoV2_5 => 1_000_000,
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
             Self::BigPickle => 200_000,
+            Self::Ring2_6_1TFree => 262_000,
             Self::Nemotron3SuperFree => 204_800,
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
 
@@ -479,6 +488,7 @@ impl Model {
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
             Self::Glm5 | Self::Glm5_1 => Some(32_768),
             Self::BigPickle => Some(128_000),
+            Self::Ring2_6_1TFree => Some(66_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
@@ -546,6 +556,7 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::BigPickle
+            | Self::Ring2_6_1TFree
             | Self::Nemotron3SuperFree => false,
 
             Self::Custom { protocol, .. } => matches!(
@@ -560,7 +571,7 @@ impl Model {
 
     pub fn supported_reasoning_effort_levels(&self) -> Option<Vec<ReasoningEffort>> {
         match self {
-            Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
+            Self::Ring2_6_1TFree | Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,

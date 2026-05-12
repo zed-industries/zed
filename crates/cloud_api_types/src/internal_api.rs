@@ -30,3 +30,14 @@ pub struct LookUpUserByGithubLoginBody {
 pub struct LookUpUserByGithubLoginResponse {
     pub user: Option<User>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FuzzySearchUsersBody {
+    pub query: String,
+    pub limit: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FuzzySearchUsersResponse {
+    pub users: Vec<User>,
+}
