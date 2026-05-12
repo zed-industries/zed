@@ -196,7 +196,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             if !available_contacts.is_empty() {
                                 let contact = available_contacts.choose(rng).unwrap();
                                 break ClientOperation::InviteContactToCall {
-                                    user_id: UserId(contact.user.id as i32),
+                                    user_id: UserId(contact.user.legacy_id as i32),
                                 };
                             }
                         }
@@ -235,7 +235,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                                 None
                                             } else {
                                                 Some((
-                                                    UserId::from_proto(participant.user.id),
+                                                    UserId::from_proto(participant.user.legacy_id),
                                                     project.worktree_root_names[0].clone(),
                                                 ))
                                             }

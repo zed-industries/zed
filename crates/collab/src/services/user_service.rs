@@ -1,7 +1,14 @@
 use std::sync::Arc;
 
+use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
+use cloud_api_types::internal_api::{
+    self, FuzzySearchUsersBody, FuzzySearchUsersResponse, LookUpUserByGithubLoginBody,
+    LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
+};
+use reqwest::RequestBuilder;
 use rpc::proto;
+use serde::de::DeserializeOwned;
 
 use crate::Result;
 use crate::db::{Channel, Database, UserId};
@@ -33,6 +40,189 @@ pub trait UserService: Send + Sync + 'static {
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeUserService> {
         panic!("called as_fake on a real `UserService`");
+    }
+}
+
+/// A [`UserService`] implementation for transitioning from reading from the database to reading from Cloud.
+pub struct TransitionalUserService {
+    cloud_user_service: CloudUserService,
+    database_user_service: DatabaseUserService,
+}
+
+impl TransitionalUserService {
+    pub fn new(
+        cloud_user_service: CloudUserService,
+        database_user_service: DatabaseUserService,
+    ) -> Self {
+        Self {
+            cloud_user_service,
+            database_user_service,
+        }
+    }
+}
+
+#[async_trait]
+impl UserService for TransitionalUserService {
+    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
+        self.cloud_user_service.get_users_by_ids(ids).await
+    }
+
+    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+        self.cloud_user_service
+            .get_user_by_github_login(github_login)
+            .await
+    }
+
+    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
+        self.cloud_user_service
+            .fuzzy_search_users(query, limit)
+            .await
+    }
+
+    async fn search_channel_members(
+        &self,
+        channel: &Channel,
+        query: &str,
+        limit: u32,
+    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
+        self.database_user_service
+            .search_channel_members(channel, query, limit)
+            .await
+    }
+}
+
+/// A [`UserService`] implementation backed by Cloud.
+pub struct CloudUserService {
+    http_client: reqwest::Client,
+    zed_cloud_url: String,
+    internal_api_key: String,
+}
+
+impl CloudUserService {
+    pub fn new(
+        http_client: reqwest::Client,
+        zed_cloud_url: String,
+        internal_api_key: String,
+    ) -> Self {
+        Self {
+            http_client,
+            zed_cloud_url,
+            internal_api_key,
+        }
+    }
+
+    async fn send_request<T: DeserializeOwned + 'static>(
+        &self,
+        request: RequestBuilder,
+    ) -> Result<T> {
+        let request = request
+            .header("Content-Type", "application/json")
+            .header(
+                "Authorization",
+                format!("Bearer {}", &self.internal_api_key),
+            )
+            .build()
+            .context("failed to build request")?;
+
+        let response = self
+            .http_client
+            .execute(request)
+            .await
+            .context("failed to send request to Cloud")?;
+
+        let status = response.status();
+        match response.error_for_status() {
+            Ok(response) => {
+                let response_body: T = response
+                    .json()
+                    .await
+                    .context("failed to parse response body")?;
+
+                Ok(response_body)
+            }
+            Err(_err) => Err(anyhow!("request to Cloud failed with status {status}",))?,
+        }
+    }
+}
+
+#[async_trait]
+impl UserService for CloudUserService {
+    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
+        let response_body: LookUpUsersByLegacyIdResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/look_up_by_legacy_id",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&LookUpUsersByLegacyIdBody {
+                        legacy_user_ids: ids.into_iter().map(|id| id.0).collect(),
+                    }),
+            )
+            .await?;
+
+        Ok(response_body.users.into_iter().map(User::from).collect())
+    }
+
+    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
+        let response_body: LookUpUserByGithubLoginResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/look_up_by_github_login",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&LookUpUserByGithubLoginBody {
+                        github_login: github_login.to_string(),
+                    }),
+            )
+            .await?;
+
+        Ok(response_body.user.map(User::from))
+    }
+
+    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
+        let response_body: FuzzySearchUsersResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/fuzzy_search",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&FuzzySearchUsersBody {
+                        query: query.to_string(),
+                        limit,
+                    }),
+            )
+            .await?;
+
+        Ok(response_body.users.into_iter().map(User::from).collect())
+    }
+
+    async fn search_channel_members(
+        &self,
+        channel: &Channel,
+        query: &str,
+        limit: u32,
+    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
+        let _ = channel;
+        let _ = query;
+        let _ = limit;
+
+        unimplemented!("not yet implemented in Cloud")
+    }
+}
+
+impl From<internal_api::User> for User {
+    fn from(user: internal_api::User) -> Self {
+        Self {
+            id: UserId(user.legacy_user_id),
+            github_login: user.github_login,
+            github_user_id: user.github_user_id,
+            name: user.name,
+            admin: user.admin,
+            connected_once: user.connected_once,
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 mod extension;
+pub mod internal_api;
 mod known_or_unknown;
 mod plan;
 mod timestamp;
