@@ -1145,6 +1145,7 @@ impl MarkdownElement {
         let image_element = div().flex_shrink_0().child(
             img(source)
                 .id(("markdown-image", range.start))
+                .min_w_0()
                 .max_w_full()
                 .rounded_md()
                 .when_some(height, |this, height| this.h(height))
@@ -2347,19 +2348,21 @@ fn image_fallback_element(
     h_flex()
         .id("image-fallback")
         .cursor_pointer()
-        .gap_1()
         .min_w_0()
+        .gap_1()
         .text_size(ui_font_size)
         .underline()
+        .flex_wrap()
         .child(
             Icon::new(IconName::Image)
                 .size(IconSize::Small)
                 .color(Color::Warning),
         )
-        .child(link_label)
+        .child(div().min_w_0().child(link_label))
         .tooltip(Tooltip::text(
             "Image failed to load. Open `zed: log` for more details.",
         ))
+        .debug_bg_cyan()
         .on_click({
             let url = dest_url.clone();
             move |_, _, cx| cx.open_url(url.as_ref())
