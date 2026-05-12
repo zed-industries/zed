@@ -65,6 +65,48 @@ pub enum SkillSource {
     },
 }
 
+impl SkillSource {
+    /// Scope prefix used in the `/<prefix>:<name>` slash-command
+    /// syntax that the autocomplete popup inserts. Global skills use
+    /// an empty prefix (so the inserted text is `/:<name>`), and
+    /// project-local skills use their worktree root name (so the
+    /// inserted text is `/<worktree>:<name>`).
+    ///
+    /// Using an empty prefix for globals rather than a literal
+    /// `global` means a worktree literally named `global` is no
+    /// longer ambiguous with the global source: the global skill is
+    /// invoked as `/:<name>`, and the worktree's skill is invoked as
+    /// `/global:<name>`. The two grammars never collide on the
+    /// inserted text.
+    pub fn scope_prefix(&self) -> &str {
+        match self {
+            Self::Global => "",
+            Self::ProjectLocal {
+                worktree_root_name, ..
+            } => worktree_root_name.as_ref(),
+        }
+    }
+
+    /// Whether this source matches the given scope qualifier from a
+    /// `/<scope>:<name>` slash command. The empty scope is reserved
+    /// for global skills; non-empty scopes match a project-local
+    /// skill whose worktree root name equals the scope.
+    ///
+    /// Hand-typed `/global:<name>` is NOT treated as an alias for
+    /// `/:<name>`. It looks for a project-local skill from a worktree
+    /// named `global` and fails if none exists. The popup always
+    /// inserts the unambiguous form (`/:<name>` for globals), so this
+    /// strictness only affects users typing by memory.
+    pub fn matches_scope(&self, scope: &str) -> bool {
+        match self {
+            Self::Global => scope.is_empty(),
+            Self::ProjectLocal {
+                worktree_root_name, ..
+            } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
+        }
+    }
+}
+
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
@@ -283,8 +325,8 @@ pub async fn load_skills_from_directory(
         .collect()
         .await;
 
-    // Sort by path so name-conflict resolution in `merge_skills` is
-    // deterministic — `fs.read_dir` order is filesystem-dependent.
+    // Sort by path so name-conflict resolution in `apply_skill_overrides`
+    // is deterministic — `fs.read_dir` order is filesystem-dependent.
     results.sort_by(|a, b| {
         let path_a: &Path = match a {
             Ok(skill) => &skill.skill_file_path,
@@ -1045,11 +1087,12 @@ description: A skill with no body content
 
     #[gpui::test]
     async fn test_load_skills_returns_results_sorted_by_path(cx: &mut TestAppContext) {
-        // `merge_skills` resolves name conflicts by keeping the first
-        // entry in iteration order. Without a stable sort here, the
-        // result depends on `fs.read_dir`, which is OS/filesystem-
-        // dependent. Assert the contract: results come back sorted by
-        // skill file path regardless of insertion order.
+        // `apply_skill_overrides` resolves same-source name collisions
+        // by keeping the first entry in iteration order. Without a
+        // stable sort here, the result depends on `fs.read_dir`, which
+        // is OS/filesystem-dependent. Assert the contract: results
+        // come back sorted by skill file path regardless of insertion
+        // order.
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/skills",
