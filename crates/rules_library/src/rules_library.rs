@@ -1139,6 +1139,7 @@ impl RulesLibrary {
                     this.border_color(cx.theme().colors().border_variant)
                 })
             })
+            .on_action(cx.listener(Self::focus_picker))
             .on_action(cx.listener(Self::move_down_from_title))
             .child(EditorElement::new(
                 &editor,
