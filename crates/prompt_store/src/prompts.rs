@@ -162,7 +162,6 @@ mod tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/oversized"),
             skill_file_path: PathBuf::from("/skills/oversized/SKILL.md"),
-            content: "Content".to_string(),
             disable_model_invocation: false,
         };
         let summary = SkillSummary::from(&skill);
