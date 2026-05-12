@@ -171,7 +171,9 @@ fn expand_changed_word_selection(
                 motion::next_char(map, selection.end, false).to_offset(map, Bias::Left),
             )
             .next();
-        if let Some((next, _)) = next_char && next != ' ' {
+        if let Some((next, _)) = next_char
+            && next != ' '
+        {
             if use_subword {
                 selection.end =
                     motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
@@ -186,10 +188,17 @@ fn expand_changed_word_selection(
                 );
             }
         }
-        if let Some(times) = times && times > 1 {
+        if let Some(times) = times
+            && times > 1
+        {
             if use_subword {
-                selection.end =
-                    motion::next_subword_end(map, selection.end, ignore_punctuation, times - 1, false);
+                selection.end = motion::next_subword_end(
+                    map,
+                    selection.end,
+                    ignore_punctuation,
+                    times - 1,
+                    false,
+                );
             } else {
                 selection.end = motion::next_word_end(
                     map,
@@ -300,8 +309,12 @@ mod test {
         // see https://github.com/zed-industries/zed/issues/35269
         cx.simulate("c w", "tesˇt-test").await.assert_matches();
 
-        cx.simulate("c 2 w", "ˇTest test test").await.assert_matches();
-        cx.simulate("c 2 w", "Tˇest test test").await.assert_matches();
+        cx.simulate("c 2 w", "ˇTest test test")
+            .await
+            .assert_matches();
+        cx.simulate("c 2 w", "Tˇest test test")
+            .await
+            .assert_matches();
         cx.simulate("c 2 w", "tesˇt-test").await.assert_matches();
 
         cx.simulate("c 2 shift-w", "Test teˇst-test test Test")
