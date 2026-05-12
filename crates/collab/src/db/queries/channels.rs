@@ -4,7 +4,7 @@ use rpc::{
     ErrorCode, ErrorCodeExt,
     proto::{ChannelBufferVersion, VectorClockEntry},
 };
-use sea_orm::{ActiveValue, DbBackend, TryGetableMany};
+use sea_orm::{ActiveValue, TryGetableMany};
 
 impl Database {
     #[cfg(feature = "test-support")]
@@ -704,57 +704,29 @@ impl Database {
         .await
     }
 
-    /// Returns the details for the specified channel member.
-    pub async fn get_channel_participant_details(
+    /// Returns the members for the given channel.
+    #[cfg(feature = "test-support")]
+    pub async fn get_channel_members(
         &self,
         channel: &Channel,
-        filter: &str,
         limit: u64,
-    ) -> Result<(Vec<channel_member::Model>, Vec<user::Model>)> {
-        let members = self
-            .transaction(move |tx| async move {
-                let mut query = channel_member::Entity::find()
-                    .find_also_related(user::Entity)
-                    .filter(channel_member::Column::ChannelId.eq(channel.root_id()));
+    ) -> Result<Vec<channel_member::Model>> {
+        self.transaction(move |tx| async move {
+            let members = channel_member::Entity::find()
+                .filter(channel_member::Column::ChannelId.eq(channel.root_id()))
+                .order_by(
+                    Expr::cust(
+                        "not role = 'admin', not role = 'member', not role = 'guest', not accepted",
+                    ),
+                    sea_orm::Order::Asc,
+                )
+                .limit(limit)
+                .all(&*tx)
+                .await?;
 
-                if cfg!(any(test, feature = "sqlite")) && self.pool.get_database_backend() == DbBackend::Sqlite {
-                    query = query.filter(Expr::cust_with_values(
-                        "UPPER(github_login) LIKE ?",
-                        [Self::fuzzy_like_string(&filter.to_uppercase())],
-                    ))
-                } else {
-                    query = query.filter(Expr::cust_with_values(
-                        "github_login ILIKE $1",
-                        [Self::fuzzy_like_string(filter)],
-                    ))
-                }
-                let members = query.order_by(
-                        Expr::cust(
-                            "not role = 'admin', not role = 'member', not role = 'guest', not accepted, github_login",
-                        ),
-                        sea_orm::Order::Asc,
-                    )
-                    .limit(limit)
-                    .all(&*tx)
-                    .await?;
-
-                Ok(members)
-            })
-            .await?;
-
-        let mut users: Vec<user::Model> = Vec::with_capacity(members.len());
-
-        let members = members
-            .into_iter()
-            .map(|(member, user)| {
-                if let Some(user) = user {
-                    users.push(user)
-                }
-                member
-            })
-            .collect();
-
-        Ok((members, users))
+            Ok(members)
+        })
+        .await
     }
 
     /// Returns whether the given user is an admin in the specified channel.
