@@ -9633,7 +9633,6 @@ pub async fn find_existing_workspace(
 
 pub fn find_open_workspace_by_id(
     workspace_id: WorkspaceId,
-    excluded_workspace: Option<&Entity<Workspace>>,
     cx: &App,
 ) -> Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
     cx.windows().into_iter().find_map(|window| {
@@ -9643,10 +9642,7 @@ pub fn find_open_workspace_by_id(
             .read(cx)
             .ok()?
             .workspaces()
-            .find(|workspace| {
-                excluded_workspace != Some(*workspace)
-                    && workspace.read(cx).database_id() == Some(workspace_id)
-            })?
+            .find(|workspace| workspace.read(cx).database_id() == Some(workspace_id))?
             .clone();
 
         Some((multi_workspace, workspace))

@@ -2024,7 +2024,6 @@ impl RecentProjectsDelegate {
         let candidate_workspace_id = candidate_workspace.workspace_id;
         let candidate_workspace_location = candidate_workspace.location.clone();
         let candidate_workspace_paths = candidate_workspace.paths.clone();
-        let current_workspace = workspace.clone();
 
         workspace.update(cx, |workspace, cx| {
             if workspace.database_id() == Some(candidate_workspace_id) {
@@ -2055,11 +2054,7 @@ impl RecentProjectsDelegate {
                     }
 
                     if let Some((existing_window, existing_workspace)) =
-                        workspace::find_open_workspace_by_id(
-                            candidate_workspace_id,
-                            Some(&current_workspace),
-                            cx,
-                        )
+                        workspace::find_open_workspace_by_id(candidate_workspace_id, cx)
                     {
                         cx.defer(move |cx| {
                             existing_window
