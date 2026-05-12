@@ -115,7 +115,9 @@ pub struct PredictEditsBody {
     pub trigger: PredictEditsRequestTrigger,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr)]
+#[derive(
+    Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr, strum::EnumString,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum PredictEditsRequestTrigger {
     Testing,

@@ -13,7 +13,7 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Anchor, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
+use gpui::{Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
@@ -1247,6 +1247,12 @@ impl StatusItemView for LspButton {
             });
             self.refresh_lsp_menu(false, window, cx);
         }
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.global_lsp_settings.get_or_insert_default().button = Some(false);
+        }))
     }
 }
 

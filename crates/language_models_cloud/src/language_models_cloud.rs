@@ -460,7 +460,13 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let effort = request
                     .thinking_effort
                     .as_ref()
-                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok());
+                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
+                    .filter(|effort| *effort != open_ai::ReasoningEffort::None);
+                let supports_none_reasoning_effort =
+                    self.model.supported_effort_levels.iter().any(|effort| {
+                        open_ai::ReasoningEffort::from_str(&effort.value)
+                            .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
+                    });
 
                 let mut request = into_open_ai_response(
                     request,
@@ -469,6 +475,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     true,
                     None,
                     None,
+                    supports_none_reasoning_effort,
                 );
 
                 if enable_thinking && let Some(effort) = effort {

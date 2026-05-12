@@ -8,7 +8,7 @@ description: Use Zed's AI coding agent to generate, refactor, and debug code wit
 The Agent Panel is where you interact with AI agents that can read, write, and run code in your project.
 It's the core of Zed's AI code editing experience — use it for code generation, refactoring, debugging, documentation, and general questions.
 
-Open it with `agent: new thread` from [the Command Palette](../getting-started.md#command-palette) or click the ✨ icon in the status bar.
+Open it with {#action agent::NewThread} from [the Command Palette](../getting-started.md#command-palette) or click the ✨ icon in the status bar.
 
 ## Getting Started {#getting-started}
 
@@ -41,7 +41,7 @@ From the "New Thread…" menu you can:
 - Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
 - Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
 
-{#action agent::NewExternalAgentThread} creates another thread with the currently selected agent.
+{#action agent::NewExternalAgentThread} creates a new thread with the specified external agent id.
 
 You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
 
@@ -240,7 +240,7 @@ Zed's UI will inform you about this via a warning icon that appears close to the
 
 ## Errors and Debugging {#errors-and-debugging}
 
-If you hit an error or unusual LLM behavior, open the thread as Markdown with `agent: open thread as markdown` and attach it to your GitHub issue.
+If you hit an error or unusual LLM behavior, open the thread as Markdown with {#action agent::OpenActiveThreadAsMarkdown} and attach it to your GitHub issue.
 
 You can also open threads as Markdown by clicking on the file icon button, to the right of the thumbs down button, when focused on the panel's editor.
 

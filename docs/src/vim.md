@@ -30,7 +30,7 @@ There are four types of features in vim mode that use Zed's core functionality, 
 
 When you first open Zed, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
 
-If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
+If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command {#action workspace::ToggleVimMode}.
 
 > **Note**: This command toggles the following property in your user settings:
 >
