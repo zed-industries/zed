@@ -3,14 +3,13 @@ use crate::{
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
-    SystemPromptTemplate, Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool,
-    WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
+    UpdatePlanTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use feature_flags::{
-    ExperimentalSystemPromptFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag,
-    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
 };
 
 use agent_client_protocol::schema as acp;
@@ -3064,14 +3063,13 @@ impl Thread {
             self.messages.len()
         );
 
-        let use_experimental_prompt = cx.has_flag::<ExperimentalSystemPromptFeatureFlag>();
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
         }
-        .render_with_prompt_variant(&self.templates, use_experimental_prompt)
+        .render(&self.templates)
         .context("failed to build system prompt")
         .expect("Invalid template");
         let mut messages = vec![LanguageModelRequestMessage {
