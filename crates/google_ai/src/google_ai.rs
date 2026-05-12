@@ -465,8 +465,8 @@ pub enum Model {
         alias = "gemini-2.5-pro-preview-06-05"
     )]
     Gemini25Pro,
-    Gemini31FlashLite,
     #[serde(rename = "gemini-3.1-flash-lite")]
+    Gemini31FlashLite,
     #[serde(rename = "gemini-3-flash-preview")]
     Gemini3Flash,
     #[serde(rename = "gemini-3.1-pro-preview", alias = "gemini-3-pro-preview")]
