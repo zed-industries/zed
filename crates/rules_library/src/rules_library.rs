@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::SelectionEffects;
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
-    Subscription, Task, TaskExt, TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, size, transparent_black,
+    App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task, TaskExt,
+    TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point,
+    px, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{ConfiguredModel, LanguageModelRegistry};
@@ -127,7 +127,10 @@ pub fn open_rules_library(
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_background: cx.theme().window_background_appearance(),
                     window_decorations: Some(window_decorations),
-                    window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
+                    window_min_size: Some(gpui::Size {
+                        width: px(900.0),
+                        height: px(240.0),
+                    }),
                     kind: gpui::WindowKind::Floating,
                     ..Default::default()
                 },
