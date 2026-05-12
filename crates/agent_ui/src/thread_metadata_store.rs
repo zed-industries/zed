@@ -135,6 +135,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         } else {
                             Some(entry.title)
                         },
+                        title_override: None,
                         updated_at: entry.updated_at,
                         created_at: entry.created_at,
                         interacted_at: None,
@@ -310,6 +311,10 @@ pub struct ThreadMetadata {
     pub session_id: Option<acp::SessionId>,
     pub agent_id: AgentId,
     pub title: Option<SharedString>,
+    /// User-supplied title that takes precedence over `title`. Set when the
+    /// user renames a thread, so that subsequent agent-driven title updates
+    /// (e.g. from `SessionInfoUpdate`) don't clobber the user's choice.
+    pub title_override: Option<SharedString>,
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
     /// When a user last interacted to send a message (including queueing).
@@ -328,9 +333,12 @@ impl ThreadMetadata {
     }
 
     pub fn display_title(&self) -> SharedString {
-        self.title
-            .clone()
+        self.title()
             .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into())
+    }
+
+    pub fn title(&self) -> Option<SharedString> {
+        self.title_override.clone().or_else(|| self.title.clone())
     }
 
     pub fn folder_paths(&self) -> &PathList {
@@ -422,7 +430,7 @@ impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
         Self {
             session_id,
             work_dirs: Some(meta.folder_paths().clone()),
-            title: meta.title.clone(),
+            title: meta.title(),
             updated_at: Some(meta.updated_at),
             created_at: meta.created_at,
             meta: None,
@@ -672,6 +680,26 @@ impl ThreadMetadataStore {
     pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
         self.save_internal(metadata);
         cx.notify();
+    }
+
+    /// Set or clear the user-supplied title for a thread.
+    pub fn set_title_override(
+        &mut self,
+        thread_id: ThreadId,
+        title_override: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(existing) = self.entry(thread_id) else {
+            return;
+        };
+        if existing.title_override.as_ref() == Some(&title_override) {
+            return;
+        }
+        let metadata = ThreadMetadata {
+            title_override: Some(title_override),
+            ..existing.clone()
+        };
+        self.save(metadata, cx);
     }
 
     fn save_internal(&mut self, metadata: ThreadMetadata) {
@@ -1196,6 +1224,7 @@ impl ThreadMetadataStore {
             Some(thread_ref.session_id().clone())
         };
         let title = thread_ref.title();
+        let title_override = existing_thread.and_then(|t| t.title_override.clone());
 
         let updated_at = Utc::now();
 
@@ -1249,6 +1278,7 @@ impl ThreadMetadataStore {
             session_id,
             agent_id,
             title,
+            title_override,
             created_at: Some(created_at),
             interacted_at,
             updated_at,
@@ -1364,6 +1394,9 @@ impl Domain for ThreadMetadataDb {
         sql!(
             ALTER TABLE sidebar_threads ADD COLUMN interacted_at TEXT;
         ),
+        sql!(
+            ALTER TABLE sidebar_threads ADD COLUMN title_override TEXT;
+        ),
     ];
 }
 
@@ -1380,7 +1413,7 @@ impl ThreadMetadataDb {
 
     const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
         created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
-        main_worktree_paths_order, remote_connection \
+        main_worktree_paths_order, remote_connection, title_override \
         FROM sidebar_threads \
         ORDER BY updated_at DESC";
 
@@ -1430,12 +1463,13 @@ impl ThreadMetadataDb {
             .map(serde_json::to_string)
             .transpose()
             .context("serialize thread metadata remote connection")?;
+        let title_override = row.title_override.as_ref().map(|t| t.to_string());
         let thread_id = row.thread_id;
         let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, title_override) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
                        ON CONFLICT(thread_id) DO UPDATE SET \
                            session_id = excluded.session_id, \
                            agent_id = excluded.agent_id, \
@@ -1448,7 +1482,8 @@ impl ThreadMetadataDb {
                            archived = excluded.archived, \
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
-                           remote_connection = excluded.remote_connection";
+                           remote_connection = excluded.remote_connection, \
+                           title_override = excluded.title_override";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&thread_id, 1)?;
             i = stmt.bind(&session_id, i)?;
@@ -1462,7 +1497,8 @@ impl ThreadMetadataDb {
             i = stmt.bind(&archived, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
-            stmt.bind(&remote_connection, i)?;
+            i = stmt.bind(&remote_connection, i)?;
+            stmt.bind(&title_override, i)?;
             stmt.exec()
         })
         .await
@@ -1619,6 +1655,7 @@ impl Column for ThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (title_override, next): (Option<String>, i32) = Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -1676,6 +1713,9 @@ impl Column for ThreadMetadata {
                 } else {
                     Some(title.into())
                 },
+                title_override: title_override
+                    .filter(|t| !t.is_empty())
+                    .map(SharedString::from),
                 updated_at,
                 created_at,
                 interacted_at,
@@ -1765,6 +1805,7 @@ mod tests {
             } else {
                 Some(title.to_string().into())
             },
+            title_override: None,
             updated_at,
             created_at: Some(updated_at),
             interacted_at: None,
@@ -1819,6 +1860,83 @@ mod tests {
             migrate_thread_remote_connections(cx, migration_task);
         });
         cx.run_until_parked();
+    }
+
+    #[test]
+    fn test_thread_metadata_title_prefers_override() {
+        let mut metadata = make_metadata(
+            "session-1",
+            "Agent Generated Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        metadata.title_override = Some("User Title".into());
+
+        assert_eq!(metadata.title().as_deref(), Some("User Title"));
+        assert_eq!(metadata.display_title().as_ref(), "User Title");
+
+        metadata.title_override = None;
+        assert_eq!(metadata.title().as_deref(), Some("Agent Generated Title"));
+        assert_eq!(metadata.display_title().as_ref(), "Agent Generated Title");
+    }
+
+    #[gpui::test]
+    async fn test_database_round_trips_title_override(_cx: &mut TestAppContext) {
+        let now = Utc::now();
+        let mut metadata = make_metadata(
+            "session-1",
+            "Agent Generated Title",
+            now,
+            PathList::new(&[Path::new("/project-a")]),
+        );
+        metadata.title_override = Some("User Title".into());
+
+        let thread = std::thread::current();
+        let test_name = thread.name().unwrap_or("unknown_test");
+        let db_name = format!("THREAD_METADATA_DB_{}", test_name);
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
+            &db_name,
+        )));
+
+        db.save(metadata).await.unwrap();
+
+        let rows = db.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title.as_deref(), Some("Agent Generated Title"));
+        assert_eq!(rows[0].title_override.as_deref(), Some("User Title"));
+        assert_eq!(rows[0].title().as_deref(), Some("User Title"));
+    }
+
+    #[gpui::test]
+    async fn test_store_set_title_override_updates_cached_metadata(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = make_metadata(
+            "session-1",
+            "Agent Generated Title",
+            Utc::now(),
+            PathList::default(),
+        );
+        let thread_id = metadata.thread_id;
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.set_title_override(thread_id, "User Title".into(), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+            let metadata = store.entry(thread_id).expect("metadata should be cached");
+            assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
+            assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
+            assert_eq!(metadata.display_title().as_ref(), "User Title");
+        });
     }
 
     #[gpui::test]
@@ -1947,6 +2065,7 @@ mod tests {
             session_id: Some(acp::SessionId::new("session-1")),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("First Thread".into()),
+            title_override: None,
             updated_at: updated_time,
             created_at: Some(updated_time),
             interacted_at: None,
@@ -2031,6 +2150,7 @@ mod tests {
             session_id: Some(acp::SessionId::new("a-session-0")),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Existing Metadata".into()),
+            title_override: None,
             updated_at: now - chrono::Duration::seconds(10),
             created_at: Some(now - chrono::Duration::seconds(10)),
             interacted_at: None,
@@ -2156,6 +2276,7 @@ mod tests {
             session_id: Some(acp::SessionId::new("existing-session")),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Existing Metadata".into()),
+            title_override: None,
             updated_at: existing_updated_at,
             created_at: Some(existing_updated_at),
             interacted_at: None,
@@ -2900,6 +3021,7 @@ mod tests {
             session_id: Some(acp::SessionId::new("local-linked")),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Local Linked".into()),
+            title_override: None,
             updated_at: now,
             created_at: Some(now),
             interacted_at: None,
@@ -2913,6 +3035,7 @@ mod tests {
             session_id: Some(acp::SessionId::new("remote-linked")),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title: Some("Remote Linked".into()),
+            title_override: None,
             updated_at: now - chrono::Duration::seconds(1),
             created_at: Some(now - chrono::Duration::seconds(1)),
             interacted_at: None,

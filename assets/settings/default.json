@@ -315,6 +315,14 @@
   "completion_menu_scrollbar": "never",
   // Whether to align detail text in code completions context menus left or right.
   "completion_detail_alignment": "left",
+  // How to display the LSP item kind (function, method, variable, etc.)
+  // of each entry in the completions menu.
+  //
+  // 1. Do not display item kinds:
+  //   "off" (default)
+  // 2. Display a single-letter badge, colorized based on the active syntax theme:
+  //   "symbol"
+  "completion_menu_item_kind": "off",
   // How to display diffs in the editor.
   //
   // Default: split
