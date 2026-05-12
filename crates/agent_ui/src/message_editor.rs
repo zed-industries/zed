@@ -132,11 +132,17 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
     }
 
     fn slash_autocomplete_invoked(&self, cx: &mut App) {
-        if let Some(editor) = self.message_editor.upgrade() {
+        // This may be called synchronously from inside a `MessageEditor`
+        // update (e.g. when pasting a slash command triggers completions),
+        // so we defer the emit to avoid a reentrant update panic.
+        let Some(editor) = self.message_editor.upgrade() else {
+            return;
+        };
+        cx.defer(move |cx| {
             editor.update(cx, |_editor, cx| {
                 cx.emit(MessageEditorEvent::SlashAutocompleteOpened);
             });
-        }
+        });
     }
 
     fn confirm_command(&self, cx: &mut App) {
