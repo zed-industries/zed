@@ -185,6 +185,12 @@ pub(crate) fn zed_default_dark() -> Theme {
                 ),
                 editor_document_highlight_write_background: gpui::red(),
                 editor_document_highlight_bracket_background: gpui::green(),
+                editor_diff_hunk_added_background: ADDED_COLOR.opacity(0.12),
+                editor_diff_hunk_added_hollow_background: ADDED_COLOR.opacity(0.06),
+                editor_diff_hunk_added_hollow_border: ADDED_COLOR.opacity(0.36),
+                editor_diff_hunk_deleted_background: REMOVED_COLOR.opacity(0.12),
+                editor_diff_hunk_deleted_hollow_background: REMOVED_COLOR.opacity(0.06),
+                editor_diff_hunk_deleted_hollow_border: REMOVED_COLOR.opacity(0.36),
 
                 terminal_background: bg,
                 // todo("Use one colors for terminal")

@@ -3,8 +3,8 @@ use crate::SendImmediately;
 use crate::{
     ChatWithFollow,
     completion_provider::{
-        PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextAction,
-        PromptContextType, SlashCommandCompletion,
+        AgentContextSelection, PromptCompletionProvider, PromptCompletionProviderDelegate,
+        PromptContextAction, PromptContextType, SlashCommandCompletion,
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
@@ -15,14 +15,16 @@ use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
-    actions::{Copy, Paste},
+    actions::{Copy, Cut, Paste},
     code_context_menus::CodeContextMenu,
+    display_map::{CreaseId, CreaseSnapshot},
     scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
     AppContext, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
+    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TaskExt, TextStyle,
+    WeakEntity,
 };
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
@@ -33,7 +35,7 @@ use project::{
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
@@ -146,6 +148,12 @@ pub struct MessageEditor {
 }
 
 #[derive(Clone, Debug)]
+pub enum InputAttempt {
+    Text(Arc<str>),
+    Paste(ClipboardItem),
+}
+
+#[derive(Clone, Debug)]
 pub enum MessageEditorEvent {
     Send,
     SendImmediately,
@@ -153,7 +161,7 @@ pub enum MessageEditorEvent {
     Focus,
     LostFocus,
     InputAttempted {
-        text: Arc<str>,
+        attempt: InputAttempt,
         cursor_offset: usize,
     },
 }
@@ -494,7 +502,7 @@ impl MessageEditor {
                         .to_offset(&editor.buffer().read(cx).snapshot(cx))
                         .0;
                     cx.emit(MessageEditorEvent::InputAttempted {
-                        text: text.clone(),
+                        attempt: InputAttempt::Text(text.clone()),
                         cursor_offset,
                     });
                 }
@@ -670,7 +678,7 @@ impl MessageEditor {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).is_empty(cx)
+        self.editor.read(cx).text(cx).trim().is_empty()
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
@@ -761,88 +769,44 @@ impl MessageEditor {
             self.session_capabilities.read().supports_embedded_context();
 
         cx.spawn(async move |_, cx| {
-            let contents = contents.await?;
-            let mut all_tracked_buffers = Vec::new();
-
-            let result = editor.update(cx, |editor, cx| {
+            let mut contents = contents.await?;
+            Ok(editor.update(cx, |editor, cx| {
+                let crease_snapshot = editor.display_map.read(cx).crease_snapshot();
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                 let text = editor.text(cx);
-                let (mut ix, _) = text
-                    .char_indices()
-                    .find(|(_, c)| !c.is_whitespace())
-                    .unwrap_or((0, '\0'));
-                let mut chunks: Vec<acp::ContentBlock> = Vec::new();
-                editor.display_map.update(cx, |map, cx| {
-                    let snapshot = map.snapshot(cx);
-                    for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-                        let Some((uri, mention)) = contents.get(&crease_id) else {
-                            continue;
-                        };
-
-                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
-                        if crease_range.start.0 > ix {
-                            let chunk = text[ix..crease_range.start.0].into();
-                            chunks.push(chunk);
-                        }
-                        let chunk = match mention {
-                            Mention::Text {
-                                content,
-                                tracked_buffers,
-                            } => {
-                                all_tracked_buffers.extend(tracked_buffers.iter().cloned());
-                                if supports_embedded_context {
-                                    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                                        acp::EmbeddedResourceResource::TextResourceContents(
-                                            acp::TextResourceContents::new(
-                                                content.clone(),
-                                                uri.to_uri().to_string(),
-                                            ),
-                                        ),
-                                    ))
-                                } else {
-                                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-                                        uri.name(),
-                                        uri.to_uri().to_string(),
-                                    ))
-                                }
-                            }
-                            Mention::Image(mention_image) => acp::ContentBlock::Image(
-                                acp::ImageContent::new(
-                                    mention_image.data.clone(),
-                                    mention_image.format.mime_type(),
-                                )
-                                .uri(match uri {
-                                    MentionUri::File { .. } => Some(uri.to_uri().to_string()),
-                                    MentionUri::PastedImage { .. } => {
-                                        Some(uri.to_uri().to_string())
-                                    }
-                                    other => {
-                                        debug_panic!(
-                                            "unexpected mention uri for image: {:?}",
-                                            other
-                                        );
-                                        None
-                                    }
-                                }),
-                            ),
-                            Mention::Link => acp::ContentBlock::ResourceLink(
-                                acp::ResourceLink::new(uri.name(), uri.to_uri().to_string()),
-                            ),
-                        };
-                        chunks.push(chunk);
-                        ix = crease_range.end.0;
-                    }
-
-                    if ix < text.len() {
-                        let last_chunk = text[ix..].trim_end().to_owned();
-                        if !last_chunk.is_empty() {
-                            chunks.push(last_chunk.into());
-                        }
-                    }
-                });
-                anyhow::Ok((chunks, all_tracked_buffers))
-            })?;
-            Ok(result)
+                build_chunks_from_creases(
+                    &text,
+                    &crease_snapshot,
+                    &buffer_snapshot,
+                    supports_embedded_context,
+                    |crease_id| {
+                        contents
+                            .remove(crease_id)
+                            .map(|(uri, mention)| (uri, Some(mention)))
+                    },
+                )
+            }))
         })
+    }
+
+    /// Snapshots the editor's current draft into a list of `ContentBlock`s
+    /// without awaiting any pending mention resolution.
+    pub fn draft_content_blocks_snapshot(&self, cx: &App) -> Vec<acp::ContentBlock> {
+        let editor = self.editor.read(cx);
+        let crease_snapshot = editor.display_map.read(cx).crease_snapshot();
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let text = editor.text(cx);
+        let mention_set = self.mention_set.read(cx);
+        let supports_embedded_context =
+            self.session_capabilities.read().supports_embedded_context();
+        let (chunks, _tracked_buffers) = build_chunks_from_creases(
+            &text,
+            &crease_snapshot,
+            &buffer_snapshot,
+            supports_embedded_context,
+            |crease_id| mention_set.resolved_mention_for_crease(crease_id),
+        );
+        chunks
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -954,18 +918,47 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Cancel)
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        if self.editor.read(cx).read_only(cx) {
+            let editor = self.editor.read(cx);
+            let cursor_offset = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .to_offset(&editor.buffer().read(cx).snapshot(cx))
+                .0;
+            cx.emit(MessageEditorEvent::InputAttempted {
+                attempt: InputAttempt::Paste(clipboard),
+                cursor_offset,
+            });
+            cx.stop_propagation();
+            return;
+        }
+
+        cx.stop_propagation();
+        self.paste_item(&clipboard, window, cx);
+    }
+
+    pub fn paste_item(
+        &mut self,
+        clipboard: &ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let editor_clipboard_selections = cx.read_from_clipboard().and_then(|item| {
-            item.entries().iter().find_map(|entry| match entry {
+        let editor_clipboard_selections =
+            clipboard.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::String(text) => {
                     text.metadata_json::<Vec<editor::ClipboardSelection>>()
                 }
                 _ => None,
-            })
-        });
+            });
 
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
@@ -997,7 +990,6 @@ impl MessageEditor {
         .unwrap_or(false);
 
         if should_insert_creases && let Some(selections) = editor_clipboard_selections {
-            cx.stop_propagation();
             let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
             let (insertion_target, _) = snapshot
                 .anchor_to_buffer_anchor(self.editor.read(cx).selections.newest_anchor().start)
@@ -1085,14 +1077,12 @@ impl MessageEditor {
         }
         // Handle text paste with potential markdown mention links before
         // clipboard context entries so markdown text still pastes as text.
-        if let Some(clipboard_text) = cx.read_from_clipboard().and_then(|item| {
-            item.entries().iter().find_map(|entry| match entry {
-                ClipboardEntry::String(text) => Some(text.text().to_string()),
-                _ => None,
-            })
-        }) {
+        let clipboard_text = clipboard.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::String(text) => Some(text.text().to_string()),
+            _ => None,
+        });
+        if let Some(clipboard_text) = clipboard_text.as_deref() {
             if clipboard_text.contains("[@") {
-                cx.stop_propagation();
                 let selections_before = self.editor.update(cx, |editor, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     editor
@@ -1109,7 +1099,7 @@ impl MessageEditor {
                 });
 
                 self.editor.update(cx, |editor, cx| {
-                    editor.insert(&clipboard_text, window, cx);
+                    editor.insert(clipboard_text, window, cx);
                 });
 
                 let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -1180,21 +1170,40 @@ impl MessageEditor {
             }
         }
 
-        if self.handle_pasted_context(window, cx) {
+        if self.handle_pasted_context(clipboard, window, cx) {
             return;
         }
 
-        // Fall through to default editor paste
-        cx.propagate();
+        self.editor.update(cx, |editor, cx| {
+            editor.paste_item(clipboard, window, cx);
+        });
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = self.serialized_copy_text(cx) else {
+        let Some((text, _)) = self.serialize_selection_with_mentions(false, cx) else {
             cx.propagate();
             return;
         };
 
         cx.stop_propagation();
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((text, ranges)) = self.serialize_selection_with_mentions(true, cx) else {
+            cx.propagate();
+            return;
+        };
+
+        cx.stop_propagation();
+        self.editor.update(cx, |editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges(ranges);
+                });
+                editor.insert("", window, cx);
+            });
+        });
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
@@ -1205,11 +1214,12 @@ impl MessageEditor {
         });
     }
 
-    fn handle_pasted_context(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(clipboard) = cx.read_from_clipboard() else {
-            return false;
-        };
-
+    fn handle_pasted_context(
+        &mut self,
+        clipboard: &ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if matches!(
             clipboard.entries().first(),
             Some(ClipboardEntry::String(_)) | None
@@ -1229,9 +1239,7 @@ impl MessageEditor {
         let editor = self.editor.clone();
         let mention_set = self.mention_set.clone();
         let workspace = self.workspace.clone();
-        let entries = clipboard.into_entries().collect::<Vec<_>>();
-
-        cx.stop_propagation();
+        let entries = clipboard.clone().into_entries().collect::<Vec<_>>();
 
         window
             .spawn(cx, async move |mut cx| {
@@ -1375,7 +1383,12 @@ impl MessageEditor {
             .detach_and_log_err(cx);
     }
 
-    pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn insert_selections(
+        &mut self,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let editor = self.editor.read(cx);
         let editor_buffer = editor.buffer().read(cx);
         let Some(buffer) = editor_buffer.as_singleton() else {
@@ -1386,17 +1399,13 @@ impl MessageEditor {
         let anchor = buffer.update(cx, |buffer, _cx| {
             buffer.anchor_before(cursor_offset.0.min(buffer.len()))
         });
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
         let Some(completion) =
             PromptCompletionProvider::<MessageEditorCompletionDelegate>::completion_for_action(
                 PromptContextAction::AddSelections,
                 anchor..anchor,
                 self.editor.downgrade(),
                 self.mention_set.downgrade(),
-                &workspace,
-                cx,
+                Some(selection),
             )
         else {
             return;
@@ -1698,12 +1707,20 @@ impl MessageEditor {
         });
     }
 
-    fn serialized_copy_text(&self, cx: &mut App) -> Option<String> {
+    fn serialize_selection_with_mentions(
+        &self,
+        expand_empty_to_line: bool,
+        cx: &mut App,
+    ) -> Option<(String, Vec<Range<MultiBufferOffset>>)> {
+        if self.mention_set.read(cx).is_empty() {
+            return None;
+        }
+
         let display_snapshot = self
             .editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
         let editor = self.editor.read(cx);
-        if !editor.has_non_empty_selection(&display_snapshot) {
+        if !expand_empty_to_line && !editor.has_non_empty_selection(&display_snapshot) {
             return None;
         }
 
@@ -1724,48 +1741,55 @@ impl MessageEditor {
             })
             .collect::<Vec<_>>();
 
+        let line_mode = editor.selections.line_mode();
+        let max_point = snapshot.max_point();
+        let point_selections = editor.selections.all::<Point>(&display_snapshot);
+
         let mut text = String::new();
+        let mut ranges = Vec::with_capacity(point_selections.len());
         let mut has_mentions = false;
         let mut is_first = true;
+        let mut prev_was_entire_line = false;
 
-        for selection in editor
-            .selections
-            .all::<MultiBufferOffset>(&display_snapshot)
-        {
+        for mut selection in point_selections {
+            let is_entire_line = (selection.is_empty() && expand_empty_to_line) || line_mode;
+            if is_entire_line {
+                selection.start = Point::new(selection.start.row, 0);
+                if !selection.is_empty() && selection.end.column == 0 {
+                    selection.end = min(max_point, selection.end);
+                } else {
+                    selection.end = min(max_point, Point::new(selection.end.row + 1, 0));
+                }
+            }
+            let range = selection.start.to_offset(&snapshot)..selection.end.to_offset(&snapshot);
+
             if is_first {
                 is_first = false;
-            } else {
+            } else if !prev_was_entire_line {
                 text.push('\n');
             }
+            prev_was_entire_line = is_entire_line;
 
-            let mut overlapping_mentions = mention_ranges
+            let mut cursor = range.start;
+            for (start, end, uri) in mention_ranges
                 .iter()
-                .filter(|(start, end, _)| *start < selection.end && selection.start < *end)
-                .peekable();
-
-            if overlapping_mentions.peek().is_none() {
-                text.extend(snapshot.text_for_range(selection.start..selection.end));
-                continue;
-            }
-
-            has_mentions = true;
-
-            let mut cursor = selection.start;
-            for (start, end, uri) in overlapping_mentions {
+                .filter(|(start, end, _)| *start < range.end && range.start < *end)
+            {
                 if cursor < *start {
                     text.extend(snapshot.text_for_range(cursor..*start));
                 }
-
                 write!(text, "{}", uri.as_link()).unwrap();
                 cursor = *end;
+                has_mentions = true;
+            }
+            if cursor < range.end {
+                text.extend(snapshot.text_for_range(cursor..range.end));
             }
 
-            if cursor < selection.end {
-                text.extend(snapshot.text_for_range(cursor..selection.end));
-            }
+            ranges.push(range);
         }
 
-        has_mentions.then_some(text)
+        has_mentions.then_some((text, ranges))
     }
 }
 
@@ -1784,6 +1808,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::copy))
+            .capture_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::paste_raw))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
@@ -1838,6 +1863,92 @@ impl Addon for MessageEditorAddon {
         if settings.use_modifier_to_send {
             key_context.add("use_modifier_to_send");
         }
+    }
+}
+
+/// Walks the editor's creases in order, interleaving plain-text chunks from
+/// `text` with mention blocks produced from `resolve`.
+fn build_chunks_from_creases(
+    text: &str,
+    crease_snapshot: &CreaseSnapshot,
+    buffer_snapshot: &MultiBufferSnapshot,
+    supports_embedded_context: bool,
+    mut resolve: impl FnMut(&CreaseId) -> Option<(MentionUri, Option<Mention>)>,
+) -> (Vec<acp::ContentBlock>, Vec<Entity<Buffer>>) {
+    let mut ix = text
+        .char_indices()
+        .find(|(_, c)| !c.is_whitespace())
+        .map_or(text.len(), |(i, _)| i);
+    let mut chunks = Vec::new();
+    let mut tracked_buffers = Vec::new();
+
+    for (crease_id, crease) in crease_snapshot.creases() {
+        let Some((uri, mention)) = resolve(&crease_id) else {
+            continue;
+        };
+        let crease_range = crease.range().to_offset(buffer_snapshot);
+        if crease_range.start.0 > ix {
+            chunks.push(text[ix..crease_range.start.0].into());
+        }
+        chunks.push(mention_to_content_block(
+            &uri,
+            mention.as_ref(),
+            supports_embedded_context,
+            &mut tracked_buffers,
+        ));
+        ix = crease_range.end.0;
+    }
+
+    if ix < text.len() {
+        let last_chunk = text[ix..].trim_end().to_owned();
+        if !last_chunk.is_empty() {
+            chunks.push(last_chunk.into());
+        }
+    }
+    (chunks, tracked_buffers)
+}
+
+fn mention_to_content_block(
+    uri: &MentionUri,
+    mention: Option<&Mention>,
+    supports_embedded_context: bool,
+    tracked_buffers: &mut Vec<Entity<Buffer>>,
+) -> acp::ContentBlock {
+    match mention {
+        Some(Mention::Text {
+            content,
+            tracked_buffers: mention_tracked_buffers,
+        }) => {
+            tracked_buffers.extend(mention_tracked_buffers.iter().cloned());
+            if supports_embedded_context {
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(content.clone(), uri.to_uri().to_string()),
+                    ),
+                ))
+            } else {
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                    uri.name(),
+                    uri.to_uri().to_string(),
+                ))
+            }
+        }
+        Some(Mention::Image(mention_image)) => acp::ContentBlock::Image(
+            acp::ImageContent::new(mention_image.data.clone(), mention_image.format.mime_type())
+                .uri(match uri {
+                    MentionUri::File { .. } | MentionUri::PastedImage { .. } => {
+                        Some(uri.to_uri().to_string())
+                    }
+                    other => {
+                        debug_panic!("unexpected mention uri for image: {:?}", other);
+                        None
+                    }
+                }),
+        ),
+        _ => acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            uri.name(),
+            uri.to_uri().to_string(),
+        )),
     }
 }
 
@@ -1914,7 +2025,7 @@ mod tests {
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
-        actions::Paste,
+        actions::{Cut, Paste},
     };
 
     use fs::FakeFs;
@@ -1934,7 +2045,7 @@ mod tests {
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, MultiWorkspace};
 
-    use crate::completion_provider::PromptContextType;
+    use crate::completion_provider::{AgentContextSelection, PromptContextType};
     use crate::{
         conversation_view::tests::init_test,
         mention_set::insert_crease_for_mention,
@@ -3655,11 +3766,17 @@ mod tests {
             })
         });
 
-        // Now let's insert the selection in the Agent Panel's editor and
-        // confirm that, after the insertion, the cursor is now in the visible
-        // range.
+        let text_editor_selection = editor.update(&mut cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let buffer = multibuffer.as_singleton().unwrap();
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let start = buffer_snapshot.anchor_before(0);
+            let end = buffer_snapshot.anchor_after(5);
+            AgentContextSelection::Editor(vec![(buffer, start..end)])
+        });
+
         message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            message_editor.insert_selections(window, cx);
+            message_editor.insert_selections(text_editor_selection, window, cx);
         });
 
         cx.run_until_parked();
@@ -3946,7 +4063,8 @@ mod tests {
 
         let copied_text = source_message_editor.update(&mut cx, |message_editor, cx| {
             message_editor
-                .serialized_copy_text(cx)
+                .serialize_selection_with_mentions(false, cx)
+                .map(|(text, _)| text)
                 .expect("selection mentions should serialize")
         });
         let expected_text = format!(
@@ -4011,7 +4129,9 @@ mod tests {
         message_editor: Entity<MessageEditor>,
         first_uri: MentionUri,
         first_range: Range<usize>,
+        second_uri: MentionUri,
         second_range: Range<usize>,
+        buffer_len: MultiBufferOffset,
     }
 
     async fn setup_selection_mention_fixture(
@@ -4036,7 +4156,7 @@ mod tests {
             line_range: 2..=3,
         };
 
-        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+        let buffer_len = message_editor.update_in(&mut cx, |message_editor, window, cx| {
             message_editor.set_text(source_text, window, cx);
 
             let snapshot = message_editor
@@ -4091,6 +4211,8 @@ mod tests {
                     );
                 });
             }
+
+            snapshot.len()
         });
 
         (
@@ -4098,7 +4220,9 @@ mod tests {
                 message_editor,
                 first_uri,
                 first_range,
+                second_uri,
                 second_range,
+                buffer_len,
             },
             cx,
         )
@@ -4126,7 +4250,9 @@ mod tests {
         let copied = fixture
             .message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor.serialized_copy_text(cx)
+                message_editor
+                    .serialize_selection_with_mentions(false, cx)
+                    .map(|(text, _)| text)
             });
 
         assert_eq!(copied, Some(fixture.first_uri.as_link().to_string()));
@@ -4158,10 +4284,173 @@ mod tests {
         let copied = fixture
             .message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor.serialized_copy_text(cx)
+                message_editor
+                    .serialize_selection_with_mentions(false, cx)
+                    .map(|(text, _)| text)
             });
 
         assert_eq!(copied, None);
+    }
+
+    #[gpui::test]
+    async fn test_draft_content_blocks_snapshot_preserves_selection_mentions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let blocks = fixture.message_editor.update(&mut cx, |editor, cx| {
+            editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(acp::PromptCapabilities::new().embedded_context(true));
+            editor.draft_content_blocks_snapshot(cx)
+        });
+
+        // Each selection mention must round-trip as a `Resource` block carrying
+        // its URI and content, not as a `Text` block containing the fold
+        // placeholder string.
+        let resource_uris: Vec<&str> =
+            blocks
+                .iter()
+                .filter_map(|block| match block {
+                    acp::ContentBlock::Resource(acp::EmbeddedResource {
+                        resource:
+                            acp::EmbeddedResourceResource::TextResourceContents(
+                                acp::TextResourceContents { uri, .. },
+                            ),
+                        ..
+                    }) => Some(uri.as_str()),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(
+            resource_uris.len(),
+            2,
+            "snapshot should emit one Resource block per selection mention; got {blocks:#?}"
+        );
+        assert!(resource_uris.contains(&fixture.first_uri.to_uri().to_string().as_str()));
+        for block in &blocks {
+            if let acp::ContentBlock::Text(text) = block {
+                assert!(
+                    !text.text.split_whitespace().any(|word| word == "selection"),
+                    "text block must not contain bare fold placeholder: {:?}",
+                    text.text
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cut_with_selection_mentions_serializes_and_removes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let buffer_len = fixture.buffer_len;
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([MultiBufferOffset(0)..buffer_len]);
+                    });
+                });
+                message_editor.cut(&Cut, window, cx);
+            });
+
+        let expected_text = format!(
+            "{} needs work\n{} looks fine",
+            fixture.first_uri.as_link(),
+            fixture.second_uri.as_link()
+        );
+
+        let clipboard_text = cx
+            .read_from_clipboard()
+            .and_then(|item| match item.entries().first().cloned() {
+                Some(ClipboardEntry::String(entry)) => Some(entry.text().to_string()),
+                _ => None,
+            })
+            .expect("cut should write serialized text to clipboard");
+        assert_eq!(clipboard_text, expected_text);
+
+        let remaining_text = fixture.message_editor.read_with(&cx, |message_editor, cx| {
+            message_editor.editor.read(cx).text(cx)
+        });
+        assert_eq!(remaining_text, "");
+    }
+
+    #[gpui::test]
+    async fn test_cut_with_empty_cursor_on_mention_line_removes_whole_line(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let cursor_offset = MultiBufferOffset(fixture.first_range.end + 4);
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([cursor_offset..cursor_offset]);
+                    });
+                });
+                message_editor.cut(&Cut, window, cx);
+            });
+
+        let clipboard_text = cx
+            .read_from_clipboard()
+            .and_then(|item| match item.entries().first().cloned() {
+                Some(ClipboardEntry::String(entry)) => Some(entry.text().to_string()),
+                _ => None,
+            })
+            .expect("cut should write serialized text to clipboard");
+        assert_eq!(
+            clipboard_text,
+            format!("{} needs work\n", fixture.first_uri.as_link())
+        );
+
+        let remaining_text = fixture.message_editor.read_with(&cx, |message_editor, cx| {
+            message_editor.editor.read(cx).text(cx)
+        });
+        assert_eq!(remaining_text, "selection looks fine");
+    }
+
+    #[gpui::test]
+    async fn test_serialized_cut_text_returns_none_when_mentions_outside_selection(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let between_start = fixture.first_range.end;
+        let between_end = fixture.second_range.start - 1;
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([
+                            MultiBufferOffset(between_start)..MultiBufferOffset(between_end)
+                        ]);
+                    });
+                });
+            });
+
+        let result = fixture
+            .message_editor
+            .update(&mut cx, |message_editor, cx| {
+                message_editor.serialize_selection_with_mentions(true, cx)
+            });
+
+        assert!(
+            result.is_none(),
+            "serialize_selection_with_mentions should return None so the default editor cut runs"
+        );
     }
 
     #[gpui::test]

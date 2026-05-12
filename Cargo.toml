@@ -61,6 +61,7 @@ members = [
     "crates/edit_prediction_types",
     "crates/edit_prediction_ui",
     "crates/editor",
+    "crates/editor_benchmarks",
     "crates/encoding_selector",
     "crates/env_var",
     "crates/etw_tracing",
@@ -225,6 +226,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/windows_resources",
     "crates/zed_credentials_provider",
     "crates/zed_env_vars",
     "crates/zeta_prompt",
@@ -386,7 +388,7 @@ markdown_preview = { path = "crates/markdown_preview" }
 svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
-mermaid-rs-renderer = { git = "https://github.com/zed-industries/mermaid-rs-renderer", rev = "374db9ead5426697c6c2111151d9f246899bc638", default-features = false }
+mermaid-rs-renderer = { git = "https://github.com/zed-industries/mermaid-rs-renderer", rev = "782b89a7da3f0e91e51f98d00a93acba679be6fb", default-features = false }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
@@ -552,7 +554,7 @@ core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
-crash-handler = "0.6"
+crash-handler = "0.7"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
@@ -800,7 +802,7 @@ wasmtime = { version = "36", default-features = false, features = [
 wasmtime-wasi = "36"
 wax = "0.7"
 which = "6.0.0"
-wasm-bindgen = "0.2.113"
+wasm-bindgen = "0.2.120"
 web-time = "1.1.0"
 webrtc-sys = "0.3.23"
 wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
@@ -912,6 +914,7 @@ wasmtime = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 wasmtime-environ = { opt-level = 3 }
 wasmtime-internal-cranelift = { opt-level = 3 }
+minidumper = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }

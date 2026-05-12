@@ -13,7 +13,7 @@ use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection, NewThreadLocation,
+    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
@@ -144,6 +144,7 @@ pub struct AgentSettings {
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
     pub default_model: Option<LanguageModelSelection>,
+    pub subagent_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
@@ -167,7 +168,6 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
-    pub new_thread_location: NewThreadLocation,
 }
 
 impl AgentSettings {
@@ -641,6 +641,7 @@ impl Settings for AgentSettings {
             },
             flexible: agent.flexible.unwrap(),
             default_model: Some(agent.default_model.unwrap()),
+            subagent_model: agent.subagent_model,
             inline_assistant_model: agent.inline_assistant_model,
             inline_assistant_use_streaming_tools: agent
                 .inline_assistant_use_streaming_tools
@@ -671,7 +672,6 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
-            new_thread_location: agent.new_thread_location.unwrap_or_default(),
         }
     }
 }

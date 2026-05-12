@@ -66,7 +66,9 @@ use ui::{
     StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
-    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    ResultExt, TakeUntilExt, TryFutureExt,
+    markdown::MarkdownInlineCode,
+    maybe,
     paths::{PathStyle, compare_paths},
     rel_path::{RelPath, RelPathBuf},
 };
@@ -1053,7 +1055,7 @@ impl ProjectPanel {
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
-            let (has_git_repo, has_file_history) = {
+            let (has_git_repo, has_history) = {
                 let project_path = project::ProjectPath {
                     worktree_id,
                     path: entry.path.clone(),
@@ -1062,12 +1064,11 @@ impl ProjectPanel {
                 let has_git_repo = git_store
                     .repository_and_path_for_project_path(&project_path, cx)
                     .is_some();
-                let has_file_history = !is_dir
-                    && has_git_repo
+                let has_history = has_git_repo
                     && !git_store
                         .project_path_git_status(&project_path, cx)
                         .is_some_and(|status| status.is_created());
-                (has_git_repo, has_file_history)
+                (has_git_repo, has_history)
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
@@ -1143,8 +1144,8 @@ impl ProjectPanel {
                                         )
                                     })
                                     .action("Add to .gitignore", Box::new(git::AddToGitignore))
-                                    .when(has_file_history, |menu| {
-                                        menu.action("View File History", Box::new(git::FileHistory))
+                                    .when(has_history, |menu| {
+                                        menu.action("View History", Box::new(git::FileHistory))
                                     })
                             })
                             .when(!should_hide_rename, |menu| {
@@ -2358,7 +2359,10 @@ impl ProjectPanel {
                             ""
                         };
 
-                        format!("{message_start} {path}?{unsaved_warning}")
+                        format!(
+                            "{message_start} {}?{unsaved_warning}",
+                            MarkdownInlineCode(path)
+                        )
                     }
                     _ => {
                         const CUTOFF_POINT: usize = 10;
@@ -2366,7 +2370,7 @@ impl ProjectPanel {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
                             let mut paths = file_paths
                                 .iter()
-                                .map(|(_, _, path)| path.clone())
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
                                 .take(CUTOFF_POINT)
                                 .collect::<Vec<_>>();
                             paths.truncate(CUTOFF_POINT);
@@ -2377,7 +2381,10 @@ impl ProjectPanel {
                             }
                             paths
                         } else {
-                            file_paths.iter().map(|(_, _, path)| path.clone()).collect()
+                            file_paths
+                                .iter()
+                                .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
+                                .collect()
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
@@ -3791,11 +3798,11 @@ impl ProjectPanel {
         Some((worktree.read(cx), entry))
     }
 
-    pub fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+    pub fn selected_entry_project_path(&self, cx: &App) -> Option<ProjectPath> {
         let (worktree, entry) = self.selected_sub_entry(cx)?;
         Some(ProjectPath {
             worktree_id: worktree.read(cx).id(),
-            path: entry.is_file().then(|| entry.path.clone())?,
+            path: entry.path.clone(),
         })
     }
 
@@ -7283,6 +7290,12 @@ impl Panel for ProjectPanel {
 
     fn activation_priority(&self) -> u32 {
         1
+    }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.project_panel.get_or_insert_default().button = Some(false);
+        }))
     }
 }
 

@@ -265,21 +265,9 @@
     "bindings": {
       "cmd-n": "agent::NewThread",
       "cmd-alt-c": "agent::OpenSettings",
-      "cmd-alt-l": "agent::OpenRulesLibrary",
-      "cmd-alt-p": "agent::ManageProfiles",
-      "cmd-i": "agent::ToggleProfileSelector",
-      "shift-tab": "agent::CycleModeSelector",
-      "cmd-alt-/": "agent::ToggleModelSelector",
-      "alt-tab": "agent::CycleFavoriteModels",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
-      "shift-alt-escape": "agent::ExpandMessageEditor",
-      "cmd->": "agent::AddSelectionToThread",
       "cmd-shift-e": "project_panel::ToggleFocus",
-      "cmd-shift-enter": "agent::ContinueThread",
-      "cmd-y": "agent::AllowOnce",
-      "cmd-alt-a": "agent::OpenPermissionDropdown",
-      "cmd-alt-z": "agent::RejectOnce",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
@@ -289,14 +277,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-c": "markdown::CopyAsMarkdown",
-    },
-  },
-  {
-    "context": "AgentPanel && acp_thread",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-n": "agent::NewExternalAgentThread",
-      "cmd-alt-t": "agent::NewThread",
     },
   },
   {
@@ -322,8 +302,21 @@
   },
   {
     "context": "AcpThread",
+    "use_key_equivalents": true,
     "bindings": {
+      "cmd-n": "agent::NewThread",
       "ctrl--": "pane::GoBack",
+      "cmd-alt-l": "agent::OpenRulesLibrary",
+      "cmd-alt-p": "agent::ManageProfiles",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
+      "cmd-alt-/": "agent::ToggleModelSelector",
+      "alt-tab": "agent::CycleFavoriteModels",
+      "shift-alt-escape": "agent::ExpandMessageEditor",
+      "cmd->": "agent::AddSelectionToThread",
+      "cmd-y": "agent::AllowOnce",
+      "cmd-alt-a": "agent::OpenPermissionDropdown",
+      "cmd-alt-z": "agent::RejectOnce",
       "pageup": "agent::ScrollOutputPageUp",
       "pagedown": "agent::ScrollOutputPageDown",
       "home": "agent::ScrollOutputToTop",
@@ -1264,6 +1257,7 @@
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
+      "ctrl-cmd-v": "terminal::PasteText",
       "cmd-f": "buffer_search::Deploy",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
@@ -1313,6 +1307,13 @@
       "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask",
       "cmd->": "agent::AddSelectionToThread",
+    },
+  },
+  {
+    "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewThread",
     },
   },
   {
@@ -1551,6 +1552,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-backspace": "branch_picker::DeleteBranch",
+      "cmd-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
       "cmd-shift-i": "branch_picker::FilterRemotes",
     },
   },
@@ -1587,6 +1589,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-backspace": "worktree_picker::DeleteWorktree",
+      "cmd-alt-shift-backspace": "worktree_picker::ForceDeleteWorktree",
     },
   },
   {
@@ -1625,6 +1628,20 @@
       "cmd-shift-r": "notebook::RestartKernel",
       "cmd-c": "notebook::InterruptKernel",
       "escape": "notebook::EnterCommandMode",
+    },
+  },
+  {
+    "context": "GitGraph",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
     },
   },
 ]

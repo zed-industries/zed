@@ -11,6 +11,7 @@ mod context;
 mod context_server_configuration;
 pub(crate) mod conversation_view;
 mod diagnostics;
+pub mod draft_prompt_store;
 mod entry_view_state;
 mod external_source_prompt;
 mod favorite_models;
@@ -43,7 +44,9 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use gpui::{
+    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
+};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -57,11 +60,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
+use std::path::{Path, PathBuf};
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
-pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads};
+pub use crate::agent_panel::{
+    AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
+};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread_metadata_store::ThreadId;
@@ -77,6 +83,33 @@ pub use thread_import::{
 };
 use zed_actions;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
+
+pub(crate) fn resolve_agent_image(
+    dest_url: &str,
+    worktree_roots: &[PathBuf],
+) -> Option<ImageSource> {
+    if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
+        return Some(ImageSource::Resource(Resource::Uri(SharedUri::from(
+            dest_url.to_string(),
+        ))));
+    }
+
+    let path = Path::new(dest_url);
+    if path.is_absolute() && path.exists() {
+        return Some(ImageSource::Resource(Resource::Path(Arc::from(path))));
+    }
+
+    for root in worktree_roots {
+        let absolute_path = root.join(dest_url);
+        if absolute_path.exists() {
+            return Some(ImageSource::Resource(Resource::Path(Arc::from(
+                absolute_path.as_path(),
+            ))));
+        }
+    }
+
+    None
+}
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
@@ -147,8 +180,6 @@ actions!(
         ResetTrialEndUpsell,
         /// Opens the "Add Context" menu in the message editor.
         OpenAddContextMenu,
-        /// Continues the current thread.
-        ContinueThread,
         /// Interrupts the current generation and sends the message immediately.
         SendImmediately,
         /// Sends the next queued message immediately.
@@ -244,12 +275,33 @@ pub struct ToggleCommandPattern {
 pub struct NewThread;
 
 /// Creates a new external agent conversation thread.
-#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewExternalAgentThread {
-    /// Which agent to use for the conversation.
-    agent: Option<Agent>,
+    /// The agent id to use for the conversation.
+    #[serde(deserialize_with = "deserialize_external_agent_id")]
+    agent: AgentId,
+}
+
+fn deserialize_external_agent_id<'de, D>(deserializer: D) -> Result<AgentId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AgentIdOrLegacyAgent {
+        LegacyAgent(Agent),
+        AgentId(AgentId),
+    }
+
+    match AgentIdOrLegacyAgent::deserialize(deserializer)? {
+        AgentIdOrLegacyAgent::AgentId(agent_id) => Ok(agent_id),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Custom { id }) => Ok(id),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::NativeAgent) => Ok(Agent::NativeAgent.id()),
+        #[cfg(any(test, feature = "test-support"))]
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Stub) => Ok(Agent::Stub.id()),
+    }
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -278,10 +330,13 @@ pub enum Agent {
 impl From<AgentId> for Agent {
     fn from(id: AgentId) -> Self {
         if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
-            Self::NativeAgent
-        } else {
-            Self::Custom { id }
+            return Self::NativeAgent;
         }
+        #[cfg(any(test, feature = "test-support"))]
+        if id.as_ref() == "stub" {
+            return Self::Stub;
+        }
+        Self::Custom { id }
     }
 }
 
@@ -692,6 +747,7 @@ mod tests {
             default_height: px(600.),
             max_content_width: Some(px(850.)),
             default_model: None,
+            subagent_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
@@ -713,7 +769,6 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            new_thread_location: Default::default(),
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         };
@@ -907,5 +962,24 @@ mod tests {
                 id: "my-agent".into(),
             },
         );
+    }
+
+    #[test]
+    fn test_deserialize_new_external_agent_thread() {
+        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"gemini"}"#)
+            .expect("should deserialize agent id");
+        assert_eq!(action.agent, AgentId::from("gemini"));
+
+        let action = serde_json::from_str::<NewExternalAgentThread>(
+            r#"{"agent":{"custom":{"name":"gemini"}}}"#,
+        )
+        .expect("should deserialize legacy custom agent payload");
+        assert_eq!(action.agent, AgentId::from("gemini"));
+
+        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"NativeAgent"}"#)
+            .expect("should deserialize legacy native agent payload");
+        assert_eq!(action.agent, Agent::NativeAgent.id());
+
+        assert!(serde_json::from_str::<NewExternalAgentThread>(r#"{}"#).is_err());
     }
 }
