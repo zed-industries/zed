@@ -1052,7 +1052,7 @@ mod tests {
         assert_eq!(
             request.remote_connection.unwrap(),
             RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: format!("ssh://{host}").into(),
+                host: host.into(),
                 username: username.map(str::to_string),
                 port,
                 ..Default::default()
@@ -1065,11 +1065,25 @@ mod tests {
     fn test_parse_ssh_urls(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
         let cases = [
-            ("me@host:/", None, "localhost", Some("me"), None, "/"),
-            ("me@host:~/code", None, "host", Some("me"), None, "/~/code"),
-            ("me@host:22/tmp", None, "host", Some("me"), Some(22), "/tmp"),
+            ("ssh://me@host:/", None, "host", Some("me"), None, "/"),
             (
-                "user@domain.tld@host:22/tmp",
+                "ssh://me@host:~/code",
+                None,
+                "host",
+                Some("me"),
+                None,
+                "/~/code",
+            ),
+            (
+                "ssh://me@host:22/tmp",
+                None,
+                "host",
+                Some("me"),
+                Some(22),
+                "/tmp",
+            ),
+            (
+                "ssh://user@domain.tld@host:22/tmp",
                 None,
                 "host",
                 Some("user@domain.tld"),
@@ -1077,9 +1091,9 @@ mod tests {
                 "/tmp",
             ),
             (
-                "domain\\user@host/dir",
-                Some("domain%5Cuser@host/dir"),
-                "h",
+                "ssh://domain\\user@host/dir",
+                Some("ssh://domain%5Cuser@host/dir"),
+                "host",
                 Some("domain\\user"),
                 None,
                 "/dir",
