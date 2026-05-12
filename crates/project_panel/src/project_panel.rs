@@ -172,6 +172,11 @@ pub struct ProjectPanel {
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
     state: State,
+    /// Snapshot of `state.expanded_dir_ids` at the time of the most recent
+    /// scheduled save. Used to skip rescheduling when an `update_visible_entries`
+    /// pass was triggered by something other than an expansion change (e.g. git
+    /// status updates), avoiding redundant SQLite writes.
+    last_scheduled_expanded_dir_ids: Option<HashMap<WorktreeId, Vec<ProjectEntryId>>>,
     _save_collapse_state_task: Task<()>,
 }
 
@@ -873,6 +878,7 @@ impl ProjectPanel {
                 },
                 update_visible_entries_task: Default::default(),
                 undo_manager: UndoManager::new(workspace.weak_handle(), weak_project_panel, &cx),
+                last_scheduled_expanded_dir_ids: None,
                 _save_collapse_state_task: Task::ready(()),
             };
             this.update_visible_entries(None, false, false, window, cx);
@@ -4372,12 +4378,18 @@ impl ProjectPanel {
     }
 
     /// Debounced save of the expanded directory state to the database.
-    /// No-ops when persistence is disabled or the workspace has no
-    /// `database_id` yet.
+    /// No-ops when persistence is disabled, the workspace has no
+    /// `database_id` yet, or the expanded set hasn't changed since the last
+    /// scheduled save (so events like git updates or worktree refreshes
+    /// don't churn the database with redundant writes).
     fn schedule_save_collapse_state(&mut self, cx: &mut Context<Self>) {
+        if self.last_scheduled_expanded_dir_ids.as_ref() == Some(&self.state.expanded_dir_ids) {
+            return;
+        }
         let Some((workspace_id, entries)) = self.collapse_state_save_payload(cx) else {
             return;
         };
+        self.last_scheduled_expanded_dir_ids = Some(self.state.expanded_dir_ids.clone());
         let db = persistence::ProjectPanelDb::global(cx);
         let executor = cx.background_executor().clone();
         self._save_collapse_state_task = cx.background_executor().spawn(async move {
