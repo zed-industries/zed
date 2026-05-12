@@ -7,10 +7,15 @@ use crate::{
 };
 use anyhow::Result;
 use cloud_llm_client::{
-    AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
+    AcceptEditPredictionBody, EditPredictionRejectReason, ZED_VERSION_HEADER_NAME,
+    predict_edits_v3::RawCompletionRequest,
 };
 use edit_prediction_types::PredictedCursorPosition;
-use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
+use gpui::{
+    App, AppContext as _, Entity, Task, TaskExt, WeakEntity,
+    http_client::{self, Method},
+    prelude::*,
+};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, EditPredictionPromptFormat, OffsetRangeExt as _,
     ToOffset as _, ZetaVersion, language_settings::all_language_settings, text_diff,
@@ -592,7 +597,6 @@ pub(crate) fn edit_prediction_accepted(
     let request_id = current_prediction.prediction.id.to_string();
     let model_version = current_prediction.prediction.model_version;
     let e2e_latency = current_prediction.e2e_latency;
-    let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store
@@ -603,35 +607,47 @@ pub(crate) fn edit_prediction_accepted(
     let app_version = AppVersion::global(cx);
 
     cx.background_spawn(async move {
-        let url = if let Some(accept_edits_url) = custom_accept_url {
-            gpui::http_client::Url::parse(&accept_edits_url)?
-        } else {
-            client
+        let body = serde_json::to_string(&AcceptEditPredictionBody {
+            request_id,
+            model_version,
+            e2e_latency_ms: Some(e2e_latency.as_millis()),
+        })?;
+
+        if let Some(custom_accept_url) = custom_accept_url {
+            // Dev override: send to a custom URL with best-effort auth and
+            // no refresh-and-retry. Used by Zed engineers via the
+            // `ZED_ACCEPT_PREDICTION_URL` environment variable.
+            let url = gpui::http_client::Url::parse(&custom_accept_url)?;
+            let token = client
+                .acquire_llm_token(&llm_token, organization_id)
+                .await
+                .ok();
+            let mut builder = http_client::Request::builder()
+                .method(Method::POST)
+                .uri(url.as_ref())
+                .header("Content-Type", "application/json")
+                .header(ZED_VERSION_HEADER_NAME, app_version.to_string());
+            if let Some(token) = token.as_deref() {
+                builder = builder.header("Authorization", format!("Bearer {token}"));
+            }
+            let response = client
                 .http_client()
-                .build_zed_llm_url("/predict_edits/accept", &[])?
-        };
-
-        let response = EditPredictionStore::send_api_request::<()>(
-            move |builder| {
-                let req = builder.uri(url.as_ref()).body(
-                    serde_json::to_string(&AcceptEditPredictionBody {
-                        request_id: request_id.clone(),
-                        model_version: model_version.clone(),
-                        e2e_latency_ms: Some(e2e_latency.as_millis()),
-                    })?
-                    .into(),
-                );
-                Ok(req?)
-            },
-            client,
-            llm_token,
-            organization_id,
-            app_version,
-            require_auth,
-        )
-        .await;
-
-        response?;
+                .send(builder.body(body.into())?)
+                .await?;
+            EditPredictionStore::process_api_response::<()>(response, &app_version).await?;
+        } else {
+            let url = client
+                .http_client()
+                .build_zed_llm_url("/predict_edits/accept", &[])?;
+            EditPredictionStore::send_api_request::<()>(
+                move |builder| Ok(builder.uri(url.as_ref()).body(body.clone().into())?),
+                client,
+                llm_token,
+                organization_id,
+                app_version,
+            )
+            .await?;
+        }
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
