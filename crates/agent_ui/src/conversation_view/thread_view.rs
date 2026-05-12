@@ -520,14 +520,15 @@ mod numbered_code_block_tests {
 ///
 /// Default (no entry in the map) means the last dropdown choice is selected,
 /// which is typically "Only this time".
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum PermissionSelection {
     /// A specific choice from the dropdown (e.g., "Always for terminal", "Only this time").
     /// The index corresponds to the position in the `choices` list from `PermissionOptions`.
     Choice(usize),
     /// "Select options…" mode where individual command patterns can be toggled.
     /// Contains the indices of checked patterns in the `patterns` list.
-    /// All patterns start checked when this mode is first activated.
+    /// Only the pattern the user clicked is checked when this mode is first activated;
+    /// the user must explicitly check any additional patterns.
     SelectedPatterns(Vec<usize>),
 }
 
