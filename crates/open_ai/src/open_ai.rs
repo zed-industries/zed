@@ -342,6 +342,37 @@ impl Model {
         }
     }
 
+    pub fn supported_thinking_reasoning_efforts(
+        &self,
+    ) -> impl Iterator<Item = ReasoningEffort> + '_ {
+        self.supported_reasoning_efforts()
+            .iter()
+            .copied()
+            .filter(|effort| effort.enables_reasoning())
+    }
+
+    pub fn default_thinking_reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort()
+            .filter(|effort| effort.enables_reasoning())
+            .or_else(|| {
+                let supported_efforts = self.supported_reasoning_efforts();
+                if supported_efforts.contains(&ReasoningEffort::Medium) {
+                    Some(ReasoningEffort::Medium)
+                } else {
+                    self.supported_thinking_reasoning_efforts().next()
+                }
+            })
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.uses_responses_api() && self.supported_thinking_reasoning_efforts().next().is_some()
+    }
+
+    pub fn supports_none_reasoning_effort(&self) -> bool {
+        self.supported_reasoning_efforts()
+            .contains(&ReasoningEffort::None)
+    }
+
     pub fn uses_responses_api(&self) -> bool {
         match self {
             Self::Custom {
@@ -407,6 +438,10 @@ mod tests {
             Model::FivePointOne.supported_reasoning_efforts(),
             expected_efforts.as_slice()
         );
+        assert_eq!(
+            Model::FivePointOne.default_thinking_reasoning_effort(),
+            Some(ReasoningEffort::Medium)
+        );
     }
 
     #[test]
@@ -426,6 +461,22 @@ mod tests {
         assert_eq!(
             Model::FivePointTwo.supported_reasoning_efforts(),
             expected_efforts.as_slice()
+        );
+        assert!(Model::FivePointTwo.supports_none_reasoning_effort());
+        assert_eq!(
+            Model::FivePointTwo
+                .supported_thinking_reasoning_efforts()
+                .collect::<Vec<_>>(),
+            [
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh
+            ]
+        );
+        assert_eq!(
+            Model::FivePointTwo.default_thinking_reasoning_effort(),
+            Some(ReasoningEffort::Medium)
         );
         assert_eq!(
             Model::FivePointFour.reasoning_effort(),

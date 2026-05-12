@@ -397,7 +397,12 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                self.model.reasoning_effort,
+                self.model
+                    .reasoning_effort
+                    .filter(|effort| effort.enables_reasoning()),
+                self.model
+                    .reasoning_effort
+                    .is_some_and(|effort| effort.disables_reasoning()),
             );
             let completions = self.stream_response(request, cx);
             async move {

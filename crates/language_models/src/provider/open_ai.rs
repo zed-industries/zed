@@ -217,6 +217,74 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 }
 
+fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModelEffortLevel> {
+    if !model.supports_thinking() {
+        return Vec::new();
+    }
+
+    let default_effort = model.default_thinking_reasoning_effort();
+    model
+        .supported_thinking_reasoning_efforts()
+        .filter_map(|effort| {
+            let (name, value) = match effort {
+                open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                open_ai::ReasoningEffort::Low => ("Low", "low"),
+                open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
+                open_ai::ReasoningEffort::High => ("High", "high"),
+                open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                open_ai::ReasoningEffort::None => return None,
+            };
+
+            Some(LanguageModelEffortLevel {
+                name: name.into(),
+                value: value.into(),
+                is_default: Some(effort) == default_effort,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supported_thinking_effort_levels_hide_none() {
+        let effort_levels = supported_thinking_effort_levels(&open_ai::Model::FivePointTwo);
+        let values = effort_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, ["low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            effort_levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("medium")
+        );
+    }
+
+    #[test]
+    fn models_supporting_only_none_have_no_selectable_thinking_effort() {
+        let model = open_ai::Model::Custom {
+            name: "custom-model".to_string(),
+            display_name: None,
+            max_tokens: 128_000,
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            reasoning_effort: Some(open_ai::ReasoningEffort::None),
+            supports_chat_completions: false,
+            supports_images: true,
+        };
+
+        assert!(!model.supports_thinking());
+        assert!(supported_thinking_effort_levels(&model).is_empty());
+        assert!(model.supports_none_reasoning_effort());
+    }
+}
+
 pub struct OpenAiLanguageModel {
     id: LanguageModelId,
     model: open_ai::Model,
@@ -351,35 +419,11 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.uses_responses_api() && self.model.reasoning_effort().is_some()
+        self.model.supports_thinking()
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        if !self.supports_thinking() {
-            return Vec::new();
-        }
-
-        let default_effort = self.model.reasoning_effort();
-        self.model
-            .supported_reasoning_efforts()
-            .iter()
-            .map(|effort| {
-                let (name, value) = match effort {
-                    open_ai::ReasoningEffort::None => ("None", "none"),
-                    open_ai::ReasoningEffort::Minimal => ("Minimal", "minimal"),
-                    open_ai::ReasoningEffort::Low => ("Low", "low"),
-                    open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
-                    open_ai::ReasoningEffort::High => ("High", "high"),
-                    open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
-                };
-
-                LanguageModelEffortLevel {
-                    name: name.into(),
-                    value: value.into(),
-                    is_default: Some(*effort) == default_effort,
-                }
-            })
-            .collect()
+        supported_thinking_effort_levels(&self.model)
     }
 
     fn supports_split_token_display(&self) -> bool {
@@ -419,7 +463,8 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.supports_parallel_tool_calls(),
                 self.model.supports_prompt_cache_key(),
                 self.max_output_tokens(),
-                self.model.reasoning_effort(),
+                self.model.default_thinking_reasoning_effort(),
+                self.model.supports_none_reasoning_effort(),
             );
             let completions = self.stream_response(request, cx);
             async move {

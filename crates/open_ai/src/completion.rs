@@ -182,7 +182,8 @@ pub fn into_open_ai_response(
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
-    reasoning_effort: Option<ReasoningEffort>,
+    default_reasoning_effort: Option<ReasoningEffort>,
+    supports_none_reasoning_effort: bool,
 ) -> ResponseRequest {
     let stream = !model_id.starts_with("o1-");
 
@@ -221,20 +222,32 @@ pub fn into_open_ai_response(
         })
         .collect();
 
-    let reasoning = if thinking_allowed {
+    let default_reasoning_effort =
+        default_reasoning_effort.filter(|effort| effort.enables_reasoning());
+    let reasoning_effort = if thinking_allowed {
         thinking_effort
             .as_deref()
             .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
-            .or(reasoning_effort)
-            .map(|effort| crate::responses::ReasoningConfig {
-                effort,
-                summary: Some(crate::responses::ReasoningSummaryMode::Auto),
-            })
+            .filter(|effort| effort.enables_reasoning())
+            .or(default_reasoning_effort)
+    } else if supports_none_reasoning_effort {
+        Some(ReasoningEffort::None)
     } else {
         None
     };
 
-    let include = if reasoning.is_some()
+    let reasoning = reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
+        effort,
+        summary: if effort.disables_reasoning() {
+            None
+        } else {
+            Some(crate::responses::ReasoningSummaryMode::Auto)
+        },
+    });
+
+    let include = if reasoning
+        .as_ref()
+        .is_some_and(|reasoning| reasoning.effort.enables_reasoning())
         || input_items
             .iter()
             .any(|item| matches!(item, ResponseInputItem::Reasoning(_)))
@@ -1465,6 +1478,7 @@ mod tests {
             true,
             Some(2048),
             Some(ReasoningEffort::Low),
+            false,
         );
 
         let serialized = serde_json::to_value(&response).unwrap();
@@ -1578,6 +1592,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Low),
+            false,
         );
 
         let serialized = serde_json::to_value(&response).unwrap();
@@ -1612,7 +1627,7 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled() {
+    fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled_and_none_is_unsupported() {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
@@ -1639,6 +1654,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
+            false,
         );
 
         let serialized = serde_json::to_value(&response).unwrap();
@@ -1646,7 +1662,45 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_serializes_none_reasoning_effort() -> Result<()> {
+    fn into_open_ai_response_sends_none_reasoning_when_thinking_is_disabled() -> Result<()> {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: Some("high".into()),
+            speed: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            Some(ReasoningEffort::Medium),
+            true,
+        );
+
+        let serialized = serde_json::to_value(&response)?;
+        assert_eq!(serialized["reasoning"], json!({ "effort": "none" }));
+        assert_eq!(serialized.get("include"), None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn into_open_ai_response_uses_default_effort_when_selected_effort_is_none() -> Result<()> {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
@@ -1673,12 +1727,13 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
+            true,
         );
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(
             serialized["reasoning"],
-            json!({ "effort": "none", "summary": "auto" })
+            json!({ "effort": "medium", "summary": "auto" })
         );
 
         Ok(())
@@ -1722,6 +1777,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
+            false,
         );
 
         let serialized = serde_json::to_value(&response).unwrap();
@@ -1810,6 +1866,7 @@ mod tests {
             true,
             None,
             Some(ReasoningEffort::Medium),
+            false,
         );
 
         let serialized = serde_json::to_value(&response).unwrap();
@@ -1888,7 +1945,8 @@ mod tests {
             speed: None,
         };
 
-        let response = into_open_ai_response(request, "custom-model", false, false, None, None);
+        let response =
+            into_open_ai_response(request, "custom-model", false, false, None, None, false);
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
