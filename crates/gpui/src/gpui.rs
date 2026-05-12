@@ -167,7 +167,7 @@ pub trait AppContext {
         T: 'static;
 
     /// Update a window for the given handle.
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T;
 

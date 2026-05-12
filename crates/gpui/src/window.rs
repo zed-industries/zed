@@ -16,9 +16,9 @@ use crate::{
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
     TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    UpdateWindowResult, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1345,6 +1345,7 @@ impl Window {
             move |request_frame_options| {
                 let thermal_state = handle
                     .update(&mut cx, |_, _, cx| cx.thermal_state())
+                    .context("Failed to get thermal state")
                     .log_err();
 
                 // Throttle frame rate based on conditions:
@@ -1374,6 +1375,7 @@ impl Window {
                         // `complete_frame`) or the compositor won't send another callback.
                         handle
                             .update(&mut cx, |_, window, _| window.complete_frame())
+                            .context("Failed to complete frame")
                             .log_err();
                         return;
                     }
@@ -1388,6 +1390,7 @@ impl Window {
                                 callback(window, cx);
                             }
                         })
+                        .context("Failed to execute next frame callbacks")
                         .log_err();
                 }
 
@@ -1411,11 +1414,13 @@ impl Window {
                                 window.present();
                                 arena_clear_needed.clear();
                             })
+                            .context("Failed to draw and present frame")
                             .log_err();
                     })
                 } else if needs_present {
                     handle
                         .update(&mut cx, |_, window, _| window.present())
+                        .context("Failed to present frame")
                         .log_err();
                 }
 
@@ -1423,6 +1428,7 @@ impl Window {
                     .update(&mut cx, |_, window, _| {
                         window.complete_frame();
                     })
+                    .context("Failed to complete frame")
                     .log_err();
             }
         }));
@@ -1886,6 +1892,7 @@ impl Window {
                     let node_id = window.focus_node_id_in_rendered_frame(focus_id);
                     window.dispatch_action_on_node(node_id, action.as_ref(), cx);
                 })
+                .context("Failed to dispatch action on window")
                 .log_err();
         })
     }
@@ -4555,6 +4562,7 @@ impl Window {
                         window.pending_input_changed(cx);
                         window.replay_pending_input(to_replay, cx)
                     })
+                    .context("Failed to replay pending input")
                     .log_err();
                 }));
             } else {
@@ -5623,7 +5631,7 @@ impl AnyWindowHandle {
         self,
         cx: &mut C,
         update: impl FnOnce(AnyView, &mut Window, &mut App) -> R,
-    ) -> Result<R>
+    ) -> UpdateWindowResult<R>
     where
         C: AppContext,
     {

@@ -2,8 +2,8 @@ use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor,
     Bounds, ClipboardItem, Context, Entity, EntityId, ForegroundExecutor, Global, InputEvent,
     Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TextSystem, VisualTestPlatform,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    Platform, Point, Render, Result, Size, Task, TestDispatcher, TextSystem, UpdateWindowResult,
+    VisualTestPlatform, Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use anyhow::anyhow;
 use image::RgbaImage;
@@ -173,7 +173,7 @@ impl VisualTestAppContext {
     }
 
     /// Updates a window.
-    pub fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    pub fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
@@ -438,7 +438,7 @@ impl AppContext for VisualTestAppContext {
         app.read_entity(handle, read)
     }
 
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {

@@ -1,7 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
     FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority, Reservation,
-    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
+    SubscriberSet, Subscription, Task, UpdateWindowResult, WeakEntity, WeakFocusHandle, Window,
+    WindowHandle,
 };
 use anyhow::Result;
 use futures::FutureExt;
@@ -825,7 +826,7 @@ impl<T> AppContext for Context<'_, T> {
     }
 
     #[inline]
-    fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
+    fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> UpdateWindowResult<R>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> R,
     {

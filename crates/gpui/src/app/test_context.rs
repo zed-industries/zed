@@ -4,8 +4,8 @@ use crate::{
     Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
+    TestScreenCaptureSource, TestWindow, TextSystem, UpdateWindowResult, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -76,7 +76,7 @@ impl AppContext for TestAppContext {
         app.read_entity(handle, read)
     }
 
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
@@ -989,7 +989,7 @@ impl AppContext for VisualTestContext {
         self.cx.read_entity(handle, read)
     }
 
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {

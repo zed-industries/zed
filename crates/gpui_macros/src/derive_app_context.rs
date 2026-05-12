@@ -72,7 +72,7 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
                 self.#app_variable.read_entity(handle, read)
             }
 
-            fn update_window<T, F>(&mut self, window: gpui::AnyWindowHandle, f: F) -> gpui::Result<T>
+            fn update_window<T, F>(&mut self, window: gpui::AnyWindowHandle, f: F) -> gpui::UpdateWindowResult<T>
             where
                 F: FnOnce(gpui::AnyView, &mut gpui::Window, &mut gpui::App) -> T,
             {

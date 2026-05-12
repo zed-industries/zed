@@ -12,7 +12,7 @@ use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
     Context, Entity, EntityId, ForegroundExecutor, Global, Pixels, PlatformHeadlessRenderer,
     PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    UpdateWindowResult, Window, WindowBounds, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
@@ -156,7 +156,7 @@ impl HeadlessAppContext {
         &mut self,
         window: AnyWindowHandle,
         f: impl FnOnce(AnyView, &mut Window, &mut App) -> R,
-    ) -> Result<R> {
+    ) -> UpdateWindowResult<R> {
         let mut app = self.app.borrow_mut();
         app.update_window(window, f)
     }
@@ -238,7 +238,7 @@ impl AppContext for HeadlessAppContext {
         app.read_entity(handle, read)
     }
 
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {

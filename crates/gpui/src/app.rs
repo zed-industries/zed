@@ -126,6 +126,29 @@ impl Drop for AppRef<'_> {
 #[derive(Deref, DerefMut)]
 pub struct AppRefMut<'a>(RefMut<'a, App>);
 
+/// An error returned when updating a window fails.
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateWindowError {
+    /// The application was released before the window update could run.
+    #[error("app was released")]
+    AppReleased,
+    /// The application is already mutably borrowed.
+    #[error("app is already borrowed")]
+    AppAlreadyBorrowed,
+    /// The application is quitting and cannot update windows.
+    #[error("app is quitting")]
+    AppQuitting,
+    /// The window was not found.
+    #[error("window not found")]
+    WindowNotFound,
+    /// The window is already being updated.
+    #[error("window is already being updated")]
+    WindowAlreadyUpdating,
+}
+
+/// The result type for updating a window.
+pub type UpdateWindowResult<T> = std::result::Result<T, UpdateWindowError>;
+
 impl Drop for AppRefMut<'_> {
     fn drop(&mut self) {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
@@ -1072,8 +1095,8 @@ impl App {
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
-                    let event: &Evt = event.downcast_ref().expect("invalid event type");
                     if let Some(entity) = handle.upgrade() {
+                        let event: &Evt = event.downcast_ref().expect("invalid event type");
                         on_event(entity, event, cx)
                     } else {
                         false
@@ -1621,18 +1644,28 @@ impl App {
             .or_insert(window);
     }
 
-    pub(crate) fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
+    pub(crate) fn update_window_id<T, F>(
+        &mut self,
+        id: WindowId,
+        update: F,
+    ) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
-            let mut window = cx.windows.get_mut(id)?.take()?;
+            let window_slot = cx
+                .windows
+                .get_mut(id)
+                .ok_or(UpdateWindowError::WindowNotFound)?;
+            let mut window = window_slot
+                .take()
+                .ok_or(UpdateWindowError::WindowAlreadyUpdating)?;
 
             let root_view = window.root.clone().unwrap();
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> UpdateWindowResult<()> {
                 cx.window_update_stack.pop();
 
                 if window.removed {
@@ -1666,15 +1699,17 @@ impl App {
                         cx.quit();
                     }
                 } else {
-                    cx.windows.get_mut(id)?.replace(window);
+                    cx.windows
+                        .get_mut(id)
+                        .ok_or(UpdateWindowError::WindowNotFound)?
+                        .replace(window);
                 }
-                Some(())
+                Ok(())
             }
             trail(id, window, cx)?;
 
-            Some(result)
+            Ok(result)
         })
-        .context("window not found")
     }
 
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
@@ -2210,6 +2245,7 @@ impl App {
                 .update(self, |_, window, cx| {
                     window.dispatch_action(action.boxed_clone(), cx)
                 })
+                .context("Failed to dispatch action to active window")
                 .log_err();
         } else {
             self.dispatch_global_action(action);
@@ -2515,7 +2551,7 @@ impl AppContext for App {
         read(entity, self)
     }
 
-    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
+    fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> UpdateWindowResult<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
