@@ -14081,6 +14081,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "criterion",
+ "db",
  "editor",
  "feature_flags",
  "file_icons",
