@@ -377,7 +377,7 @@ async fn build_registry_agents(
     }
 
     let current_platform = current_platform_key();
-    let mut icon_paths = resolve_icon_paths(
+    let icon_paths = resolve_icon_paths(
         &index.agents,
         &icons_dir,
         update_cache,
@@ -388,9 +388,7 @@ async fn build_registry_agents(
     .await;
 
     let mut agents = Vec::new();
-    for entry in index.agents {
-        let icon_path = icon_paths.remove(&entry.id);
-
+    for (entry, icon_path) in index.agents.into_iter().zip(icon_paths) {
         let metadata = RegistryAgentMetadata {
             id: AgentId::new(entry.id),
             name: entry.name.into(),
@@ -464,24 +462,18 @@ async fn resolve_icon_paths(
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     executor: &BackgroundExecutor,
-) -> HashMap<String, SharedString> {
+) -> Vec<Option<SharedString>> {
     join_all(entries.iter().map(|entry| {
         let fs = fs.clone();
         let http_client = http_client.clone();
         async move {
-            let icon_path =
-                resolve_icon_path(entry, icons_dir, update_cache, fs, http_client, executor)
-                    .await
-                    .log_err()
-                    .flatten();
-
-            (entry.id.clone(), icon_path)
+            resolve_icon_path(entry, icons_dir, update_cache, fs, http_client, executor)
+                .await
+                .log_err()
+                .flatten()
         }
     }))
     .await
-    .into_iter()
-    .filter_map(|(id, icon)| icon.map(|icon| (id, icon)))
-    .collect()
 }
 
 async fn resolve_icon_path(

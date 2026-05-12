@@ -324,7 +324,6 @@ impl AgentRegistryPage {
                 }
             }
         };
-        let registry_store = self.registry_store.clone();
 
         h_flex()
             .py_4()
@@ -354,12 +353,11 @@ impl AgentRegistryPage {
                     }),
             )
             .when_some(fetch_error, |this, _| {
+                let registry_store = self.registry_store.clone();
                 this.child(
                     Button::new("retry-agent-registry", "Retry")
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Compact)
-                        .disabled(is_fetching)
-                        .loading(is_fetching)
                         .on_click(move |_, _, cx| {
                             registry_store.update(cx, |store, cx| store.refresh(cx));
                         }),
