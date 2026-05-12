@@ -2106,8 +2106,22 @@ impl AgentPanel {
         if let Some(acp_thread) = conversation_view.read(cx).root_thread(cx) {
             self._draft_editor_observation = Some(cx.subscribe(
                 &acp_thread,
-                |this, _, e: &AcpThreadEvent, cx| {
-                    if let AcpThreadEvent::PromptUpdated = e {
+                |this, acp_thread, event: &AcpThreadEvent, cx| {
+                    if !acp_thread.read(cx).is_draft_thread()
+                        && this.draft_thread.as_ref().is_some_and(|draft| {
+                            draft
+                                .read(cx)
+                                .root_thread(cx)
+                                .is_some_and(|thread| thread.entity_id() == acp_thread.entity_id())
+                        })
+                    {
+                        this.draft_thread = None;
+                        this._draft_editor_observation = None;
+                        this.serialize(cx);
+                        return;
+                    }
+
+                    if let AcpThreadEvent::PromptUpdated = event {
                         this.serialize(cx);
                     }
                 },
@@ -3254,10 +3268,11 @@ impl AgentPanel {
                         // promoted to a real thread. Clear the ephemeral
                         // pointer; the ConversationView itself stays put as
                         // the active base view.
-                        if this.draft_thread.as_ref().is_some_and(|d| {
-                            this.active_conversation_view()
-                                .is_some_and(|active| active.entity_id() == d.entity_id())
-                        }) {
+                        if this
+                            .draft_thread
+                            .as_ref()
+                            .is_some_and(|draft| draft.read(cx).thread_id == thread_id)
+                        {
                             this.draft_thread = None;
                             this._draft_editor_observation = None;
                         }
