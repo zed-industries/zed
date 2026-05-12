@@ -11,6 +11,9 @@ pub struct Request {
     pub model: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
+    pub store: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<ResponseIncludable>,
     #[serde(default)]
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -31,18 +34,28 @@ pub struct Request {
     pub reasoning: Option<ReasoningConfig>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseIncludable {
+    #[serde(rename = "reasoning.encrypted_content")]
+    ReasoningEncryptedContent,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseInputItem {
     Message(ResponseMessageItem),
     FunctionCall(ResponseFunctionCallItem),
     FunctionCallOutput(ResponseFunctionCallOutputItem),
+    Reasoning(ResponseReasoningInputItem),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseMessageItem {
     pub role: Role,
     pub content: Vec<ResponseInputContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,6 +69,26 @@ pub struct ResponseFunctionCallItem {
 pub struct ResponseFunctionCallOutputItem {
     pub call_id: String,
     pub output: ResponseFunctionCallOutputContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponseReasoningInputItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub summary: Vec<ResponseReasoningSummaryPart>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseReasoningSummaryPart {
+    SummaryText { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -111,9 +144,13 @@ pub enum ToolDefinition {
     },
 }
 
-#[derive(Deserialize, Debug)]
-pub struct Error {
+#[derive(Deserialize, Debug, Clone)]
+pub struct ResponseError {
+    #[serde(default)]
+    pub code: Option<String>,
     pub message: String,
+    #[serde(default)]
+    pub param: Option<Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -167,6 +204,24 @@ pub enum StreamEvent {
         content_index: Option<usize>,
         text: String,
     },
+    #[serde(rename = "response.refusal.delta")]
+    RefusalDelta {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        delta: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
+    #[serde(rename = "response.refusal.done")]
+    RefusalDone {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        refusal: String,
+        #[serde(default)]
+        sequence_number: Option<u64>,
+    },
     #[serde(rename = "response.reasoning_summary_part.added")]
     ReasoningSummaryPartAdded {
         item_id: String,
@@ -214,9 +269,12 @@ pub enum StreamEvent {
     #[serde(rename = "response.failed")]
     Failed { response: ResponseSummary },
     #[serde(rename = "response.error")]
-    Error { error: Error },
+    Error { error: ResponseError },
     #[serde(rename = "error")]
-    GenericError { error: Error },
+    GenericError {
+        #[serde(flatten)]
+        error: ResponseError,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -228,7 +286,9 @@ pub struct ResponseSummary {
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
-    pub status_details: Option<ResponseStatusDetails>,
+    pub incomplete_details: Option<ResponseIncompleteDetails>,
+    #[serde(default)]
+    pub error: Option<ResponseError>,
     #[serde(default)]
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
@@ -236,13 +296,9 @@ pub struct ResponseSummary {
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
-pub struct ResponseStatusDetails {
+pub struct ResponseIncompleteDetails {
     #[serde(default)]
     pub reason: Option<String>,
-    #[serde(default)]
-    pub r#type: Option<String>,
-    #[serde(default)]
-    pub error: Option<Value>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -250,9 +306,25 @@ pub struct ResponseUsage {
     #[serde(default)]
     pub input_tokens: Option<u64>,
     #[serde(default)]
+    pub input_tokens_details: ResponseInputTokensDetails,
+    #[serde(default)]
     pub output_tokens: Option<u64>,
     #[serde(default)]
+    pub output_tokens_details: ResponseOutputTokensDetails,
+    #[serde(default)]
     pub total_tokens: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct ResponseInputTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u64,
+}
+
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct ResponseOutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u64,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -271,6 +343,12 @@ pub struct ResponseReasoningItem {
     pub id: Option<String>,
     #[serde(default)]
     pub summary: Vec<ReasoningSummaryPart>,
+    #[serde(default)]
+    pub content: Vec<Value>,
+    #[serde(default)]
+    pub encrypted_content: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -293,6 +371,8 @@ pub struct ResponseOutputMessage {
     pub role: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -441,8 +521,17 @@ pub async fn stream_response(
                         });
                     }
 
-                    all_events.push(StreamEvent::Completed {
-                        response: response_summary,
+                    let status = response_summary.status.clone();
+                    all_events.push(match status.as_deref() {
+                        Some("incomplete") => StreamEvent::Incomplete {
+                            response: response_summary,
+                        },
+                        Some("failed") => StreamEvent::Failed {
+                            response: response_summary,
+                        },
+                        _ => StreamEvent::Completed {
+                            response: response_summary,
+                        },
                     });
 
                     Ok(futures::stream::iter(all_events.into_iter().map(Ok)).boxed())
