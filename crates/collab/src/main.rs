@@ -43,24 +43,13 @@ async fn main() -> Result<()> {
         Some("version") => {
             println!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"));
         }
-        Some("seed") => {
-            let config = envy::from_env::<Config>().expect("error loading config");
-            let db_options = db::ConnectOptions::new(config.database_url.clone());
-
-            let mut db = Database::new(db_options).await?;
-            db.initialize_notification_kinds().await?;
-
-            collab::seed::seed(&config, &db, false).await?;
-        }
         Some("serve") => {
             let mode = match args.next().as_deref() {
                 Some("collab") => ServiceMode::Collab,
                 Some("api") => ServiceMode::Api,
                 Some("all") => ServiceMode::All,
                 _ => {
-                    return Err(anyhow!(
-                        "usage: collab <version | seed | serve <api|collab|all>>"
-                    ))?;
+                    return Err(anyhow!("usage: collab <version | serve <api|collab|all>>"))?;
                 }
             };
 
@@ -199,10 +188,6 @@ async fn setup_app_database(config: &Config) -> Result<()> {
     let mut db = Database::new(db_options).await?;
 
     db.initialize_notification_kinds().await?;
-
-    if config.seed_path.is_some() {
-        collab::seed::seed(config, &db, false).await?;
-    }
 
     Ok(())
 }
