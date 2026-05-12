@@ -16,11 +16,7 @@ use mermaid::{
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
-use theme::Theme;
 use theme_settings::ThemeSettings;
-use ui::Checkbox;
-use ui::CopyButton;
-use ui::Tooltip;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -49,7 +45,7 @@ use parser::{
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
+use ui::{Checkbox, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -1136,13 +1132,10 @@ impl MarkdownElement {
         alt_text: Option<SharedString>,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
-        cx: &App,
     ) {
-        let ui_font_size = TextSize::default().rems(cx);
-
         builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
 
-        let image_element = div().flex_shrink_0().child(
+        let image_element = div().min_w_0().child(
             img(source)
                 .id(("markdown-image", range.start))
                 .min_w_0()
@@ -1150,12 +1143,10 @@ impl MarkdownElement {
                 .rounded_md()
                 .when_some(height, |this, height| this.h(height))
                 .when_some(width, |this, width| this.w(width))
-                .with_fallback(move || {
-                    image_fallback_element(dest_url.clone(), alt_text.clone(), ui_font_size)
-                }),
+                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
         );
 
-        builder.push_child(image_element);
+        builder.push_image_child(image_element);
     }
 
     fn push_markdown_paragraph(
@@ -1730,7 +1721,6 @@ impl Element for MarkdownElement {
                                     alt_text,
                                     None,
                                     None,
-                                    cx,
                                 );
                             } else if let Some(source) = self
                                 .image_resolver
@@ -1746,7 +1736,6 @@ impl Element for MarkdownElement {
                                     alt_text,
                                     None,
                                     None,
-                                    cx,
                                 );
                             }
                         }
@@ -2336,33 +2325,21 @@ fn collect_image_alt_text(
     }
 }
 
-fn image_fallback_element(
-    dest_url: SharedString,
-    alt_text: Option<SharedString>,
-    ui_font_size: Rems,
-) -> AnyElement {
+fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>) -> AnyElement {
     let link_label = alt_text
         .filter(|alt| !alt.is_empty())
         .unwrap_or_else(|| dest_url.clone());
 
-    h_flex()
+    let label = format!("Failed to Load: {link_label}");
+
+    div()
         .id("image-fallback")
         .cursor_pointer()
         .min_w_0()
-        .gap_1()
-        .text_size(ui_font_size)
-        .underline()
-        .flex_wrap()
-        .child(
-            Icon::new(IconName::Image)
-                .size(IconSize::Small)
-                .color(Color::Warning),
-        )
-        .child(div().min_w_0().child(link_label))
+        .child(Label::new(label).color(Color::Warning).underline())
         .tooltip(Tooltip::text(
             "Image failed to load. Open `zed: log` for more details.",
         ))
-        .debug_bg_cyan()
         .on_click({
             let url = dest_url.clone();
             move |_, _, cx| cx.open_url(url.as_ref())
@@ -2663,7 +2640,7 @@ impl MarkdownElementBuilder {
         self.push_div(div().pl_4(), range, markdown_end);
     }
 
-    fn push_child(&mut self, child: impl IntoElement) {
+    fn push_image_child(&mut self, child: impl IntoElement) {
         self.flush_text();
         self.div_stack
             .last_mut()
@@ -2894,15 +2871,6 @@ impl MarkdownElementBuilder {
             .into_any_element()
     }
 
-    // <div>
-    //  Some very very very ... long string
-    //  <img ...>
-    //  <img ...>
-    //  <img ...>
-    //  <img ...>
-    //  <img ...>
-    // <
-
     fn flush_text(&mut self) {
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
@@ -2916,10 +2884,7 @@ impl MarkdownElementBuilder {
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
         });
-        self.div_stack
-            .last_mut()
-            .unwrap()
-            .extend([div().min_w_0().child(text).into_any_element()]);
+        self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
 
     fn build(mut self) -> RenderedMarkdown {

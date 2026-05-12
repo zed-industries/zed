@@ -136,7 +136,7 @@ impl MarkdownElement {
                 self.render_html_table(table, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::Image(image) => {
-                self.render_html_image(image, builder, cx);
+                self.render_html_image(image, builder);
             }
         }
     }
@@ -358,7 +358,7 @@ impl MarkdownElement {
                     self.render_html_text(text, source_allocator, builder, cx);
                 }
                 HtmlParagraphChunk::Image(image) => {
-                    self.render_html_image(image, builder, cx);
+                    self.render_html_image(image, builder);
                 }
             }
         }
@@ -449,7 +449,7 @@ impl MarkdownElement {
         }
     }
 
-    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder, cx: &App) {
+    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder) {
         let Some(source) = self
             .image_resolver
             .as_ref()
@@ -466,7 +466,6 @@ impl MarkdownElement {
             image.alt_text.clone(),
             image.width,
             image.height,
-            cx,
         );
     }
 }
