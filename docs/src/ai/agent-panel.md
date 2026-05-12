@@ -41,7 +41,7 @@ From the "New Thread…" menu you can:
 - Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
 - Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
 
-{#action agent::NewExternalAgentThread} creates another thread with the currently selected agent.
+{#action agent::NewExternalAgentThread} creates a new thread with the specified external agent id.
 
 You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
 

@@ -65,6 +65,10 @@ pub struct AmazonBedrockSettingsContent {
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
     pub allow_global: Option<bool>,
+    /// The guardrail identifier (ARN or ID) to apply to Bedrock API requests.
+    pub guardrail_identifier: Option<String>,
+    /// The guardrail version to use. Defaults to "DRAFT" if not specified.
+    pub guardrail_version: Option<String>,
 }
 
 #[with_fallible_options]
