@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use cloud_api_types::internal_api::{
@@ -13,7 +11,7 @@ use rpc::proto;
 use serde::de::DeserializeOwned;
 
 use crate::Result;
-use crate::db::{Channel, Database, UserId};
+use crate::db::{Channel, UserId};
 use crate::entities::User;
 
 #[cfg(feature = "test-support")]
@@ -40,7 +38,7 @@ pub trait UserService: Send + Sync + 'static {
     ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)>;
 
     #[cfg(feature = "test-support")]
-    fn as_fake(&self) -> Arc<FakeUserService> {
+    fn as_fake(&self) -> std::sync::Arc<FakeUserService> {
         panic!("called as_fake on a real `UserService`");
     }
 }
@@ -222,64 +220,14 @@ impl From<internal_api::User> for User {
     }
 }
 
-/// A [`UserService`] implementation backed by the database.
-pub struct DatabaseUserService {
-    database: Arc<Database>,
-}
-
-impl DatabaseUserService {
-    pub fn new(database: Arc<Database>) -> Self {
-        Self { database }
-    }
-}
-
-#[async_trait]
-impl UserService for DatabaseUserService {
-    async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-        let users = self.database.get_users_by_ids(ids).await?;
-
-        Ok(users.into_iter().map(User::from).collect())
-    }
-
-    async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        let user = self.database.get_user_by_github_login(github_login).await?;
-
-        Ok(user.map(User::from))
-    }
-
-    async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
-        let users = self.database.fuzzy_search_users(query, limit).await?;
-
-        Ok(users.into_iter().map(User::from).collect())
-    }
-
-    async fn search_channel_members(
-        &self,
-        channel: &Channel,
-        query: &str,
-        limit: u32,
-    ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
-        let (members, users) = self
-            .database
-            .get_channel_participant_details(channel, query, limit as u64)
-            .await?;
-
-        Ok((
-            members
-                .into_iter()
-                .map(proto::ChannelMember::from)
-                .collect(),
-            users.into_iter().map(User::from).collect(),
-        ))
-    }
-}
-
 #[cfg(feature = "test-support")]
 mod fake_user_service {
-    use std::sync::Weak;
+    use std::sync::{Arc, Weak};
 
     use collections::HashMap;
     use tokio::sync::Mutex;
+
+    use crate::db::Database;
 
     use super::*;
 
