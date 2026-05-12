@@ -227,6 +227,7 @@ struct ThreadEntry {
     is_live: bool,
     is_background: bool,
     is_title_generating: bool,
+    is_draft: bool,
     highlight_positions: Vec<usize>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     diff_stats: DiffStats,
@@ -237,6 +238,7 @@ struct TerminalEntry {
     id: TerminalId,
     title: SharedString,
     workspace: Entity<Workspace>,
+    worktrees: Vec<ThreadItemWorktreeInfo>,
     created_at: DateTime<Utc>,
     has_notification: bool,
     highlight_positions: Vec<usize>,
@@ -543,6 +545,16 @@ fn apply_worktree_label_mode(
     worktrees
 }
 
+fn terminal_worktree_info<S: std::hash::BuildHasher>(
+    workspace: &Entity<Workspace>,
+    branch_by_path: &HashMap<PathBuf, SharedString, S>,
+    cx: &App,
+) -> Vec<ThreadItemWorktreeInfo> {
+    let project = workspace.read(cx).project().clone();
+    let worktree_paths = project.read(cx).worktree_paths(cx);
+    worktree_info_from_thread_paths(&worktree_paths, branch_by_path)
+}
+
 /// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
 /// an SSH connection. Suitable for passing to
 /// [`MultiWorkspace::find_or_create_workspace`] as the `connect_remote`
@@ -589,6 +601,7 @@ pub struct Sidebar {
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
+    _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
     /// Threads" but if we are showing both the external agents and other
     /// channels import banners then we change the text to disambiguate the
@@ -696,6 +709,7 @@ impl Sidebar {
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
             _subscriptions: Vec::new(),
+            _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
         }
     }
@@ -1196,7 +1210,9 @@ impl Sidebar {
             let group_workspaces = &group.workspaces;
             let terminals: Vec<TerminalEntry> = group_workspaces
                 .iter()
-                .flat_map(|workspace| terminal_entries_for_workspace(workspace, cx))
+                .flat_map(|workspace| {
+                    terminal_entries_for_workspace(workspace, &branch_by_path, cx)
+                })
                 .collect();
             current_terminal_ids.extend(terminals.iter().map(|terminal| terminal.id));
             notified_terminals.extend(
@@ -1231,6 +1247,15 @@ impl Sidebar {
             if should_load_threads {
                 let thread_store = ThreadMetadataStore::global(cx);
 
+                let ephemeral_drafts: HashSet<ThreadId> = group_workspaces
+                    .iter()
+                    .filter_map(|ws| {
+                        ws.read(cx)
+                            .panel::<AgentPanel>(cx)
+                            .and_then(|panel| panel.read(cx).ephemeral_draft_thread_id(cx))
+                    })
+                    .collect();
+
                 // Build a lookup from workspace root paths to their workspace
                 // entity, used to assign ThreadEntryWorkspace::Open for threads
                 // whose folder_paths match an open workspace.
@@ -1259,6 +1284,7 @@ impl Sidebar {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
                             worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
+                        let is_draft = row.is_draft();
                         ThreadEntry {
                             metadata: row,
                             icon,
@@ -1268,6 +1294,7 @@ impl Sidebar {
                             is_live: false,
                             is_background: false,
                             is_title_generating: false,
+                            is_draft,
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
@@ -1368,6 +1395,25 @@ impl Sidebar {
                         ));
                     }
                 }
+
+                if !ephemeral_drafts.is_empty() {
+                    threads.retain(|thread| !ephemeral_drafts.contains(&thread.metadata.thread_id));
+                }
+                for thread in &mut threads {
+                    if !thread.is_draft {
+                        continue;
+                    }
+                    let workspace = match &thread.workspace {
+                        ThreadEntryWorkspace::Open(workspace) => Some(workspace),
+                        ThreadEntryWorkspace::Closed { .. } => None,
+                    };
+                    thread.metadata.title = agent_ui::draft_prompt_store::display_label_for_draft(
+                        workspace,
+                        thread.metadata.thread_id,
+                        cx,
+                    );
+                }
+                threads.retain(|thread| !thread.is_draft || thread.metadata.title.is_some());
 
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
@@ -1483,7 +1529,17 @@ impl Sidebar {
                         terminal.highlight_positions = positions;
                         terminal_matched = true;
                     }
-                    if workspace_matched || terminal_matched {
+                    let mut worktree_matched = false;
+                    for worktree in &mut terminal.worktrees {
+                        let Some(name) = worktree.worktree_name.as_ref() else {
+                            continue;
+                        };
+                        if let Some(positions) = fuzzy_match_positions(&query, name) {
+                            worktree.highlight_positions = positions;
+                            worktree_matched = true;
+                        }
+                    }
+                    if workspace_matched || terminal_matched || worktree_matched {
                         matched_terminals.push(terminal);
                     }
                 }
@@ -1566,6 +1622,7 @@ impl Sidebar {
         let scroll_position = self.list_state.logical_scroll_top();
 
         self.rebuild_contents(cx);
+        self.refresh_draft_editor_observations(cx);
 
         self.list_state.reset(self.contents.entries.len());
         self.list_state.scroll_to(scroll_position);
@@ -1577,6 +1634,40 @@ impl Sidebar {
         }
 
         cx.notify();
+    }
+
+    /// Re-establishes subscriptions to each visible draft's message editor
+    /// so we rebuild entries (and their displayed titles) as the user types.
+    fn refresh_draft_editor_observations(&mut self, cx: &mut Context<Self>) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            self._draft_editor_observations.clear();
+            return;
+        };
+
+        let draft_conversation_views: Vec<Entity<agent_ui::ConversationView>> = multi_workspace
+            .read(cx)
+            .workspaces()
+            .filter_map(|ws| ws.read(cx).panel::<AgentPanel>(cx))
+            .flat_map(|panel| panel.read(cx).conversation_views())
+            .collect();
+
+        let mut subscriptions = Vec::with_capacity(draft_conversation_views.len());
+        for cv in draft_conversation_views {
+            if let Some(thread_view) = cv.read(cx).active_thread() {
+                let editor = thread_view.read(cx).message_editor.clone();
+                subscriptions.push(cx.observe(&editor, |this, _editor, cx| {
+                    this.update_entries(cx);
+                }));
+            }
+            // Also observe the ConversationView itself so that editor
+            // replacements during lifecycle transitions (Loading →
+            // Connected) re-wire the editor observation above.
+            subscriptions.push(cx.observe(&cv, |this, _cv, cx| {
+                this.refresh_draft_editor_observations(cx);
+                this.update_entries(cx);
+            }));
+        }
+        self._draft_editor_observations = subscriptions;
     }
 
     fn select_first_entry(&mut self) {
@@ -1633,7 +1724,7 @@ impl Sidebar {
                             let panel = panel.read(cx);
                             // An active terminal is its own surface, not a draft.
                             panel.active_terminal_id().is_none()
-                                && (panel.active_thread_is_draft(cx)
+                                && (panel.active_view_is_new_draft(cx)
                                     || panel.active_conversation_view().is_none())
                         });
                 self.project_header_menu_handles.entry(ix).or_default();
@@ -2282,7 +2373,7 @@ impl Sidebar {
                     let panel = panel.read(cx);
                     // An active terminal is its own surface, not a draft.
                     panel.active_terminal_id().is_none()
-                        && (panel.active_thread_is_draft(cx)
+                        && (panel.active_view_is_new_draft(cx)
                             || panel.active_conversation_view().is_none())
                 });
         let header_element = self.render_project_header(
@@ -2599,13 +2690,10 @@ impl Sidebar {
                            focus: bool,
                            window: &mut Window,
                            cx: &mut App| {
-            let Some(session_id) = metadata.session_id.clone() else {
-                return;
-            };
             agent_panel.update(cx, |panel, cx| {
                 panel.load_agent_thread(
                     Agent::from(metadata.agent_id.clone()),
-                    session_id,
+                    metadata.thread_id,
                     Some(metadata.folder_paths().clone()),
                     metadata.title.clone(),
                     focus,
@@ -2680,10 +2768,7 @@ impl Sidebar {
             workspace: workspace.clone(),
         });
         self.record_thread_access(&metadata.thread_id);
-
-        if metadata.session_id.is_some() {
-            self.pending_thread_activation = Some(metadata.thread_id);
-        }
+        self.pending_thread_activation = Some(metadata.thread_id);
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), None, window, cx);
@@ -2692,22 +2777,7 @@ impl Sidebar {
             }
         });
 
-        // Drafts (and other retained threads without a session_id) are
-        // already in memory — activate them directly instead of loading.
-        let thread_id = metadata.thread_id;
-        if metadata.session_id.is_none() {
-            workspace.update(cx, |ws, cx| {
-                if let Some(panel) = ws.panel::<AgentPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.activate_retained_thread(thread_id, true, window, cx);
-                    });
-                }
-                ws.focus_panel::<AgentPanel>(window, cx);
-            });
-            self.pending_thread_activation = None;
-        } else {
-            Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
-        }
+        Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
 
         self.update_entries(cx);
     }
@@ -3883,7 +3953,13 @@ impl Sidebar {
                     }
                     AgentThreadStatus::Completed | AgentThreadStatus::Error => {}
                 }
-                if let Some(session_id) = thread.metadata.session_id.clone() {
+                if thread.is_draft {
+                    if let ThreadEntryWorkspace::Open(workspace) = &thread.workspace {
+                        let workspace = workspace.clone();
+                        let draft_id = thread.metadata.thread_id;
+                        self.remove_draft(draft_id, &workspace, window, cx);
+                    }
+                } else if let Some(session_id) = thread.metadata.session_id.clone() {
                     self.archive_thread(&session_id, window, cx);
                 }
             }
@@ -3985,7 +4061,6 @@ impl Sidebar {
                     None
                 }
                 ListEntry::Thread(thread) => {
-                    let session_id = thread.metadata.session_id.clone()?;
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
                         ThreadEntryWorkspace::Closed { .. } => {
@@ -4005,7 +4080,6 @@ impl Sidebar {
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
                             .into();
                     Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
-                        session_id,
                         title: thread.metadata.display_title(),
                         icon: thread.icon,
                         icon_from_external_svg: thread.icon_from_external_svg.clone(),
@@ -4023,6 +4097,7 @@ impl Sidebar {
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
+                        is_draft: thread.is_draft,
                         is_title_generating: thread.is_title_generating,
                         notified,
                         timestamp,
@@ -4036,6 +4111,15 @@ impl Sidebar {
                         title: terminal.title.clone(),
                         workspace: terminal.workspace.clone(),
                         project_name: current_header_label.clone(),
+                        worktrees: terminal
+                            .worktrees
+                            .iter()
+                            .cloned()
+                            .map(|mut wt| {
+                                wt.highlight_positions = Vec::new();
+                                wt
+                            })
+                            .collect(),
                         created_at: terminal.created_at,
                         notified: self.contents.is_terminal_notified(terminal.id),
                         timestamp,
@@ -4321,6 +4405,7 @@ impl Sidebar {
 
         let is_hovered = self.hovered_thread_index == Some(ix);
         let is_selected = is_active;
+        let is_draft = thread.is_draft;
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -4346,12 +4431,21 @@ impl Sidebar {
             cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
         );
 
+        let (icon, icon_svg) = if is_draft {
+            (IconName::Circle, None)
+        } else {
+            (thread.icon, thread.icon_from_external_svg.clone())
+        };
+
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
-            .icon(thread.icon)
+            .icon(icon)
+            .when(is_draft, |this| {
+                this.icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.2)))
+            })
             .status(thread.status)
             .is_remote(is_remote)
-            .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
+            .when_some(icon_svg, |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
             .worktrees(worktrees)
@@ -4390,7 +4484,7 @@ impl Sidebar {
                         }),
                 )
             })
-            .when(is_hovered && !is_running, |this| {
+            .when(is_hovered && !is_running && !is_draft, |this| {
                 this.action_slot(
                     IconButton::new("archive-thread", IconName::Archive)
                         .icon_size(IconSize::Small)
@@ -4411,6 +4505,22 @@ impl Sidebar {
                             cx.listener(move |this, _, window, cx| {
                                 if let Some(ref session_id) = session_id {
                                     this.archive_thread(session_id, window, cx);
+                                }
+                            })
+                        }),
+                )
+            })
+            .when(is_hovered && !is_running && is_draft, |this| {
+                this.action_slot(
+                    IconButton::new("discard_thread", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Discard Draft"))
+                        .on_click({
+                            let thread_workspace = thread_workspace.clone();
+                            cx.listener(move |this, _, window, cx| {
+                                if let ThreadEntryWorkspace::Open(workspace) = &thread_workspace {
+                                    this.remove_draft(thread_id_for_actions, workspace, window, cx);
                                 }
                             })
                         }),
@@ -4459,10 +4569,15 @@ impl Sidebar {
         let terminal_id = terminal.id;
         let workspace = terminal.workspace.clone();
         let focus_handle = self.focus_handle.clone();
+        let worktrees = apply_worktree_label_mode(
+            terminal.worktrees.clone(),
+            cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
+        );
 
         ThreadItem::new(id, terminal.title.clone())
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
+            .worktrees(worktrees)
             .timestamp(timestamp)
             .notified(terminal.has_notification)
             .highlight_positions(terminal.highlight_positions.clone())
@@ -4590,6 +4705,35 @@ impl Sidebar {
         } else if let Some(workspace) = self.active_workspace(cx) {
             self.create_new_entry(&workspace, window, cx);
         }
+    }
+
+    /// Deletes a parked draft thread (its metadata row, any kvp-stored
+    /// draft prompt) and promotes a sibling in the same group, if any, to
+    /// the active entry.
+    fn remove_draft(
+        &mut self,
+        draft_id: ThreadId,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        workspace.update(cx, |ws, cx| {
+            if let Some(panel) = ws.panel::<AgentPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.remove_thread(draft_id, window, cx);
+                });
+            }
+        });
+
+        let was_active = self
+            .active_entry
+            .as_ref()
+            .is_some_and(|e| e.is_active_thread(&draft_id));
+        if was_active {
+            self.active_entry = None;
+        }
+
+        self.update_entries(cx);
     }
 
     fn create_new_entry(
@@ -5579,8 +5723,9 @@ impl Render for Sidebar {
     }
 }
 
-fn terminal_entries_for_workspace(
+fn terminal_entries_for_workspace<S: std::hash::BuildHasher>(
     workspace: &Entity<Workspace>,
+    branch_by_path: &HashMap<PathBuf, SharedString, S>,
     cx: &App,
 ) -> impl Iterator<Item = TerminalEntry> {
     if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
@@ -5589,19 +5734,17 @@ fn terminal_entries_for_workspace(
     let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
         return None.into_iter().flatten();
     };
-    let terminals =
-        agent_panel
-            .read(cx)
-            .terminals(cx)
-            .into_iter()
-            .map(|terminal: AgentPanelTerminalInfo| TerminalEntry {
-                id: terminal.id,
-                title: terminal.title,
-                workspace: workspace.clone(),
-                created_at: terminal.created_at,
-                has_notification: terminal.has_notification,
-                highlight_positions: Vec::new(),
-            });
+    let terminals = agent_panel.read(cx).terminals(cx).into_iter().map(
+        move |terminal: AgentPanelTerminalInfo| TerminalEntry {
+            id: terminal.id,
+            title: terminal.title,
+            workspace: workspace.clone(),
+            worktrees: terminal_worktree_info(workspace, branch_by_path, cx),
+            created_at: terminal.created_at,
+            has_notification: terminal.has_notification,
+            highlight_positions: Vec::new(),
+        },
+    );
 
     Some(terminals).into_iter().flatten()
 }

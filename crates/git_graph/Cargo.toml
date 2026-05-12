@@ -14,6 +14,7 @@ path = "src/git_graph.rs"
 [features]
 default = []
 test-support = [
+    "dep:rand",
     "project/test-support",
     "gpui/test-support",
     "remote_connection/test-support",
@@ -33,9 +34,11 @@ menu.workspace = true
 picker.workspace = true
 project.workspace = true
 project_panel.workspace = true
+rand = { workspace = true, optional = true }
 search.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+task.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true
