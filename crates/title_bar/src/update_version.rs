@@ -134,12 +134,15 @@ mod tests {
             Version::new(1, 0, 0),
         ));
 
-        assert_eq!(message, "Version: 1.0.0");
+        assert_eq!(message, "Update to Version: 1.0.0");
 
         let message = UpdateVersion::version_tooltip_message(&VersionCheckType::Sha(
             AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
         ));
 
-        assert_eq!(message, "Version: 14d9a4189f058d8736339b06ff2340101eaea5af");
+        assert_eq!(
+            message,
+            "Update to Version: 14d9a4189f058d8736339b06ff2340101eaea5af"
+        );
     }
 }
