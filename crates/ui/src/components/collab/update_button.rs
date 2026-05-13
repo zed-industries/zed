@@ -116,7 +116,7 @@ impl RenderOnce for UpdateButton {
         let border_color = if self.disabled {
             cx.theme().colors().border
         } else {
-            cx.theme().colors().text.opacity(0.12)
+            cx.theme().colors().text.opacity(0.15)
         };
 
         let icon = Icon::new(self.icon)
