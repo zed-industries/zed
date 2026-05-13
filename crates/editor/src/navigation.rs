@@ -1997,7 +1997,7 @@ impl Editor {
                 };
                 let selection = [range.start..range.start];
 
-                let _ = editor
+                editor
                     .update(acx, |editor, ecx| {
                         editor.change_selections(
                             SelectionEffects::scroll(Autoscroll::newest()),
@@ -2006,7 +2006,7 @@ impl Editor {
                             |s| s.select_ranges(selection),
                         );
                     })
-                    .ok();
+                    .log_err();
             })?;
 
             Ok(())
