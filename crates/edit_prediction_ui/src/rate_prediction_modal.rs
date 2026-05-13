@@ -7,7 +7,7 @@ use gpui::{
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
 };
 use language::{
-    Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, Point, ToOffset, ToPoint,
+    Anchor, Bias, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, Point, ToOffset, ToPoint,
     language_settings::{self, InlayHintKind},
 };
 use markdown::{Markdown, MarkdownStyle};
@@ -67,6 +67,7 @@ struct ActivePrediction {
     prediction: EditPrediction,
     feedback_editor: Entity<Editor>,
     expected_buffer: Entity<Buffer>,
+    expected_editable_range: Option<Range<Anchor>>,
     expected_editor: Entity<Editor>,
     expected_diff_editor: Entity<Editor>,
     expected_patch_preview: bool,
@@ -362,10 +363,10 @@ impl RatePredictionsModal {
         editor.update(cx, |editor, cx| {
             let buffer_snapshot = buffer.read(cx).snapshot();
             let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start_buffer_anchor =
-                buffer_snapshot.anchor_after(marker_range.start.min(buffer_snapshot.len()));
-            let end_buffer_anchor =
-                buffer_snapshot.anchor_after(marker_range.end.min(buffer_snapshot.len()));
+            let start_buffer_anchor = buffer_snapshot
+                .anchor_after(buffer_snapshot.clip_offset(marker_range.start, Bias::Left));
+            let end_buffer_anchor = buffer_snapshot
+                .anchor_after(buffer_snapshot.clip_offset(marker_range.end, Bias::Right));
             let Some(start_anchor) = multibuffer_snapshot.anchor_in_excerpt(start_buffer_anchor)
             else {
                 return;
@@ -480,14 +481,6 @@ impl RatePredictionsModal {
             let start = Point::new(visible_range.start.row.saturating_sub(5), 0);
             let end =
                 Point::new(visible_range.end.row + 5, 0).min(predicted_buffer_snapshot.max_point());
-            let expected_excerpt_range = editable_range
-                .as_ref()
-                .map(|range| {
-                    range.start.to_point(&prediction.snapshot)
-                        ..range.end.to_point(&prediction.snapshot)
-                })
-                .unwrap_or_else(|| visible_range.clone());
-
             Self::update_diff_editor(
                 &self.diff_editor,
                 predicted_buffer.clone(),
@@ -517,10 +510,10 @@ impl RatePredictionsModal {
                         .edit_preview
                         .anchor_to_offset_in_result(cursor_position.anchor)
                         + cursor_position.offset;
-                    let cursor_anchor = predicted_buffer
-                        .read(cx)
-                        .snapshot()
-                        .anchor_after(cursor_offset);
+                    let predicted_buffer_snapshot = predicted_buffer.read(cx).snapshot();
+                    let cursor_anchor = predicted_buffer_snapshot.anchor_after(
+                        predicted_buffer_snapshot.clip_offset(cursor_offset, Bias::Right),
+                    );
 
                     if let Some(anchor) = multibuffer_snapshot.anchor_in_excerpt(cursor_anchor) {
                         editor.splice_inlays(
@@ -571,20 +564,64 @@ impl RatePredictionsModal {
 
             write!(&mut formatted_inputs, "## Cursor Excerpt\n\n").unwrap();
 
+            let mut cursor_offset = prediction
+                .inputs
+                .cursor_offset_in_excerpt
+                .min(prediction.inputs.cursor_excerpt.len());
+            while !prediction
+                .inputs
+                .cursor_excerpt
+                .is_char_boundary(cursor_offset)
+            {
+                cursor_offset = cursor_offset.saturating_sub(1);
+            }
             writeln!(
                 &mut formatted_inputs,
                 "```{}\n{}<CURSOR>{}\n```\n",
                 prediction.inputs.cursor_path.display(),
-                &prediction.inputs.cursor_excerpt[..prediction.inputs.cursor_offset_in_excerpt],
-                &prediction.inputs.cursor_excerpt[prediction.inputs.cursor_offset_in_excerpt..],
+                &prediction.inputs.cursor_excerpt[..cursor_offset],
+                &prediction.inputs.cursor_excerpt[cursor_offset..],
             )
             .unwrap();
 
+            let current_editable_region = editable_range.as_ref().map(|range| {
+                prediction
+                    .buffer
+                    .read(cx)
+                    .snapshot()
+                    .text_for_range(range.clone())
+                    .collect::<String>()
+            });
             let expected_buffer = cx.new(|cx| {
                 let mut buffer = Buffer::local(prediction.snapshot.text(), cx);
                 buffer.set_language_async(prediction.snapshot.language().cloned(), cx);
                 buffer
             });
+            let expected_editable_range = editable_range.as_ref().map(|editable_range| {
+                expected_buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let editable_point_range = editable_range.start.to_point(&prediction.snapshot)
+                        ..editable_range.end.to_point(&prediction.snapshot);
+                    let expected_editable_range = snapshot.anchor_before(editable_point_range.start)
+                        ..snapshot.anchor_after(editable_point_range.end);
+                    if let Some(current_editable_region) = current_editable_region {
+                        buffer.edit(
+                            [(expected_editable_range.clone(), current_editable_region)],
+                            None,
+                            cx,
+                        );
+                    }
+                    expected_editable_range
+                })
+            });
+            let expected_buffer_snapshot = expected_buffer.read(cx).snapshot();
+            let expected_excerpt_range = expected_editable_range
+                .as_ref()
+                .map(|range| {
+                    range.start.to_point(&expected_buffer_snapshot)
+                        ..range.end.to_point(&expected_buffer_snapshot)
+                })
+                .unwrap_or_else(|| visible_range.clone());
             let expected_editor = cx.new(|cx| {
                 let multibuffer = cx.new(|cx| {
                     let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
@@ -617,12 +654,17 @@ impl RatePredictionsModal {
                 editor.set_show_git_diff_gutter(false, cx);
                 editor
             });
-            if let Some(editable_range) = editable_range.as_ref() {
+            if let Some(expected_editable_range) = expected_editable_range.as_ref() {
+                let expected_buffer_snapshot = expected_buffer.read(cx).snapshot();
                 Self::insert_editable_region_markers(
                     &expected_editor,
                     &expected_buffer,
-                    editable_range.start.to_offset(&prediction.snapshot)
-                        ..editable_range.end.to_offset(&prediction.snapshot),
+                    expected_editable_range
+                        .start
+                        .to_offset(&expected_buffer_snapshot)
+                        ..expected_editable_range
+                            .end
+                            .to_offset(&expected_buffer_snapshot),
                     cx,
                 );
             }
@@ -650,6 +692,7 @@ impl RatePredictionsModal {
                     editor
                 }),
                 expected_buffer,
+                expected_editable_range,
                 expected_editor,
                 expected_diff_editor,
                 expected_patch_preview: false,
@@ -726,18 +769,20 @@ impl RatePredictionsModal {
                     start..end,
                     cx,
                 );
-                if let Some(editable_range) =
-                    Self::editable_range_for_prediction(&active_prediction.prediction)
+                if let Some(expected_editable_range) =
+                    active_prediction.expected_editable_range.as_ref()
                 {
+                    let expected_buffer_snapshot =
+                        active_prediction.expected_buffer.read(cx).snapshot();
                     Self::insert_editable_region_markers(
                         &active_prediction.expected_diff_editor,
                         &active_prediction.expected_buffer,
-                        editable_range
+                        expected_editable_range
                             .start
-                            .to_offset(&active_prediction.prediction.snapshot)
-                            ..editable_range
+                            .to_offset(&expected_buffer_snapshot)
+                            ..expected_editable_range
                                 .end
-                                .to_offset(&active_prediction.prediction.snapshot),
+                                .to_offset(&expected_buffer_snapshot),
                         cx,
                     );
                 }
