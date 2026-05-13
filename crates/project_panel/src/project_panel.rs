@@ -79,7 +79,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, PathChange};
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,
@@ -697,12 +697,28 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
-                    project::Event::WorktreeUpdatedEntries(_, _) => {
+                    project::Event::WorktreeUpdatedEntries(_, changes) => {
                         // A rename keeps `ProjectEntryId` stable while changing
                         // the entry's path, which the cheap entry-id guard in
-                        // `schedule_save_collapse_state` cannot detect. Flag
-                        // it so the next schedule recomputes the path payload.
-                        this.worktree_entries_changed_since_last_save = true;
+                        // `schedule_save_collapse_state` cannot detect.
+                        // `worktree::build_diff` represents renames as
+                        // Removed+Added, so only flag a potential path change
+                        // when the change set contains a path-structure change
+                        // (Added/Removed/AddedOrUpdated/Loaded) and not pure
+                        // metadata updates.
+                        let has_path_change = changes.is_empty()
+                            || changes.iter().any(|(_, _, change)| {
+                                matches!(
+                                    change,
+                                    PathChange::Added
+                                        | PathChange::Removed
+                                        | PathChange::AddedOrUpdated
+                                        | PathChange::Loaded
+                                )
+                            });
+                        if has_path_change {
+                            this.worktree_entries_changed_since_last_save = true;
+                        }
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
