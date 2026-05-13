@@ -218,9 +218,11 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
-                .register_action(|workspace, action: &NewThread, window, cx| {
+                .register_action(|workspace, _: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
+                        panel.update(cx, |panel, cx| {
+                            panel.new_thread_with_workspace(Some(workspace), window, cx)
+                        });
                         workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
@@ -1322,11 +1324,17 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_thread_with_workspace(None, window, cx);
+    }
+
+    fn new_thread_with_workspace(
+        &mut self,
+        workspace: Option<&Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.should_create_terminal_for_new_entry(cx) {
-            // `new_terminal` falls back to `default_terminal_working_directory`
-            // when no workspace is passed; we pass `None` here because the
-            // panel already holds a `WeakEntity<Workspace>` it can resolve.
-            self.new_terminal(None, window, cx);
+            self.new_terminal(workspace, window, cx);
         } else {
             self.activate_new_thread(true, "agent_panel", window, cx);
         }
@@ -1483,10 +1491,18 @@ impl AgentPanel {
         if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
             return;
         }
-        let working_directory = workspace
-            .map(|workspace| terminal_view::default_working_directory(workspace, cx))
-            .unwrap_or_else(|| self.default_terminal_working_directory(cx));
+        let working_directory = self.terminal_working_directory(workspace, cx);
         self.spawn_terminal(TerminalId::new(), working_directory, true, window, cx);
+    }
+
+    fn terminal_working_directory(
+        &self,
+        workspace: Option<&Workspace>,
+        cx: &App,
+    ) -> Option<PathBuf> {
+        workspace
+            .map(|workspace| terminal_view::default_working_directory(workspace, cx))
+            .unwrap_or_else(|| self.default_terminal_working_directory(cx))
     }
 
     pub fn supports_terminal(&self, cx: &App) -> bool {
@@ -6551,6 +6567,43 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_terminal_working_directory_uses_active_workspace_while_workspace_is_updating(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, panel, mut cx) = setup_workspace_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", false, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(panel.last_created_entry_kind, AgentPanelEntryKind::Terminal);
+            assert!(panel.should_create_terminal_for_new_entry(cx));
+        });
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = workspace
+                .panel::<AgentPanel>(cx)
+                .expect("agent panel should be registered in workspace");
+            panel.read_with(cx, |panel, cx| {
+                panel.terminal_working_directory(Some(workspace), cx);
+            });
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(panel.last_created_entry_kind, AgentPanelEntryKind::Terminal);
+            assert!(panel.should_create_terminal_for_new_entry(cx));
+        });
+    }
+
+    #[gpui::test]
     async fn test_terminal_title_editor_is_created_only_while_editing(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
         cx.update(|_, cx| {
@@ -8869,6 +8922,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs.clone(), [], cx).await;
 
         let multi_workspace =
