@@ -10683,3 +10683,73 @@ async fn test_auto_reveal_ignored_entries_setting(cx: &mut TestAppContext) {
         "auto_reveal_ignored_entries=true should auto-expand the gitignored ancestor",
     );
 }
+
+#[gpui::test]
+async fn test_collapse_state_save_follows_rename(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "old_name": { "child.txt": "" },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/old_name", cx);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut before = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    before.sort();
+    assert_eq!(
+        before,
+        vec!["".to_string(), "old_name".to_string()],
+        "old_name should be in the saved expanded set before rename",
+    );
+
+    select_path(&panel, "root/old_name", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel
+            .filename_editor
+            .update(cx, |editor, cx| editor.set_text("new_name", window, cx));
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut after = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    after.sort();
+    assert_eq!(
+        after,
+        vec!["".to_string(), "new_name".to_string()],
+        "rename should update the persisted path even though the entry id is unchanged",
+    );
+}
