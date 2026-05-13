@@ -1949,6 +1949,7 @@ impl Editor {
             self.add_selections_state = Some(state);
         }
     }
+
     fn select_match_ranges(
         &mut self,
         range: Range<MultiBufferOffset>,
