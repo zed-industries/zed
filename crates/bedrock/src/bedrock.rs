@@ -84,10 +84,8 @@ pub async fn stream_completion(
 
     response = response.inference_config(inference_config);
 
-    if let Some(system) = request.system {
-        if !system.is_empty() {
-            response = response.system(BedrockSystemContentBlock::Text(system));
-        }
+    for system_block in request.system {
+        response = response.system(system_block);
     }
 
     if let Some(guardrail_id) = &request.guardrail_identifier {
@@ -207,7 +205,11 @@ pub struct Request {
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,
-    pub system: Option<String>,
+    /// System content blocks in prefix order. Typically `[Text(...)]` or, when
+    /// the model supports prompt caching, `[Text(...), CachePoint(...)]` so the
+    /// system prompt anchors its own cache prefix independent of tools and
+    /// messages.
+    pub system: Vec<BedrockSystemContentBlock>,
     pub metadata: Option<Metadata>,
     pub stop_sequences: Vec<String>,
     pub temperature: Option<f32>,

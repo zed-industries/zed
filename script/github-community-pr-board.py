@@ -365,7 +365,7 @@ def github_get_field_value(item_id, field_name):
               fieldValues(first: 20) {
                 nodes {
                   ... on ProjectV2ItemFieldSingleSelectValue {
-                    field { name }
+                    field { ... on ProjectV2SingleSelectField { name } }
                     name
                   }
                 }

@@ -192,6 +192,7 @@ impl Button {
     /// Displays a rotating loading spinner in place of the `start_icon`.
     ///
     /// When `loading` is `true`, any `start_icon` is ignored. and a rotating
+    /// loading spinner is shown instead.
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
         self
@@ -393,23 +394,26 @@ impl RenderOnce for Button {
             h_flex()
                 .when(self.truncate, |this| this.min_w_0().overflow_hidden())
                 .gap(DynamicSpacing::Base04.rems(cx))
-                .when(self.loading, |this| {
-                    this.child(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_keyed_rotate_animation(loading_icon_id, 2),
-                    )
-                })
-                .when(!self.loading, |this| {
-                    this.when_some(self.start_icon, |this, icon| {
-                        this.child(if is_disabled {
-                            icon.color(Color::Disabled)
-                        } else {
-                            icon
+                .when_else(
+                    self.loading,
+                    |this| {
+                        this.child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                                .with_keyed_rotate_animation(loading_icon_id, 2),
+                        )
+                    },
+                    |this| {
+                        this.when_some(self.start_icon, |this, icon| {
+                            this.child(if is_disabled {
+                                icon.color(Color::Disabled)
+                            } else {
+                                icon
+                            })
                         })
-                    })
-                })
+                    },
+                )
                 .child(
                     h_flex()
                         .when(self.truncate, |this| this.min_w_0().overflow_hidden())
