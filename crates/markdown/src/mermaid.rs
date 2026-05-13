@@ -104,6 +104,7 @@ impl CachedMermaidDiagram {
         let render_image_clone = render_image.clone();
         let svg_renderer = cx.svg_renderer();
         let mermaid_theme = build_mermaid_theme(cx);
+        let accent_classdefs = build_accent_classdefs(cx);
 
         let task = cx.spawn(async move |this, cx| {
             let value = cx
@@ -112,8 +113,9 @@ impl CachedMermaidDiagram {
                         theme: mermaid_theme,
                         layout: mermaid_rs_renderer::LayoutConfig::default(),
                     };
+                    let full_source = format!("{}\n{}", contents.contents, accent_classdefs);
                     let svg_string =
-                        mermaid_rs_renderer::render_with_options(&contents.contents, options)?;
+                        mermaid_rs_renderer::render_with_options(&full_source, options)?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale)
@@ -177,8 +179,53 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_rs_renderer::Theme {
     theme.cluster_background = hsla_to_hex(colors.panel_background);
     theme.cluster_border = hsla_to_hex(colors.border_variant);
     theme.text_color = hsla_to_hex(colors.text);
+    let accents = cx.theme().accents();
+    let pie_colors: [String; 12] = std::array::from_fn(|i| {
+        hsla_to_hex(accents.color_for_index(i as u32))
+    });
+    theme.pie_colors = pie_colors;
+    theme.pie_title_text_color = hsla_to_hex(colors.text);
+    theme.pie_section_text_color = "#fff".to_string();
+    theme.pie_legend_text_color = hsla_to_hex(colors.text);
+    theme.pie_stroke_color = hsla_to_hex(colors.border);
+    theme.pie_outer_stroke_color = hsla_to_hex(colors.border);
+
+    theme.sequence_actor_fill = hsla_to_hex(colors.element_background);
+    theme.sequence_actor_border = hsla_to_hex(colors.border);
+    theme.sequence_actor_line = hsla_to_hex(colors.border);
+    theme.sequence_note_fill = hsla_to_hex(colors.surface_background);
+    theme.sequence_note_border = hsla_to_hex(colors.border_variant);
+    theme.sequence_activation_fill = hsla_to_hex(colors.ghost_element_hover);
+    theme.sequence_activation_border = hsla_to_hex(colors.border);
+
+    let players = cx.theme().players();
+    theme.git_colors = std::array::from_fn(|i| {
+        hsla_to_hex(players.0[i % players.0.len()].cursor)
+    });
+    theme.git_inv_colors = std::array::from_fn(|i| {
+        hsla_to_hex(players.0[i % players.0.len()].background)
+    });
+    theme.git_branch_label_colors = std::array::from_fn(|_| "#fff".to_string());
+    theme.git_commit_label_color = hsla_to_hex(colors.text);
+    theme.git_commit_label_background = hsla_to_hex(colors.element_background);
+    theme.git_tag_label_color = hsla_to_hex(colors.text);
+    theme.git_tag_label_background = hsla_to_hex(colors.element_background);
+    theme.git_tag_label_border = hsla_to_hex(colors.border);
 
     theme
+}
+
+fn build_accent_classdefs(cx: &Context<Markdown>) -> String {
+    use std::fmt::Write;
+    let players = &cx.theme().players();
+    let mut defs = String::new();
+    for (i, player) in players.0.iter().enumerate() {
+        let fill = hsla_to_hex(player.background);
+        let stroke = hsla_to_hex(player.cursor);
+        let text = hsla_to_hex(player.cursor);
+        writeln!(defs, "classDef accent{i} fill:{fill},stroke:{stroke},color:{text}").ok();
+    }
+    defs
 }
 
 fn parse_mermaid_info(info: &str) -> Option<u32> {

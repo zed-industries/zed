@@ -164,7 +164,13 @@ graph TD
 
 The diagram will be rendered as an image by default, with "Preview" and "Code" tabs so the user can toggle between the rendered diagram and the source code.
 
-Mermaid diagrams are automatically themed to match the user's editor theme. Do not include `%%{init}%%` directives or `style`/`classDef` color overrides unless the user specifically asks for custom colors.
+Mermaid diagrams are automatically themed to match the user's editor theme. Do not include `%%{init}%%` directives or define your own `classDef` styles.
+
+When you need accent colors for emphasis (e.g. color-coding layers, categories, or states), use the pre-defined classes `accent0` through `accent7` with the `:::` syntax:
+
+    A:::accent0 --> B:::accent1 --> C:::accent2
+
+These classes automatically match the user's theme. Do not hardcode hex color values.
 
 {{#if (gt (len available_tools) 0)}}
 ## Fixing Diagnostics
