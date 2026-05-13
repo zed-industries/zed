@@ -706,23 +706,27 @@ struct AgentTerminal {
 }
 
 impl AgentTerminal {
-    fn display_title(&self, cx: &App) -> SharedString {
+    fn title(&self, cx: &App) -> SharedString {
         let view = self.view.read(cx);
-        view.custom_title()
-            .map(SharedString::from)
-            .or_else(|| {
-                let breadcrumb_text = &view.terminal().read(cx).breadcrumb_text;
-                if breadcrumb_text.is_empty() {
-                    None
+        if let Some(custom_title) = view.custom_title() {
+            SharedString::from(custom_title)
+        } else {
+            let terminal = view.terminal().read(cx);
+            if terminal.breadcrumb_text.is_empty() {
+                let title = terminal.title(true);
+                if title == "Terminal" {
+                    SharedString::from("")
                 } else {
-                    Some(breadcrumb_text.clone().into())
+                    title.into()
                 }
-            })
-            .unwrap_or_else(|| SharedString::from(view.terminal().read(cx).title(true)))
+            } else {
+                terminal.breadcrumb_text.clone().into()
+            }
+        }
     }
 
     fn refresh_title(&mut self, cx: &mut App) -> bool {
-        let title = self.display_title(cx);
+        let title = self.title(cx);
         let changed = self.last_known_title != title.as_ref();
         if changed {
             self.last_known_title = title.to_string();
@@ -1678,7 +1682,7 @@ impl AgentPanel {
             return;
         }
 
-        let title = terminal.display_title(cx).to_string();
+        let title = terminal.title(cx).to_string();
         let title_editor_initial_title = title.clone();
         let title_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -1847,7 +1851,7 @@ impl AgentPanel {
         if !terminal.notification_windows.is_empty() {
             return;
         }
-        let title = terminal.display_title(cx);
+        let title = terminal.title(cx);
         let settings = AgentSettings::get_global(cx);
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -2347,7 +2351,7 @@ impl AgentPanel {
             .iter()
             .map(|(id, terminal)| AgentPanelTerminalInfo {
                 id: *id,
-                title: terminal.display_title(cx),
+                title: terminal.title(cx),
                 created_at: terminal.created_at,
                 has_notification: terminal.has_notification,
             })
@@ -3943,7 +3947,7 @@ impl AgentPanel {
                             (
                                 terminal_id,
                                 terminal.title_editor.clone(),
-                                terminal.display_title(cx),
+                                terminal.title(cx),
                             )
                         })
                     })
@@ -6474,6 +6478,75 @@ mod tests {
             assert_eq!(panel.active_terminal_id(), None);
             assert!(panel.has_terminal(terminal_id));
             assert!(!panel.should_create_terminal_for_new_entry(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_title_omits_placeholder_title(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(terminals.len(), 1);
+            assert_eq!(terminals[0].title.as_ref(), "");
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            assert_eq!(terminal.title(cx).as_ref(), "");
+        });
+
+        let terminal_view = panel.read_with(&cx, |panel, _cx| {
+            panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel")
+                .view
+                .clone()
+        });
+        let terminal_entity =
+            terminal_view.read_with(&cx, |terminal_view, _cx| terminal_view.terminal().clone());
+        terminal_entity.update(&mut cx, |_terminal, cx| {
+            cx.emit(TerminalEvent::TitleChanged);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(terminals.len(), 1);
+            assert_eq!(terminals[0].title.as_ref(), "");
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            assert_eq!(terminal.title(cx).as_ref(), "");
+        });
+
+        terminal_entity.update(&mut cx, |terminal, cx| {
+            terminal.breadcrumb_text = "Shell Breadcrumb".to_string();
+            cx.emit(TerminalEvent::BreadcrumbsChanged);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(terminals.len(), 1);
+            assert_eq!(terminals[0].title.as_ref(), "Shell Breadcrumb");
+            let terminal = panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel");
+            assert_eq!(terminal.title(cx).as_ref(), "Shell Breadcrumb");
         });
     }
 
