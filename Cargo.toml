@@ -898,15 +898,13 @@ codegen-units = 16
 split-debuginfo = "unpacked"
 debug = "limited"
 
-
-# "debug" is reserved.
+# "debug" is a reserved profile name.
 [profile.dbg]
 inherits = "dev"
 debug = "full"
 
 [profile.dbg.build-override]
 debug = "full"
-
 
 [profile.dev.package]
 # proc-macros start
