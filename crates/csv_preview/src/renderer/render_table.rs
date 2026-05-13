@@ -133,7 +133,6 @@ impl CsvPreviewView {
                     display_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,
-                    this.settings.font_type,
                     cx,
                 ),
             );

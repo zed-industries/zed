@@ -44,7 +44,9 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use gpui::{
+    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
+};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -58,6 +60,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
+use std::path::{Path, PathBuf};
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -80,6 +83,33 @@ pub use thread_import::{
 };
 use zed_actions;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
+
+pub(crate) fn resolve_agent_image(
+    dest_url: &str,
+    worktree_roots: &[PathBuf],
+) -> Option<ImageSource> {
+    if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
+        return Some(ImageSource::Resource(Resource::Uri(SharedUri::from(
+            dest_url.to_string(),
+        ))));
+    }
+
+    let path = Path::new(dest_url);
+    if path.is_absolute() && path.exists() {
+        return Some(ImageSource::Resource(Resource::Path(Arc::from(path))));
+    }
+
+    for root in worktree_roots {
+        let absolute_path = root.join(dest_url);
+        if absolute_path.exists() {
+            return Some(ImageSource::Resource(Resource::Path(Arc::from(
+                absolute_path.as_path(),
+            ))));
+        }
+    }
+
+    None
+}
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";

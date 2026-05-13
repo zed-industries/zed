@@ -3248,6 +3248,58 @@ async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_thread_switcher_includes_parked_draft(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-existing")),
+        Some("Existing Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &project,
+        cx,
+    );
+
+    let connection = StubAgentConnection::new();
+    agent_ui::test_support::open_draft_with_connection(&panel, connection, cx);
+    cx.run_until_parked();
+    let draft_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+    agent_ui::test_support::type_draft_prompt(&panel, "Fix the login bug", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_thread(&NewThread, window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(sidebar.contents.entries.iter().any(|entry| {
+            matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == draft_id)
+        }));
+    });
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open");
+        assert!(switcher.read(cx).entries().iter().any(|entry| {
+            matches!(entry.thread_id(), Some(thread_id) if thread_id == draft_id)
+        }));
+    });
+}
+
+#[gpui::test]
 async fn test_plus_button_reuses_empty_draft(cx: &mut TestAppContext) {
     // Clicking `+` when an empty draft is already active should focus it
     // instead of creating and parking a new one.
