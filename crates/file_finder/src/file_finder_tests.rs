@@ -696,6 +696,65 @@ fn test_line_range_query_parsing() {
     assert_eq!(query.line_range, Some(428..=440));
 }
 
+#[test]
+fn test_parse_search_query() {
+    // Test trailing colon stripping.
+    let query = parse_file_search_query("content.rs:2:");
+    assert_eq!(query.raw_query, "content.rs:2");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test multiple trailing colons are also stripped.
+    let query = parse_file_search_query("content.rs:2:::");
+    assert_eq!(query.raw_query, "content.rs:2");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test trailing colon after an incomplete range is stripped.
+    let query = parse_file_search_query("content.rs:2-:");
+    assert_eq!(query.raw_query, "content.rs:2-");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test trailing colon after a complete range is stripped, range is preserved.
+    let query = parse_file_search_query("content.rs:2-4:");
+    assert_eq!(query.raw_query, "content.rs:2-4");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(2..=4));
+
+    // Test multiple trailing colons after a complete range are all stripped.
+    let query = parse_file_search_query("content.rs:2-4:::");
+    assert_eq!(query.raw_query, "content.rs:2-4");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(2..=4));
+
+    // Test invalid end should fall back to using the start as a single row.
+    let query = parse_file_search_query("content.rs:5-x");
+    assert_eq!(query.raw_query, "content.rs:5-x");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(5));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test reversed range (end < start) should fall back to using the start as a single row.
+    let query = parse_file_search_query("content.rs:10-5");
+    assert_eq!(query.raw_query, "content.rs:10-5");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(10));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+}
+
 #[gpui::test]
 async fn test_line_range_query_selects_lines(cx: &mut TestAppContext) {
     let app_state = init_test(cx);

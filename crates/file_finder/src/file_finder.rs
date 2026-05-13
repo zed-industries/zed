@@ -860,17 +860,17 @@ impl FileSearchQuery {
 fn parse_file_search_query(raw_query: &str) -> FileSearchQuery {
     let raw_query = raw_query.trim().trim_end_matches(':').to_owned();
 
-    if let Some((path_query, line_range)) = parse_line_range_query(&raw_query) {
+    if let Some((path_query, start_line, end_line)) = parse_line_range_query(&raw_query) {
         let path_query = path_query.to_owned();
         return FileSearchQuery {
             raw_query,
             file_query_end: Some(path_query.len()),
             path_position: PathWithPosition {
                 path: PathBuf::from(&path_query),
-                row: Some(*line_range.start()),
+                row: Some(start_line),
                 column: None,
             },
-            line_range: Some(line_range),
+            line_range: end_line.map(|end| start_line..=end),
         };
     }
 
@@ -891,7 +891,7 @@ fn parse_file_search_query(raw_query: &str) -> FileSearchQuery {
     }
 }
 
-fn parse_line_range_query(raw_query: &str) -> Option<(&str, RangeInclusive<u32>)> {
+fn parse_line_range_query(raw_query: &str) -> Option<(&str, u32, Option<u32>)> {
     let (path_query, line_range) = raw_query.rsplit_once(':')?;
     if path_query.is_empty() {
         return None;
@@ -899,12 +899,16 @@ fn parse_line_range_query(raw_query: &str) -> Option<(&str, RangeInclusive<u32>)
 
     let (start_line, end_line) = line_range.split_once('-')?;
     let start_line = start_line.parse::<u32>().ok()?;
-    let end_line = end_line.parse::<u32>().ok()?;
-    if start_line == 0 || end_line == 0 || end_line < start_line {
+    if start_line == 0 {
         return None;
     }
 
-    Some((path_query, start_line..=end_line))
+    let end_line = end_line
+        .parse::<u32>()
+        .ok()
+        .filter(|&end| end != 0 && end >= start_line);
+
+    Some((path_query, start_line, end_line))
 }
 
 fn buffer_range_for_line_range(
