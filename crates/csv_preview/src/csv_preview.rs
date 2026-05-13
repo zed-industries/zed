@@ -179,7 +179,8 @@ impl CsvPreviewView {
                 column_widths: ColumnWidths::new(cx, 1),
                 parsing_task: None,
                 performance_metrics: PerformanceMetrics::default(),
-                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.)),
+                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
+                    .measure_all(),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -207,7 +208,8 @@ impl CsvPreviewView {
 
         // Update list state with filtered row count
         let visible_rows = self.engine.d2d_mapping().visible_row_count();
-        self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(100.));
+        self.list_state =
+            gpui::ListState::new(visible_rows, ListAlignment::Top, px(100.)).measure_all();
     }
 
     pub fn resolve_active_item_as_csv_editor(

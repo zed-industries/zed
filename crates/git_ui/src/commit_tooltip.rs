@@ -84,7 +84,7 @@ impl<'a> CommitAvatar<'a> {
                     .child(
                         Icon::new(IconName::Person)
                             .color(Color::Muted)
-                            .size(IconSize::Small),
+                            .size(IconSize::XSmall),
                     )
                     .into_any_element()
             }
