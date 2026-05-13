@@ -1577,10 +1577,6 @@ mod tests {
         let mut all_tab_stops = Vec::new();
         let mut byte_offset = 1;
         let mut char_offset = 1;
-        #[expect(
-            clippy::explicit_counter_loop,
-            reason = "Lint does not account for char_offset being needed after the loop"
-        )]
         for ch in buffer_snapshot.text().chars() {
             if ch == '\t' {
                 all_tab_stops.push(TabStop {

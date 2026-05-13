@@ -850,6 +850,7 @@ impl Item for Editor {
     }
 
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.clear_universal_argument(cx);
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, true, false, cx);
     }

@@ -249,6 +249,9 @@ impl EditorElement {
         register_action(editor, window, Editor::select_page_down);
         register_action(editor, window, Editor::select_page_up);
         register_action(editor, window, Editor::cancel);
+        register_action(editor, window, Editor::universal_argument);
+        register_action(editor, window, Editor::universal_argument_digit);
+        register_action(editor, window, Editor::universal_argument_minus);
         register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::next_snippet_tabstop);
         register_action(editor, window, Editor::previous_snippet_tabstop);
@@ -575,7 +578,12 @@ impl EditorElement {
             });
             register_action(editor, window, Editor::cut);
             register_action(editor, window, Editor::kill_ring_cut);
+            register_action(editor, window, Editor::kill_ring_cut_region);
+            register_action(editor, window, Editor::kill_ring_kill_word);
+            register_action(editor, window, Editor::kill_ring_backward_kill_word);
+            register_action(editor, window, Editor::kill_ring_save);
             register_action(editor, window, Editor::kill_ring_yank);
+            register_action(editor, window, Editor::kill_ring_yank_pop);
             register_action(editor, window, Editor::paste);
             register_action(editor, window, Editor::undo);
             register_action(editor, window, Editor::redo);

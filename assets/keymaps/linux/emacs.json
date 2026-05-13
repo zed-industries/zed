@@ -56,13 +56,15 @@
       "alt-,": "pane::GoBack", // xref-pop-marker-stack
       "ctrl-x h": "editor::SelectAll", // mark-whole-buffer
       "ctrl-d": "editor::Delete", // delete-char
-      "alt-d": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }], // kill-word
-      "alt-backspace": "editor::DeleteToPreviousWordStart", // backward-kill-word
-      "alt-delete": "editor::DeleteToPreviousWordStart", // backward-kill-word
+      "ctrl-u": "editor::UniversalArgument", // universal-argument
+      "alt-d": "editor::KillRingKillWord", // kill-word
+      "alt-backspace": "editor::KillRingBackwardKillWord", // backward-kill-word
+      "alt-delete": "editor::KillRingBackwardKillWord", // backward-kill-word
       "ctrl-k": "editor::KillRingCut", // kill-line
-      "ctrl-w": "editor::Cut", // kill-region
-      "alt-w": "editor::Copy", // kill-ring-save
+      "ctrl-w": "editor::KillRingCutRegion", // kill-region
+      "alt-w": "editor::KillRingSave", // kill-ring-save
       "ctrl-y": "editor::KillRingYank", // yank
+      "alt-y": "editor::KillRingPickAndYank", // yank-from-kill-ring
       "ctrl-_": "editor::Undo", // undo
       "ctrl-/": "editor::Undo", // undo
       "ctrl-x u": "editor::Undo", // undo
@@ -83,6 +85,34 @@
       "ctrl-r": "buffer_search::Deploy", // isearch-backward
       "alt-^": "editor::JoinLines", // join-line
       "alt-q": "editor::Rewrap", // fill-paragraph
+    },
+  },
+  {
+    "context": "Editor && kill_ring_can_yank_pop",
+    "bindings": {
+      "alt-y": "editor::KillRingYankPop", // yank-pop
+    },
+  },
+  {
+    "context": "Editor && universal_argument_accepts_minus",
+    "bindings": {
+      "-": "editor::UniversalArgumentMinus"
+    },
+  },
+  {
+    "context": "Editor && universal_argument",
+    "bindings": {
+      "ctrl-u": "editor::UniversalArgument",
+      "0": ["editor::UniversalArgumentDigit", 0],
+      "1": ["editor::UniversalArgumentDigit", 1],
+      "2": ["editor::UniversalArgumentDigit", 2],
+      "3": ["editor::UniversalArgumentDigit", 3],
+      "4": ["editor::UniversalArgumentDigit", 4],
+      "5": ["editor::UniversalArgumentDigit", 5],
+      "6": ["editor::UniversalArgumentDigit", 6],
+      "7": ["editor::UniversalArgumentDigit", 7],
+      "8": ["editor::UniversalArgumentDigit", 8],
+      "9": ["editor::UniversalArgumentDigit", 9]
     },
   },
   {
