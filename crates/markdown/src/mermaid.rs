@@ -214,18 +214,63 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_rs_renderer::Theme {
 fn build_accent_classdefs(cx: &Context<Markdown>) -> String {
     use std::fmt::Write;
     let players = &cx.theme().players();
+    let is_light = cx.theme().appearance.is_light();
     let mut defs = String::new();
     for (i, player) in players.0.iter().enumerate() {
-        let fill = hsla_to_hex(player.background);
+        let (fill, text_color) = accent_fill_and_text(player.background, is_light);
+        let fill = hsla_to_hex(fill);
         let stroke = hsla_to_hex(player.cursor);
-        let text = hsla_to_hex(player.cursor);
+        let text_color = hsla_to_hex(text_color);
         writeln!(
             defs,
-            "classDef accent{i} fill:{fill},stroke:{stroke},color:{text}"
+            "classDef accent{i} fill:{fill},stroke:{stroke},color:{text_color}"
         )
         .ok();
     }
     defs
+}
+
+/// Adjusts an accent fill color to ensure readable text contrast.
+///
+/// On dark themes, darkens the fill and uses white text.
+/// On light themes, lightens the fill and uses black text.
+/// The fill is adjusted until it meets a minimum WCAG contrast ratio
+/// of ~4.5:1 against the chosen text color.
+fn accent_fill_and_text(color: Hsla, is_light: bool) -> (Hsla, Hsla) {
+    let mut fill = color;
+    if is_light {
+        // Lighten fill until luminance is high enough for black text.
+        // Target: relative luminance >= 0.35 → contrast ratio ~8:1 with black.
+        for _ in 0..50 {
+            if relative_luminance(fill) >= 0.35 {
+                break;
+            }
+            fill.l = (fill.l + 0.02).min(1.0);
+        }
+        (fill, gpui::black())
+    } else {
+        // Darken fill until luminance is low enough for white text.
+        // Target: relative luminance <= 0.18 → contrast ratio ~4.6:1 with white.
+        for _ in 0..50 {
+            if relative_luminance(fill) <= 0.18 {
+                break;
+            }
+            fill.l = (fill.l - 0.02).max(0.0);
+        }
+        (fill, gpui::white())
+    }
+}
+
+fn relative_luminance(color: Hsla) -> f32 {
+    let rgba: Rgba = color.to_rgb();
+    fn linearize(c: f32) -> f32 {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * linearize(rgba.r) + 0.7152 * linearize(rgba.g) + 0.0722 * linearize(rgba.b)
 }
 
 fn parse_mermaid_info(info: &str) -> Option<u32> {
@@ -539,9 +584,23 @@ mod tests {
         MarkdownStyle,
     };
     use collections::HashMap;
-    use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
+    use gpui::{Context, Hsla, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
     use ui::prelude::*;
+
+    #[gpui::property_test]
+    fn accent_fill_and_text_sufficient_contrast(
+        #[strategy = Hsla::opaque_strategy()] color: Hsla,
+        light_mode: bool,
+    ) {
+        let (fill, text) = super::accent_fill_and_text(color, light_mode);
+        let fill_luminance = super::relative_luminance(fill);
+        let text_luminance = super::relative_luminance(text);
+        let lighter = fill_luminance.max(text_luminance);
+        let darker = fill_luminance.min(text_luminance);
+        let contrast_ratio = (lighter + 0.05) / (darker + 0.05);
+        assert!(contrast_ratio >= 4.5,);
+    }
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
