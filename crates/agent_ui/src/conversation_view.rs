@@ -6069,6 +6069,185 @@ pub(crate) mod tests {
         });
     }
 
+    /// Build a thread with two user prompts and two assistant responses
+    /// chosen so that the substring `"banana"` appears once in the first
+    /// user message, twice across both assistant responses, and the
+    /// substring `"apple"` appears nowhere. Then open the search bar,
+    /// type each query, and verify the match count.
+    ///
+    /// This indirectly exercises the matcher (`SearchQuery::search_str`
+    /// over every entry's markdown), the active-match state machine, and
+    /// the `ListState` scroll handoff to the entry containing a match.
+    #[gpui::test]
+    async fn test_thread_search_finds_matches_across_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Yes, you can substitute banana for plantain in this recipe.".into(),
+            ),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| view.thread.clone());
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("Can I use banana here?", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(
+                "Banana yogurt also works as a topping; whisk the banana smooth first.".into(),
+            ),
+        )]);
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw("What about as a topping?", cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Type a case-insensitive query that matches user msg 1 once and
+        // assistant msg 1 once and assistant msg 2 twice (lowercase
+        // "banana" + uppercase "Banana" both match by default).
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread_search_bar should be set after toggle_search");
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", window, cx);
+            });
+            // The editor-edited event normally triggers `update_matches`
+            // asynchronously; call directly so the test is deterministic.
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        let (match_count, active_text) = bar.read_with(cx, |bar, cx| {
+            (bar.match_count(), bar.active_match_text(cx))
+        });
+        // 1 in user-1 ("Can I use banana") + 1 in assistant-1 + 2 in
+        // assistant-2 ("Banana" + "banana") = 4 matches total.
+        assert_eq!(match_count, 4, "expected 4 matches for case-insensitive 'banana'");
+        assert_eq!(active_text.as_deref(), Some("1/4"));
+
+        // The first match lives in entry 0 (user message 1); the bar
+        // should have asked the list to scroll there.
+        thread_view.read_with(cx, |view, _| {
+            assert_eq!(view.list_state.logical_scroll_top().item_ix, 0);
+        });
+
+        // Step forward and verify navigation lands on later entries.
+        bar.update_in(cx, |bar, window, cx| {
+            bar.select_next_match(
+                &super::thread_search_bar::SelectNextThreadMatch,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let active_text_2 = bar.read_with(cx, |bar, cx| bar.active_match_text(cx));
+        assert_eq!(active_text_2.as_deref(), Some("2/4"));
+
+        // Wrap from last to first using prev from match 1.
+        bar.update_in(cx, |bar, window, cx| {
+            bar.select_prev_match(
+                &super::thread_search_bar::SelectPreviousThreadMatch,
+                window,
+                cx,
+            );
+        });
+        let active_text_3 = bar.read_with(cx, |bar, cx| bar.active_match_text(cx));
+        assert_eq!(active_text_3.as_deref(), Some("1/4"));
+
+        // Switch query to something that doesn't match.
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("apple", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        let (match_count_apple, active_text_apple) = bar.read_with(cx, |bar, cx| {
+            (bar.match_count(), bar.active_match_text(cx))
+        });
+        assert_eq!(match_count_apple, 0);
+        assert_eq!(active_text_apple.as_deref(), Some("0/0"));
+    }
+
+    /// Verifies that dismissing the search bar clears highlights from
+    /// every markdown entity it touched, so reopening doesn't show
+    /// stale yellow ranges.
+    #[gpui::test]
+    async fn test_thread_search_dismiss_clears_highlights(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Mango is a tropical fruit.".into()),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let thread = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| view.thread.clone());
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Tell me about mango", cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        let bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .unwrap();
+        bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("mango", window, cx);
+            });
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+
+        // After search, at least one markdown has highlights.
+        let entries = thread.read_with(cx, |thread, _| thread.entries().len());
+        assert!(entries > 0);
+
+        // Toggle off; highlights should clear.
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        cx.run_until_parked();
+
+        bar.read_with(cx, |bar, _| {
+            assert_eq!(bar.match_count(), 0);
+            assert!(bar.active_match_index().is_none());
+        });
+    }
+
     #[gpui::test]
     async fn test_message_editing_cancel(cx: &mut TestAppContext) {
         init_test(cx);

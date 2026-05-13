@@ -80,7 +80,7 @@ struct ThreadMatch {
 }
 
 pub struct ThreadSearchBar {
-    query_editor: Entity<Editor>,
+    pub(super) query_editor: Entity<Editor>,
     options: SearchOptions,
     /// `None` means "not yet searched / empty query". `Some(...)` is the
     /// flat list of matches in thread order.
@@ -165,6 +165,21 @@ impl ThreadSearchBar {
         self.update_matches(window, cx);
     }
 
+    /// Test-only accessor for the total match count. The `matches` vec
+    /// stores `ThreadMatch` which is private; exposing this scalar keeps
+    /// the type sealed while letting `conversation_view::tests` observe
+    /// the search result.
+    #[cfg(test)]
+    pub(super) fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    /// Test-only accessor for the active match index.
+    #[cfg(test)]
+    pub(super) fn active_match_index(&self) -> Option<usize> {
+        self.active_match
+    }
+
     pub fn active_match_text(&self, cx: &App) -> Option<String> {
         if self.query_editor.read(cx).text(cx).is_empty() {
             return None;
@@ -213,7 +228,7 @@ impl ThreadSearchBar {
         result.log_err().map(Arc::new)
     }
 
-    fn update_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn update_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.build_query(cx);
         self.query_error = !self.current_query(cx).is_empty() && query.is_none();
         // Always clear stale highlights from the previous query.
@@ -306,7 +321,7 @@ impl ThreadSearchBar {
         cx.notify();
     }
 
-    fn select_next_match(
+    pub(super) fn select_next_match(
         &mut self,
         _: &SelectNextThreadMatch,
         window: &mut Window,
@@ -322,7 +337,7 @@ impl ThreadSearchBar {
         self.activate_match(next, window, cx);
     }
 
-    fn select_prev_match(
+    pub(super) fn select_prev_match(
         &mut self,
         _: &SelectPreviousThreadMatch,
         window: &mut Window,
@@ -568,10 +583,7 @@ fn nav_button(
                 window.dispatch_action(action_for_dispatch.boxed_clone(), cx);
             }
         })
-        .tooltip({
-            let focus_handle = focus_handle.clone();
-            move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx)
-        })
+        .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
 }
 
 /// Collects every `Entity<Markdown>` reachable from a thread entry,
