@@ -40,6 +40,7 @@ From the "New Thread…" menu you can:
 
 - Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
 - Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
+- Choose **Terminal** to open an interactive terminal directly in the Agent Panel — see [Terminals](#terminals) for details.
 
 {#action agent::NewExternalAgentThread} creates a new thread with the specified external agent id.
 
@@ -122,6 +123,26 @@ You can accept or reject each individual change hunk, or the whole set of change
 Edit diffs also appear in singleton buffers.
 If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
 You can turn this off, though, through the `agent.single_file_review` setting.
+
+## Terminals {#terminals}
+
+The Agent Panel can host interactive terminals alongside your threads. Each terminal appears as its own entry in the [Threads Sidebar](./parallel-agents.md#threads-sidebar) with a terminal icon, letting you switch between conversations and shell sessions from the same list.
+
+### Opening a Terminal {#opening-a-terminal}
+
+Open the menu using the agent selector button on the left (in the empty state) or the `+` icon in the top-right of the panel toolbar, and choose **Terminal**. The terminal opens in the panel body, just like switching to a thread. You can open as many terminals as you like — each gets its own sidebar entry.
+
+### Terminal Titles {#terminal-titles}
+
+The terminal title in the toolbar updates automatically to reflect the running shell or process. You can also set a custom name by clicking the title or the pencil icon that appears on hover.
+
+### Notifications {#terminal-notifications}
+
+When a terminal produces a bell character while not in focus, Zed notifies you the same way it does when an agent finishes — with a visual pop-up and an optional sound. Clicking the notification brings the terminal into focus and clears the indicator. The same `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings apply.
+
+### Closing Terminals {#closing-terminals}
+
+Unlike threads, terminals are closed rather than archived — they don't go to Thread History. To close a terminal, hover over it in the Threads Sidebar and click the **×** button, or select it and press {#kb agent::ArchiveSelectedThread}.
 
 ## Adding Context {#adding-context}
 
