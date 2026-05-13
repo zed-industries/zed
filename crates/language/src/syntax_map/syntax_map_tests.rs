@@ -1163,7 +1163,7 @@ fn test_random_edits(
 
     let layers = syntax_map.layers(&buffer);
     let reference_layers = reference_syntax_map.layers(&buffer);
-    for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter()) {
+    for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers) {
         assert_eq!(
             edited_layer.node().to_sexp(),
             reference_layer.node().to_sexp()
@@ -1326,9 +1326,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
             reference_layers.len(),
             "wrong number of layers at step {i}"
         );
-        for (edited_layer, reference_layer) in
-            mutated_layers.into_iter().zip(reference_layers.into_iter())
-        {
+        for (edited_layer, reference_layer) in mutated_layers.into_iter().zip(reference_layers) {
             assert_eq!(
                 edited_layer.node().to_sexp(),
                 reference_layer.node().to_sexp(),

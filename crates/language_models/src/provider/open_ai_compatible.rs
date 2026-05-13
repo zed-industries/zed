@@ -2,7 +2,7 @@ use anyhow::Result;
 use convert_case::{Case, Casing};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -397,7 +397,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                self.model.reasoning_effort,
+                self.model
+                    .reasoning_effort
+                    .filter(|effort| *effort != open_ai::ReasoningEffort::None),
+                self.model.reasoning_effort == Some(open_ai::ReasoningEffort::None),
             );
             let completions = self.stream_response(request, cx);
             async move {

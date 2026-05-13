@@ -44,32 +44,6 @@ impl Database {
             .await
     }
 
-    /// Returns all users by ID. There are no access checks here, so this should only be used internally.
-    pub async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<user::Model>> {
-        if ids.len() >= 10000_usize {
-            return Err(anyhow!("too many users"))?;
-        }
-        self.transaction(|tx| async {
-            let tx = tx;
-            Ok(user::Entity::find()
-                .filter(user::Column::Id.is_in(ids.iter().copied()))
-                .all(&*tx)
-                .await?)
-        })
-        .await
-    }
-
-    /// Returns a user by GitHub login. There are no access checks here, so this should only be used internally.
-    pub async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        self.transaction(|tx| async move {
-            Ok(user::Entity::find()
-                .filter(user::Column::GithubLogin.eq(github_login))
-                .one(&*tx)
-                .await?)
-        })
-        .await
-    }
-
     pub async fn update_or_create_user_by_github_account(
         &self,
         github_login: &str,
@@ -78,7 +52,7 @@ impl Database {
         github_name: Option<&str>,
         github_user_created_at: DateTimeUtc,
         initial_channel_id: Option<ChannelId>,
-    ) -> Result<User> {
+    ) -> Result<user::Model> {
         self.transaction(|tx| async move {
             self.update_or_create_user_by_github_account_tx(
                 github_login,
@@ -103,7 +77,7 @@ impl Database {
         github_user_created_at: NaiveDateTime,
         initial_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
-    ) -> Result<User> {
+    ) -> Result<user::Model> {
         if let Some(existing_user) = self
             .get_user_by_github_user_id_or_github_login(github_user_id, github_login, tx)
             .await?
@@ -156,7 +130,7 @@ impl Database {
         github_user_id: i32,
         github_login: &str,
         tx: &DatabaseTransaction,
-    ) -> Result<Option<User>> {
+    ) -> Result<Option<user::Model>> {
         if let Some(user_by_github_user_id) = user::Entity::find()
             .filter(user::Column::GithubUserId.eq(github_user_id))
             .one(tx)
@@ -178,7 +152,7 @@ impl Database {
 
     /// get_all_users returns the next page of users. To get more call again with
     /// the same limit and the page incremented by 1.
-    pub async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<User>> {
+    pub async fn get_all_users(&self, page: u32, limit: u32) -> Result<Vec<user::Model>> {
         self.transaction(|tx| async move {
             Ok(user::Entity::find()
                 .order_by_asc(user::Column::GithubLogin)
@@ -204,44 +178,5 @@ impl Database {
             Ok(())
         })
         .await
-    }
-
-    /// Find users where github_login ILIKE name_query.
-    pub async fn fuzzy_search_users(&self, name_query: &str, limit: u32) -> Result<Vec<User>> {
-        self.transaction(|tx| async {
-            let tx = tx;
-            let like_string = Self::fuzzy_like_string(name_query);
-            let query = "
-                SELECT users.*
-                FROM users
-                WHERE github_login ILIKE $1
-                ORDER BY github_login <-> $2
-                LIMIT $3
-            ";
-
-            Ok(user::Entity::find()
-                .from_raw_sql(Statement::from_sql_and_values(
-                    self.pool.get_database_backend(),
-                    query,
-                    vec![like_string.into(), name_query.into(), limit.into()],
-                ))
-                .all(&*tx)
-                .await?)
-        })
-        .await
-    }
-
-    /// fuzzy_like_string creates a string for matching in-order using fuzzy_search_users.
-    /// e.g. "cir" would become "%c%i%r%"
-    pub fn fuzzy_like_string(string: &str) -> String {
-        let mut result = String::with_capacity(string.len() * 2 + 1);
-        for c in string.chars() {
-            if c.is_alphanumeric() {
-                result.push('%');
-                result.push(c);
-            }
-        }
-        result.push('%');
-        result
     }
 }

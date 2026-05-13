@@ -4,6 +4,7 @@ use crate::tasks::workflows::{
     runners,
     steps::{
         self, FluentBuilder, NamedJob, RepositoryTarget, TokenPermissions, ZippyGitIdentity, named,
+        use_clang,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
@@ -71,9 +72,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn run_cargo_fix() -> Step<Run> {
-        named::bash(
-            "cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged",
-        )
+        named::bash("cargo fix --workspace --allow-dirty --allow-staged")
     }
 
     fn run_cargo_machete_fix() -> Step<Run> {
@@ -81,9 +80,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn run_clippy_fix() -> Step<Run> {
-        named::bash(
-            "cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged",
-        )
+        named::bash("cargo clippy --workspace --fix --allow-dirty --allow-staged")
     }
 
     fn run_prettier_fix() -> Step<Run> {
@@ -103,7 +100,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
         .id("create-patch")
     }
 
-    named::job(
+    named::job(use_clang(
         Job::default()
             .runs_on(runners::LINUX_DEFAULT)
             .outputs([(
@@ -125,7 +122,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(create_patch())
             .add_step(upload_patch_artifact())
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
-    )
+    ))
 }
 
 fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {

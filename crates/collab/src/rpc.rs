@@ -1,12 +1,13 @@
 mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
+use crate::entities::User;
 use crate::{
     AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId, User,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId,
         UserId,
     },
     executor::Executor,
@@ -38,8 +39,10 @@ use tracing::Span;
 use util::paths::PathStyle;
 
 use futures::{
-    FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
-    stream::FuturesUnordered,
+    FutureExt, SinkExt, StreamExt, TryStreamExt,
+    channel::oneshot,
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
 };
 use prometheus::{IntGauge, register_int_gauge};
 use rpc::{
@@ -127,6 +130,30 @@ impl<R: RequestMessage> Response<R> {
     }
 }
 
+struct StreamResponse<R> {
+    peer: Arc<Peer>,
+    receipt: Receipt<R>,
+    ended: Arc<AtomicBool>,
+}
+
+impl<R: RequestMessage> StreamResponse<R> {
+    fn send(&self, payload: R::Response) -> Result<()> {
+        self.peer.respond(self.receipt, payload)?;
+        Ok(())
+    }
+
+    fn end(self) -> Result<()> {
+        // Always mark `ended` even if sending `EndStream` on the wire fails, so that
+        // `ended` reflects "the handler intended to end the stream". The caller still
+        // gets the underlying error and routes through the Err arm of the handler,
+        // which sends `respond_with_error` to terminate the client-side stream.
+        let result = self.peer.end_stream(self.receipt);
+        self.ended.store(true, SeqCst);
+        result?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Principal {
     User(User),
@@ -176,6 +203,36 @@ impl MessageContext {
             })
             .inspect_err(|_| tracing::error!("error forwarding request"))
             .inspect_ok(|_| tracing::info!("finished forwarding request"))
+    }
+
+    pub fn forward_request_stream<T: RequestMessage>(
+        &self,
+        receiver_id: ConnectionId,
+        request: T,
+    ) -> impl Future<Output = anyhow::Result<BoxStream<'static, anyhow::Result<T::Response>>>> {
+        let request_start_time = Instant::now();
+        let span = self.span.clone();
+        let peer = self.peer.clone();
+        let envelope = request.into_envelope(0, None, Some(self.connection_id.into()));
+        async move {
+            tracing::info!("start forwarding stream request");
+            let stream = peer
+                .request_stream_dynamic(receiver_id, envelope, T::NAME)
+                .await;
+            span.record(
+                HOST_WAITING_MS,
+                request_start_time.elapsed().as_micros() as f64 / 1000.0,
+            );
+            let stream = stream
+                .inspect_err(|_| tracing::error!("error forwarding stream request"))?
+                .map(|response| {
+                    T::Response::from_envelope(response?)
+                        .context("received response of the wrong type")
+                })
+                .boxed();
+            tracing::info!("finished opening forwarded stream request");
+            Ok(stream)
+        }
     }
 }
 
@@ -437,6 +494,12 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
             .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
+            .add_request_stream_handler(
+                forward_read_only_project_stream_request::<proto::GetInitialGraphData>,
+            )
+            .add_request_stream_handler(
+                forward_read_only_project_stream_request::<proto::SearchCommits>,
+            )
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)
@@ -721,7 +784,54 @@ impl Server {
                         if responded.load(std::sync::atomic::Ordering::SeqCst) {
                             Ok(())
                         } else {
-                            Err(anyhow!("handler did not send a response"))?
+                            let error = anyhow!("handler did not send a response");
+                            let proto_err =
+                                ErrorCode::Internal.message(format!("{error}")).to_proto();
+                            peer.respond_with_error(receipt, proto_err)?;
+                            Err(error)?
+                        }
+                    }
+                    Err(error) => {
+                        let proto_err = match &error {
+                            Error::Internal(err) => err.to_proto(),
+                            _ => ErrorCode::Internal.message(format!("{error}")).to_proto(),
+                        };
+                        peer.respond_with_error(receipt, proto_err)?;
+                        Err(error)
+                    }
+                }
+            }
+        })
+    }
+
+    fn add_request_stream_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
+    where
+        F: 'static + Send + Sync + Fn(M, StreamResponse<M>, MessageContext) -> Fut,
+        Fut: Send + Future<Output = Result<()>>,
+        M: RequestMessage,
+    {
+        let handler = Arc::new(handler);
+        self.add_handler(move |envelope, session| {
+            let receipt = envelope.receipt();
+            let handler = handler.clone();
+            async move {
+                let peer = session.peer.clone();
+                let ended = Arc::new(AtomicBool::default());
+                let response = StreamResponse {
+                    peer: peer.clone(),
+                    ended: ended.clone(),
+                    receipt,
+                };
+                match (handler)(envelope.payload, response, session).await {
+                    Ok(()) => {
+                        if ended.load(std::sync::atomic::Ordering::SeqCst) {
+                            Ok(())
+                        } else {
+                            let error = anyhow!("handler did not end a response stream");
+                            let proto_err =
+                                ErrorCode::Internal.message(format!("{error}")).to_proto();
+                            peer.respond_with_error(receipt, proto_err)?;
+                            Err(error)?
                         }
                     }
                     Err(error) => {
@@ -945,10 +1055,6 @@ impl Server {
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
-                }
-
-                if should_auto_subscribe_to_channels(&zed_version) {
-                    subscribe_user_to_channels(user.id, session).await?;
                 }
 
                 if let Some(incoming_call) =
@@ -2259,6 +2365,32 @@ where
     Ok(())
 }
 
+/// forward a project stream request to the host. These requests should be read only
+/// as guests are allowed to send them.
+async fn forward_read_only_project_stream_request<T>(
+    request: T,
+    response: StreamResponse<T>,
+    session: MessageContext,
+) -> Result<()>
+where
+    T: EntityMessage + RequestMessage,
+{
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_read_only_project_request(project_id, session.connection_id)
+        .await?;
+    let mut stream = session
+        .forward_request_stream(host_connection_id, request)
+        .await?;
+    while let Some(payload) = stream.next().await {
+        response.send(payload?)?;
+    }
+    response.end()?;
+    Ok(())
+}
+
 /// forward a project request to the host. These requests are disallowed
 /// for guests.
 async fn forward_mutating_project_request<T>(
@@ -2544,10 +2676,11 @@ async fn get_users(
         .map(UserId::from_proto)
         .collect();
     let users = session
-        .db()
-        .await
+        .app_state
+        .user_service
         .get_users_by_ids(user_ids)
-        .await?
+        .await?;
+    let users = users
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),
@@ -2570,13 +2703,19 @@ async fn fuzzy_search_users(
     let users = match query.len() {
         0 => vec![],
         1 | 2 => session
-            .db()
-            .await
+            .app_state
+            .user_service
             .get_user_by_github_login(&query)
             .await?
             .into_iter()
             .collect(),
-        _ => session.db().await.fuzzy_search_users(&query, 10).await?,
+        _ => {
+            session
+                .app_state
+                .user_service
+                .fuzzy_search_users(&query, 10)
+                .await?
+        }
     };
     let users = users
         .into_iter()
@@ -2746,10 +2885,6 @@ async fn remove_contact(
 
     response.send(proto::Ack {})?;
     Ok(())
-}
-
-fn should_auto_subscribe_to_channels(version: &ZedVersion) -> bool {
-    version.0.minor < 139
 }
 
 async fn subscribe_to_channels(
@@ -3167,9 +3302,16 @@ async fn get_channel_members(
     } else {
         request.limit
     };
-    let (members, users) = db
-        .get_channel_participant_details(channel_id, &request.query, limit, session.user_id())
+
+    let channel = db.get_channel(channel_id, session.user_id()).await?;
+
+    let (members, users) = session
+        .app_state
+        .user_service
+        .search_channel_members(&channel, &request.query, limit as u32)
         .await?;
+    let users = users.into_iter().map(proto::User::from).collect();
+
     response.send(proto::GetChannelMembersResponse { members, users })?;
     Ok(())
 }
@@ -4076,6 +4218,20 @@ where
                 tracing::error!("{:?}", error);
                 None
             }
+        }
+    }
+}
+
+impl From<User> for proto::User {
+    fn from(user: User) -> Self {
+        Self {
+            id: user.id.to_proto(),
+            avatar_url: format!(
+                "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
+                user.github_user_id
+            ),
+            github_login: user.github_login,
+            name: user.name,
         }
     }
 }

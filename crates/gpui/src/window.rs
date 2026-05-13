@@ -3,21 +3,22 @@ use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -601,6 +602,22 @@ impl HitboxId {
         if window.last_input_was_keyboard() {
             return false;
         }
+        self.hit_test(window)
+    }
+
+    /// Checks if the hitbox with this ID is currently hovered, regardless of the last
+    /// input modality used.
+    ///
+    /// See [`HitboxId::is_hovered`] for more details.
+    pub(crate) fn is_hovered_ignoring_last_input(self, window: &Window) -> bool {
+        // If this hitbox has captured the pointer, it's always considered hovered
+        if window.captured_hitbox == Some(self) {
+            return true;
+        }
+        self.hit_test(window)
+    }
+
+    fn hit_test(self, window: &Window) -> bool {
         let hit_test = &window.mouse_hit_test;
         for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
             if self == *id {
@@ -877,9 +894,11 @@ impl Frame {
             .rev()
             .fold_while(None, |style, request| match request.hitbox_id {
                 None => Done(Some(request.style)),
-                Some(hitbox_id) => Continue(
-                    style.or_else(|| hitbox_id.is_hovered(window).then_some(request.style)),
-                ),
+                Some(hitbox_id) => Continue(style.or_else(|| {
+                    hitbox_id
+                        .is_hovered_ignoring_last_input(window)
+                        .then_some(request.style)
+                })),
             })
             .into_inner()
     }
@@ -1383,6 +1402,11 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                if request_frame_options.force_render {
+                                    // Bypass cached view reuse so we don't replay stale
+                                    // atlas tile references after a GPU device recovery.
+                                    window.refresh();
+                                }
                                 let arena_clear_needed = window.draw(cx);
                                 window.present();
                                 arena_clear_needed.clear();
@@ -3573,6 +3597,7 @@ impl Window {
         );
         let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
         let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
+        let dilation = self.text_system().glyph_dilation_for_color(color);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -3581,6 +3606,7 @@ impl Window {
             scale_factor,
             is_emoji: false,
             subpixel_rendering,
+            dilation,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -3670,6 +3696,7 @@ impl Window {
             scale_factor,
             is_emoji: true,
             subpixel_rendering: false,
+            dilation: 0,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -4448,6 +4475,14 @@ impl Window {
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.pending_modifier.saw_keystroke = true;
             keystroke = Some(key_down_event.keystroke.clone());
+            if key_down_event.keystroke.key_char.is_some()
+                && matches!(
+                    cx.cursor_hide_mode,
+                    CursorHideMode::OnTyping | CursorHideMode::OnTypingAndAction
+                )
+            {
+                cx.platform.hide_cursor_until_mouse_moves();
+            }
         }
 
         let Some(keystroke) = keystroke else {
@@ -4709,6 +4744,22 @@ impl Window {
     }
 
     fn dispatch_action_on_node(
+        &mut self,
+        node_id: DispatchNodeId,
+        action: &dyn Action,
+        cx: &mut App,
+    ) {
+        self.dispatch_action_on_node_inner(node_id, action, cx);
+
+        if !cx.propagate_event
+            && cx.cursor_hide_mode == CursorHideMode::OnTypingAndAction
+            && self.last_input_was_keyboard()
+        {
+            cx.platform.hide_cursor_until_mouse_moves();
+        }
+    }
+
+    fn dispatch_action_on_node_inner(
         &mut self,
         node_id: DispatchNodeId,
         action: &dyn Action,
@@ -5713,7 +5764,7 @@ impl From<Arc<std::path::Path>> for ElementId {
 
 impl From<&'static str> for ElementId {
     fn from(name: &'static str) -> Self {
-        ElementId::Name(name.into())
+        ElementId::Name(SharedString::new_static(name))
     }
 }
 
@@ -5725,13 +5776,13 @@ impl<'a> From<&'a FocusHandle> for ElementId {
 
 impl From<(&'static str, EntityId)> for ElementId {
     fn from((name, id): (&'static str, EntityId)) -> Self {
-        ElementId::NamedInteger(name.into(), id.as_u64())
+        ElementId::NamedInteger(SharedString::new_static(name), id.as_u64())
     }
 }
 
 impl From<(&'static str, usize)> for ElementId {
     fn from((name, id): (&'static str, usize)) -> Self {
-        ElementId::NamedInteger(name.into(), id as u64)
+        ElementId::NamedInteger(SharedString::new_static(name), id as u64)
     }
 }
 
@@ -5743,7 +5794,7 @@ impl From<(SharedString, usize)> for ElementId {
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
-        ElementId::NamedInteger(name.into(), id)
+        ElementId::NamedInteger(SharedString::new_static(name), id)
     }
 }
 
@@ -5755,7 +5806,7 @@ impl From<Uuid> for ElementId {
 
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
-        ElementId::NamedInteger(name.into(), id.into())
+        ElementId::NamedInteger(SharedString::new_static(name), u64::from(id))
     }
 }
 

@@ -18,6 +18,7 @@ use smol::lock::RwLock;
 use std::{
     borrow::Cow,
     ffi::OsString,
+    future::Future,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
@@ -669,76 +670,80 @@ impl LspInstaller for TypeScriptLspAdapter {
         })
     }
 
-    async fn check_if_version_installed(
+    fn check_if_version_installed(
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
+        let typescript_version = version.typescript_version.clone();
+        let server_version = version.server_version.clone();
+        let container_dir = container_dir.clone();
 
-        if self
-            .node
-            .should_install_npm_package(
-                Self::PACKAGE_NAME,
-                &server_path,
-                container_dir,
-                VersionStrategy::Latest(&version.typescript_version),
-            )
-            .await
-        {
-            return None;
+        async move {
+            let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+
+            if node
+                .should_install_npm_package(
+                    Self::PACKAGE_NAME,
+                    &server_path,
+                    &container_dir,
+                    VersionStrategy::Latest(&typescript_version),
+                )
+                .await
+            {
+                return None;
+            }
+
+            if node
+                .should_install_npm_package(
+                    Self::SERVER_PACKAGE_NAME,
+                    &server_path,
+                    &container_dir,
+                    VersionStrategy::Latest(&server_version),
+                )
+                .await
+            {
+                return None;
+            }
+
+            Some(LanguageServerBinary {
+                path: node.binary_path().await.ok()?,
+                env: None,
+                arguments: typescript_server_binary_arguments(&server_path),
+            })
         }
-
-        if self
-            .node
-            .should_install_npm_package(
-                Self::SERVER_PACKAGE_NAME,
-                &server_path,
-                container_dir,
-                VersionStrategy::Latest(&version.server_version),
-            )
-            .await
-        {
-            return None;
-        }
-
-        Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
-            env: None,
-            arguments: typescript_server_binary_arguments(&server_path),
-        })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
 
-        self.node
-            .npm_install_packages(
+        async move {
+            let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+            let typescript_version = latest_version.typescript_version.to_string();
+            let server_version = latest_version.server_version.to_string();
+
+            node.npm_install_packages(
                 &container_dir,
                 &[
-                    (
-                        Self::PACKAGE_NAME,
-                        &latest_version.typescript_version.to_string(),
-                    ),
-                    (
-                        Self::SERVER_PACKAGE_NAME,
-                        &latest_version.server_version.to_string(),
-                    ),
+                    (Self::PACKAGE_NAME, typescript_version.as_str()),
+                    (Self::SERVER_PACKAGE_NAME, server_version.as_str()),
                 ],
             )
             .await?;
 
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: typescript_server_binary_arguments(&server_path),
-        })
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                env: None,
+                arguments: typescript_server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn cached_server_binary(

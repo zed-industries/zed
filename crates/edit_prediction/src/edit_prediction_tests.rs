@@ -2241,17 +2241,46 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
     let search_range = snapshot.offset_to_point(search_ranges[0].start)
         ..snapshot.offset_to_point(search_ranges[0].end);
 
-    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(&snapshot, search_range, 100);
+    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(&snapshot, search_range, 5, 0);
 
     assert_eq!(
         active_buffer_diagnostics,
         vec![zeta_prompt::ActiveBufferDiagnostic {
             severity: Some(1),
             message: "second error".to_string(),
-            snippet: text,
+            snippet: "    let second_value = 2;".to_string(),
             snippet_buffer_row_range: 5..5,
-            diagnostic_range_in_snippet: 61..73,
+            diagnostic_range_in_snippet: 8..20,
         }]
+    );
+
+    let active_buffer_diagnostics =
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(0, 0)..snapshot.max_point(), 5, 100);
+    assert_eq!(
+        active_buffer_diagnostics,
+        vec![
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(1),
+                message: "second error".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 5..5,
+                diagnostic_range_in_snippet: 0..0,
+            },
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(2),
+                message: "first warning".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 1..1,
+                diagnostic_range_in_snippet: 0..0,
+            },
+            zeta_prompt::ActiveBufferDiagnostic {
+                severity: Some(4),
+                message: "third hint".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 10..10,
+                diagnostic_range_in_snippet: 0..0,
+            },
+        ]
     );
 
     let buffer = cx.new(|cx| {
@@ -2313,7 +2342,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
     let active_buffer_diagnostics =
-        zeta::active_buffer_diagnostics(&snapshot, Point::new(2, 0)..Point::new(4, 0), 100);
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(2, 0)..Point::new(4, 0), 3, 0);
 
     assert_eq!(
         active_buffer_diagnostics
@@ -2330,19 +2359,100 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
             (
                 Some(2),
                 "row two".to_string(),
-                "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                "three".to_string(),
                 2..2,
-                8..13,
+                0..5,
             ),
             (
                 Some(3),
                 "row four".to_string(),
-                "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                "five".to_string(),
                 4..4,
-                19..23,
+                0..4,
             ),
         ]
     );
+}
+
+#[gpui::test]
+fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
+    let text = (0..25)
+        .map(|row| format!("line {row}\n"))
+        .collect::<String>();
+    let buffer = cx.new(|cx| Buffer::local(&text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let snapshot = buffer.snapshot();
+        let diagnostics = DiagnosticSet::new(
+            (0..25)
+                .map(|row| DiagnosticEntry {
+                    range: text::PointUtf16::new(row, 0)..text::PointUtf16::new(row, 4),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: format!("row {row}"),
+                        group_id: row as usize,
+                        is_primary: true,
+                        source_kind: language::DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
+                    },
+                })
+                .collect::<Vec<_>>(),
+            &snapshot,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let active_buffer_diagnostics =
+        zeta::active_buffer_diagnostics(&snapshot, Point::new(0, 0)..Point::new(25, 0), 12, 0);
+
+    assert_eq!(active_buffer_diagnostics.len(), 20);
+    assert!(
+        active_buffer_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "row 12")
+    );
+    assert!(
+        active_buffer_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.message != "row 0" && diagnostic.message != "row 24")
+    );
+
+    let text = (0..300)
+        .map(|row| format!("line {row} has some diagnostic context\n"))
+        .collect::<String>();
+    let buffer = cx.new(|cx| Buffer::local(&text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let snapshot = buffer.snapshot();
+        let diagnostics = DiagnosticSet::new(
+            vec![DiagnosticEntry {
+                range: text::PointUtf16::new(150, 0)..text::PointUtf16::new(150, 4),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "long snippet".to_string(),
+                    group_id: 1,
+                    is_primary: true,
+                    source_kind: language::DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
+                },
+            }],
+            &snapshot,
+        );
+        buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+    });
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let active_buffer_diagnostics = zeta::active_buffer_diagnostics(
+        &snapshot,
+        Point::new(100, 0)..Point::new(200, 0),
+        150,
+        2000,
+    );
+
+    assert_eq!(active_buffer_diagnostics.len(), 1);
+    assert!(active_buffer_diagnostics[0].snippet.len() <= 512 * 3 + 2);
+    assert!(active_buffer_diagnostics[0].snippet.len() < text.len());
 }
 
 // Generate a model response that would apply the given diff to the active file.
@@ -2356,6 +2466,7 @@ fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> Predi
         request_id: Uuid::new_v4().to_string(),
         editable_range,
         output: new_excerpt,
+        cursor_offset: None,
         model_version: None,
     }
 }
@@ -2365,6 +2476,7 @@ fn empty_response() -> PredictEditsV3Response {
         request_id: Uuid::new_v4().to_string(),
         editable_range: 0..0,
         output: String::new(),
+        cursor_offset: None,
         model_version: None,
     }
 }
@@ -2713,6 +2825,7 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
         output: "hello world\n".to_string(),
         editable_range: 0..excerpt_length,
         model_version: None,
+        cursor_offset: None,
     };
     respond_tx.send(response).unwrap();
 
@@ -2771,9 +2884,10 @@ async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestApp
     respond_tx
         .send(PredictEditsV3Response {
             request_id: Uuid::new_v4().to_string(),
-            output: "hello<|user_cursor|> world".to_string(),
+            output: "hello world".to_string(),
             editable_range: 0..excerpt_length,
             model_version: None,
+            cursor_offset: Some(5),
         })
         .unwrap();
 
@@ -2878,6 +2992,7 @@ async fn make_test_ep_store(
                                     editable_range: 0..req.input.cursor_excerpt.len(),
                                     output: completion_response.lock().clone(),
                                     model_version: None,
+                                    cursor_offset: None,
                                 })
                                 .unwrap()
                                 .into(),
@@ -3310,8 +3425,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     // Let the worker process the channel message before we start advancing.
     cx.run_until_parked();
 
-    let mut region_a_edit_offset = 5;
-    for _ in 0..3 {
+    for region_a_edit_offset in (5..).take(3) {
         // Edit inside region A (not at the boundary) so `last_edit_at` is
         // updated before the worker's next wake.
         buffer.update(cx, |buffer, cx| {
@@ -3321,7 +3435,6 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
                 cx,
             );
         });
-        region_a_edit_offset += 1;
         cx.run_until_parked();
 
         cx.executor()

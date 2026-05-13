@@ -14,7 +14,7 @@ use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, WeakEntity, Window, actions, rems,
+    StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use open_path_prompt::{
     OpenPathPrompt,
@@ -612,10 +612,7 @@ impl Matches {
         // We build a sorted Vec<Match>, eliminating duplicate search matches.
         // Search matches with the same paths should have equal `ProjectPanelOrdMatch`, so we should
         // not have any duplicates after building the final list.
-        for new_match in new_history_matches
-            .into_values()
-            .chain(new_search_matches.into_iter())
-        {
+        for new_match in new_history_matches.into_values().chain(new_search_matches) {
             match self.position(&new_match, currently_opened) {
                 Ok(_duplicate) => continue,
                 Err(i) => {

@@ -47,7 +47,14 @@ pub async fn run_format_prompt(
             let (editable_range, context_range) =
                 resolved_excerpt_ranges_for_format(prompt_inputs, zeta_format);
 
-            let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
+            let include_diagnostics = matches!(zeta_format, ZetaFormat::V0420Diagnostics);
+
+            let prompt = TeacherPrompt::format_prompt(
+                example,
+                editable_range,
+                context_range,
+                include_diagnostics,
+            );
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output: None,
@@ -64,8 +71,14 @@ pub async fn run_format_prompt(
             let (editable_range, context_range) =
                 resolved_excerpt_ranges_for_format(prompt_inputs, zeta_format);
 
-            let prompt =
-                TeacherMultiRegionPrompt::format_prompt(example, editable_range, context_range);
+            let include_diagnostics = matches!(zeta_format, ZetaFormat::V0420Diagnostics);
+
+            let prompt = TeacherMultiRegionPrompt::format_prompt(
+                example,
+                editable_range,
+                context_range,
+                include_diagnostics,
+            );
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
                 expected_output: None,
@@ -128,15 +141,20 @@ impl TeacherPrompt {
         example: &Example,
         editable_range: Range<usize>,
         context_range: Range<usize>,
+        include_diagnostics: bool,
     ) -> String {
         let edit_history = Self::format_edit_history(&example.spec.edit_history);
         let context = Self::format_context(example);
         let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
+        let diagnostics = include_diagnostics
+            .then(|| Self::format_diagnostics(example))
+            .map(|diagnostics| format!("# 4. Diagnostics\n\n{diagnostics}"));
 
         let prompt_template = crate::prompt_assets::get_prompt("teacher.md");
         let prompt = prompt_template
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
+            .replace("{{diagnostics}}", diagnostics.as_deref().unwrap_or(""))
             .replace("{{cursor_excerpt}}", &cursor_excerpt);
 
         prompt
@@ -294,6 +312,27 @@ impl TeacherPrompt {
         let region = &text[start..end];
         Ok(region.strip_suffix('\n').unwrap_or(region).to_string())
     }
+
+    fn format_diagnostics(example: &Example) -> String {
+        example
+            .prompt_inputs
+            .as_ref()
+            .map(|prompt_inputs| {
+                prompt_inputs
+                    .active_buffer_diagnostics
+                    .iter()
+                    .map(|diagnostic| {
+                        format!(
+                            "*{}*:\n```\n{}\n```\n",
+                            &diagnostic.message, &diagnostic.snippet
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .filter(|m| !m.is_empty())
+            .unwrap_or("No Diagnostics".to_string())
+    }
 }
 
 pub struct TeacherMultiRegionPrompt;
@@ -309,15 +348,20 @@ impl TeacherMultiRegionPrompt {
         example: &Example,
         editable_range: Range<usize>,
         context_range: Range<usize>,
+        include_diagnostics: bool,
     ) -> String {
         let edit_history = Self::format_edit_history(&example.spec.edit_history);
         let context = Self::format_context(example);
         let cursor_excerpt = Self::format_cursor_excerpt(example, editable_range, context_range);
+        let diagnostics = include_diagnostics
+            .then(|| TeacherPrompt::format_diagnostics(example))
+            .map(|diagnostics| format!("# 4. Diagnostics\n\n{diagnostics}"));
 
         let prompt_template = crate::prompt_assets::get_prompt("teacher_multi_region.md");
         let prompt = prompt_template
             .replace("{{context}}", &context)
             .replace("{{edit_history}}", &edit_history)
+            .replace("{{diagnostics}}", diagnostics.as_deref().unwrap_or(""))
             .replace("{{cursor_excerpt}}", &cursor_excerpt);
 
         prompt
@@ -900,6 +944,7 @@ mod tests {
             },
             editable_range,
             context_range,
+            false,
         );
 
         assert!(prompt.contains(TeacherPrompt::EDITABLE_REGION_START));

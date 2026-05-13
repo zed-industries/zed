@@ -49,7 +49,7 @@ Each thread can use a different agent, so you can run Zed's built-in agent in on
 
 ## Multiple Projects {#multiple-projects}
 
-The Threads Sidebar can hold multiple projects at once. Each project gets its own group with its own threads and conversation history.
+The Threads Sidebar can hold multiple projects at once. Each project gets its own group with its own threads and conversation history. This mirrors how Zed handles projects in general — see [Windows & Projects](../windows-and-projects.md) for more on how projects open and how to manage them.
 
 To add another project to the sidebar, click the **Add Project** button (open-folder icon) in the sidebar bottom bar. The popover that opens lists your recent projects and also provides **Add Local Folders** and **Add Remote Folder** buttons at the bottom.
 
@@ -63,7 +63,7 @@ A single project can contain multiple folders (a multi-root folder project). Age
 
 ## Worktree Isolation {#worktree-isolation}
 
-If two threads might edit the same files, start one in a new Git worktree to give it an isolated checkout.
+If two threads might edit the same files, start one in a new [Git worktree](../git.md#git-worktrees) to give it an isolated checkout.
 
 Worktrees are managed from the title bar. Click the worktree picker (to the right of the project picker) to switch between existing worktrees or create a new one. New worktrees are created in a detached HEAD state, so you won't accidentally share a branch between worktrees.
 

@@ -20,7 +20,7 @@ use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::{any::Any, cell::RefCell, collections::VecDeque};
@@ -194,6 +194,34 @@ impl AcpDebugLog {
         for sender in &state.subscribers {
             sender.try_send(message.clone()).log_err();
         }
+    }
+
+    fn trailing_stderr(&self) -> Option<String> {
+        let state = self.state.lock().ok()?;
+        let mut lines = state
+            .messages
+            .iter()
+            .rev()
+            .take_while(|message| matches!(&message.message, AcpDebugMessageContent::Stderr { .. }))
+            .filter_map(|message| match &message.message {
+                AcpDebugMessageContent::Stderr { line } if !line.is_empty() => Some(line.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if lines.is_empty() {
+            return None;
+        }
+
+        lines.reverse();
+        Some(lines.join("\n"))
+    }
+}
+
+fn exited_load_error_with_stderr(status: ExitStatus, debug_log: &AcpDebugLog) -> LoadError {
+    LoadError::Exited {
+        status,
+        stderr: debug_log.trailing_stderr().map(SharedString::from),
     }
 }
 
@@ -385,6 +413,7 @@ fn enqueue_notification<Notif>(
 pub struct AcpConnection {
     id: AgentId,
     telemetry_id: SharedString,
+    agent_version: Option<SharedString>,
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_sessions: Rc<RefCell<HashMap<acp::SessionId, PendingAcpSession>>>,
@@ -714,6 +743,7 @@ impl AcpConnection {
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
+        let debug_log = AcpDebugLog::default();
 
         let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
             (
@@ -729,7 +759,6 @@ impl AcpConnection {
         // Set up the foreground dispatch channel for bridging Send handler
         // closures to the !Send foreground thread.
         let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
-        let debug_log = AcpDebugLog::default();
 
         let incoming_lines = futures::io::BufReader::new(stdout).lines();
         let tapped_incoming = incoming_lines.inspect({
@@ -756,37 +785,6 @@ impl AcpConnection {
 
         let transport = Lines::new(tapped_outgoing, tapped_incoming);
 
-        // `connect_client_future` installs the production handler set and
-        // hands us back both the connection-future (to run on a background
-        // executor) and a oneshot receiver that produces the
-        // `ConnectionTo<Agent>` once the transport handshake is ready.
-        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let connection_future =
-            connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
-        let io_task = cx.background_spawn(async move {
-            if let Err(err) = connection_future.await {
-                log::error!("ACP connection error: {err}");
-            }
-        });
-
-        let connection: ConnectionTo<Agent> = connection_rx
-            .await
-            .context("Failed to receive ACP connection handle")?;
-
-        // Set up the foreground dispatch loop to process work items from handlers.
-        let dispatch_context = ClientContext {
-            sessions: sessions.clone(),
-            session_list: client_session_list.clone(),
-        };
-        let dispatch_task = cx.spawn({
-            let mut dispatch_rx = dispatch_rx;
-            async move |cx| {
-                while let Some(work) = dispatch_rx.next().await {
-                    work.run(cx, &dispatch_context);
-                }
-            }
-        });
-
         let stderr_task = cx.background_spawn({
             let debug_log = debug_log.clone();
             async move {
@@ -804,17 +802,53 @@ impl AcpConnection {
             }
         });
 
-        let wait_task = cx.spawn({
-            let sessions = sessions.clone();
-            let status_fut = child.status();
-            async move |cx| {
-                let status = status_fut.await?;
-                emit_load_error_to_all_sessions(&sessions, LoadError::Exited { status }, cx);
-                anyhow::Ok(())
+        // `connect_client_future` installs the production handler set and
+        // hands us back both the connection-future (to run on a background
+        // executor) and a oneshot receiver that produces the
+        // `ConnectionTo<Agent>` once the transport handshake is ready.
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        let connection_future =
+            connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
+        let io_task = cx.background_spawn(async move {
+            if let Err(err) = connection_future.await {
+                log::error!("ACP connection error: {err}");
             }
         });
 
-        let response = into_foreground_future(
+        let connection_rx = async move {
+            connection_rx
+                .await
+                .context("Failed to receive ACP connection handle")
+        }
+        .boxed_local();
+        let status_fut = child.status().boxed_local();
+        let (connection, status_fut) = match futures::future::select(connection_rx, status_fut)
+            .await
+        {
+            futures::future::Either::Left((connection, status_fut)) => (connection?, status_fut),
+            futures::future::Either::Right((status, _connection_rx)) => match status {
+                Ok(status) => return Err(exited_load_error_with_stderr(status, &debug_log).into()),
+                Err(err) => {
+                    return Err(anyhow!("agent server exited before initialization: {err}"));
+                }
+            },
+        };
+
+        // Set up the foreground dispatch loop to process work items from handlers.
+        let dispatch_context = ClientContext {
+            sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
+        };
+        let dispatch_task = cx.spawn({
+            let mut dispatch_rx = dispatch_rx;
+            async move |cx| {
+                while let Some(work) = dispatch_rx.next().await {
+                    work.run(cx, &dispatch_context);
+                }
+            }
+        });
+
+        let initialize_response = into_foreground_future(
             connection.send_request(
                 acp::InitializeRequest::new(acp::ProtocolVersion::V1)
                     .client_capabilities(
@@ -835,18 +869,47 @@ impl AcpConnection {
                     ),
             ),
         )
-        .await?;
+        .map(|response| response.map_err(anyhow::Error::from))
+        .boxed_local();
+        let (response, status_fut) = match futures::future::select(initialize_response, status_fut)
+            .await
+        {
+            futures::future::Either::Left((response, status_fut)) => (response?, status_fut),
+            futures::future::Either::Right((status, _initialize_response)) => match status {
+                Ok(status) => return Err(exited_load_error_with_stderr(status, &debug_log).into()),
+                Err(err) => {
+                    return Err(anyhow!("agent server exited before initialization: {err}"));
+                }
+            },
+        };
 
         if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
             return Err(UnsupportedVersion.into());
         }
 
-        let telemetry_id = response
-            .agent_info
+        let wait_task = cx.spawn({
+            let sessions = sessions.clone();
+            let debug_log = debug_log.clone();
+            async move |cx| {
+                let status = status_fut.await?;
+                emit_load_error_to_all_sessions(
+                    &sessions,
+                    exited_load_error_with_stderr(status, &debug_log),
+                    cx,
+                );
+                anyhow::Ok(())
+            }
+        });
+
+        let agent_info = response.agent_info;
+        let telemetry_id = agent_info
+            .as_ref()
             // Use the one the agent provides if we have one
-            .map(|info| info.name.into())
+            .map(|info| SharedString::from(info.name.clone()))
             // Otherwise, just use the name
             .unwrap_or_else(|| agent_id.0.clone());
+        let agent_version = agent_info
+            .and_then(|info| (!info.version.is_empty()).then(|| SharedString::from(info.version)));
 
         let session_list = if response
             .agent_capabilities
@@ -886,6 +949,7 @@ impl AcpConnection {
             agent_server_store,
             connection,
             telemetry_id,
+            agent_version,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
@@ -919,6 +983,7 @@ impl AcpConnection {
         Self {
             id: AgentId::new("test"),
             telemetry_id: "test".into(),
+            agent_version: None,
             connection,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
@@ -1258,6 +1323,10 @@ impl AgentConnection for AcpConnection {
 
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
+    }
+
+    fn agent_version(&self) -> Option<SharedString> {
+        self.agent_version.clone()
     }
 
     fn new_session(
@@ -1881,7 +1950,10 @@ pub mod test_support {
                     while let Ok(status) = exit_rx.recv().await {
                         emit_load_error_to_all_sessions(
                             &connection.sessions,
-                            LoadError::Exited { status },
+                            LoadError::Exited {
+                                status,
+                                stderr: None,
+                            },
                             cx,
                         );
                     }
@@ -1920,6 +1992,10 @@ pub mod test_support {
 
         fn telemetry_id(&self) -> SharedString {
             self.inner.telemetry_id()
+        }
+
+        fn agent_version(&self) -> Option<SharedString> {
+            self.inner.agent_version()
         }
 
         fn new_session(
@@ -2371,6 +2447,85 @@ mod tests {
             ])
         );
         assert_eq!(task.label, "Login");
+    }
+
+    #[test]
+    fn trailing_stderr_only_uses_final_stderr_block() {
+        let debug_log = AcpDebugLog::default();
+        debug_log.record_line(AcpDebugMessageDirection::Stderr, "stale stderr");
+        debug_log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"method":"initialized"}"#,
+        );
+
+        assert_eq!(debug_log.trailing_stderr(), None);
+
+        debug_log.record_line(AcpDebugMessageDirection::Stderr, "recent stderr");
+        assert_eq!(
+            debug_log.trailing_stderr().as_deref(),
+            Some("recent stderr")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn startup_returns_error_when_agent_exits_before_initialization(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project = project::Project::example([temp_dir.path()], &mut cx.to_async()).await;
+        let agent_server_store =
+            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+        let command = AgentServerCommand {
+            path: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                r#"printf '%s\n' 'npm error code ETARGET' 'npm error notarget No matching version found for @agentclientprotocol/claude-agent-acp@0.32.0 with a date before 4/28/2026, 12:11:38 PM.' >&2; exit 1"#.into(),
+            ],
+            env: None,
+        };
+
+        let mut async_cx = cx.to_async();
+        let startup = AcpConnection::stdio(
+            AgentId::new("test-agent"),
+            project,
+            command,
+            agent_server_store,
+            None,
+            None,
+            HashMap::default(),
+            &mut async_cx,
+        )
+        .fuse();
+        let timeout = cx
+            .background_executor
+            .timer(std::time::Duration::from_secs(5))
+            .fuse();
+        futures::pin_mut!(startup, timeout);
+
+        let result = futures::select! {
+            result = startup => result,
+            _ = timeout => panic!("timed out waiting for failed ACP startup"),
+        };
+
+        let Err(error) = result else {
+            panic!("expected ACP startup to fail");
+        };
+        let load_error = error
+            .downcast::<LoadError>()
+            .expect("startup failure should preserve the typed load error");
+        match load_error {
+            LoadError::Exited { status, .. } => {
+                assert!(!status.success(), "expected non-zero exit status");
+            }
+            error => panic!("expected exited load error, got: {error:?}"),
+        };
     }
 
     async fn connect_fake_agent(
@@ -3204,6 +3359,7 @@ fn handle_request_permission(
                     thread.request_tool_call_authorization(
                         args.tool_call,
                         acp_thread::PermissionOptions::Flat(args.options),
+                        acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
                     )
                 })

@@ -131,6 +131,7 @@ struct Notification<'a, T> {
     jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
+    #[serde(skip_serializing_if = "is_null_value")]
     params: T,
 }
 
@@ -472,6 +473,13 @@ impl Client {
         .unwrap();
         self.outbound_tx.try_send(notification)?;
         Ok(())
+    }
+
+    /// Notify the underlying transport of the negotiated MCP protocol version
+    /// so it can stamp subsequent requests (e.g. HTTP's `MCP-Protocol-Version`
+    /// header required from 2025-06-18 onward).
+    pub(crate) fn set_protocol_version(&self, version: &str) {
+        self.transport.set_protocol_version(version);
     }
 
     #[must_use]
