@@ -9,84 +9,10 @@ on:
     tags:
     - nightly
   schedule:
-  - cron: 0 * * * *
+  - cron: 0 */6 * * *
 jobs:
-  check_for_changes:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
-    permissions:
-      actions: write
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-      with:
-        clean: false
-        fetch-tags: true
-    - id: check
-      name: release_nightly::check_for_changes::check_nightly_tag
-      run: |
-        if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            # Check if a scheduled run is already building the same commit
-            SCHEDULED_SHA=$(gh run list \
-                --workflow release_nightly.yml \
-                --status in_progress \
-                --event schedule \
-                --json databaseId,headSha \
-                -q '.[0].headSha' || true)
-
-            if [ "$SCHEDULED_SHA" = "$GITHUB_SHA" ]; then
-                echo "Scheduled run is already building this commit ($GITHUB_SHA), skipping push event"
-                echo "bump_nightly=false" >> "$GITHUB_OUTPUT"
-                exit 0
-            fi
-
-            # Cancel any in-progress scheduled runs building a different commit
-            gh run list \
-                --workflow release_nightly.yml \
-                --status in_progress \
-                --event schedule \
-                --json databaseId \
-                -q '.[].databaseId' | while read -r run_id; do
-                echo "Cancelling in-progress scheduled run $run_id"
-                gh run cancel "$run_id" || true
-            done
-            echo "Push event, proceeding with nightly release"
-            echo "bump_nightly=true" >> "$GITHUB_OUTPUT"
-            exit 0
-        fi
-
-        # For scheduled events: check if a push-triggered run is already in progress
-        if gh run list \
-            --workflow release_nightly.yml \
-            --status in_progress \
-            --event push \
-            --json databaseId \
-            -q '.[].databaseId' | grep -q .; then
-            echo "A push-triggered nightly release is in progress, skipping scheduled run"
-            echo "bump_nightly=false" >> "$GITHUB_OUTPUT"
-            exit 0
-        fi
-
-        if ! NIGHTLY_SHA=$(git rev-parse nightly 2>/dev/null); then
-            echo "No nightly tag found, changes detected"
-            echo "bump_nightly=true" >> "$GITHUB_OUTPUT"
-            exit 0
-        fi
-
-        HEAD_SHA=$(git rev-parse HEAD)
-        if [ "$NIGHTLY_SHA" = "$HEAD_SHA" ]; then
-            echo "nightly tag already points to HEAD ($HEAD_SHA), no new nightly needed"
-            echo "bump_nightly=false" >> "$GITHUB_OUTPUT"
-        else
-            echo "Changes detected: nightly=$NIGHTLY_SHA HEAD=$HEAD_SHA"
-            echo "bump_nightly=true" >> "$GITHUB_OUTPUT"
-        fi
-    outputs:
-      bump_nightly: ${{ steps.check.outputs.bump_nightly }}
   check_style:
-    needs:
-    - check_for_changes
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_for_changes.outputs.bump_nightly == 'true'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -100,9 +26,7 @@ jobs:
       run: ./script/clippy
     timeout-minutes: 60
   run_tests_linux:
-    needs:
-    - check_for_changes
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_for_changes.outputs.bump_nightly == 'true'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -158,9 +82,7 @@ jobs:
         - 5432:5432
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   clippy_linux:
-    needs:
-    - check_for_changes
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && needs.check_for_changes.outputs.bump_nightly == 'true'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
@@ -660,7 +582,7 @@ jobs:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
         SLACK_MESSAGE: '❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
 concurrency:
-  group: release-nightly-${{ github.event_name }}
+  group: release-nightly
   cancel-in-progress: true
 defaults:
   run:

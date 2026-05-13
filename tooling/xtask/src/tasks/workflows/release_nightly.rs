@@ -7,10 +7,7 @@ use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests::{clippy, run_platform_tests_no_filter},
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{
-        CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob,
-        ZippyGitIdentity,
-    },
+    steps::{CommonJobConditions, FluentBuilder, NamedJob, ZippyGitIdentity},
 };
 
 use super::{runners, steps, steps::named, vars};
@@ -19,11 +16,10 @@ use indoc::indoc;
 
 /// Generates the release_nightly.yml workflow
 pub fn release_nightly() -> Workflow {
-    let check = check_for_changes();
-    let style = with_changes_guard(check_style(), &check);
+    let style = check_style();
     // Run only on windows as that's our fastest platform right now.
-    let tests = with_changes_guard(run_platform_tests_no_filter(Platform::Linux), &check);
-    let clippy_job = with_changes_guard(clippy(Platform::Linux, None), &check);
+    let tests = run_platform_tests_no_filter(Platform::Linux);
+    let clippy_job = clippy(Platform::Linux, None);
     const NIGHTLY: Option<ReleaseChannel> = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
@@ -54,17 +50,16 @@ pub fn release_nightly() -> Workflow {
 
     named::workflow()
         .on(Event::default()
-            // Fire hourly
-            .schedule([Schedule::new("0 * * * *")])
+            // Fire 4 times a day
+            .schedule([Schedule::new("0 */6 * * *")])
             .push(Push::default().add_tag("nightly")))
         .concurrency(
             Concurrency::default()
-                .group("release-nightly-${{ github.event_name }}")
+                .group("release-nightly")
                 .cancel_in_progress(true),
         )
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", "1"))
-        .add_job(check.name, check.job)
         .add_job(style.name, style.job)
         .add_job(tests.name, tests.job)
         .add_job(clippy_job.name, clippy_job.job)
@@ -78,98 +73,6 @@ pub fn release_nightly() -> Workflow {
         .add_job(nix_mac_arm.name, nix_mac_arm.job)
         .add_job(update_nightly_tag.name, update_nightly_tag.job)
         .add_job(notify_on_failure.name, notify_on_failure.job)
-}
-
-fn check_for_changes() -> NamedJob {
-    fn check_nightly_tag() -> (Step<Run>, vars::StepOutput) {
-        let step = named::bash(indoc! {r#"
-            if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-                # Check if a scheduled run is already building the same commit
-                SCHEDULED_SHA=$(gh run list \
-                    --workflow release_nightly.yml \
-                    --status in_progress \
-                    --event schedule \
-                    --json databaseId,headSha \
-                    -q '.[0].headSha' || true)
-
-                if [ "$SCHEDULED_SHA" = "$GITHUB_SHA" ]; then
-                    echo "Scheduled run is already building this commit ($GITHUB_SHA), skipping push event"
-                    echo "bump_nightly=false" >> "$GITHUB_OUTPUT"
-                    exit 0
-                fi
-
-                # Cancel any in-progress scheduled runs building a different commit
-                gh run list \
-                    --workflow release_nightly.yml \
-                    --status in_progress \
-                    --event schedule \
-                    --json databaseId \
-                    -q '.[].databaseId' | while read -r run_id; do
-                    echo "Cancelling in-progress scheduled run $run_id"
-                    gh run cancel "$run_id" || true
-                done
-                echo "Push event, proceeding with nightly release"
-                echo "bump_nightly=true" >> "$GITHUB_OUTPUT"
-                exit 0
-            fi
-
-            # For scheduled events: check if a push-triggered run is already in progress
-            if gh run list \
-                --workflow release_nightly.yml \
-                --status in_progress \
-                --event push \
-                --json databaseId \
-                -q '.[].databaseId' | grep -q .; then
-                echo "A push-triggered nightly release is in progress, skipping scheduled run"
-                echo "bump_nightly=false" >> "$GITHUB_OUTPUT"
-                exit 0
-            fi
-
-            if ! NIGHTLY_SHA=$(git rev-parse nightly 2>/dev/null); then
-                echo "No nightly tag found, changes detected"
-                echo "bump_nightly=true" >> "$GITHUB_OUTPUT"
-                exit 0
-            fi
-
-            HEAD_SHA=$(git rev-parse HEAD)
-            if [ "$NIGHTLY_SHA" = "$HEAD_SHA" ]; then
-                echo "nightly tag already points to HEAD ($HEAD_SHA), no new nightly needed"
-                echo "bump_nightly=false" >> "$GITHUB_OUTPUT"
-            else
-                echo "Changes detected: nightly=$NIGHTLY_SHA HEAD=$HEAD_SHA"
-                echo "bump_nightly=true" >> "$GITHUB_OUTPUT"
-            fi
-        "#})
-        .id("check");
-
-        let bump_nightly = vars::StepOutput::new(&step, "bump_nightly");
-        (step, bump_nightly)
-    }
-
-    let (check_step, bump_nightly) = check_nightly_tag();
-
-    named::job(
-        Job::default()
-            .with_repository_owner_guard()
-            .permissions(Permissions::default().actions(Level::Write))
-            .runs_on(runners::LINUX_SMALL)
-            .outputs([("bump_nightly".to_owned(), bump_nightly.to_string())])
-            .add_step(steps::checkout_repo().with_fetch_tags())
-            .add_step(check_step),
-    )
-}
-
-fn with_changes_guard(job: NamedJob, check: &NamedJob) -> NamedJob {
-    NamedJob {
-        name: job.name,
-        job: job
-            .job
-            .add_need(check.name.clone())
-            .cond(Expression::new(format!(
-                "{DEFAULT_REPOSITORY_OWNER_GUARD} && needs.{}.outputs.bump_nightly == 'true'",
-                check.name
-            ))),
-    }
 }
 
 fn check_style() -> NamedJob {
