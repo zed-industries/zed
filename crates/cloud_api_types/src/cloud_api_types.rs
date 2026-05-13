@@ -113,5 +113,7 @@ pub struct SubmitEditPredictionFeedbackBody {
     pub rating: String,
     pub inputs: serde_json::Value,
     pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_output: Option<String>,
     pub feedback: String,
 }
