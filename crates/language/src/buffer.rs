@@ -3341,8 +3341,14 @@ impl Buffer {
 }
 
 pub struct EditedBufferSnapshot {
-    pub text: text::EditedBufferSnapshot,
-    pub snapshot: BufferSnapshot,
+    text: text::EditedBufferSnapshot,
+    snapshot: BufferSnapshot,
+}
+
+impl EditedBufferSnapshot {
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
 }
 
 #[doc(hidden)]

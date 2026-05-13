@@ -7,10 +7,11 @@ use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint};
+use language::{Anchor, Buffer, BufferEvent, Point, ToOffset, ToPoint, text_diff};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{
     cmp,
+    collections::BTreeSet,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -173,8 +174,17 @@ impl ActionLog {
                     diff_base = buffer.read(cx).as_rope().clone();
                     unreviewed_edits = Patch::default();
                 }
+                let base_text_buffer = cx.new(|cx| {
+                    let mut base_text_buffer = Buffer::local(&diff_base.to_string(), cx);
+                    if let Some(language_registry) = language_registry {
+                        base_text_buffer.set_language_registry(language_registry);
+                    }
+                    base_text_buffer.set_language(language, cx);
+                    base_text_buffer
+                });
                 TrackedBuffer {
                     buffer: buffer.clone(),
+                    base_text_buffer,
                     diff_base,
                     unreviewed_edits,
                     snapshot,
@@ -277,10 +287,9 @@ impl ActionLog {
                 })
             })?
             .await
-            .ok()
-            .map(|(diff, _)| diff);
+            .ok();
         let (mut git_diff_updates_tx, mut git_diff_updates_rx) = watch::channel(());
-        let _diff_subscription = if let Some(git_diff) = git_diff.as_ref() {
+        let _diff_subscription = if let Some((git_diff, _)) = git_diff.as_ref() {
             cx.update(|cx| {
                 Some(cx.subscribe(git_diff, move |_, event, _cx| {
                     if matches!(event, buffer_diff::BufferDiffEvent::BaseTextChanged) {
@@ -302,8 +311,8 @@ impl ActionLog {
                     }
                 }
                 _ = git_diff_updates_rx.changed().fuse() => {
-                    if let Some(git_diff) = git_diff.as_ref() {
-                        Self::keep_committed_edits(&this, &buffer, git_diff, cx).await?;
+                    if let Some((git_diff, git_diff_base_text_buffer)) = git_diff.as_ref() {
+                        Self::keep_committed_edits(&this, &buffer, git_diff, git_diff_base_text_buffer, cx).await?;
                     }
                 }
             }
@@ -363,7 +372,8 @@ impl ActionLog {
     async fn keep_committed_edits(
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
-        git_diff: &Entity<BufferDiff>,
+        _git_diff: &Entity<BufferDiff>,
+        git_diff_base_text_buffer: &Entity<Buffer>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let buffer_snapshot = this.read_with(cx, |this, _cx| {
@@ -381,7 +391,11 @@ impl ActionLog {
                     .context("buffer not tracked")?;
                 let old_unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let agent_diff_base = tracked_buffer.diff_base.clone();
-                let git_diff_base = git_diff.read(cx).base_text().as_rope().clone();
+                let git_diff_base = git_diff_base_text_buffer
+                    .read(cx)
+                    .snapshot()
+                    .as_rope()
+                    .clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
@@ -457,21 +471,45 @@ impl ActionLog {
         new_diff_base: Rope,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (diff, language) = this.read_with(cx, |this, cx| {
+        let (diff, base_text_buffer) = this.read_with(cx, |this, _| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get(buffer)
                 .context("buffer not tracked")?;
             anyhow::Ok((
                 tracked_buffer.diff.clone(),
-                buffer.read(cx).language().cloned(),
+                tracked_buffer.base_text_buffer.clone(),
             ))
         })??;
-        let update = diff
-            .update(cx, |diff, cx| {
-                diff.update_diff(buffer_snapshot.clone(), Some(new_base_text), cx)
+        let prev_diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+        let base_text_edits = cx
+            .background_spawn({
+                let new_base_text = new_base_text.clone();
+                async move {
+                    text_diff(
+                        &prev_diff_snapshot.base_text_string().unwrap_or_default(),
+                        &new_base_text,
+                    )
+                }
             })
             .await;
+        let snapshot_with_edits = base_text_buffer
+            .update(cx, |base_text_buffer, cx| {
+                base_text_buffer.snapshot_with_edits(base_text_edits, cx)
+            })
+            .await;
+        let update = diff
+            .update(cx, |diff, cx| {
+                diff.update_diff(
+                    buffer_snapshot.clone(),
+                    Some((new_base_text, snapshot_with_edits.snapshot().clone())),
+                    cx,
+                )
+            })
+            .await;
+        base_text_buffer.update(cx, |base_text_buffer, cx| {
+            base_text_buffer.fast_forward(snapshot_with_edits, cx);
+        });
         diff.update(cx, |diff, cx| diff.set_snapshot(update.clone(), cx));
         let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
 
@@ -919,7 +957,7 @@ impl ActionLog {
         let mut undo_buffers = Vec::new();
         let mut futures = Vec::new();
 
-        for buffer in self.changed_buffers(cx).into_keys() {
+        for buffer in self.changed_buffers(cx) {
             let buffer_ranges = vec![Anchor::min_max_range_for_buffer(
                 buffer.read(cx).remote_id(),
             )];
@@ -1005,18 +1043,35 @@ impl ActionLog {
         })
     }
 
+    pub fn diff_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+    ) -> Option<(Entity<BufferDiff>, Entity<Buffer>)> {
+        let tracked_buffer = self.tracked_buffers.get(buffer)?;
+        Some((
+            tracked_buffer.diff.clone(),
+            tracked_buffer.base_text_buffer.clone(),
+        ))
+    }
+
     /// Returns the set of buffers that contain edits that haven't been reviewed by the user.
-    pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, Entity<BufferDiff>> {
+    pub fn changed_buffers(&self, cx: &App) -> BTreeSet<Entity<Buffer>> {
         self.tracked_buffers
             .iter()
             .filter(|(_, tracked)| tracked.has_edits(cx))
-            .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
+            .map(|(buffer, _)| buffer.clone())
             .collect()
     }
 
     /// Returns the total number of lines added and removed across all unreviewed buffers.
     pub fn diff_stats(&self, cx: &App) -> DiffStats {
-        DiffStats::all_files(&self.changed_buffers(cx), cx)
+        DiffStats::all_files(
+            self.changed_buffers(cx).into_iter().filter_map(|buffer| {
+                let (diff, _) = self.diff_for_buffer(&buffer)?;
+                Some((buffer, diff))
+            }),
+            cx,
+        )
     }
 
     /// Iterate over buffers changed since last read or edited by the model
@@ -1064,7 +1119,7 @@ impl DiffStats {
     }
 
     pub fn all_files(
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: impl IntoIterator<Item = (Entity<Buffer>, Entity<BufferDiff>)>,
         cx: &App,
     ) -> Self {
         let mut total = DiffStats::default();
@@ -1262,12 +1317,16 @@ enum TrackedBufferStatus {
 
 pub struct TrackedBuffer {
     buffer: Entity<Buffer>,
+    base_text_buffer: Entity<Buffer>,
+    // the diff base that will be set the next time the diff is recalculated
     diff_base: Rope,
+    // user edits? agent edits?
     unreviewed_edits: Patch<u32>,
     status: TrackedBufferStatus,
     version: clock::Global,
     diff: Entity<BufferDiff>,
     snapshot: language::BufferSnapshot,
+    // when we want the diff to be recalculated, we take a snapshot of the buffer and send it on this channel
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, language::BufferSnapshot)>,
     _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
@@ -3154,36 +3213,18 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let child_1_changed: Vec<_> = cx.read(|cx| {
-            child_log_1
-                .read(cx)
-                .changed_buffers(cx)
-                .into_keys()
-                .collect()
-        });
-        let child_2_changed: Vec<_> = cx.read(|cx| {
-            child_log_2
-                .read(cx)
-                .changed_buffers(cx)
-                .into_keys()
-                .collect()
-        });
-        let parent_changed: Vec<_> = cx.read(|cx| {
-            parent_log
-                .read(cx)
-                .changed_buffers(cx)
-                .into_keys()
-                .collect()
-        });
+        let child_1_changed = cx.read(|cx| child_log_1.read(cx).changed_buffers(cx));
+        let child_2_changed = cx.read(|cx| child_log_2.read(cx).changed_buffers(cx));
+        let parent_changed = cx.read(|cx| parent_log.read(cx).changed_buffers(cx));
 
         assert_eq!(
             child_1_changed,
-            vec![buffer_a.clone()],
+            BTreeSet::from_iter([buffer_a.clone()]),
             "child 1 should only track file_a"
         );
         assert_eq!(
             child_2_changed,
-            vec![buffer_b.clone()],
+            BTreeSet::from_iter([buffer_b.clone()]),
             "child 2 should only track file_b"
         );
         assert_eq!(parent_changed.len(), 2, "parent should track both files");
@@ -3395,13 +3436,14 @@ mod tests {
         cx: &TestAppContext,
     ) -> Vec<(Entity<Buffer>, Vec<HunkStatus>)> {
         cx.read(|cx| {
+            let action_log = action_log.read(cx);
             action_log
-                .read(cx)
                 .changed_buffers(cx)
                 .into_iter()
-                .map(|(buffer, diff)| {
+                .filter_map(|buffer| {
                     let snapshot = buffer.read(cx).snapshot();
-                    (
+                    let (diff, base_text_buffer) = action_log.diff_for_buffer(&buffer)?;
+                    Some((
                         buffer,
                         diff.read(cx)
                             .snapshot(cx)
@@ -3409,14 +3451,13 @@ mod tests {
                             .map(|hunk| HunkStatus {
                                 diff_status: hunk.status().kind,
                                 range: hunk.range,
-                                old_text: diff
+                                old_text: base_text_buffer
                                     .read(cx)
-                                    .base_text()
                                     .text_for_range(hunk.diff_base_byte_range)
                                     .collect(),
                             })
                             .collect(),
-                    )
+                    ))
                 })
                 .collect()
         })

@@ -3841,7 +3841,7 @@ impl BufferGitState {
                             buffer.clone(),
                             new_index
                                 .as_ref()
-                                .map(|(text, edited)| (text.clone(), edited.snapshot.clone())),
+                                .map(|(text, edited)| (text.clone(), edited.snapshot().clone())),
                             cx,
                         )
                     })
@@ -3860,7 +3860,9 @@ impl BufferGitState {
                     // Ensure we use the right base text buffer for updating the uncommitted diff
                     if let Some(update) = &mut update {
                         update.set_base_text(
-                            new_head.as_ref().map(|(_, edited)| edited.snapshot.clone()),
+                            new_head
+                                .as_ref()
+                                .map(|(_, edited)| edited.snapshot().clone()),
                         );
                     }
                     update
@@ -3869,9 +3871,9 @@ impl BufferGitState {
                         cx.update(|cx| {
                             uncommitted_diff.read(cx).update_diff(
                                 buffer.clone(),
-                                new_head
-                                    .as_ref()
-                                    .map(|(text, edited)| (text.clone(), edited.snapshot.clone())),
+                                new_head.as_ref().map(|(text, edited)| {
+                                    (text.clone(), edited.snapshot().clone())
+                                }),
                                 cx,
                             )
                         })
