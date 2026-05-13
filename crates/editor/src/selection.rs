@@ -809,6 +809,7 @@ impl Editor {
             }
         }
     }
+
     pub fn select_next_syntax_node(
         &mut self,
         _: &SelectNextSyntaxNode,
