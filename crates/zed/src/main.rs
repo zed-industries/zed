@@ -4,8 +4,18 @@
 mod reliability;
 mod zed;
 
+// Ensure the binary name stays in sync with APP_NAME so that the paths used
+// at runtime (data dir, config dir, etc.) match what the binary is called.
+const _: () = assert!(
+    paths::APP_NAME_LOWERCASE
+        .as_bytes()
+        .eq_ignore_ascii_case(env!("CARGO_BIN_NAME").as_bytes()),
+    "paths::APP_NAME_LOWERCASE must match the binary name. \
+     Forks: update APP_NAME in crates/paths/src/paths.rs when renaming the binary.",
+);
+
 use agent::{SharedThread, ThreadStore};
-use agent_client_protocol;
+use agent_client_protocol::schema as acp;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
@@ -21,7 +31,10 @@ use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
-use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
+use gpui::{
+    App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, Task, TaskExt,
+    UpdateGlobal as _, block_on,
+};
 use gpui_platform;
 
 use gpui_tokio::Tokio;
@@ -41,6 +54,7 @@ use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
+use smol::future::poll_once;
 use std::{
     cell::RefCell,
     env,
@@ -65,7 +79,7 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions,
 };
 
-use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
+use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon_theme};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -193,7 +207,7 @@ fn main() {
 
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
-        crashes::crash_server(socket.as_path());
+        crashes::crash_server(socket.as_path(), paths::logs_dir().clone());
         return;
     }
 
@@ -297,6 +311,8 @@ fn main() {
             app_version,
             app_commit_sha,
             *release_channel::RELEASE_CHANNEL,
+            client::telemetry::os_name(),
+            client::telemetry::os_version(),
         );
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
@@ -335,28 +351,7 @@ fn main() {
         session_id.clone(),
         KeyValueStore::from_app_db(&app_db),
     ));
-
-    crashes::init(
-        InitCrashHandler {
-            session_id,
-            // strip the build and channel information from the version string, we send them separately
-            zed_version: semver::Version::new(
-                app_version.major,
-                app_version.minor,
-                app_version.patch,
-            )
-            .to_string(),
-            binary: "zed".to_string(),
-            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: app_commit_sha
-                .as_ref()
-                .map(|sha| sha.full())
-                .unwrap_or_else(|| "no sha".to_owned()),
-        },
-        |task| {
-            app.background_executor().spawn(task).detach();
-        },
-    );
+    let background_executor = app.background_executor();
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -386,6 +381,46 @@ fn main() {
         return;
     }
 
+    let should_install_crash_handler = matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || *release_channel::RELEASE_CHANNEL
+        != ReleaseChannel::Dev;
+
+    let crash_handler = if should_install_crash_handler {
+        Some(
+            app.background_executor().spawn(crashes::init(
+                InitCrashHandler {
+                    session_id,
+                    // strip the build and channel information from the version string, we send them separately
+                    zed_version: semver::Version::new(
+                        app_version.major,
+                        app_version.minor,
+                        app_version.patch,
+                    )
+                    .to_string(),
+                    binary: "zed".to_string(),
+                    release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                    commit_sha: app_commit_sha
+                        .as_ref()
+                        .map(|sha| sha.full())
+                        .unwrap_or_else(|| "no sha".to_owned()),
+                },
+                {
+                    let background_executor1 = app.background_executor();
+                    move |task| {
+                        background_executor1.spawn(task).detach();
+                    }
+                },
+                |pid| paths::temp_dir().join(format!("zed-crash-handler-{pid}")),
+                move |duration| background_executor.timer(duration),
+            )),
+        )
+    } else {
+        crashes::force_backtrace();
+        None
+    };
+
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let git_binary_path =
         if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
@@ -414,7 +449,7 @@ fn main() {
                 util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
             })
-            .detach()
+            .detach();
     } else {
         drop(shell_env_loaded_tx)
     }
@@ -551,6 +586,8 @@ fn main() {
         Client::set_global(client.clone(), cx);
 
         zed::init(cx);
+        #[cfg(target_os = "macos")]
+        zed::move_to_applications::init(cx);
         project::Project::init(&client, cx);
         debugger_ui::init(cx);
         debugger_tools::init(cx);
@@ -570,12 +607,17 @@ fn main() {
         );
         cx.subscribe(&user_store, {
             let telemetry = telemetry.clone();
-            move |_, evt: &client::user::Event, _| match evt {
+            move |_, evt: &client::user::Event, cx| match evt {
                 client::user::Event::PrivateUserInfoUpdated => {
-                    crashes::set_user_info(crashes::UserInfo {
-                        metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
-                        is_staff: telemetry.is_staff(),
-                    });
+                    if let Some(crash_client) = cx.try_global::<CrashHandler>() {
+                        crashes::set_user_info(
+                            &crash_client.0,
+                            crashes::UserInfo {
+                                metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
+                                is_staff: telemetry.is_staff(),
+                            },
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -807,6 +849,25 @@ fn main() {
 
         let menus = app_menus(cx);
         cx.set_menus(menus);
+
+        if let Some(mut crash_handler) = crash_handler {
+            let crash_handler2 = block_on(poll_once(&mut crash_handler));
+            match crash_handler2 {
+                Some(crash_handler) => {
+                    cx.set_global(CrashHandler(crash_handler));
+                }
+                None => {
+                    cx.spawn(async move |cx| {
+                        let client1 = crash_handler.await;
+                        cx.update(|cx| {
+                            cx.set_global(CrashHandler(client1));
+                        });
+                    })
+                    .detach();
+                }
+            }
+        }
+
         initialize_workspace(app_state.clone(), cx);
 
         cx.activate(true);
@@ -850,26 +911,47 @@ fn main() {
             })
         }
 
-        match open_rx
+        let (current_session_id, last_session_id) = {
+            let session = app_state.session.read(cx);
+            (
+                session.id().to_owned(),
+                session.last_session_id().map(|id| id.to_owned()),
+            )
+        };
+
+        let restore_task = match open_rx
             .try_recv()
             .ok()
             .and_then(|request| OpenRequest::parse(request, cx).log_err())
         {
             Some(request) => {
                 handle_open_request(request, app_state.clone(), cx);
+                Task::ready(())
             }
-            None => {
-                cx.spawn({
-                    let app_state = app_state.clone();
-                    async move |cx| {
-                        if let Err(e) = restore_or_create_workspace(app_state, cx).await {
-                            fail_to_open_window_async(e, cx)
-                        }
+            None => cx.spawn({
+                let app_state = app_state.clone();
+                async move |cx| {
+                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
+                        fail_to_open_window_async(e, cx)
                     }
-                })
-                .detach();
+                }
+            }),
+        };
+
+        cx.spawn({
+            let db = workspace::WorkspaceDb::global(cx);
+            let fs = app_state.fs.clone();
+            async move |_cx| {
+                restore_task.await;
+                db.garbage_collect_workspaces(
+                    fs.as_ref(),
+                    &current_session_id,
+                    last_session_id.as_deref(),
+                )
+                .await
             }
-        }
+        })
+        .detach_and_log_err(cx);
 
         let app_state = app_state.clone();
 
@@ -967,7 +1049,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
                     let db_thread = shared_thread.to_db_thread();
-                    let session_id = agent_client_protocol::SessionId::new(session_id);
+                    let session_id = acp::SessionId::new(session_id);
 
                     let save_session_id = session_id.clone();
 
@@ -1217,7 +1299,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             .await?;
             for result in results.into_iter().flatten() {
                 if let Err(err) = result {
-                    log::error!("Error opening path: {err}",);
+                    log::error!("Error opening path: {err:#}");
                 }
             }
             anyhow::Ok(())
@@ -1444,6 +1526,31 @@ pub(crate) async fn restore_or_create_workspace(
                 })
                 .await?;
             }
+        }
+
+        // If the user cancelled a failed remote connection at startup,
+        // open_remote_project returns Ok but removes the window, so error_count
+        // stays 0 and the toast fallback above does not trigger. Without this
+        // check, Zed would exit silently.
+        if cx.update(|cx| cx.windows().is_empty()) {
+            cx.update(|cx| {
+                workspace::open_new(
+                    Default::default(),
+                    app_state.clone(),
+                    cx,
+                    |workspace, window, cx| {
+                        let restore_on_startup =
+                            WorkspaceSettings::get_global(cx).restore_on_startup;
+                        match restore_on_startup {
+                            workspace::RestoreOnStartupBehavior::Launchpad => {}
+                            _ => {
+                                Editor::new_file(workspace, &Default::default(), window, cx);
+                            }
+                        }
+                    },
+                )
+            })
+            .await?;
         }
     } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_onboarding_view(app_state, cx)).await?;

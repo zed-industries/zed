@@ -6,13 +6,14 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use futures_lite::future::yield_now;
 use git::repository::DiffType;
 
 use git::{
@@ -33,7 +34,6 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
-use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -117,12 +117,52 @@ impl ProjectDiff {
     ) {
         telemetry::event!("Git Branch Diff Opened");
         let project = workspace.project().clone();
+        let intended_repo = project.read(cx).active_repository(cx);
 
         let existing = workspace
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }));
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
+
+            if let Some(intended_repo) = intended_repo {
+                let needs_switch = existing
+                    .read(cx)
+                    .branch_diff
+                    .read(cx)
+                    .repo()
+                    .map_or(true, |current| {
+                        current.read(cx).id != intended_repo.read(cx).id
+                    });
+
+                if needs_switch {
+                    let default_branch =
+                        intended_repo.update(cx, |repo, _| repo.default_branch(true));
+                    let existing = existing.downgrade();
+                    let workspace = cx.entity().downgrade();
+                    window
+                        .spawn(cx, async move |cx| {
+                            let default_branch = default_branch
+                                .await??
+                                .context("Could not determine default branch")?;
+
+                            existing.update(cx, |project_diff, cx| {
+                                project_diff.branch_diff.update(cx, |branch_diff, cx| {
+                                    branch_diff.set_repo(Some(intended_repo), cx);
+                                    branch_diff.set_diff_base(
+                                        DiffBase::Merge {
+                                            base_ref: default_branch,
+                                        },
+                                        cx,
+                                    );
+                                });
+                            })?;
+                            anyhow::Ok(())
+                        })
+                        .detach_and_notify_err(workspace, window, cx);
+                }
+            }
+
             return;
         }
         let workspace = cx.entity();
@@ -359,13 +399,9 @@ impl ProjectDiff {
             );
             match branch_diff.read(cx).diff_base() {
                 DiffBase::Head => {}
-                DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
-                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                    cx,
-                ),
+                DiffBase::Merge { .. } => diff_display_editor.disable_diff_hunk_controls(cx),
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
-                editor.disable_diagnostics(cx);
                 editor.set_show_diff_review_button(true, cx);
 
                 match branch_diff.read(cx).diff_base() {
@@ -768,7 +804,7 @@ impl ProjectDiff {
         needs_fold
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip(this, cx))]
     pub async fn refresh(
         this: WeakEntity<Self>,
         reason: RefreshReason,
@@ -780,13 +816,13 @@ impl ProjectDiff {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
-            let mut previous_paths = this
+            let mut previous_buffers = this
                 .multibuffer
                 .read(cx)
                 .snapshot(cx)
                 .buffers_with_paths()
-                .map(|(_, path_key)| path_key.clone())
-                .collect::<HashSet<_>>();
+                .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
+                .collect::<HashMap<_, _>>();
 
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
@@ -796,14 +832,14 @@ impl ProjectDiff {
                     let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
                     let path_key =
                         PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
-                    previous_paths.remove(&path_key);
+                    previous_buffers.remove(&path_key);
                     path_keys.push(path_key)
                 }
             }
 
             this.editor.update(cx, |editor, cx| {
-                for path in previous_paths {
-                    if let Some(buffer) = this.multibuffer.read(cx).buffer_for_path(&path, cx) {
+                for (path, buffer_id) in previous_buffers {
+                    if let Some(buffer) = this.multibuffer.read(cx).buffer(buffer_id) {
                         let skip = match reason {
                             RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
                                 buffer.read(cx).is_dirty()
@@ -816,6 +852,8 @@ impl ProjectDiff {
                     }
 
                     this.buffer_diff_subscriptions.remove(&path.path);
+                    let _span = ztracing::info_span!("remove_excerpts_for_path");
+                    _span.enter();
                     editor.remove_excerpts_for_path(path, cx);
                 }
             });
@@ -824,7 +862,7 @@ impl ProjectDiff {
 
         let mut buffers_to_fold = Vec::new();
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys) {
             if let Some((buffer, diff)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.

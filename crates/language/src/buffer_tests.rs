@@ -3,6 +3,7 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
+use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, BorrowAppContext, Entity};
 use gpui::{HighlightStyle, TestAppContext};
 use indoc::indoc;
@@ -559,7 +560,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
     let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
-    smol::future::yield_now().await;
+    yield_now().await;
 
     // Edit the buffer while the normalization task is running.
     let version_before_edit = buffer.update(cx, |buffer, _| buffer.version());

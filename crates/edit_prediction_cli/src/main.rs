@@ -19,7 +19,6 @@ mod qa;
 mod reorder_patch;
 mod repair;
 mod retrieve_context;
-mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
@@ -41,6 +40,7 @@ use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::VecDeque;
 use std::env;
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
@@ -73,6 +73,9 @@ struct EpArgs {
     printenv: bool,
     #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
+    /// Process all examples from a repository together instead of distributing examples across workers.
+    #[clap(long, default_value_t = false, global = true)]
+    group_by_repo: bool,
     /// The limit for the number of examples to process
     /// Default is unlimited for processing local datasets, 5000 when pulling from snowflake
     #[clap(long, global = true)]
@@ -415,16 +418,13 @@ impl std::str::FromStr for PredictionProvider {
                 let format = arg.map(ZetaFormat::parse).transpose()?.unwrap_or_default();
                 Ok(PredictionProvider::Zeta2(format))
             }
-            "teacher" => parse_teacher_args(arg),
+            "teacher" => {
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::Teacher(backend, format))
+            }
             "teacher-non-batching" | "teacher_non_batching" => {
-                let backend = arg
-                    .map(|a| a.parse())
-                    .transpose()?
-                    .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::TeacherNonBatching(
-                    backend,
-                    ZetaFormat::default(),
-                ))
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::TeacherNonBatching(backend, format))
             }
             "teacher-multi-region" | "teacher_multi_region" => {
                 let backend = arg
@@ -461,7 +461,7 @@ impl std::str::FromStr for PredictionProvider {
     }
 }
 
-fn parse_teacher_args(arg: Option<&str>) -> Result<PredictionProvider, anyhow::Error> {
+fn parse_teacher_args(arg: Option<&str>) -> Result<(TeacherBackend, ZetaFormat), anyhow::Error> {
     let mut backend = TeacherBackend::default();
     let mut format = ZetaFormat::default();
 
@@ -479,7 +479,7 @@ fn parse_teacher_args(arg: Option<&str>) -> Result<PredictionProvider, anyhow::E
         }
     }
 
-    Ok(PredictionProvider::Teacher(backend, format))
+    Ok((backend, format))
 }
 
 impl Serialize for PredictionProvider {
@@ -903,6 +903,18 @@ fn spec_hash(spec: &edit_prediction::example_spec::ExampleSpec) -> u64 {
     hasher.finish()
 }
 
+fn chunk_examples(examples: Vec<Example>, max_parallelism: usize) -> VecDeque<Vec<Example>> {
+    if examples.is_empty() || max_parallelism == 0 {
+        return VecDeque::new();
+    }
+
+    let chunk_size = examples.len().div_ceil(max_parallelism);
+    examples
+        .chunks(chunk_size)
+        .map(|chunk| chunk.to_vec())
+        .collect()
+}
+
 fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>, command: &Command) {
     let file = match File::open(path) {
         Ok(f) => f,
@@ -991,7 +1003,7 @@ fn main() {
 
     match &command {
         Command::ImportBatch(import_args) => {
-            smol::block_on(async {
+            gpui::block_on(async {
                 match import_args.provider {
                     BatchProvider::Anthropic => {
                         let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
@@ -1050,7 +1062,7 @@ fn main() {
                 output_dir,
                 fresh: synth_args.fresh,
             };
-            smol::block_on(async {
+            gpui::block_on(async {
                 if let Err(e) = run_synthesize(config).await {
                     eprintln!("Error: {:?}", e);
                     std::process::exit(1);
@@ -1177,7 +1189,12 @@ fn main() {
                     output_sender = Some(sender);
                 }
 
-                let grouped_examples = Mutex::new(group_examples_by_repo(examples));
+                let example_batches = if args.group_by_repo {
+                    group_examples_by_repo(examples)
+                } else {
+                    chunk_examples(examples, args.max_parallelism)
+                };
+                let example_batches = Mutex::new(example_batches);
                 let finished_examples = Mutex::new(Vec::new());
 
                 let mut tasks = Vec::new();
@@ -1185,7 +1202,7 @@ fn main() {
                     tasks.push(async {
                         loop {
                             let Some(mut repo_examples) =
-                                grouped_examples.lock().unwrap().pop_front()
+                                example_batches.lock().unwrap().pop_front()
                             else {
                                 break;
                             };

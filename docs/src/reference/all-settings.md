@@ -174,6 +174,12 @@ On Linux:
 ls ~/.local/share/zed/extensions/installed
 ```
 
+On Windows:
+
+```pwsh
+Get-ChildItem "$env:LOCALAPPDATA\Zed\extensions\installed" -Name
+```
+
 Define extensions which should be installed (`true`) or never installed (`false`).
 
 ```json [settings]
@@ -449,6 +455,24 @@ left and right padding of the central pane from the workspace when the centered 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
 Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+
+## Code Lens
+
+- Description: Whether and how to display code lenses from language servers. Code lenses show contextual information such as reference counts, implementations, and other metadata provided by the language server.
+- Setting: `code_lens`
+- Default: `off`
+
+**Options**
+
+1. `off`: Do not query and display code lenses.
+2. `on`: Display code lenses from language servers above code elements.
+3. `menu`: Display code lenses in the code action menu.
+
+```json [settings]
+{
+  "code_lens": "on"
+}
+```
 
 ## Confirm Quit
 
@@ -783,9 +807,8 @@ List of `string` values
 
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in an editor or input box.
-- Setting: `hide_mouse`
-- Default: `on_typing_and_movement`
+- Description: Determines when the mouse cursor should be hidden in response to keyboard input.
+- Default: `on_typing_and_action`
 
 **Options**
 
@@ -805,11 +828,11 @@ List of `string` values
 }
 ```
 
-3. Hide on both typing and cursor movement:
+3. Hide on typing and on key bindings that resolve to an action:
 
 ```json [settings]
 {
-  "hide_mouse": "on_typing_and_movement"
+  "hide_mouse": "on_typing_and_action"
 }
 ```
 
@@ -1618,6 +1641,56 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 `boolean` values
 
+## Line Ending
+
+- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.
+- Setting: `line_ending`
+- Default: `detect`
+
+**Options**
+
+1. To detect existing line endings and otherwise use the platform default (`lf` on Unix, `crlf` on Windows), set it to `detect`:
+
+```json [settings]
+{
+  "line_ending": "detect"
+}
+```
+
+2. To prefer LF (`\n`) for new files and files with no existing line ending, use `prefer_lf`:
+
+```json [settings]
+{
+  "line_ending": "prefer_lf"
+}
+```
+
+3. To prefer CRLF (`\r\n`) for new files and files with no existing line ending, use `prefer_crlf`:
+
+```json [settings]
+{
+  "line_ending": "prefer_crlf"
+}
+```
+
+4. To enforce LF (`\n`) during format and save, use `enforce_lf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_lf"
+}
+```
+
+5. To enforce CRLF (`\r\n`) during format and save, use `enforce_crlf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_crlf"
+}
+```
+
+The [`.editorconfig`](https://editorconfig.org) `end_of_line` property overrides this setting and behaves like `enforce_lf` or `enforce_crlf`.
+
 ## Expand Excerpt Lines
 
 - Description: The default number of lines to expand excerpts in the multibuffer by
@@ -2356,6 +2429,47 @@ Example:
 }
 ```
 
+## Go to Definition Scroll Strategy
+
+- Description: How to scroll the target into view when navigating to a definition or reference (e.g. {#action editor::GoToDefinition}, {#action editor::GoToTypeDefinition}, {#action editor::FindAllReferences}).
+- Setting: `go_to_definition_scroll_strategy`
+- Default: `"center"`
+
+**Options**
+
+1. Vertically center the target in the viewport (default):
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "center"
+}
+```
+
+2. Scroll the minimum amount needed to make the target visible:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "minimum"
+}
+```
+
+3. Scroll so the target appears near the top of the viewport:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "top"
+}
+```
+
+4. Preserve the cursor's vertical position within the viewport, falling back to
+   `center` when the cursor is offscreen.
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "preserve"
+}
+```
+
 ## Hard Tabs
 
 - Description: Whether to indent lines using tab characters or multiple spaces.
@@ -2772,6 +2886,7 @@ The following settings can be overridden for each specific language:
 
 - [`enable_language_server`](#enable-language-server)
 - [`ensure_final_newline_on_save`](#ensure-final-newline-on-save)
+- [`line_ending`](#line-ending)
 - [`format_on_save`](#format-on-save)
 - [`formatter`](#formatter)
 - [`hard_tabs`](#hard-tabs)
@@ -3019,6 +3134,32 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
   "on_last_window_closed": "quit_app"
 }
 ```
+
+## Instrumentation
+
+- Description: Configuration for developer-oriented instrumentation tools (profilers, tracers, etc.) that can be toggled at runtime.
+- Setting: `instrumentation`
+- Default:
+
+```json
+{
+  "instrumentation": {
+    "performance_profiler": {
+      "enabled": false
+    }
+  }
+}
+```
+
+### Performance Profiler
+
+- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the {#action zed::OpenPerformanceProfiler} action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
+- Setting: `instrumentation.performance_profiler.enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Profiles
 
@@ -3796,8 +3937,7 @@ Positive integer values
 1. `none` to avoid wrapping generally, unless the line is too long
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
-4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
-5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
+4. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
 ## Show Wrap Guides
 
@@ -5425,7 +5565,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Settings Profiles
 
-- Description: Configure any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.
+- Description: Configure any number of settings profiles that are temporarily applied when selected from {#action settings_profile_selector::Toggle}.
 - Setting: `profiles`
 - Default: `{}`
 
@@ -5467,7 +5607,7 @@ Example:
 }
 ```
 
-To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for {#action settings_profile_selector::Toggle}.
 
 ## An example configuration:
 

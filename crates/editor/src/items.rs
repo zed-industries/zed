@@ -11,7 +11,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use fs::MTime;
-use futures::future::try_join_all;
+use futures::{channel::oneshot, future::try_join_all};
 use git::status::GitSummary;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
@@ -22,22 +22,24 @@ use language::{
     SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{MultiBufferOffset, PathKey};
+use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
+use rope::TextSummary;
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cmp::{self, Ordering},
+    num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::{BufferId, BufferSnapshot, Selection};
+use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt, rel_path::RelPath};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
@@ -99,6 +101,10 @@ impl FollowableItem for Editor {
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
 
+            let path_excerpts =
+                deserialize_path_excerpts_and_wait_for_anchors(state.path_excerpts, &buffers, cx)
+                    .await?;
+
             let editor = cx.update(|window, cx| {
                 let multibuffer = cx.new(|cx| {
                     let mut multibuffer;
@@ -106,27 +112,13 @@ impl FollowableItem for Editor {
                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
                         multibuffer = MultiBuffer::new(project.read(cx).capability());
-                        for path_with_ranges in state.path_excerpts {
-                            let Some(path_key) =
-                                path_with_ranges.path_key.and_then(deserialize_path_key)
-                            else {
-                                continue;
-                            };
-                            let Some(buffer_id) = BufferId::new(path_with_ranges.buffer_id).ok()
-                            else {
-                                continue;
-                            };
+                        for (path_key, buffer_id, ranges) in path_excerpts {
                             let Some(buffer) =
                                 buffers.iter().find(|b| b.read(cx).remote_id() == buffer_id)
                             else {
                                 continue;
                             };
                             let buffer_snapshot = buffer.read(cx).snapshot();
-                            let ranges = path_with_ranges
-                                .ranges
-                                .into_iter()
-                                .filter_map(deserialize_excerpt_range)
-                                .collect::<Vec<_>>();
                             multibuffer.update_path_excerpts(
                                 path_key,
                                 buffer.clone(),
@@ -400,25 +392,20 @@ async fn update_editor_from_message(
             .map(|id| BufferId::new(id).map(|id| project.open_buffer_by_id(id, cx)))
             .collect::<Result<Vec<_>>>()
     })?;
-    let _inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
+    let inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
+
+    let updated_paths = deserialize_path_excerpts_and_wait_for_anchors(
+        message.updated_paths,
+        &inserted_excerpt_buffers,
+        cx,
+    )
+    .await?;
 
     // Update the editor's excerpts.
     let buffer_snapshot = this.update(cx, |editor, cx| {
         editor.buffer.update(cx, |multibuffer, cx| {
-            for path_with_excerpts in message.updated_paths {
-                let Some(path_key) = path_with_excerpts.path_key.and_then(deserialize_path_key)
-                else {
-                    continue;
-                };
-                let ranges = path_with_excerpts
-                    .ranges
-                    .into_iter()
-                    .filter_map(deserialize_excerpt_range)
-                    .collect::<Vec<_>>();
-                let Some(buffer) = BufferId::new(path_with_excerpts.buffer_id)
-                    .ok()
-                    .and_then(|buffer_id| project.read(cx).buffer_for_id(buffer_id, cx))
-                else {
+            for (path_key, buffer_id, ranges) in updated_paths {
+                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
                     continue;
                 };
 
@@ -535,6 +522,56 @@ fn serialize_excerpt_range(range: ExcerptRange<language::Anchor>) -> proto::Exce
         primary_start: Some(primary_start),
         primary_end: Some(primary_end),
     }
+}
+
+async fn deserialize_path_excerpts_and_wait_for_anchors(
+    path_excerpts: Vec<proto::PathExcerpts>,
+    buffers: &[Entity<Buffer>],
+    cx: &mut AsyncWindowContext,
+) -> Result<Vec<(PathKey, BufferId, Vec<ExcerptRange<language::Anchor>>)>> {
+    let path_excerpts = path_excerpts
+        .into_iter()
+        .filter_map(|path_with_ranges| {
+            let path_key = path_with_ranges.path_key.and_then(deserialize_path_key)?;
+            let buffer_id = BufferId::new(path_with_ranges.buffer_id).ok()?;
+            let ranges = path_with_ranges
+                .ranges
+                .into_iter()
+                .filter_map(deserialize_excerpt_range)
+                .collect::<Vec<_>>();
+            Some((path_key, buffer_id, ranges))
+        })
+        .collect::<Vec<_>>();
+
+    let wait_for_anchors = cx.update(|_, cx| {
+        buffers
+            .iter()
+            .map(|buffer| {
+                let buffer_id = buffer.read(cx).remote_id();
+                let anchors = path_excerpts
+                    .iter()
+                    .filter(|(_, id, _)| *id == buffer_id)
+                    .flat_map(|(_, _, ranges)| {
+                        ranges.iter().flat_map(|range| {
+                            [
+                                range.context.start,
+                                range.context.end,
+                                range.primary.start,
+                                range.primary.end,
+                            ]
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                buffer.update(cx, |buffer, _| buffer.wait_for_anchors(anchors))
+            })
+            .collect::<Vec<_>>()
+    })?;
+    // Without this wait, resolving these anchors later can race ahead of the
+    // leader's pending buffer ops and trip `panic_bad_anchor` on a stale
+    // snapshot.
+    try_join_all(wait_for_anchors).await?;
+
+    Ok(path_excerpts)
 }
 
 fn deserialize_excerpt_range(
@@ -1660,8 +1697,17 @@ impl SearchableItem for Editor {
         }
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let setting = if ignore_settings {
+            SeedQuerySetting::Always
+        } else {
+            EditorSettings::get_global(cx).seed_search_query_from_cursor
+        };
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
         let buffer_snapshot = snapshot.buffer_snapshot();
@@ -1790,6 +1836,10 @@ impl SearchableItem for Editor {
             });
         }
     }
+
+    /// Takes the current cursor position and finds the next match in the
+    /// provided `direction`, the provide `count` number of times, wrapping
+    /// around if necessary.
     fn match_index_for_direction(
         &mut self,
         matches: &[Range<Anchor>],
@@ -1800,45 +1850,48 @@ impl SearchableItem for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        let buffer = self.buffer().read(cx).snapshot(cx);
-        let current_index_position = if self.selections.disjoint_anchors_arc().len() == 1 {
+        if count == 0 {
+            return current_index;
+        }
+
+        let cursor = if self.selections.disjoint_anchors_arc().len() == 1 {
             self.selections.newest_anchor().head()
         } else {
             matches[current_index].start
         };
 
-        let mut count = count % matches.len();
-        if count == 0 {
-            return current_index;
-        }
-        match direction {
-            Direction::Next => {
-                if matches[current_index]
-                    .start
-                    .cmp(&current_index_position, &buffer)
-                    .is_gt()
-                {
-                    count -= 1
-                }
+        let buffer = self.buffer().read(cx).snapshot(cx);
+        let new_idx = match direction {
+            Direction::Next => matches
+                .iter()
+                .position(|m| m.start.cmp(&cursor, &buffer).is_gt())
+                .unwrap_or(0),
+            Direction::Prev => matches
+                .iter()
+                .rposition(|m| m.end.cmp(&cursor, &buffer).is_lt())
+                .unwrap_or(matches.len() - 1),
+        } as isize;
 
-                (current_index + count) % matches.len()
-            }
-            Direction::Prev => {
-                if matches[current_index]
-                    .end
-                    .cmp(&current_index_position, &buffer)
-                    .is_lt()
-                {
-                    count -= 1;
-                }
+        // We'll use `count - 1` because the first jump to the next or previous
+        // match already happens in the scenario above, when we find the next or
+        // previous match starting from the cursor position.
+        let count = count.saturating_sub(1);
+        let count = match direction {
+            Direction::Prev => -(count as isize),
+            Direction::Next => count as isize,
+        };
 
-                if current_index >= count {
-                    current_index - count
-                } else {
-                    matches.len() - (count - current_index)
-                }
-            }
-        }
+        let new_idx = (new_idx + count) % matches.len() as isize;
+        let new_idx = if new_idx.is_negative() {
+            // We need a `matches.len() - 1` here in case `next_idx` has now been
+            // set to `0`, otherwise we'd end up returning `matches.len()`, which
+            // would be out of bounds.
+            new_idx + (matches.len() - 1) as isize
+        } else {
+            new_idx
+        };
+        assert!(new_idx < matches.len() as isize);
+        new_idx as usize
     }
 
     fn find_matches(
@@ -1855,6 +1908,7 @@ impl SearchableItem for Editor {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
 
+        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             let mut ranges = Vec::new();
 
@@ -1863,38 +1917,70 @@ impl SearchableItem for Editor {
             } else {
                 search_within_ranges
             };
-
+            let num_cpus = executor.num_cpus();
             for range in search_within_ranges {
                 for (search_buffer, search_range, deleted_hunk_anchor) in
                     buffer.range_to_buffer_ranges_with_deleted_hunks(range)
                 {
-                    ranges.extend(
-                        query
-                            .search(
-                                search_buffer,
-                                Some(search_range.start.0..search_range.end.0),
-                            )
-                            .await
-                            .into_iter()
-                            .filter_map(|match_range| {
-                                if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
-                                    let start = search_buffer
-                                        .anchor_after(search_range.start + match_range.start);
-                                    let end = search_buffer
-                                        .anchor_before(search_range.start + match_range.end);
-                                    Some(
-                                        deleted_hunk_anchor.with_diff_base_anchor(start)
-                                            ..deleted_hunk_anchor.with_diff_base_anchor(end),
-                                    )
-                                } else {
-                                    let start = search_buffer
-                                        .anchor_after(search_range.start + match_range.start);
-                                    let end = search_buffer
-                                        .anchor_before(search_range.start + match_range.end);
-                                    buffer.buffer_anchor_range_to_anchor_range(start..end)
-                                }
-                            }),
-                    );
+                    let query = query.clone();
+
+                    let mut results = Vec::new();
+                    executor
+                        .scoped(|scope| {
+                            for search_range in chunk_search_range(
+                                search_buffer.text.clone(),
+                                &query,
+                                num_cpus as u32,
+                                search_range,
+                            ) {
+                                let query = query.clone();
+                                let buffer = buffer.clone();
+
+                                let (tx, rx) = oneshot::channel();
+                                results.push(rx);
+                                scope.spawn(async move {
+                                    let chunk_result = query
+                                        .search(
+                                            search_buffer,
+                                            Some(search_range.start..search_range.end),
+                                        )
+                                        .await
+                                        .into_iter()
+                                        .filter_map(|match_range| {
+                                            if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
+                                                let start = search_buffer.anchor_after(
+                                                    search_range.start + match_range.start,
+                                                );
+                                                let end = search_buffer.anchor_before(
+                                                    search_range.start + match_range.end,
+                                                );
+                                                Some(
+                                                    deleted_hunk_anchor.with_diff_base_anchor(start)
+                                                        ..deleted_hunk_anchor
+                                                            .with_diff_base_anchor(end),
+                                                )
+                                            } else {
+                                                let start = search_buffer.anchor_after(
+                                                    search_range.start + match_range.start,
+                                                );
+                                                let end = search_buffer.anchor_before(
+                                                    search_range.start + match_range.end,
+                                                );
+                                                buffer.anchor_range_in_buffer(start..end)
+                                            }
+                                        })
+                                        .collect::<Vec<_>>();
+                                    _ = tx.send(chunk_result);
+                                });
+                            }
+                        })
+                        .await;
+
+                    for rx in results {
+                        if let Ok(results) = rx.await {
+                            ranges.extend(results);
+                        }
+                    }
                 }
             }
 
@@ -2093,6 +2179,48 @@ fn deserialize_path_key(path_key: proto::PathKey) -> Option<PathKey> {
     })
 }
 
+fn chunk_search_range(
+    buffer: BufferSnapshot,
+    query: &SearchQuery,
+    num_cpus: u32,
+    initial_range: Range<BufferOffset>,
+) -> Box<dyn Iterator<Item = Range<usize>> + 'static> {
+    let range = initial_range.to_offset(&buffer);
+    if range.is_empty() {
+        return Box::new(std::iter::empty());
+    }
+
+    let summary: TextSummary = buffer.text_summary_for_range(initial_range);
+    let num_chunks = if !query.is_regex() && !query.as_str().contains('\n') {
+        NonZeroU32::new(summary.lines.row.saturating_add(1).min(num_cpus.max(1)))
+    } else {
+        NonZeroU32::new(1)
+    };
+
+    let Some(num_chunks) = num_chunks else {
+        return Box::new(std::iter::empty());
+    };
+
+    let mut chunk_start = range.start;
+    let rope = buffer.as_rope().clone();
+    let range_end = range.end;
+    let average_chunk_length = summary.len.div_ceil(num_chunks.get() as usize);
+    Box::new(std::iter::from_fn(move || {
+        if chunk_start >= range_end {
+            return None;
+        }
+        let candidate_position = chunk_start + average_chunk_length;
+        let adjusted = rope.ceil_char_boundary(candidate_position);
+        let mut as_point = rope.offset_to_point(adjusted);
+        as_point.row += 1;
+        as_point.column = 0;
+        let end_offset = buffer.point_to_offset(as_point).min(range_end);
+        let ret = chunk_start..end_offset;
+        chunk_start = end_offset;
+        Some(ret)
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
@@ -2116,6 +2244,115 @@ mod tests {
             local_root: None,
         });
         assert_eq!(path_for_file(&file, 0, false, cx), None);
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_multi_line(cx: &mut App) {
+        let text = "line one\nline two\nline three\nline four\nline five\nline six\n";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "line", 4, 0..text.len());
+
+        assert_chunks_are_contiguous(&chunks, 0..text.len());
+        assert!(
+            chunks.len() <= 4,
+            "got {} chunks, expected <= num_cpus (4)",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            let end = chunk.end;
+            assert!(
+                end == text.len() || text.as_bytes()[end - 1] == b'\n',
+                "chunk ending at {end} is not a line boundary",
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_single_line(cx: &mut App) {
+        let text = "hello world hello again";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "hello", 4, 0..text.len());
+        assert_chunks_are_contiguous(&chunks, 0..text.len());
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_empty_range(cx: &mut App) {
+        let buffer = cx.new(|cx| Buffer::local("hello world", cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunks = chunk_search_range_for_test(&snapshot, "hello", 4, 5..5);
+        assert!(chunks.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_chunk_search_range_does_not_start_at_zero(cx: &mut App) {
+        let line = "abcdefghij\n";
+        let text = line.repeat(20);
+        let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let start = line.len() * 7;
+        let end = line.len() * 14;
+        let chunks = chunk_search_range_for_test(&snapshot, "abc", 4, start..end);
+
+        assert_chunks_are_contiguous(&chunks, start..end);
+    }
+
+    fn chunk_search_range_for_test(
+        snapshot: &language::BufferSnapshot,
+        query: &str,
+        num_cpus: u32,
+        range: Range<usize>,
+    ) -> Vec<Range<usize>> {
+        let query = SearchQuery::text(
+            query,
+            false,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .unwrap();
+        chunk_search_range(
+            snapshot.text.clone(),
+            &query,
+            num_cpus,
+            BufferOffset(range.start)..BufferOffset(range.end),
+        )
+        .collect()
+    }
+
+    #[track_caller]
+    fn assert_chunks_are_contiguous(chunks: &[Range<usize>], expected: Range<usize>) {
+        assert!(!chunks.is_empty(), "expected at least one chunk");
+        assert_eq!(
+            chunks.first().unwrap().start,
+            expected.start,
+            "first chunk does not start at {}",
+            expected.start
+        );
+        assert_eq!(
+            chunks.last().unwrap().end,
+            expected.end,
+            "last chunk does not end at {}",
+            expected.end
+        );
+        for chunk in chunks {
+            assert!(chunk.start < chunk.end, "empty chunk: {:?}", chunk);
+        }
+        for window in chunks.windows(2) {
+            assert_eq!(
+                window[0].end, window[1].start,
+                "gap or overlap between chunks {:?} and {:?}",
+                window[0], window[1],
+            );
+        }
     }
 
     async fn deserialize_editor(

@@ -1872,7 +1872,7 @@ async fn test_active_call_events(
         mem::take(&mut *events_b.borrow_mut()),
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
-                id: client_a.user_id().unwrap(),
+                legacy_id: client_a.user_id().unwrap(),
                 github_login: "user_a".into(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
@@ -1891,7 +1891,7 @@ async fn test_active_call_events(
         mem::take(&mut *events_a.borrow_mut()),
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
-                id: client_b.user_id().unwrap(),
+                legacy_id: client_b.user_id().unwrap(),
                 github_login: "user_b".into(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
@@ -5295,6 +5295,7 @@ async fn test_project_search(
                     "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."
                 )
             }
+            SearchResult::WaitingForScan | SearchResult::Searching => {}
         };
     }
 

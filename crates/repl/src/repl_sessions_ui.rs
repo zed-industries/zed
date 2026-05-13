@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, TaskExt, actions,
     prelude::*,
 };
 use project::ProjectItem as _;

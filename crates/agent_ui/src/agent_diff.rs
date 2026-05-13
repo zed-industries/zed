@@ -7,7 +7,7 @@ use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
     Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
-    SelectionEffects, ToPoint,
+    SelectionEffects, SplittableEditor, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -15,7 +15,7 @@ use editor::{
 
 use gpui::{
     Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
+    Global, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, prelude::*,
 };
 
 use language::{Buffer, Capability, OffsetRangeExt, Point};
@@ -40,7 +40,7 @@ use zed_actions::assistant::ToggleFocus;
 
 pub struct AgentDiffPane {
     multibuffer: Entity<MultiBuffer>,
-    editor: Entity<Editor>,
+    editor: Entity<SplittableEditor>,
     thread: Entity<AcpThread>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
@@ -91,15 +91,21 @@ impl AgentDiffPane {
 
         let project = thread.read(cx).project().clone();
         let editor = cx.new(|cx| {
-            let mut editor =
-                Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
-            editor.disable_inline_diagnostics();
-            editor.set_expand_all_diff_hunks(cx);
-            editor
+            let workspace_entity = workspace.upgrade().expect("workspace must exist");
+            let diff_display_editor = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
+                multibuffer.clone(),
+                project.clone(),
+                workspace_entity,
+                window,
+                cx,
+            );
+            diff_display_editor
                 .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
-            editor.register_addon(AgentDiffAddon);
-            editor.disable_mouse_wheel_zoom();
-            editor
+            diff_display_editor.update_editors(cx, |editor, _cx| {
+                editor.register_addon(AgentDiffAddon);
+            });
+            diff_display_editor
         });
 
         let action_log = thread.read(cx).action_log().clone();
@@ -167,21 +173,20 @@ impl AgentDiffPane {
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
-            let (was_empty, is_excerpt_newly_added) =
-                self.multibuffer.update(cx, |multibuffer, cx| {
-                    let was_empty = multibuffer.is_empty();
-                    let is_excerpt_newly_added = multibuffer.update_excerpts_for_path(
-                        path_key.clone(),
-                        buffer.clone(),
-                        diff_hunk_ranges,
-                        multibuffer_context_lines(cx),
-                        cx,
-                    );
-                    multibuffer.add_diff(diff_handle.clone(), cx);
-                    (was_empty, is_excerpt_newly_added)
-                });
+            let was_empty = self.multibuffer.read(cx).is_empty();
+            let is_excerpt_newly_added = self.editor.update(cx, |editor, cx| {
+                editor.update_excerpts_for_path(
+                    path_key.clone(),
+                    buffer.clone(),
+                    diff_hunk_ranges,
+                    multibuffer_context_lines(cx),
+                    diff_handle.clone(),
+                    cx,
+                )
+            });
 
-            self.editor.update(cx, |editor, cx| {
+            let rhs_editor = self.editor.read(cx).rhs_editor().clone();
+            rhs_editor.update(cx, |editor, cx| {
                 if was_empty {
                     let first_hunk = editor
                         .diff_hunks_in_ranges(
@@ -209,9 +214,9 @@ impl AgentDiffPane {
             });
         }
 
-        self.multibuffer.update(cx, |multibuffer, cx| {
+        self.editor.update(cx, |editor, cx| {
             for buffer_id in buffers_to_delete {
-                multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
+                editor.remove_excerpts_for_buffer(buffer_id, cx);
             }
         });
 
@@ -238,7 +243,8 @@ impl AgentDiffPane {
 
     pub fn move_to_path(&self, path_key: PathKey, window: &mut Window, cx: &mut App) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
-            self.editor.update(cx, |editor, cx| {
+            let rhs_editor = self.editor.read(cx).rhs_editor().clone();
+            rhs_editor.update(cx, |editor, cx| {
                 let first_hunk = editor
                     .diff_hunks_in_ranges(
                         &[position..editor::Anchor::Max],
@@ -257,14 +263,16 @@ impl AgentDiffPane {
     }
 
     fn keep(&mut self, _: &Keep, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
+        let rhs_editor = self.editor.read(cx).rhs_editor().clone();
+        rhs_editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             keep_edits_in_selection(editor, &snapshot, &self.thread, window, cx);
         });
     }
 
     fn reject(&mut self, _: &Reject, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
+        let rhs_editor = self.editor.read(cx).rhs_editor().clone();
+        rhs_editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             reject_edits_in_selection(
                 editor,
@@ -278,7 +286,8 @@ impl AgentDiffPane {
     }
 
     fn reject_all(&mut self, _: &RejectAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
+        let rhs_editor = self.editor.read(cx).rhs_editor().clone();
+        rhs_editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             reject_edits_in_ranges(
                 editor,
@@ -551,7 +560,10 @@ impl Item for AgentDiffPane {
         cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
-        self.editor.for_each_project_item(cx, f)
+        self.editor
+            .read(cx)
+            .rhs_editor()
+            .for_each_project_item(cx, f)
     }
 
     fn set_nav_history(
@@ -560,8 +572,10 @@ impl Item for AgentDiffPane {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
+        self.editor.update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, _| {
+                editor.set_nav_history(Some(nav_history));
+            });
         });
     }
 
@@ -628,14 +642,12 @@ impl Item for AgentDiffPane {
         &'a self,
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
-        _: &'a App,
+        cx: &'a App,
     ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
-        } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.clone().into())
         } else {
-            None
+            self.editor.act_as_type(type_id, cx)
         }
     }
 
@@ -1799,7 +1811,7 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{DiffViewStyle, SettingsStore};
     use std::{path::Path, rc::Rc};
     use util::path;
     use workspace::{MultiWorkspace, PathList};
@@ -1809,6 +1821,11 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
+                });
+            });
             prompt_store::init(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             language_model::init(cx);
@@ -1847,7 +1864,7 @@ mod tests {
         let agent_diff = cx.new_window_entity(|window, cx| {
             AgentDiffPane::new(thread.clone(), workspace.downgrade(), window, cx)
         });
-        let editor = agent_diff.read_with(cx, |diff, _cx| diff.editor.clone());
+        let editor = agent_diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
 
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(buffer_path, cx))

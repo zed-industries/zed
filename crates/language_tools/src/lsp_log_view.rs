@@ -2,7 +2,7 @@ use collections::VecDeque;
 use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
-    App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
+    Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
     Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools as _;
@@ -28,7 +28,7 @@ use workspace::{
 
 use crate::get_or_create_tool;
 
-pub fn open_server_trace(
+pub fn open(
     log_store: &Entity<LogStore>,
     workspace: WeakEntity<Workspace>,
     server: LanguageServerSelector,
@@ -67,7 +67,7 @@ pub fn open_server_trace(
                             }
                         };
                         if let Some(server_id) = server_id {
-                            log_view.show_rpc_trace_for_server(server_id, window, cx);
+                            log_view.show_logs_for_server(server_id, window, cx);
                         }
                     });
                 })
@@ -822,9 +822,14 @@ impl SearchableItem for LspLogView {
         })
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.editor
-            .update(cx, |e, cx| e.query_suggestion(window, cx))
+            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
     }
 
     fn activate_match(
@@ -956,7 +961,7 @@ impl Render for LspLogToolbarItemView {
         let log_toolbar_view = cx.weak_entity();
 
         let lsp_menu = PopoverMenu::new("LspLogView")
-            .anchor(Corner::TopLeft)
+            .anchor(Anchor::TopLeft)
             .trigger(
                 Button::new(
                     "language_server_menu_header",
@@ -1031,7 +1036,7 @@ impl Render for LspLogToolbarItemView {
                 LogKind::ServerInfo => SERVER_INFO,
             };
             PopoverMenu::new("LspViewSelector")
-                .anchor(Corner::TopLeft)
+                .anchor(Anchor::TopLeft)
                 .trigger(
                     Button::new("language_server_menu_header", label).end_icon(
                         Icon::new(IconName::ChevronDown)
@@ -1123,7 +1128,7 @@ impl Render for LspLogToolbarItemView {
                                 let log_view = log_view.clone();
                                 div().child(
                                     PopoverMenu::new("lsp-trace-level-menu")
-                                        .anchor(Corner::TopLeft)
+                                        .anchor(Anchor::TopLeft)
                                         .trigger(
                                             Button::new(
                                                 "language_server_trace_level_selector",
@@ -1193,7 +1198,7 @@ impl Render for LspLogToolbarItemView {
                                 let log_view = log_view.clone();
                                 div().child(
                                     PopoverMenu::new("lsp-log-level-menu")
-                                        .anchor(Corner::TopLeft)
+                                        .anchor(Anchor::TopLeft)
                                         .trigger(
                                             Button::new(
                                                 "language_server_log_level_selector",

@@ -115,7 +115,9 @@ pub struct PredictEditsBody {
     pub trigger: PredictEditsRequestTrigger,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr)]
+#[derive(
+    Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr, strum::EnumString,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum PredictEditsRequestTrigger {
     Testing,
@@ -266,18 +268,6 @@ pub struct WebSearchResult {
     pub title: String,
     pub url: String,
     pub text: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensBody {
-    pub provider: LanguageModelProvider,
-    pub model: String,
-    pub provider_request: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensResponse {
-    pub tokens: usize,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]

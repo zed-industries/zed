@@ -3,12 +3,11 @@ use fs::Fs;
 
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, WeakEntity, Window,
-    WindowId, actions, deferred, px,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, Tiling, WeakEntity,
+    Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
-use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
@@ -325,12 +324,15 @@ impl MultiWorkspace {
         });
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
         let settings_subscription = cx.observe_global_in::<settings::SettingsStore>(window, {
-            let mut previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+            let mut previous_multi_workspace_enabled = !DisableAiSettings::get_global(cx)
+                .disable_ai
+                && AgentSettings::get_global(cx).enabled;
             move |this, window, cx| {
-                if DisableAiSettings::get_global(cx).disable_ai != previous_disable_ai {
+                let multi_workspace_enabled = this.multi_workspace_enabled(cx);
+                if previous_multi_workspace_enabled && !multi_workspace_enabled {
                     this.collapse_to_single_workspace(window, cx);
-                    previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
                 }
+                previous_multi_workspace_enabled = multi_workspace_enabled;
             }
         });
         Self::subscribe_to_workspace(&workspace, window, cx);
@@ -397,8 +399,7 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
-            && !DisableAiSettings::get_global(cx).disable_ai
+        !DisableAiSettings::get_global(cx).disable_ai && AgentSettings::get_global(cx).enabled
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1430,11 +1431,17 @@ impl MultiWorkspace {
         let old_active_workspace = self.active_workspace.clone();
         let old_active_was_retained = self.active_workspace_is_retained();
         let workspace_was_retained = self.is_workspace_retained(&workspace);
+        let should_retain_workspaces = self.multi_workspace_enabled(cx);
+
+        if should_retain_workspaces && !old_active_was_retained {
+            let key = old_active_workspace.read(cx).project_group_key(cx);
+            self.retain_workspace(old_active_workspace.clone(), key, cx);
+        }
 
         if !workspace_was_retained {
             self.register_workspace(&workspace, window, cx);
 
-            if self.sidebar_open {
+            if should_retain_workspaces {
                 let key = workspace.read(cx).project_group_key(cx);
                 self.retain_workspace(workspace.clone(), key, cx);
             }
@@ -1447,7 +1454,7 @@ impl MultiWorkspace {
             group.last_active_workspace = Some(self.active_workspace.downgrade());
         }
 
-        if !self.sidebar_open && !old_active_was_retained {
+        if !should_retain_workspaces && !old_active_was_retained {
             self.detach_workspace(&old_active_workspace, cx);
         }
 
@@ -1473,7 +1480,7 @@ impl MultiWorkspace {
     }
 
     /// Collapses to a single workspace, discarding all groups.
-    /// Used when multi-workspace is disabled (e.g. disable_ai).
+    /// Used when multi-workspace is disabled by settings.
     fn collapse_to_single_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sidebar_open {
             self.close_sidebar(window, cx);
@@ -1932,15 +1939,55 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(
-                PathList::new(&paths),
-                None,
-                &[],
-                None,
-                OpenMode::Activate,
-                window,
-                cx,
-            )
+            let empty_workspace = if self
+                .active_workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .is_none()
+            {
+                Some(self.active_workspace.clone())
+            } else {
+                None
+            };
+
+            cx.spawn_in(window, async move |this, cx| {
+                if let Some(empty_workspace) = empty_workspace.as_ref() {
+                    let should_continue = empty_workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+                        })?
+                        .await?;
+                    if !should_continue {
+                        return Ok(empty_workspace.clone());
+                    }
+                }
+
+                let create_task = this.update_in(cx, |this, window, cx| {
+                    this.find_or_create_local_workspace(
+                        PathList::new(&paths),
+                        None,
+                        empty_workspace.as_slice(),
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                })?;
+                let new_workspace = create_task.await?;
+
+                if let Some(empty_workspace) = empty_workspace {
+                    this.update(cx, |this, cx| {
+                        if this.is_workspace_retained(&empty_workspace) {
+                            this.detach_workspace(&empty_workspace, cx);
+                        }
+                    })?;
+                }
+
+                Ok(new_workspace)
+            })
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {
