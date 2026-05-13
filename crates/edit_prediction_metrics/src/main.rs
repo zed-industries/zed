@@ -41,8 +41,8 @@ fn run() -> Result<(), String> {
             let actual_patch = fs::read_to_string(&actual_patch_path)
                 .map_err(|err| format!("failed to read {}: {err}", actual_patch_path.display()))?;
 
-            let expected = apply_patch_to_excerpt(&base, &expected_patch, 0)?;
-            let actual = apply_patch_to_excerpt(&base, &actual_patch, 0)?;
+            let expected = apply_patch_to_excerpt(&base, &expected_patch, 0, None)?;
+            let actual = apply_patch_to_excerpt(&base, &actual_patch, 0, None)?;
             let context = [];
 
             EvaluationReport::new(
@@ -105,6 +105,7 @@ fn report_from_json_example(
 ) -> Result<EvaluationReport, String> {
     let context = get_context_excerpts(&example);
     let excerpt_start_row = example.prompt_inputs.excerpt_start_row;
+    let cursor_path = example.cursor_path;
     let base = example.prompt_inputs.cursor_excerpt;
     let expected_patch = example
         .expected_patches
@@ -122,8 +123,14 @@ fn report_from_json_example(
             .actual_patch
     };
 
-    let expected = apply_patch_to_excerpt(&base, &expected_patch, excerpt_start_row)?;
-    let actual = apply_patch_to_excerpt(&base, &actual_patch, excerpt_start_row)?;
+    let expected = apply_patch_to_excerpt(
+        &base,
+        &expected_patch,
+        excerpt_start_row,
+        Some(&cursor_path),
+    )?;
+    let actual =
+        apply_patch_to_excerpt(&base, &actual_patch, excerpt_start_row, Some(&cursor_path))?;
 
     Ok(EvaluationReport::new(
         base,
@@ -380,8 +387,8 @@ fn print_report(report: &EvaluationReport) {
     println!("Jumps metrics");
     println!("-------------");
     println!(
-        "Editable context coverage: {} ({} / {})",
-        report.editable_context_coverage.score,
+        "Editable context coverage: {}% ({} out of {} edits covered)",
+        (report.editable_context_coverage.score * 100.0).round(),
         report.editable_context_coverage.changed_lines_reachable,
         report.editable_context_coverage.total_changed_lines
     );
@@ -473,6 +480,7 @@ struct Prediction {
 #[derive(Debug, Clone)]
 struct ParsedHunk {
     old_start: u32,
+    filename: Option<String>,
     lines: Vec<HunkLine>,
 }
 
@@ -487,8 +495,20 @@ fn apply_patch_to_excerpt(
     base: &str,
     patch: &str,
     excerpt_start_row: u32,
+    target_path: Option<&str>,
 ) -> Result<String, String> {
     let hunks = parse_diff_hunks(patch);
+    let hunks = if let Some(target_path) = target_path {
+        hunks
+            .into_iter()
+            .filter(|hunk| match hunk.filename.as_deref() {
+                Some(filename) => filename == target_path,
+                None => true,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        hunks
+    };
 
     let result = try_apply_hunks(base, &hunks, excerpt_start_row);
 
@@ -680,6 +700,7 @@ fn filter_hunk_to_excerpt(
 
     Some(ParsedHunk {
         old_start: filtered_old_start.unwrap_or(excerpt_start_row),
+        filename: hunk.filename.clone(),
         lines: filtered_lines,
     })
 }
@@ -687,8 +708,14 @@ fn filter_hunk_to_excerpt(
 fn parse_diff_hunks(diff: &str) -> Vec<ParsedHunk> {
     let mut hunks = Vec::new();
     let mut current_hunk: Option<ParsedHunk> = None;
+    let mut current_filename = None;
 
     for line in diff.lines() {
+        if let Some(filename) = parse_diff_filename(line) {
+            current_filename = Some(filename);
+            continue;
+        }
+
         if let Some((old_start, old_count, _new_start, _new_count)) = parse_hunk_header(line) {
             if let Some(hunk) = current_hunk.take() {
                 hunks.push(hunk);
@@ -696,6 +723,7 @@ fn parse_diff_hunks(diff: &str) -> Vec<ParsedHunk> {
             let _ = old_count;
             current_hunk = Some(ParsedHunk {
                 old_start,
+                filename: current_filename.clone(),
                 lines: Vec::new(),
             });
             continue;
@@ -746,6 +774,27 @@ fn parse_hunk_range(part: &str) -> Option<(u32, u32)> {
     }
 }
 
+fn parse_diff_filename(line: &str) -> Option<String> {
+    let path = line
+        .strip_prefix("--- ")
+        .or_else(|| line.strip_prefix("+++ "))?;
+    normalize_diff_path(path)
+}
+
+fn normalize_diff_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path);
+
+    if path == "/dev/null" {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -755,7 +804,7 @@ mod tests {
         let base = "fn main() {\n    println!(\"hello\");\n}\n";
         let patch = "@@ -1,3 +1,3 @@\n fn main() {\n-    println!(\"hello\");\n+    println!(\"world\");\n }\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 0).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 0, None).unwrap();
         assert_eq!(actual, "fn main() {\n    println!(\"world\");\n}\n");
     }
 
@@ -764,7 +813,7 @@ mod tests {
         let base = "b\nc\nd\n";
         let patch = "@@ -2,2 +2,2 @@\n-b\n-c\n+x\n+y\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 1).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 1, None).unwrap();
         assert_eq!(actual, "x\ny\nd\n");
     }
 
@@ -775,7 +824,7 @@ mod tests {
         // even though the excerpt starts at file row 100.
         let patch = "@@ -2,2 +2,2 @@\n-b\n-c\n+x\n+y\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 100).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 100, None).unwrap();
         assert_eq!(actual, "a\nx\ny\nd\n");
     }
 
@@ -786,8 +835,35 @@ mod tests {
         // hunk targets line 6 (1-based) = row 5 (0-based) = first line.
         let patch = "@@ -6,2 +6,2 @@\n-a\n-b\n+x\n+y\n";
 
-        let actual = apply_patch_to_excerpt(base, patch, 5).unwrap();
+        let actual = apply_patch_to_excerpt(base, patch, 5, None).unwrap();
         assert_eq!(actual, "x\ny\nc\n");
+    }
+
+    #[test]
+    fn json_patch_application_ignores_unrelated_file_hunks() {
+        let base = "first\nsecond\nthird\n";
+        let patch = "--- a/src/other.rs\n+++ b/src/other.rs\n@@ -2,1 +2,1 @@\n-second\n+changed\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 0, Some("src/main.rs")).unwrap();
+        assert_eq!(actual, base);
+    }
+
+    #[test]
+    fn json_patch_application_applies_matching_file_hunks() {
+        let base = "first\nsecond\nthird\n";
+        let patch = "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -2,1 +2,1 @@\n-second\n+changed\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 0, Some("src/main.rs")).unwrap();
+        assert_eq!(actual, "first\nchanged\nthird\n");
+    }
+
+    #[test]
+    fn json_patch_application_applies_headerless_hunks() {
+        let base = "first\nsecond\nthird\n";
+        let patch = "@@ -2,1 +2,1 @@\n-second\n+changed\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 0, Some("src/main.rs")).unwrap();
+        assert_eq!(actual, "first\nchanged\nthird\n");
     }
 
     fn json_example(predictions: Option<&str>) -> String {
