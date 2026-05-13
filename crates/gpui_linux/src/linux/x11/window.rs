@@ -278,7 +278,7 @@ pub struct X11WindowState {
     hidden: bool,
     active: bool,
     hovered: bool,
-    pub(crate) force_render_after_recovery: bool,
+    pub(crate) force_render: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -788,7 +788,7 @@ impl X11WindowState {
                 input_handler: None,
                 active: false,
                 hovered: false,
-                force_render_after_recovery: false,
+                force_render: false,
                 fullscreen: false,
                 maximized_vertical: false,
                 maximized_horizontal: false,
@@ -1677,14 +1677,14 @@ impl PlatformWindow for X11Window {
                 }
             }
 
-            inner.force_render_after_recovery = true;
+            inner.force_render = true;
             return;
         }
 
         inner.renderer.draw(scene);
 
         if inner.renderer.needs_redraw() {
-            inner.force_render_after_recovery = true;
+            inner.force_render = true;
         }
     }
 
