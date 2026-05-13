@@ -11,6 +11,7 @@ use std::sync::Arc;
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub anthropic_compatible: Option<HashMap<Arc<str>, AnthropicCompatibleSettingsContent>>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
@@ -332,6 +333,34 @@ impl Default for OpenAiCompatibleModelCapabilities {
             interleaved_reasoning: false,
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<AnthropicCompatibleAvailableModel>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleAvailableModel {
+    /// The model's name in the API. e.g. claude-3-5-sonnet-latest, etc.
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
+    pub max_tokens: u64,
+    /// The maximum number of output tokens to generate.
+    pub max_output_tokens: Option<u64>,
+    /// Default temperature for completions.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_temperature: Option<f32>,
+    /// The model's mode (e.g. thinking).
+    pub mode: Option<ModelMode>,
+    /// Whether the model supports image inputs.
+    #[serde(default)]
+    pub supports_images: bool,
 }
 
 #[with_fallible_options]

@@ -4,9 +4,10 @@ use collections::HashMap;
 use settings::RegisterSetting;
 
 use crate::provider::{
-    anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
-    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
+    anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
+    bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
+    google::GoogleSettings, lmstudio::LmStudioSettings, mistral::MistralSettings,
+    ollama::OllamaSettings, open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
     opencode::OpenCodeSettings, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
@@ -14,6 +15,7 @@ use crate::provider::{
 #[derive(Debug, RegisterSetting)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
+    pub anthropic_compatible: HashMap<Arc<str>, AnthropicCompatibleSettings>,
     pub bedrock: AmazonBedrockSettings,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
@@ -44,6 +46,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let opencode = language_models.opencode.unwrap();
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
+        let anthropic_compatible = language_models.anthropic_compatible.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
         let vercel_ai_gateway = language_models.vercel_ai_gateway.unwrap();
         let x_ai = language_models.x_ai.unwrap();
@@ -101,6 +104,18 @@ impl settings::Settings for AllLanguageModelSettings {
                 api_url: openai.api_url.unwrap(),
                 available_models: openai.available_models.unwrap_or_default(),
             },
+            anthropic_compatible: anthropic_compatible
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        key,
+                        AnthropicCompatibleSettings {
+                            api_url: value.api_url,
+                            available_models: value.available_models,
+                        },
+                    )
+                })
+                .collect(),
             openai_compatible: openai_compatible
                 .into_iter()
                 .map(|(key, value)| {
