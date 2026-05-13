@@ -180,9 +180,8 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_rs_renderer::Theme {
     theme.cluster_border = hsla_to_hex(colors.border_variant);
     theme.text_color = hsla_to_hex(colors.text);
     let accents = cx.theme().accents();
-    let pie_colors: [String; 12] = std::array::from_fn(|i| {
-        hsla_to_hex(accents.color_for_index(i as u32))
-    });
+    let pie_colors: [String; 12] =
+        std::array::from_fn(|i| hsla_to_hex(accents.color_for_index(i as u32)));
     theme.pie_colors = pie_colors;
     theme.pie_title_text_color = hsla_to_hex(colors.text);
     theme.pie_section_text_color = "#fff".to_string();
@@ -199,12 +198,9 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_rs_renderer::Theme {
     theme.sequence_activation_border = hsla_to_hex(colors.border);
 
     let players = cx.theme().players();
-    theme.git_colors = std::array::from_fn(|i| {
-        hsla_to_hex(players.0[i % players.0.len()].cursor)
-    });
-    theme.git_inv_colors = std::array::from_fn(|i| {
-        hsla_to_hex(players.0[i % players.0.len()].background)
-    });
+    theme.git_colors = std::array::from_fn(|i| hsla_to_hex(players.0[i % players.0.len()].cursor));
+    theme.git_inv_colors =
+        std::array::from_fn(|i| hsla_to_hex(players.0[i % players.0.len()].background));
     theme.git_branch_label_colors = std::array::from_fn(|_| "#fff".to_string());
     theme.git_commit_label_color = hsla_to_hex(colors.text);
     theme.git_commit_label_background = hsla_to_hex(colors.element_background);
@@ -223,7 +219,11 @@ fn build_accent_classdefs(cx: &Context<Markdown>) -> String {
         let fill = hsla_to_hex(player.background);
         let stroke = hsla_to_hex(player.cursor);
         let text = hsla_to_hex(player.cursor);
-        writeln!(defs, "classDef accent{i} fill:{fill},stroke:{stroke},color:{text}").ok();
+        writeln!(
+            defs,
+            "classDef accent{i} fill:{fill},stroke:{stroke},color:{text}"
+        )
+        .ok();
     }
     defs
 }
