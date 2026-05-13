@@ -1399,7 +1399,12 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         "Should have fetched one code lens action, but got: {resulting_lens_actions:?}"
     );
     assert_eq!(
-        resulting_lens_actions.first().unwrap().lsp_action.title(),
+        resulting_lens_actions
+            .values()
+            .next()
+            .unwrap()
+            .lsp_action
+            .title(),
         "LSP Command 1",
         "Only the final code lens action should be in the data"
     )
@@ -2739,9 +2744,9 @@ async fn test_lsp_pull_diagnostics(
     let closure_workspace_diagnostics_pulls_result_ids =
         workspace_diagnostics_pulls_result_ids.clone();
     let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
     let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
 
     let capabilities = lsp::ServerCapabilities {
         diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(

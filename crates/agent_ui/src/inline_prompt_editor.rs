@@ -1163,6 +1163,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         MarkdownElement::new(markdown, style)
+            .image_resolver(|dest_url| crate::resolve_agent_image(dest_url, &[]))
     }
 }
 
@@ -1539,26 +1540,6 @@ pub enum CodegenStatus {
     Pending,
     Done,
     Error(anyhow::Error),
-}
-
-/// This is just CodegenStatus without the anyhow::Error, which causes a lifetime issue for rendering the Cancel button.
-#[derive(Copy, Clone)]
-pub enum CancelButtonState {
-    Idle,
-    Pending,
-    Done,
-    Error,
-}
-
-impl Into<CancelButtonState> for &CodegenStatus {
-    fn into(self) -> CancelButtonState {
-        match self {
-            CodegenStatus::Idle => CancelButtonState::Idle,
-            CodegenStatus::Pending => CancelButtonState::Pending,
-            CodegenStatus::Done => CancelButtonState::Done,
-            CodegenStatus::Error(_) => CancelButtonState::Error,
-        }
-    }
 }
 
 #[derive(Copy, Clone)]

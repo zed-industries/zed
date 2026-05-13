@@ -149,6 +149,12 @@ pub struct ThemeSettingsContent {
     pub agent_ui_font_size: Option<FontSize>,
     /// The font size for user messages in the agent panel.
     pub agent_buffer_font_size: Option<FontSize>,
+    /// The name of a font to use for rendering in the markdown preview.
+    /// Falls back to the UI font if unset.
+    pub markdown_preview_font_family: Option<FontFamilyName>,
+    /// The theme to use for the markdown preview.
+    /// Falls back to the main editor theme if unset.
+    pub markdown_preview_theme: Option<ThemeSelection>,
     /// The name of the Zed theme to use.
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
@@ -848,6 +854,30 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.document_highlight.bracket_background")]
     pub editor_document_highlight_bracket_background: Option<String>,
 
+    /// Filled background color for added diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.added.background")]
+    pub editor_diff_hunk_added_background: Option<String>,
+
+    /// Hollow background color for added diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.added.hollow_background")]
+    pub editor_diff_hunk_added_hollow_background: Option<String>,
+
+    /// Hollow border color for added diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.added.hollow_border")]
+    pub editor_diff_hunk_added_hollow_border: Option<String>,
+
+    /// Filled background color for deleted diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.deleted.background")]
+    pub editor_diff_hunk_deleted_background: Option<String>,
+
+    /// Hollow background color for deleted diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.deleted.hollow_background")]
+    pub editor_diff_hunk_deleted_hollow_background: Option<String>,
+
+    /// Hollow border color for deleted diff hunk row highlights in the editor.
+    #[serde(rename = "editor.diff_hunk.deleted.hollow_border")]
+    pub editor_diff_hunk_deleted_hollow_border: Option<String>,
+
     /// Terminal background color.
     #[serde(rename = "terminal.background")]
     pub terminal_background: Option<String>,
@@ -1036,6 +1066,9 @@ pub struct ThemeColorsContent {
     /// Background color for Vim yank highlight.
     #[serde(rename = "vim.yank.background")]
     pub vim_yank_background: Option<String>,
+    /// Foreground color for Helix jump labels.
+    #[serde(rename = "vim.helix_jump_label.foreground")]
+    pub vim_helix_jump_label_foreground: Option<String>,
     /// Background color for Vim Helix Normal mode indicator.
     #[serde(rename = "vim.helix_normal.background")]
     pub vim_helix_normal_background: Option<String>,

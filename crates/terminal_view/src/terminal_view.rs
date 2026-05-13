@@ -11,8 +11,8 @@ use editor::{
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
     FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions,
-    anchored, deferred, div,
+    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt, WeakEntity,
+    actions, anchored, deferred, div,
 };
 use itertools::Itertools;
 use menu;
@@ -32,9 +32,9 @@ use std::{
 };
 use task::TaskId;
 use terminal::{
-    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp,
-    ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState,
-    TaskStatus, Terminal, TerminalBounds, ToggleViMode,
+    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, PasteText, ScrollLineDown,
+    ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette,
+    TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
     alacritty_terminal::{
         index::Point as AlacPoint,
         term::{TermMode, point_to_viewport, search::RegexSearch},
@@ -489,6 +489,7 @@ impl TerminalView {
     pub fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
+        has_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -497,13 +498,6 @@ impl TerminalView {
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
             .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
-        let has_selection = self
-            .terminal
-            .read(cx)
-            .last_content
-            .selection_text
-            .as_ref()
-            .is_some_and(|text| !text.is_empty());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal::default()))
@@ -514,6 +508,7 @@ impl TerminalView {
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
+                .action("Paste Text", Box::new(PasteText))
                 .action("Select All", Box::new(SelectAll))
                 .action("Clear", Box::new(Clear))
                 .when(assistant_enabled, |menu| {
@@ -817,7 +812,7 @@ impl TerminalView {
     }
 
     ///Attempt to paste the clipboard into the terminal
-    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         let Some(clipboard) = cx.read_from_clipboard() else {
             return;
         };
@@ -826,12 +821,27 @@ impl TerminalView {
             Some(ClipboardEntry::Image(image)) if !image.bytes.is_empty() => {
                 self.forward_ctrl_v(cx);
             }
+            Some(ClipboardEntry::ExternalPaths(paths)) => {
+                self.add_paths_to_terminal(paths.paths(), window, cx);
+            }
             _ => {
                 if let Some(text) = clipboard.text() {
                     self.terminal
                         .update(cx, |terminal, _cx| terminal.paste(&text));
                 }
             }
+        }
+    }
+
+    ///Attempt to paste the clipboard text into the terminal
+    fn paste_text(&mut self, _: &PasteText, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        if let Some(text) = clipboard.text() {
+            self.terminal
+                .update(cx, |terminal, _cx| terminal.paste(&text));
         }
     }
 
@@ -1232,6 +1242,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::send_keystroke))
             .on_action(cx.listener(TerminalView::copy))
             .on_action(cx.listener(TerminalView::paste))
+            .on_action(cx.listener(TerminalView::paste_text))
             .on_action(cx.listener(TerminalView::clear))
             .on_action(cx.listener(TerminalView::scroll_line_up))
             .on_action(cx.listener(TerminalView::scroll_line_down))
@@ -1249,12 +1260,21 @@ impl Render for TerminalView {
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
-                        if this.terminal.read(cx).last_content.selection.is_none() {
+                        let had_selection = this.terminal.read(cx).last_content.selection.is_some();
+                        if !had_selection {
                             this.terminal.update(cx, |terminal, _| {
                                 terminal.select_word_at_event_position(event);
                             });
-                        };
-                        this.deploy_context_menu(event.position, window, cx);
+                        }
+                        let has_selection = !had_selection
+                            || this
+                                .terminal
+                                .read(cx)
+                                .last_content
+                                .selection_text
+                                .as_ref()
+                                .is_some_and(|text| !text.is_empty());
+                        this.deploy_context_menu(event.position, has_selection, window, cx);
                         cx.notify();
                     }
                 }),
@@ -1276,12 +1296,13 @@ impl Render for TerminalView {
                         self.mode.clone(),
                     ))
                     .when(self.content_mode(window, cx).is_scrollable(), |div| {
+                        let colors = cx.theme().colors();
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
-                                .with_track_along(
+                                .with_stable_track_along(
                                     ScrollAxes::Vertical,
-                                    cx.theme().colors().editor_background,
+                                    colors.editor_background,
                                 )
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
@@ -1984,7 +2005,7 @@ impl SearchableItem for TerminalView {
 /// For remote projects, local-only resolution (home dir fallback, shell expansion,
 /// local `is_dir` checks) is skipped -- returning `None` lets the remote shell
 /// open in the remote user's home directory by default.
-pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let is_remote = workspace.project().read(cx).is_remote();
     let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentFileDirectory => workspace

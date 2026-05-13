@@ -227,6 +227,7 @@ pub(crate) fn parse_markdown_with_options(
                             metadata: CodeBlockMetadata {
                                 content_range: range.clone(),
                                 line_count: 1,
+                                is_fenced_closed: false,
                             },
                         }
                     }
@@ -243,9 +244,22 @@ pub(crate) fn parse_markdown_with_options(
                             .bytes()
                             .filter(|c| *c == b'\n')
                             .count();
+                        let is_fenced_closed = {
+                            let code_block_source = &text[range.clone()];
+                            code_block_source
+                                .trim_end()
+                                .lines()
+                                .last()
+                                .is_some_and(|line| {
+                                    let trimmed = line.trim_start();
+                                    trimmed.len() >= 3 && trimmed.chars().all(|c| c == '`')
+                                })
+                        };
+
                         let metadata = CodeBlockMetadata {
                             content_range,
                             line_count,
+                            is_fenced_closed,
                         };
 
                         let info = info.trim();
@@ -293,7 +307,7 @@ pub(crate) fn parse_markdown_with_options(
                             attrs,
                         }
                     }
-                    pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
+                    pulldown_cmark::Tag::BlockQuote(kind) => MarkdownTag::BlockQuote(kind),
                     pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
                     pulldown_cmark::Tag::Item => MarkdownTag::Item,
                     pulldown_cmark::Tag::FootnoteDefinition(label) => {
@@ -652,7 +666,7 @@ pub enum MarkdownTag {
         attrs: Vec<(SharedString, Option<SharedString>)>,
     },
 
-    BlockQuote,
+    BlockQuote(Option<pulldown_cmark::BlockQuoteKind>),
 
     /// A code block.
     CodeBlock {
@@ -735,6 +749,7 @@ pub enum CodeBlockKind {
 pub struct CodeBlockMetadata {
     pub content_range: Range<usize>,
     pub line_count: usize,
+    pub is_fenced_closed: bool,
 }
 
 fn extract_code_content_range(text: &str) -> Range<usize> {
@@ -952,7 +967,8 @@ mod tests {
                             kind: CodeBlockKind::FencedLang("rust".into()),
                             metadata: CodeBlockMetadata {
                                 content_range: 8..34,
-                                line_count: 3
+                                line_count: 3,
+                                is_fenced_closed: true,
                             }
                         })
                     ),
@@ -980,7 +996,8 @@ mod tests {
                             kind: CodeBlockKind::Indented,
                             metadata: CodeBlockMetadata {
                                 content_range: 4..16,
-                                line_count: 1
+                                line_count: 1,
+                                is_fenced_closed: false,
                             }
                         })
                     ),
@@ -1299,5 +1316,34 @@ mod tests {
         assert!(parsed.heading_slugs.contains_key("foo"));
         assert!(parsed.heading_slugs.contains_key("foo-1"));
         assert!(parsed.heading_slugs.contains_key("foo-1-1"));
+    }
+
+    #[test]
+    fn test_gfm_alert_block_quote_kinds() {
+        use pulldown_cmark::BlockQuoteKind;
+
+        let markdown = "\n> [!NOTE]\n> A note.\n\n> [!TIP]\n> A tip.\n\n> [!IMPORTANT]\n> Important.\n\n> [!WARNING]\n> A warning.\n\n> [!CAUTION]\n> A caution.\n\n> Plain quote.\n";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        let block_quote_kinds: Vec<_> = parsed
+            .events
+            .iter()
+            .filter_map(|(_, event)| match event {
+                Start(BlockQuote(kind)) => Some(*kind),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            block_quote_kinds,
+            vec![
+                Some(BlockQuoteKind::Note),
+                Some(BlockQuoteKind::Tip),
+                Some(BlockQuoteKind::Important),
+                Some(BlockQuoteKind::Warning),
+                Some(BlockQuoteKind::Caution),
+                None,
+            ]
+        );
     }
 }

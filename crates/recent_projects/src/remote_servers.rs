@@ -12,10 +12,10 @@ use dev_container::{
 use editor::Editor;
 
 use extension_host::ExtensionStore;
-use futures::{FutureExt, channel::oneshot, future::Shared};
+use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
+    EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, TaskExt,
     WeakEntity, Window, canvas,
 };
 use log::{debug, info};
@@ -31,7 +31,6 @@ use settings::{
     RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
     watch_config_file,
 };
-use smol::stream::StreamExt as _;
 use std::{
     borrow::Cow,
     collections::BTreeSet,
