@@ -124,7 +124,7 @@ However, the SDK doesn't yet expose everything needed to fully support all of th
 
 #### Claude Code Notifications
 
-Claude Agent runs Claude Code under the hood. Claude Code can ring the terminal bell when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
+Claude Code can ring the terminal bell when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
 
 ```json
 {
