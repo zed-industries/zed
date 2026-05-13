@@ -374,6 +374,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 // completion menu will still be shown after "@category " is
                 // inserted
                 confirm: Some(Arc::new(|_, _, _| true)),
+                group: None,
             }),
             PromptContextEntry::Action(action) => {
                 let selection = workspace.update(cx, |workspace, cx| {
@@ -431,6 +432,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         }
     }
 
@@ -470,6 +472,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         }
     }
 
@@ -536,6 +539,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         })
     }
 
@@ -601,6 +605,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         })
     }
 
@@ -641,6 +646,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         })
     }
 
@@ -686,6 +692,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             // completion menu will still be shown after "@category " is
             // inserted
             confirm: Some(on_action),
+            group: None,
         })
     }
 
@@ -783,6 +790,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         }
     }
 
@@ -824,6 +832,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 mention_set,
                 workspace,
             )),
+            group: None,
         }
     }
 
@@ -1367,6 +1376,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                     }
                 }
 
+                let show_section_headers = mode.is_none() && argument.is_none();
                 let query = argument.unwrap_or_default();
                 let search_task =
                     self.search_mentions(mode, query, Arc::<AtomicBool>::default(), cx);
@@ -1397,118 +1407,150 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 };
 
                 cx.spawn(async move |_, cx| {
-                    let matches = search_task.await;
+                    let mut matches = search_task.await;
+                    if show_section_headers {
+                        matches.sort_by_key(|mat| match mat {
+                            Match::File(FileMatch {
+                                is_recent: true, ..
+                            })
+                            | Match::RecentThread(_) => 0,
+                            Match::Entry(_) | Match::BranchDiff(_) => 1,
+                            _ => 2,
+                        });
+                    }
 
                     let completions = cx.update(|cx| {
                         matches
                             .into_iter()
-                            .filter_map(|mat| match mat {
-                                Match::File(FileMatch { mat, is_recent }) => {
-                                    let project_path = ProjectPath {
-                                        worktree_id: WorktreeId::from_usize(mat.worktree_id),
-                                        path: mat.path.clone(),
-                                    };
+                            .filter_map(|mat| {
+                                let group = if show_section_headers {
+                                    match &mat {
+                                        Match::File(FileMatch {
+                                            is_recent: true, ..
+                                        })
+                                        | Match::RecentThread(_) => Some("Recent".into()),
+                                        Match::Entry(_) | Match::BranchDiff(_) => {
+                                            Some("Context".into())
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                };
+                                let mut completion = match mat {
+                                    Match::File(FileMatch { mat, is_recent }) => {
+                                        let project_path = ProjectPath {
+                                            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                            path: mat.path.clone(),
+                                        };
 
-                                    // If path is empty, this means we're matching with the root directory itself
-                                    // so we use the path_prefix as the name
-                                    let path_prefix = if mat.path.is_empty() {
-                                        project
-                                            .read(cx)
-                                            .worktree_for_id(project_path.worktree_id, cx)
-                                            .map(|wt| wt.read(cx).root_name().into())
-                                            .unwrap_or_else(|| mat.path_prefix.clone())
-                                    } else {
-                                        mat.path_prefix.clone()
-                                    };
+                                        // If path is empty, this means we're matching with the root directory itself
+                                        // so we use the path_prefix as the name
+                                        let path_prefix = if mat.path.is_empty() {
+                                            project
+                                                .read(cx)
+                                                .worktree_for_id(project_path.worktree_id, cx)
+                                                .map(|wt| wt.read(cx).root_name().into())
+                                                .unwrap_or_else(|| mat.path_prefix.clone())
+                                        } else {
+                                            mat.path_prefix.clone()
+                                        };
 
-                                    Self::completion_for_path(
-                                        project_path,
-                                        &path_prefix,
-                                        is_recent,
-                                        mat.is_dir,
+                                        Self::completion_for_path(
+                                            project_path,
+                                            &path_prefix,
+                                            is_recent,
+                                            mat.is_dir,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            project.clone(),
+                                            label_max_chars,
+                                            cx,
+                                        )
+                                    }
+                                    Match::Symbol(SymbolMatch { symbol, .. }) => {
+                                        Self::completion_for_symbol(
+                                            symbol,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            label_max_chars,
+                                            cx,
+                                        )
+                                    }
+                                    Match::Thread(thread) => Some(Self::completion_for_thread(
+                                        thread.session_id,
+                                        Some(thread.title),
                                         source_range.clone(),
+                                        false,
                                         source.clone(),
                                         editor.clone(),
                                         mention_set.clone(),
                                         workspace.clone(),
-                                        project.clone(),
-                                        label_max_chars,
                                         cx,
-                                    )
-                                }
-                                Match::Symbol(SymbolMatch { symbol, .. }) => {
-                                    Self::completion_for_symbol(
-                                        symbol,
-                                        source_range.clone(),
-                                        source.clone(),
-                                        editor.clone(),
-                                        mention_set.clone(),
-                                        workspace.clone(),
-                                        label_max_chars,
-                                        cx,
-                                    )
-                                }
-                                Match::Thread(thread) => Some(Self::completion_for_thread(
-                                    thread.session_id,
-                                    Some(thread.title),
-                                    source_range.clone(),
-                                    false,
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )),
-                                Match::RecentThread(thread) => Some(Self::completion_for_thread(
-                                    thread.session_id,
-                                    Some(thread.title),
-                                    source_range.clone(),
-                                    true,
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )),
-                                Match::Rules(user_rules) => Some(Self::completion_for_rules(
-                                    user_rules,
-                                    source_range.clone(),
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                )),
-                                Match::Fetch(url) => Self::completion_for_fetch(
-                                    source_range.clone(),
-                                    url,
-                                    source.clone(),
-                                    editor.clone(),
-                                    mention_set.clone(),
-                                    workspace.clone(),
-                                    cx,
-                                ),
-                                Match::Entry(EntryMatch { entry, .. }) => {
-                                    Self::completion_for_entry(
-                                        entry,
-                                        source_range.clone(),
-                                        editor.clone(),
-                                        mention_set.clone(),
-                                        &workspace,
-                                        cx,
-                                    )
-                                }
-                                Match::BranchDiff(branch_diff) => {
-                                    Some(Self::build_branch_diff_completion(
-                                        branch_diff.base_ref,
+                                    )),
+                                    Match::RecentThread(thread) => {
+                                        Some(Self::completion_for_thread(
+                                            thread.session_id,
+                                            Some(thread.title),
+                                            source_range.clone(),
+                                            true,
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        ))
+                                    }
+                                    Match::Rules(user_rules) => Some(Self::completion_for_rules(
+                                        user_rules,
                                         source_range.clone(),
                                         source.clone(),
                                         editor.clone(),
                                         mention_set.clone(),
                                         workspace.clone(),
                                         cx,
-                                    ))
+                                    )),
+                                    Match::Fetch(url) => Self::completion_for_fetch(
+                                        source_range.clone(),
+                                        url,
+                                        source.clone(),
+                                        editor.clone(),
+                                        mention_set.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    ),
+                                    Match::Entry(EntryMatch { entry, .. }) => {
+                                        Self::completion_for_entry(
+                                            entry,
+                                            source_range.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            &workspace,
+                                            cx,
+                                        )
+                                    }
+                                    Match::BranchDiff(branch_diff) => {
+                                        Some(Self::build_branch_diff_completion(
+                                            branch_diff.base_ref,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        ))
+                                    }
+                                };
+                                if let Some(completion) = &mut completion {
+                                    completion.group = group;
                                 }
+                                completion
                             })
                             .collect::<Vec<_>>()
                     });

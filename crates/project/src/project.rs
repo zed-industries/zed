@@ -557,6 +557,9 @@ pub struct Completion {
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
+    /// An optional group label for this completion. When present, the completion menu
+    /// renders a non-selectable header row whenever the group changes between consecutive items.
+    pub group: Option<SharedString>,
 }
 
 #[derive(Debug, Clone)]
