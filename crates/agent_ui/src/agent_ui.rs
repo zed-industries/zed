@@ -55,7 +55,7 @@ use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, rules_to_skills_migration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore};
@@ -527,6 +527,18 @@ pub fn init(
         );
     })
     .detach();
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::agent::OpenRulesToSkillsMigrationInfo,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                crate::ui::RulesToSkillsModal::toggle(workspace, window, cx);
+            },
+        );
+    })
+    .detach();
+
     cx.observe_new(ManageProfilesModal::register).detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
@@ -554,6 +566,18 @@ pub fn init(
         update_command_palette_filter(cx);
     })
     .detach();
+
+    // Once the `skills` feature flag has resolved, kick off the one-time
+    // migration of non-Default Rules to global Skills. Idempotent and
+    // self-gated on the flag, so it's safe to call on every flag-ready
+    // notification (and a no-op for users without the flag).
+    {
+        let fs = fs.clone();
+        cx.on_flags_ready(move |_, cx| {
+            rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+        })
+        .detach();
+    }
 
     maybe_backfill_editor_layout(fs, is_new_install, cx);
 }

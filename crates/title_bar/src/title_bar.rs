@@ -25,6 +25,7 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
@@ -454,6 +455,18 @@ impl TitleBar {
             titlebar
         });
 
+        let banner = Some(cx.new(|cx| {
+            OnboardingBanner::new(
+                "Skills Have Replaced Rules",
+                IconName::Sparkle,
+                "Skills Have Replaced Rules",
+                Some("Introducing:".into()),
+                zed_actions::agent::OpenRulesToSkillsMigrationInfo.boxed_clone(),
+                cx,
+            )
+            .visible_when(|cx| cx.has_flag::<SkillsFeatureFlag>())
+        }));
+
         let mut this = Self {
             platform_titlebar,
             application_menu,
@@ -463,7 +476,7 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
-            banner: None,
+            banner,
             update_version,
             screen_share_popover_handle: PopoverMenuHandle::default(),
             _diagnostics_subscription: None,
