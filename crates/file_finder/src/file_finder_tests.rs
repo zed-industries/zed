@@ -1,9 +1,14 @@
-use std::{future::IntoFuture, path::Path, time::Duration};
+use std::{
+    future::IntoFuture,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrevious};
+use picker::ConfirmCompletion;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
@@ -353,6 +358,16 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
             }),
         )
         .await;
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/outside"),
+            json!({
+                "external.txt": "",
+            }),
+        )
+        .await;
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
@@ -380,6 +395,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         assert_eq!(active_editor.read(cx).title(cx), "file2.txt");
     });
 
+    let picker = open_file_picker(&workspace, cx);
     let mismatching_abs_path = path!("/root/a/b/file1.txt").to_string();
     picker
         .update_in(cx, |picker, window, cx| {
@@ -394,6 +410,110 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
             Vec::new(),
             "Mismatching abs path should produce no matches"
         )
+    });
+
+    let external_abs_path = PathBuf::from(path!("/outside/external.txt"));
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker.delegate.update_matches(
+                external_abs_path.to_string_lossy().into_owned(),
+                window,
+                cx,
+            )
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(
+            matches.external_paths,
+            vec![external_abs_path.clone()],
+            "External abs path should be shown as an external path match"
+        );
+        assert!(
+            matches.search.is_empty(),
+            "External abs path should not be forced into project search matches"
+        );
+    });
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches(path!("../out").to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(
+            matches.path_completions,
+            vec![(
+                PathBuf::from(path!("/outside")),
+                path!("../outside/").to_string(),
+                true
+            )],
+            "Relative path prefix should complete directories"
+        );
+    });
+    cx.dispatch_action(Confirm);
+    cx.background_executor.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(picker.read(cx).query(cx), path!("../outside/").to_string());
+    });
+
+    let relative_external_path = path!("../outside/external.txt").to_string();
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches(relative_external_path, window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(
+            matches.external_paths,
+            vec![external_abs_path.clone()],
+            "Relative external path should resolve from a workspace root"
+        );
+        assert!(
+            matches.search.is_empty(),
+            "Relative external path should not be forced into project search matches"
+        );
+    });
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches(path!("../outside/exter").to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(
+            matches.path_completions,
+            vec![(
+                external_abs_path.clone(),
+                path!("../outside/external.txt").to_string(),
+                false
+            )],
+            "Relative path prefix should show filesystem completions"
+        );
+    });
+    cx.dispatch_action(ConfirmCompletion);
+    cx.background_executor.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(
+            picker.read(cx).query(cx),
+            path!("../outside/external.txt").to_string()
+        );
+    });
+    cx.dispatch_action(Confirm);
+    cx.background_executor.run_until_parked();
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "external.txt");
+        assert_eq!(workspace.read(cx).visible_worktrees(cx).count(), 1);
     });
 }
 
@@ -732,6 +852,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[1].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
+            None,
             cx,
         );
 
@@ -746,6 +867,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[2].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
+            None,
             cx,
         );
 
@@ -3801,6 +3923,7 @@ fn test_path_position(test_str: &str) -> FileSearchQuery {
 
     FileSearchQuery {
         raw_query: test_str.to_owned(),
+        path_lookup_query: None,
         file_query_end: if path_position.path.to_str().unwrap() == test_str {
             None
         } else {
@@ -3857,6 +3980,8 @@ struct SearchEntries {
     history_found_paths: Vec<FoundPath>,
     search: Vec<Arc<RelPath>>,
     search_matches: Vec<PathMatch>,
+    external_paths: Vec<PathBuf>,
+    path_completions: Vec<(PathBuf, String, bool)>,
 }
 
 impl SearchEntries {
@@ -3908,6 +4033,18 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                     .push(path_match.0.path_prefix.join(&path_match.0.path));
                 search_entries.search_matches.push(path_match.0.clone());
             }
+            Match::ExternalPath(path) => {
+                search_entries.external_paths.push(path.clone());
+            }
+            Match::PathCompletion {
+                path,
+                query,
+                is_dir,
+            } => {
+                search_entries
+                    .path_completions
+                    .push((path.clone(), query.clone(), *is_dir));
+            }
             Match::CreateNew(_) => {}
             Match::Channel { .. } => {}
         }
@@ -3943,6 +4080,8 @@ fn assert_match_at_position(
     let match_file_name = match &match_item {
         Match::History { path, .. } => path.absolute.file_name().and_then(|s| s.to_str()),
         Match::Search(path_match) => path_match.0.path.file_name(),
+        Match::ExternalPath(path) => path.file_name().and_then(|s| s.to_str()),
+        Match::PathCompletion { path, .. } => path.file_name().and_then(|s| s.to_str()),
         Match::CreateNew(project_path) => project_path.path.file_name(),
         Match::Channel { channel_name, .. } => Some(channel_name.as_str()),
     }
