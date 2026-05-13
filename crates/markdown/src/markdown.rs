@@ -17,8 +17,6 @@ use mermaid::{
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
-use ui::Checkbox;
-use ui::CopyButton;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -36,7 +34,7 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
+    StyleRefinement, StyledImage, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
@@ -47,7 +45,7 @@ use parser::{
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
+use ui::{Checkbox, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -329,6 +327,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
@@ -501,6 +500,7 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
@@ -535,6 +535,27 @@ impl Markdown {
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
         self.code_block_scroll_handles
             .retain(|id, _| ids.contains(id));
+    }
+
+    /// Used in the agent panel to force a re-render when the theme changes
+    pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
+        if self.options.render_mermaid_diagrams && !self.parsed_markdown.mermaid_diagrams.is_empty()
+        {
+            self.mermaid_state.clear();
+            let parsed_markdown = self.parsed_markdown.clone();
+            self.mermaid_state.update(&parsed_markdown, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
+        self.mermaid_showing_code.contains(&source_offset)
+    }
+
+    pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
+        if !self.mermaid_showing_code.remove(&source_offset) {
+            self.mermaid_showing_code.insert(source_offset);
+        }
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -885,8 +906,11 @@ impl Markdown {
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
                     this.mermaid_state.update(&parsed_markdown, cx);
+                    this.mermaid_showing_code
+                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
                 } else {
                     this.mermaid_state.clear();
+                    this.mermaid_showing_code.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1130,27 +1154,25 @@ impl MarkdownElement {
         builder: &mut MarkdownElementBuilder,
         range: &Range<usize>,
         source: ImageSource,
+        dest_url: SharedString,
+        alt_text: Option<SharedString>,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        let align = builder.text_style().text_align;
-        builder.modify_current_div(|el| {
-            let mut image_container = el.flex().flex_row().items_center();
+        builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
 
-            image_container = match align {
-                TextAlign::Left => image_container.justify_start(),
-                TextAlign::Center => image_container.justify_center(),
-                TextAlign::Right => image_container.justify_end(),
-            };
+        let image_element = div().min_w_0().child(
+            img(source)
+                .id(("markdown-image", range.start))
+                .min_w_0()
+                .max_w_full()
+                .rounded_md()
+                .when_some(height, |this, height| this.h(height))
+                .when_some(width, |this, width| this.w(width))
+                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
+        );
 
-            image_container.child(
-                img(source)
-                    .id(("markdown-image", range.start))
-                    .max_w_full()
-                    .when_some(height, |this, height| this.h(height))
-                    .when_some(width, |this, width| this.w(width)),
-            )
-        });
+        builder.push_image_child(image_element);
     }
 
     fn push_markdown_paragraph(
@@ -1711,12 +1733,18 @@ impl Element for MarkdownElement {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Image { dest_url, .. } => {
+                            let alt_text = collect_image_alt_text(
+                                &parsed_markdown.events[index..],
+                                &parsed_markdown.source,
+                            );
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
                                     &mut builder,
                                     range,
                                     image.clone().into(),
+                                    dest_url.clone(),
+                                    alt_text,
                                     None,
                                     None,
                                 );
@@ -1726,7 +1754,15 @@ impl Element for MarkdownElement {
                                 .and_then(|resolve| resolve(dest_url.as_ref()))
                             {
                                 current_img_block_range = Some(range.clone());
-                                self.push_markdown_image(&mut builder, range, source, None, None);
+                                self.push_markdown_image(
+                                    &mut builder,
+                                    range,
+                                    source,
+                                    dest_url.clone(),
+                                    alt_text,
+                                    None,
+                                    None,
+                                );
                             }
                         }
                         MarkdownTag::Paragraph => {
@@ -1767,12 +1803,25 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
+                                let showing_code =
+                                    self.markdown.read(cx).is_mermaid_showing_code(range.start);
+                                let copy_button_visibility = match &self.code_block_renderer {
+                                    CodeBlockRenderer::Default {
+                                        copy_button_visibility,
+                                        ..
+                                    } => *copy_button_visibility,
+                                    _ => CopyButtonVisibility::VisibleOnHover,
+                                };
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(
                                         mermaid_diagram,
                                         &mermaid_state,
                                         &self.style,
+                                        self.markdown.clone(),
+                                        range.start,
+                                        showing_code,
+                                        copy_button_visibility,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
@@ -2296,6 +2345,44 @@ impl Element for MarkdownElement {
     }
 }
 
+fn collect_image_alt_text(
+    events_from_image_start: &[(Range<usize>, MarkdownEvent)],
+    source: &str,
+) -> Option<SharedString> {
+    let mut alt_text = String::new();
+    for (range, event) in events_from_image_start.iter().skip(1) {
+        match event {
+            MarkdownEvent::End(MarkdownTagEnd::Image) => break,
+            MarkdownEvent::Text => alt_text.push_str(&source[range.clone()]),
+            _ => {}
+        }
+    }
+    if alt_text.is_empty() {
+        None
+    } else {
+        Some(alt_text.into())
+    }
+}
+
+fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>) -> AnyElement {
+    let link_label = alt_text
+        .filter(|alt| !alt.is_empty())
+        .unwrap_or_else(|| dest_url.clone());
+
+    let label = format!("Failed to Load: {link_label}");
+
+    div()
+        .id("image-fallback")
+        .cursor_pointer()
+        .min_w_0()
+        .child(Label::new(label).color(Color::Warning).underline())
+        .tooltip(Tooltip::text(
+            "Image failed to load. Open `zed: log` for more details.",
+        ))
+        .on_click(move |_, _, cx| cx.open_url(&dest_url))
+        .into_any_element()
+}
+
 fn apply_heading_style(
     mut heading: Div,
     level: pulldown_cmark::HeadingLevel,
@@ -2587,6 +2674,14 @@ impl MarkdownElementBuilder {
             markdown_end,
         );
         self.push_div(div().pl_4(), range, markdown_end);
+    }
+
+    fn push_image_child(&mut self, child: impl IntoElement) {
+        self.flush_text();
+        self.div_stack
+            .last_mut()
+            .unwrap()
+            .extend([child.into_any_element()]);
     }
 
     fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {

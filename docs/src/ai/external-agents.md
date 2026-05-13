@@ -29,10 +29,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-g": [
-        "agent::NewExternalAgentThread",
-        { "agent": { "custom": { "name": "gemini" } } }
-      ]
+      "cmd-alt-g": ["agent::NewExternalAgentThread", { "agent": "gemini" }]
     }
   }
 ]
@@ -75,10 +72,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": [
-        "agent::NewExternalAgentThread",
-        { "agent": { "custom": { "name": "claude-acp" } } }
-      ]
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude-acp" }]
     }
   }
 ]
@@ -150,10 +144,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": [
-        "agent::NewExternalAgentThread",
-        { "agent": { "custom": { "name": "codex-acp" } } }
-      ]
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "codex-acp" }]
     }
   }
 ]

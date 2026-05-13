@@ -1362,6 +1362,10 @@ impl Vim {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
                     match operator {
+                        // Vim jump labels are transient navigation, so keep the
+                        // user's normal cursor shape while waiting for the label.
+                        Operator::HelixJump { .. } => cursor_shape.normal,
+
                         // Navigation operators -> Block cursor
                         Operator::FindForward { .. }
                         | Operator::FindBackward { .. }
@@ -1826,6 +1830,28 @@ impl Vim {
             HelixJumpBehaviour::Move => {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_anchor_ranges([candidate.range.clone()])
+                });
+            }
+            HelixJumpBehaviour::MoveToWordStart => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    // Vim users expect jump labels to behave like motions, leaving
+                    // normal mode at the label instead of selecting the word.
+                    s.select_anchor_ranges([candidate.range.start..candidate.range.start])
+                });
+            }
+            HelixJumpBehaviour::ExtendToWordStart => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(&mut |map, selection| {
+                        let word_start = candidate.range.start.to_display_point(map);
+                        let tail = selection.tail();
+
+                        if word_start >= tail {
+                            selection
+                                .set_head(motion::right(map, word_start, 1), SelectionGoal::None);
+                        } else {
+                            selection.set_head_tail(word_start, selection.end, SelectionGoal::None);
+                        }
+                    });
                 });
             }
             HelixJumpBehaviour::Extend => {
