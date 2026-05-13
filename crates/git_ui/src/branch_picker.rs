@@ -984,9 +984,7 @@ impl PickerDelegate for BranchListDelegate {
                 if self.is_select_only() {
                     "Select branch…"
                 } else {
-                    match self.branch_filter {
-                        BranchFilter::All | BranchFilter::Remote => "Switch branch…",
-                    }
+                    "Switch branch…"
                 }
             }
             PickerState::CreateRemote(_) => "Enter a name for this remote…",

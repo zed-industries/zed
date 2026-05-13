@@ -116,6 +116,15 @@ impl BranchDiff {
     }
 
     pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
+        let same_repo = match (self.repo.as_ref(), repo.as_ref()) {
+            (Some(current), Some(new)) => current.read(cx).id == new.read(cx).id,
+            (None, None) => true,
+            _ => false,
+        };
+        if same_repo {
+            return;
+        }
+
         self.repo = repo;
         self.tree_diff = None;
         self.tree_diff_update_needed = self.diff_base.is_merge_base();
