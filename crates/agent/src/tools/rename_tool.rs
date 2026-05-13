@@ -12,12 +12,9 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Renames a symbol across the project using the language server.
 ///
-/// This performs a semantic rename, updating all references to the symbol
-/// across all files in the project. The language server determines which
-/// occurrences to rename based on the symbol's type and scope.
+/// This performs a semantic rename, updating all references to the symbol across all files in the project. The language server determines which occurrences to rename based on the symbol's type and scope.
 ///
-/// Before using this tool, use read_file or grep to find the exact symbol
-/// name and line number.
+/// Before using this tool, use read_file or grep to find the exact symbol name and line number.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RenameToolInput {
     /// The symbol to rename.

@@ -87,19 +87,11 @@ impl Watcher for FsWatcher {
         let path: Arc<std::path::Path> = path.into();
 
         let registration_path = path.clone();
-        let registration_id = global_watcher().add(
-            path.clone(),
-            self.mode,
-            move |result: Result<&notify::Event, &notify::Error>| match result {
-                Ok(event) => {
-                    log::trace!("watcher received event: {event:?}");
-                    push_notify_event(&tx, &pending_path_events, &root_path, path.as_ref(), event);
-                }
-                Err(error) => {
-                    push_notify_error(&tx, &pending_path_events, path.as_ref(), error);
-                }
-            },
-        )?;
+        let registration_id =
+            global_watcher().add(path.clone(), self.mode, move |event: &notify::Event| {
+                log::trace!("watcher received event: {event:?}");
+                push_notify_event(&tx, &pending_path_events, &root_path, path.as_ref(), event);
+            })?;
 
         self.registrations
             .lock()
@@ -176,23 +168,6 @@ fn push_notify_event(
     enqueue_path_events(tx, pending_path_events, path_events);
 }
 
-fn push_notify_error(
-    tx: &smol::channel::Sender<()>,
-    pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
-    watched_root: &Path,
-    error: &notify::Error,
-) {
-    log::warn!("watcher error for {watched_root:?}: {error}");
-    enqueue_path_events(
-        tx,
-        pending_path_events,
-        vec![PathEvent {
-            path: watched_root.to_path_buf(),
-            kind: Some(PathEventKind::Rescan),
-        }],
-    );
-}
-
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
     if !path_events
         .iter()
@@ -247,7 +222,7 @@ fn is_covered_rescan(kind: Option<PathEventKind>, path: &Path, ancestor: &Path) 
 pub struct WatcherRegistrationId(u32);
 
 struct WatcherRegistrationState {
-    callback: Arc<dyn for<'a> Fn(Result<&'a notify::Event, &'a notify::Error>) + Send + Sync>,
+    callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
     path: Arc<std::path::Path>,
     mode: WatcherMode,
 }
@@ -283,7 +258,7 @@ impl GlobalWatcher {
         &self,
         path: Arc<std::path::Path>,
         mode: WatcherMode,
-        cb: impl for<'a> Fn(Result<&'a notify::Event, &'a notify::Error>) + Send + Sync + 'static,
+        cb: impl Fn(&notify::Event) + Send + Sync + 'static,
     ) -> anyhow::Result<WatcherRegistrationId> {
         let mut state = self.state.lock();
         let registrations_for_mode = state.path_registrations(mode);
@@ -483,13 +458,11 @@ fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) 
     match event {
         Ok(event) => {
             for callback in callbacks {
-                callback(Ok(&event));
+                callback(&event);
             }
         }
         Err(error) => {
-            for callback in callbacks {
-                callback(Err(&error));
-            }
+            log::warn!("watcher error for {mode:?}: {error}");
         }
     }
 }

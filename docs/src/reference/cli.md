@@ -9,7 +9,7 @@ Use Zed's command-line interface (CLI) to open files and directories, integrate 
 
 ## Installation
 
-**macOS:** Run the `cli: install` command from the command palette ({#kb command_palette::Toggle}) to install the `zed` CLI to `/usr/local/bin/zed`.
+**macOS:** Run the {#action cli::InstallCliBinary} command from the command palette ({#kb command_palette::Toggle}) to install the `zed` CLI to `/usr/local/bin/zed`.
 
 **Linux:** The CLI is included with Zed packages. The binary name may vary by distribution (commonly `zed` or `zeditor`).
 
@@ -84,6 +84,8 @@ Reuse an existing window, replacing its current workspace with the new paths:
 ```sh
 zed -r ~/projects/different-project
 ```
+
+By default (without `-n`, `-a`, or `-r`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
 
 ### `--diff <OLD_PATH> <NEW_PATH>`
 

@@ -1272,30 +1272,17 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
-        // macOs applies overrides to modal window buttons after they are added.
-        // Two most important for this logic are:
-        // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
-        // * Last button added to the modal via `addButtonWithTitle` stays focused
-        // * Focused buttons react on "space"/" " keypresses
-        // * Usage of `keyEquivalent`, `makeFirstResponder` or `setInitialFirstResponder` does not change the focus
-        //
-        // See also https://developer.apple.com/documentation/appkit/nsalert/1524532-addbuttonwithtitle#discussion
-        // ```
-        // By default, the first button has a key equivalent of Return,
-        // any button with a title of “Cancel” has a key equivalent of Escape,
-        // and any button with the title “Don’t Save” has a key equivalent of Command-D (but only if it’s not the first button).
-        // ```
-        //
-        // To avoid situations when the last element added is "Cancel" and it gets the focus
-        // (hence stealing both ESC and Space shortcuts), we find and add one non-Cancel button
-        // last, so it gets focus and a Space shortcut.
-        // This way, "Save this file? Yes/No/Cancel"-ish modals will get all three buttons mapped with a key.
-        let latest_non_cancel_label = answers
+        // NSAlert's first button keeps Return and Cancel keeps Escape, but the keyboard
+        // focus (and therefore Space) defaults to Cancel, leaving the middle button of
+        // prompts like "Save / Don't Save / Cancel" unreachable from the keyboard. Move
+        // the initial focus onto the last non-cancel, non-default button instead.
+        let initial_focus_ix = answers
             .iter()
             .enumerate()
             .rev()
             .find(|(_, label)| !label.is_cancel())
-            .filter(|&(label_index, _)| label_index > 0);
+            .map(|(ix, _)| ix)
+            .filter(|&ix| ix > 0);
 
         unsafe {
             let alert: id = msg_send![class!(NSAlert), alloc];
@@ -1311,25 +1298,24 @@ impl PlatformWindow for MacWindow {
                 let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
             }
 
-            for (ix, answer) in answers
-                .iter()
-                .enumerate()
-                .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
-            {
+            let mut initial_focus_button: Option<id> = None;
+            for (ix, answer) in answers.iter().enumerate() {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
 
                 if answer.is_cancel() {
-                    // Bind Escape Key to Cancel Button
                     if let Some(key) = std::char::from_u32(crate::events::ESCAPE_KEY as u32) {
                         let _: () =
                             msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
                     }
+                } else if Some(ix) == initial_focus_ix {
+                    initial_focus_button = Some(button);
                 }
             }
-            if let Some((ix, answer)) = latest_non_cancel_label {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
-                let _: () = msg_send![button, setTag: ix as NSInteger];
+
+            if let Some(button) = initial_focus_button {
+                let alert_window: id = msg_send![alert, window];
+                let _: () = msg_send![alert_window, setInitialFirstResponder: button];
             }
 
             let (done_tx, done_rx) = oneshot::channel();

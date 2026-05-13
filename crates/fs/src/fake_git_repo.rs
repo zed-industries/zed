@@ -72,6 +72,8 @@ pub struct FakeGitRepositoryState {
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_create_worktree_error: Option<String>,
     pub simulated_graph_error: Option<String>,
+    pub branches_requiring_force_delete: HashSet<String>,
+    pub worktrees_requiring_force_delete: HashSet<PathBuf>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
@@ -91,6 +93,8 @@ impl FakeGitRepositoryState {
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
             simulated_graph_error: None,
+            branches_requiring_force_delete: Default::default(),
+            worktrees_requiring_force_delete: Default::default(),
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
@@ -733,12 +737,24 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
-    fn remove_worktree(&self, path: PathBuf, _force: bool) -> BoxFuture<'_, Result<()>> {
+    fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
         let common_dir_path = self.common_dir_path.clone();
         async move {
             executor.simulate_random_delay().await;
+
+            if !force {
+                fs.with_git_state(&common_dir_path, false, |state| {
+                    if state.worktrees_requiring_force_delete.contains(&path) {
+                        bail!(
+                            "fatal: '{}' contains modified or untracked files, use --force to delete it",
+                            path.display()
+                        );
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })??;
+            }
 
             // Try to read the worktree's .git file to find its entry
             // directory. If the working tree is already gone (e.g. the
@@ -780,7 +796,10 @@ impl GitRepository for FakeGitRepository {
 
             // Emit a git event on the main .git directory so the scanner
             // notices the change.
-            fs.with_git_state(&common_dir_path, true, |_| {})?;
+            fs.with_git_state(&common_dir_path, true, |state| {
+                state.worktrees_requiring_force_delete.remove(&path);
+                Ok::<(), anyhow::Error>(())
+            })??;
 
             Ok(())
         }
@@ -888,11 +907,22 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn delete_branch(&self, _is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(
+        &self,
+        _is_remote: bool,
+        name: String,
+        force: bool,
+    ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            if !force && state.branches_requiring_force_delete.contains(&name) {
+                bail!(
+                    "error: The branch '{name}' is not fully merged.\nIf you are sure you want to delete it, run 'git branch -D {name}'."
+                );
+            }
             if !state.branches.remove(&name) {
                 bail!("no such branch: {name}");
             }
+            state.branches_requiring_force_delete.remove(&name);
             Ok(())
         })
     }
