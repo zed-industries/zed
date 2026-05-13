@@ -62,14 +62,14 @@ impl LlmCompatibleProvider {
     }
 }
 
-struct AddLlmProviderInput {
+struct AddOpenAICompatibleInput {
     provider_name: Entity<InputField>,
     api_url: Entity<InputField>,
     api_key: Entity<InputField>,
     models: Vec<ModelInput>,
 }
 
-impl AddLlmProviderInput {
+impl AddOpenAICompatibleInput {
     fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut App) -> Self {
         let provider_name =
             single_line_input("Provider Name", provider.name(), None, 1, window, cx);
@@ -340,7 +340,7 @@ impl AddAnthropicCompatibleInput {
 }
 
 enum ProviderInput {
-    OpenAiCompatible(AddLlmProviderInput),
+    OpenAiCompatible(AddOpenAICompatibleInput),
     AnthropicCompatible(AddAnthropicCompatibleInput),
 }
 
@@ -389,7 +389,7 @@ impl ProviderInput {
 }
 
 fn save_provider_to_settings(
-    input: &AddLlmProviderInput,
+    input: &AddOpenAICompatibleInput,
     cx: &mut App,
 ) -> Task<Result<(), SharedString>> {
     let provider_name: Arc<str> = input.provider_name.read(cx).text(cx).into();
@@ -551,7 +551,7 @@ impl AddLlmProviderModal {
     fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = match provider {
             LlmCompatibleProvider::OpenAi => {
-                ProviderInput::OpenAiCompatible(AddLlmProviderInput::new(provider, window, cx))
+                ProviderInput::OpenAiCompatible(AddOpenAICompatibleInput::new(provider, window, cx))
             }
             LlmCompatibleProvider::Anthropic => ProviderInput::AnthropicCompatible(
                 AddAnthropicCompatibleInput::new(provider, window, cx),
@@ -1203,7 +1203,8 @@ mod tests {
         }
 
         let task = cx.update(|window, cx| {
-            let mut input = AddLlmProviderInput::new(LlmCompatibleProvider::OpenAi, window, cx);
+            let mut input =
+                AddOpenAICompatibleInput::new(LlmCompatibleProvider::OpenAi, window, cx);
             set_text(&input.provider_name, provider_name, window, cx);
             set_text(&input.api_url, api_url, window, cx);
             set_text(&input.api_key, api_key, window, cx);
