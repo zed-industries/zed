@@ -99,8 +99,8 @@ pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &Lang
                             util::ConnectionResult::Result(Ok(result)) => match result {
                                 Some(Value::Object(mut map)) => map
                                     .remove("body")
-                                    .unwrap_or(Value::Object(map)),
-                                Some(other) => other,
+                                    .unwrap_or(Value::Null),
+                                Some(other) => Value::Null,
                                 None => Value::Null,
                             },
                             util::ConnectionResult::Result(Err(error)) => {
