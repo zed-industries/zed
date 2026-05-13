@@ -1109,8 +1109,7 @@ async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<P
     let mut cmd = new_command(downloaded_installer);
     cmd.arg("/verysilent")
         .arg("/update=true")
-        .arg("!desktopicon")
-        .arg("!quicklaunchicon");
+        .arg("/MERGETASKS=!desktopicon");
     let output = cmd.output().await?;
     anyhow::ensure!(
         output.status.success(),

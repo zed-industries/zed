@@ -20,9 +20,7 @@ use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
 
-use crate::services::{
-    CloudUserService, DatabaseUserService, TransitionalUserService, UserService,
-};
+use crate::services::{CloudUserService, UserService};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -265,19 +263,11 @@ impl AppState {
             } else {
                 None
             },
-            user_service: {
-                let database_user_service = DatabaseUserService::new(db);
-                let cloud_user_service = CloudUserService::new(
-                    http_client,
-                    config.zed_cloud_url().to_string(),
-                    config.zed_cloud_internal_api_key.clone(),
-                );
-
-                Arc::new(TransitionalUserService::new(
-                    cloud_user_service,
-                    database_user_service,
-                ))
-            },
+            user_service: Arc::new(CloudUserService::new(
+                http_client,
+                config.zed_cloud_url().to_string(),
+                config.zed_cloud_internal_api_key.clone(),
+            )),
             config,
         };
         Ok(Arc::new(this))

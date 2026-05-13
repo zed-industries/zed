@@ -302,6 +302,11 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
+    /// Origin label for this command (e.g. `"global"` or a worktree
+    /// root name for skills). When present, it's displayed in the
+    /// autocomplete popup after the command name so users can
+    /// disambiguate same-named commands from different scopes.
+    pub source: Option<SharedString>,
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -313,6 +318,12 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
+
+    /// Called once each time the user opens slash-command autocomplete
+    /// in the editor this delegate serves. Implementations may use it
+    /// to lazily kick off work that produces commands (for example,
+    /// scanning the global skills directory). The default is a no-op.
+    fn slash_autocomplete_invoked(&self, _cx: &mut App) {}
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
@@ -817,6 +828,13 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
+        // Notify the delegate that slash autocomplete is being
+        // invoked, so it can lazily kick off any work that produces
+        // additional commands. Whatever it produces won't be visible
+        // in the current autocomplete pass (we read `available_commands`
+        // synchronously below), but will appear on the next invocation.
+        self.source.slash_autocomplete_invoked(cx);
+
         let commands = self.source.available_commands(cx);
         if commands.is_empty() {
             return Task::ready(Vec::new());
@@ -1229,24 +1247,61 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 command, argument, ..
             }) => {
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
+                // Resolve the muted-text highlight up front: the
+                // completion build happens on a background thread where
+                // `cx.theme()` isn't available.
+                let source_highlight_id = cx
+                    .theme()
+                    .syntax()
+                    .highlight_id("variable")
+                    .map(HighlightId::new);
                 cx.background_spawn(async move {
                     let completions = search_task
                         .await
                         .into_iter()
                         .map(|command| {
-                            let new_text = if let Some(argument) = argument.as_ref() {
-                                format!("/{} {}", command.name, argument)
-                            } else {
-                                format!("/{} ", command.name)
+                            // Qualify the inserted text with the skill's
+                            // scope prefix as `/<prefix>:<name>` when the
+                            // command carries one. The prefix is empty
+                            // for global skills (so the inserted text
+                            // is `/:<name>`) and the worktree root name
+                            // for project-locals (so the inserted text
+                            // is `/<worktree>:<name>`). The `:`
+                            // separator namespaces skill scopes away
+                            // from MCP server prefixes
+                            // (`/<server>.<name>`), and the empty
+                            // prefix means a worktree literally named
+                            // `global` no longer collides with the
+                            // global source. MCP commands have no
+                            // source meta and keep the bare `/<name>`
+                            // form.
+                            //
+                            // Composed in a single `format!` to avoid
+                            // building an intermediate `qualified_name`
+                            // string just to splice it into the final
+                            // text.
+                            let new_text = match (command.source.as_ref(), argument.as_ref()) {
+                                (Some(source), Some(argument)) => {
+                                    format!("/{}:{} {}", source, command.name, argument)
+                                }
+                                (Some(source), None) => {
+                                    format!("/{}:{} ", source, command.name)
+                                }
+                                (None, Some(argument)) => {
+                                    format!("/{} {}", command.name, argument)
+                                }
+                                (None, None) => format!("/{} ", command.name),
                             };
 
                             let is_missing_argument =
                                 command.requires_argument && argument.is_none();
 
+                            let label = build_slash_command_label(&command, source_highlight_id);
+
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
-                                label: CodeLabel::plain(command.name.to_string(), None),
+                                label,
                                 documentation: Some(CompletionDocumentation::MultiLinePlainText(
                                     command.description.into(),
                                 )),
@@ -2114,6 +2169,42 @@ pub fn extract_file_name_and_directory(
         file_name.to_string().into(),
         Some(SharedString::new(directory)).filter(|dir| !dir.is_empty()),
     )
+}
+
+/// Build the autocomplete-popup label for a slash command, appending
+/// the command's origin (a worktree root name for project-local
+/// skills) after the name when one is present and non-empty. The
+/// suffix is styled with the muted `variable` highlight and excluded
+/// from the fuzzy filter range so typing the source doesn't match
+/// the entry.
+///
+/// Global skills carry an empty source (the literal scope prefix is
+/// empty so the popup inserts `/:<name>`), and render with no
+/// subtext — the source column is reserved for project-local skills
+/// where the worktree name disambiguates same-named entries.
+fn build_slash_command_label(
+    command: &AvailableCommand,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    let source = command.source.as_ref().filter(|source| !source.is_empty());
+    let Some(source) = source else {
+        return CodeLabel::plain(command.name.to_string(), None);
+    };
+    let mut builder = CodeLabelBuilder::default();
+    builder.push_str(&command.name, None);
+    // Two spaces gives a touch of breathing room between the name and
+    // the muted source label.
+    builder.push_str("  ", None);
+    builder.push_str(source, source_highlight_id);
+    // The filter range defaults to the entire label after `build()`,
+    // which would let the source text participate in fuzzy filtering.
+    // Slash commands are matched up-front in `search_slash_commands`
+    // against the command name, and the editor doesn't re-filter
+    // (`filter_completions()` is false), so this is mostly defensive
+    // — but it keeps the displayed filter consistent with what we
+    // actually matched against.
+    builder.respan_filter_range(Some(&command.name));
+    builder.build()
 }
 
 fn build_code_label_for_path(

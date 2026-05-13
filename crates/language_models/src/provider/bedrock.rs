@@ -7,6 +7,7 @@ use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::{Credentials, Token};
 use aws_http_client::AwsHttpClient;
+use bedrock::BedrockSystemContentBlock;
 use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
 use bedrock::bedrock_client::types::{
@@ -113,6 +114,8 @@ pub struct AmazonBedrockSettings {
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
     pub allow_global: Option<bool>,
+    pub guardrail_identifier: Option<String>,
+    pub guardrail_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -384,6 +387,12 @@ impl State {
             .as_ref()
             .and_then(|s| s.allow_global)
             .unwrap_or(false)
+    }
+
+    fn get_guardrail_config(&self) -> (Option<String>, Option<String>) {
+        self.settings.as_ref().map_or((None, None), |s| {
+            (s.guardrail_identifier.clone(), s.guardrail_version.clone())
+        })
     }
 }
 
@@ -710,9 +719,11 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (region, allow_global) = cx.read_entity(&self.state, |state, _cx| {
-            (state.get_region(), state.get_allow_global())
-        });
+        let (region, allow_global, guardrail_identifier, guardrail_version) =
+            cx.read_entity(&self.state, |state, _cx| {
+                let (gid, gv) = state.get_guardrail_config();
+                (state.get_region(), state.get_allow_global(), gid, gv)
+            });
 
         let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
@@ -731,6 +742,8 @@ impl LanguageModel for BedrockModel {
             self.model.thinking_mode(),
             self.model.supports_caching(),
             self.model.supports_tool_use(),
+            guardrail_identifier,
+            guardrail_version,
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -823,6 +836,8 @@ pub fn into_bedrock(
     thinking_mode: BedrockModelMode,
     supports_caching: bool,
     supports_tool_use: bool,
+    guardrail_identifier: Option<String>,
+    guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
@@ -1090,11 +1105,24 @@ pub fn into_bedrock(
         )
     };
 
+    let mut system_blocks: Vec<BedrockSystemContentBlock> = Vec::new();
+    if !system_message.is_empty() {
+        system_blocks.push(BedrockSystemContentBlock::Text(system_message));
+        if supports_caching {
+            system_blocks.push(BedrockSystemContentBlock::CachePoint(
+                CachePointBlock::builder()
+                    .r#type(CachePointType::Default)
+                    .build()
+                    .context("failed to build system cache point block")?,
+            ));
+        }
+    }
+
     Ok(bedrock::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: Some(system_message),
+        system: system_blocks,
         tools: tool_config,
         thinking: if request.thinking_allowed {
             match thinking_mode {
@@ -1127,6 +1155,8 @@ pub fn into_bedrock(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+        guardrail_identifier,
+        guardrail_version,
     })
 }
 
