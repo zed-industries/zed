@@ -630,6 +630,12 @@ pub struct ThreadView {
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
     dismissed_skill_loading_issues: HashSet<SkillLoadingIssue>,
+    /// In-thread search bar. `None` until the user first opens it with
+    /// `agent::ToggleSearch`; after that it's kept around (focus toggles
+    /// visibility-by-focus) so query state persists across hides.
+    pub(crate) thread_search_bar: Option<Entity<super::thread_search_bar::ThreadSearchBar>>,
+    /// When true, the search bar is shown above the entries.
+    pub(crate) thread_search_visible: bool,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -1003,6 +1009,8 @@ impl ThreadView {
             generating_indicator_in_list: false,
             skill_loading_issues: Vec::new(),
             dismissed_skill_loading_issues: HashSet::default(),
+            thread_search_bar: None,
+            thread_search_visible: false,
         };
 
         this.sync_generating_indicator(cx);
@@ -6278,6 +6286,60 @@ impl ThreadView {
         }
     }
 
+    /// Toggle the in-thread search bar. Lazily creates it on first use so
+    /// threads that never get searched don't pay the editor + subscription
+    /// cost.
+    pub(crate) fn toggle_search(
+        &mut self,
+        _: &crate::ToggleSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use super::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent};
+        if self.thread_search_bar.is_none() {
+            let thread = self.thread.clone();
+            let view = cx.entity().downgrade();
+            let on_activate = std::sync::Arc::new(
+                move |entry_ix: usize, _source_index: usize, _window: &mut Window, cx: &mut App| {
+                    let _ = view.update(cx, |this, cx| {
+                        this.list_state.scroll_to(gpui::ListOffset {
+                            item_ix: entry_ix,
+                            offset_in_item: gpui::px(0.),
+                        });
+                        cx.notify();
+                    });
+                },
+            );
+            let bar = cx.new(|cx| ThreadSearchBar::new(thread, on_activate, window, cx));
+            let dismiss_sub = cx.subscribe_in(&bar, window, |this, _bar, event, window, cx| {
+                if matches!(event, ThreadSearchBarEvent::Dismissed) {
+                    this.thread_search_visible = false;
+                    this.message_editor.focus_handle(cx).focus(window, cx);
+                    cx.notify();
+                }
+            });
+            self._subscriptions.push(dismiss_sub);
+            self.thread_search_bar = Some(bar);
+        }
+
+        if self.thread_search_visible {
+            // Toggling while visible: close and clear any highlights so the
+            // user gets a clean view back.
+            if let Some(bar) = &self.thread_search_bar {
+                bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+            }
+            self.thread_search_visible = false;
+            self.message_editor.focus_handle(cx).focus(window, cx);
+            cx.notify();
+        } else {
+            self.thread_search_visible = true;
+            if let Some(bar) = self.thread_search_bar.clone() {
+                bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
+            }
+            cx.notify();
+        }
+    }
+
     pub fn open_thread_as_markdown(
         &self,
         workspace: Entity<Workspace>,
@@ -10574,6 +10636,7 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::scroll_output_to_bottom))
             .on_action(cx.listener(Self::scroll_output_to_previous_message))
             .on_action(cx.listener(Self::scroll_output_to_next_message))
+            .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(|this, _: &ToggleFastMode, window, cx| {
                 this.toggle_fast_mode(window, cx);
             }))
@@ -10743,6 +10806,12 @@ impl Render for ThreadView {
             }))
             .size_full()
             .children(self.render_subagent_titlebar(cx))
+            .when_some(
+                self.thread_search_visible
+                    .then(|| self.thread_search_bar.clone())
+                    .flatten(),
+                |this, bar| this.child(bar),
+            )
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
             .children(self.render_activity_bar(window, cx))

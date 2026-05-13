@@ -106,6 +106,7 @@ const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
+mod thread_search_bar;
 mod thread_view;
 pub use thread_view::*;
 
