@@ -298,12 +298,13 @@ pub struct RulesContextEntry {
 }
 
 #[derive(Debug, Clone)]
-pub enum AvailableCommandKind {
-    Command,
-    Skill {
-        source: SharedString,
-        skill_file_path: PathBuf,
-    },
+pub struct AvailableSkill {
+    pub name: Arc<str>,
+    pub description: Arc<str>,
+    /// Scope prefix for this skill: empty for global skills, or the
+    /// worktree root name for project-local skills.
+    pub source: SharedString,
+    pub skill_file_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -311,12 +312,22 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
-    /// Origin label for this command (e.g. `"global"` or a worktree
-    /// root name for skills). When present, it's displayed in the
-    /// autocomplete popup after the command name so users can
-    /// disambiguate same-named commands from different scopes.
     pub source: Option<SharedString>,
-    pub kind: AvailableCommandKind,
+}
+
+#[derive(Debug, Clone)]
+enum SlashCompletionCandidate {
+    Skill(AvailableSkill),
+    Command(AvailableCommand),
+}
+
+impl SlashCompletionCandidate {
+    fn name(&self) -> &Arc<str> {
+        match self {
+            Self::Skill(skill) => &skill.name,
+            Self::Command(command) => &command.name,
+        }
+    }
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -327,6 +338,9 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
     fn supports_images(&self, cx: &App) -> bool;
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
+    fn available_skills(&self, _cx: &App) -> Vec<AvailableSkill> {
+        Vec::new()
+    }
     fn confirm_command(&self, cx: &mut App);
 
     /// Called once each time the user opens slash-command autocomplete
@@ -846,28 +860,44 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         }
     }
 
-    fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
+    fn search_slash_commands(
+        &self,
+        query: String,
+        cx: &mut App,
+    ) -> Task<Vec<SlashCompletionCandidate>> {
         // Notify the delegate that slash autocomplete is being
         // invoked, so it can lazily kick off any work that produces
-        // additional commands. Whatever it produces won't be visible
-        // in the current autocomplete pass (we read `available_commands`
-        // synchronously below), but will appear on the next invocation.
+        // additional commands or skills. Whatever it produces won't be
+        // visible in the current autocomplete pass (we read available
+        // items synchronously below), but will appear on the next
+        // invocation.
         self.source.slash_autocomplete_invoked(cx);
 
-        let commands = self.source.available_commands(cx);
-        if commands.is_empty() {
+        let mut candidates = self
+            .source
+            .available_skills(cx)
+            .into_iter()
+            .map(SlashCompletionCandidate::Skill)
+            .collect::<Vec<_>>();
+        candidates.extend(
+            self.source
+                .available_commands(cx)
+                .into_iter()
+                .map(SlashCompletionCandidate::Command),
+        );
+        if candidates.is_empty() {
             return Task::ready(Vec::new());
         }
 
         cx.spawn(async move |cx| {
-            let candidates = commands
+            let string_match_candidates = candidates
                 .iter()
                 .enumerate()
-                .map(|(id, command)| StringMatchCandidate::new(id, &command.name))
+                .map(|(id, candidate)| StringMatchCandidate::new(id, candidate.name()))
                 .collect::<Vec<_>>();
 
             let matches = fuzzy::match_strings(
-                &candidates,
+                &string_match_candidates,
                 &query,
                 false,
                 true,
@@ -879,7 +909,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             matches
                 .into_iter()
-                .map(|mat| commands[mat.candidate_id].clone())
+                .map(|mat| candidates[mat.candidate_id].clone())
                 .collect()
         })
     }
@@ -1276,33 +1306,24 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                     .highlight_id("variable")
                     .map(HighlightId::new);
 
-                // Pre-build confirm callbacks for skill commands on the
-                // foreground thread, since they need access to entities
-                // (mention_set, editor, workspace) that aren't Send.
-                // Non-skill commands get `None` here and use the
-                // send-immediately confirm callback built later.
                 type SkillInfo = (
                     String,
                     SharedString,
                     Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>,
                 );
-                let skill_confirm_callbacks: Task<Vec<(AvailableCommand, Option<SkillInfo>)>> = {
+                let slash_candidates: Task<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>> = {
                     let source = source.clone();
                     cx.spawn(async move |_this, cx| {
-                        let commands = search_task.await;
+                        let candidates = search_task.await;
                         cx.update(|cx| {
-                            commands
+                            candidates
                                 .into_iter()
-                                .map(|command| {
-                                    if let AvailableCommandKind::Skill {
-                                        source: skill_source,
-                                        skill_file_path,
-                                    } = &command.kind
-                                    {
+                                .map(|candidate| match &candidate {
+                                    SlashCompletionCandidate::Skill(skill) => {
                                         let uri = MentionUri::Skill {
-                                            name: command.name.to_string(),
-                                            source: skill_source.to_string(),
-                                            skill_file_path: skill_file_path.clone(),
+                                            name: skill.name.to_string(),
+                                            source: skill.source.to_string(),
+                                            skill_file_path: skill.skill_file_path.clone(),
                                         };
                                         let new_text = format!("{} ", uri.as_link());
                                         let new_text_len = new_text.len();
@@ -1318,36 +1339,40 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             mention_set.clone(),
                                             workspace.clone(),
                                         );
-                                        (command, Some((new_text, icon_path, confirm)))
-                                    } else {
-                                        (command, None)
+                                        (candidate, Some((new_text, icon_path, confirm)))
                                     }
+                                    SlashCompletionCandidate::Command(_) => (candidate, None),
                                 })
-                                .collect::<Vec<(AvailableCommand, Option<SkillInfo>)>>()
+                                .collect::<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>>()
                         })
                     })
                 };
 
                 cx.background_spawn(async move {
-                    let mut commands_with_callbacks = skill_confirm_callbacks.await;
-                    // Sort so skills come first, then non-skill commands.
-                    // This ensures group headers appear once per group.
-                    commands_with_callbacks
-                        .sort_by_key(|(_, skill_info)| if skill_info.is_some() { 0 } else { 1 });
-                    let completions = commands_with_callbacks
+                    let mut slash_candidates = slash_candidates.await;
+                    slash_candidates.sort_by_key(|(candidate, _)| match candidate {
+                        SlashCompletionCandidate::Skill(_) => 0,
+                        SlashCompletionCandidate::Command(_) => 1,
+                    });
+                    let completions = slash_candidates
                         .into_iter()
-                        .map(|(command, skill_info)| {
-                            let label = build_slash_command_label(&command, source_highlight_id);
-
-                            if let Some((new_text, icon_path, confirm)) = skill_info {
-                                // Skill command: insert as a mention crease
+                        .map(|(candidate, skill_info)| match candidate {
+                            SlashCompletionCandidate::Skill(skill) => {
+                                let label = build_slash_item_label(
+                                    &skill.name,
+                                    Some(&skill.source),
+                                    source_highlight_id,
+                                );
+                                let Some((new_text, icon_path, confirm)) = skill_info else {
+                                    unreachable!("skill candidates always have confirm callbacks")
+                                };
                                 Completion {
                                     replace_range: source_range.clone(),
                                     new_text,
                                     label,
                                     documentation: Some(
                                         CompletionDocumentation::MultiLinePlainText(
-                                            command.description.into(),
+                                            skill.description.into(),
                                         ),
                                     ),
                                     source: project::CompletionSource::Custom,
@@ -1358,8 +1383,10 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     confirm: Some(confirm),
                                     group: show_section_headers.then(|| "Skills".into()),
                                 }
-                            } else {
-                                // Non-skill slash command: send immediately on confirm
+                            }
+                            SlashCompletionCandidate::Command(command) => {
+                                let label =
+                                    build_slash_command_label(&command, source_highlight_id);
                                 let new_text = match (command.source.as_ref(), argument.as_ref()) {
                                     (Some(source), Some(argument)) => {
                                         format!("/{}:{} {}", source, command.name, argument)
@@ -2284,27 +2311,28 @@ pub fn extract_file_name_and_directory(
     )
 }
 
-/// Build the autocomplete-popup label for a slash command, appending
-/// the command's origin (a worktree root name for project-local
-/// skills) after the name when one is present and non-empty. The
-/// suffix is styled with the muted `variable` highlight and excluded
-/// from the fuzzy filter range so typing the source doesn't match
-/// the entry.
-///
-/// Global skills carry an empty source (the literal scope prefix is
-/// empty so the popup inserts `/:<name>`), and render with no
-/// subtext — the source column is reserved for project-local skills
-/// where the worktree name disambiguates same-named entries.
 fn build_slash_command_label(
     command: &AvailableCommand,
     source_highlight_id: Option<HighlightId>,
 ) -> CodeLabel {
-    let source = command.source.as_ref().filter(|source| !source.is_empty());
+    build_slash_item_label(&command.name, command.source.as_ref(), source_highlight_id)
+}
+
+/// Build the autocomplete-popup label for a slash menu item, appending
+/// the item origin after the name when one is present and non-empty.
+/// The suffix is styled with the muted `variable` highlight and excluded
+/// from the fuzzy filter range so typing the source doesn't match the entry.
+fn build_slash_item_label(
+    name: &Arc<str>,
+    source: Option<&SharedString>,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    let source = source.filter(|source| !source.is_empty());
     let Some(source) = source else {
-        return CodeLabel::plain(command.name.to_string(), None);
+        return CodeLabel::plain(name.to_string(), None);
     };
     let mut builder = CodeLabelBuilder::default();
-    builder.push_str(&command.name, None);
+    builder.push_str(name, None);
     // Two spaces gives a touch of breathing room between the name and
     // the muted source label.
     builder.push_str("  ", None);
@@ -2316,7 +2344,7 @@ fn build_slash_command_label(
     // (`filter_completions()` is false), so this is mostly defensive
     // — but it keeps the displayed filter consistent with what we
     // actually matched against.
-    builder.respan_filter_range(Some(&command.name));
+    builder.respan_filter_range(Some(name));
     builder.build()
 }
 
