@@ -12455,15 +12455,10 @@ impl LspStore {
             }
         }
 
-        cx.background_spawn(async move {
-            let mut all_succeeded = true;
-            for rx in receivers {
-                match rx.await {
-                    Ok(success) => all_succeeded &= success,
-                    Err(_) => all_succeeded = false,
-                }
-            }
-            all_succeeded
+        cx.background_spawn(async {
+            FuturesUnordered::from_iter(receivers)
+                .all(async |result| result.unwrap_or(false))
+                .await
         })
     }
 
