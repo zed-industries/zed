@@ -1,11 +1,11 @@
 ---
 title: Parallel Agents - Zed
-description: Run multiple agent threads and terminals concurrently using the Threads Sidebar, manage them across projects, and isolate work using Git worktrees.
+description: Run multiple agent threads and terminal threads concurrently using the Threads Sidebar, manage them across projects, and isolate work using Git worktrees.
 ---
 
 # Parallel Agents
 
-Parallel Agents lets you run multiple agent threads and terminals at once from the Threads Sidebar. Each thread works independently with its own agent, context window, and conversation history. Terminals appear alongside threads in the same sidebar, so you can switch between them without leaving the Agent Panel.
+Parallel Agents lets you run multiple agent threads and terminal threads at once from the Threads Sidebar. Each thread works independently with its own agent, context window, and conversation history. Terminal threads appear alongside agent threads in the same sidebar, so you can switch between them without leaving the Agent Panel.
 
 Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 
@@ -15,7 +15,7 @@ Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 
 The sidebar shows your threads grouped by project. Each project gets its own section with a header. Threads appear below with their title, status indicator, and which agent is running them. Threads running in linked Git worktrees appear under the same project as their main worktree. See [Worktree Isolation](#worktree-isolation).
 
-Terminals opened in the Agent Panel also appear as entries in the sidebar alongside threads, identified by a terminal icon. Click a terminal entry to switch to it. See [Terminals](./agent-panel.md#terminals) for details.
+Terminal threads also appear as entries in the sidebar alongside agent threads, identified by a terminal icon. Click one to switch to it. See [Terminal Threads](./agent-panel.md#terminal-threads) for details.
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
