@@ -74,6 +74,7 @@ pub(crate) fn build_nix(
         Platform::Windows => unimplemented!(),
         Platform::Linux => runners::LINUX_X86_BUNDLER,
         Platform::Mac => runners::MAC_DEFAULT,
+        Platform::Freebsd => unimplemented!(),
     };
     let mut job = Job::default()
         .timeout_minutes(60u32)
@@ -116,6 +117,7 @@ pub(crate) fn build_nix(
             .add_step(build(&flake_output))
             .add_step(export_to_local_nix_cache()),
         Platform::Windows => unimplemented!(),
+        Platform::Freebsd => unimplemented!(),
     };
 
     NamedJob {

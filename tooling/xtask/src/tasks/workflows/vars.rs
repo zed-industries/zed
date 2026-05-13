@@ -68,6 +68,7 @@ pub fn bundle_envs(platform: Platform) -> Env {
 
     match platform {
         Platform::Linux => env,
+        Platform::Freebsd => env,
         Platform::Mac => env
             .add("MACOS_CERTIFICATE", MACOS_CERTIFICATE)
             .add("MACOS_CERTIFICATE_PASSWORD", MACOS_CERTIFICATE_PASSWORD)
@@ -393,6 +394,7 @@ pub mod assets {
     pub const REMOTE_SERVER_LINUX_X86_64: &str = "zed-remote-server-linux-x86_64.gz";
     pub const REMOTE_SERVER_WINDOWS_AARCH64: &str = "zed-remote-server-windows-aarch64.zip";
     pub const REMOTE_SERVER_WINDOWS_X86_64: &str = "zed-remote-server-windows-x86_64.zip";
+    pub const REMOTE_SERVER_FREEBSD_X86_64: &str = "zed-remote-server-freebsd-x86_64.gz";
 
     pub fn all() -> Vec<&'static str> {
         vec![
@@ -408,6 +410,7 @@ pub mod assets {
             REMOTE_SERVER_LINUX_X86_64,
             REMOTE_SERVER_WINDOWS_AARCH64,
             REMOTE_SERVER_WINDOWS_X86_64,
+            REMOTE_SERVER_FREEBSD_X86_64,
         ]
     }
 }

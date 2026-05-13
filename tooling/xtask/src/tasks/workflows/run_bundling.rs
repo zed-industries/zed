@@ -20,6 +20,7 @@ pub fn run_bundling() -> Workflow {
         mac_x86_64: bundle_mac(Arch::X86_64, None, &[]),
         windows_aarch64: bundle_windows(Arch::AARCH64, None, &[]),
         windows_x86_64: bundle_windows(Arch::X86_64, None, &[]),
+        freebsd_x86_64: bundle_freebsd(Arch::X86_64, None, &[]),
     };
     let nix_linux_x86_64 = nix_job(Platform::Linux, Arch::X86_64);
     let nix_mac_aarch64 = nix_job(Platform::Mac, Arch::AARCH64);
@@ -201,6 +202,58 @@ pub(crate) fn bundle_windows(
     }
 }
 
+pub(crate) fn bundle_freebsd(
+    _arch: Arch,
+    release_channel: Option<ReleaseChannel>,
+    deps: &[&NamedJob],
+) -> NamedJob {
+    let platform = Platform::Freebsd;
+    let remote_server_artifact_name = assets::REMOTE_SERVER_FREEBSD_X86_64;
+    NamedJob {
+        name: "bundle_freebsd_x86_64".to_owned(),
+        job: bundle_job(deps)
+            .runs_on(runners::LINUX_X86_BUNDLER)
+            .envs(bundle_envs(platform))
+            .add_step(steps::checkout_repo())
+            .when_some(release_channel, |job, release_channel| {
+                job.add_step(set_release_channel(platform, release_channel))
+            })
+            .add_step(steps::setup_sentry())
+            .add_step(steps::install_rustup_target("x86_64-unknown-freebsd"))
+            .add_step(named::bash(
+                "pip install ziglang cargo-zigbuild --break-system-packages",
+            ))
+            .add_step(named::bash(indoc! {r#"
+                set -eu
+                mkdir -p ~/freebsd-sysroot
+                if [ ! -f ~/freebsd-sysroot/usr/include/stdio.h ]; then
+                  curl -L -o /tmp/base.txz \
+                    https://download.freebsd.org/releases/amd64/amd64/15.0-RELEASE/base.txz
+                  tar -xJf /tmp/base.txz -C ~/freebsd-sysroot ./lib ./usr
+                fi
+            "#}))
+            .add_step(named::bash(indoc! {r#"
+                set -eu
+                export CFLAGS_x86_64_unknown_freebsd="\
+                    -fPIC \
+                    -I$HOME/freebsd-sysroot/usr/include \
+                    -L$HOME/freebsd-sysroot/lib \
+                    -L$HOME/freebsd-sysroot/usr/lib"
+                export RUSTFLAGS="\
+                    -L $HOME/freebsd-sysroot/lib \
+                    -L $HOME/freebsd-sysroot/usr/lib \
+                    -C link-arg=$HOME/freebsd-sysroot/usr/lib/libkvm.so \
+                    -C link-arg=$HOME/freebsd-sysroot/usr/lib/libprocstat.so"
+                cargo zigbuild -p remote_server --release --target x86_64-unknown-freebsd
+                gzip -f --stdout --best target/x86_64-unknown-freebsd/release/remote_server \
+                    > target/zed-remote-server-freebsd-x86_64.gz
+            "#}))
+            .add_step(upload_artifact(&format!(
+                "target/{remote_server_artifact_name}"
+            ))),
+    }
+}
+
 fn set_release_channel(platform: Platform, release_channel: ReleaseChannel) -> Step<Run> {
     match release_channel {
         ReleaseChannel::Nightly => set_release_channel_to_nightly(platform),
@@ -209,7 +262,7 @@ fn set_release_channel(platform: Platform, release_channel: ReleaseChannel) -> S
 
 fn set_release_channel_to_nightly(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+        Platform::Linux | Platform::Mac | Platform::Freebsd => named::bash(indoc::indoc! {r#"
             set -eu
             version=$(git rev-parse --short HEAD)
             echo "Publishing version: ${version} on release channel nightly"
