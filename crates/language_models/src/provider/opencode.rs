@@ -647,6 +647,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     1.0,
                     self.model.max_output_tokens().unwrap_or(8192),
                     mode,
+                    anthropic::completion::AnthropicPromptCacheMode::Automatic,
                 );
                 let stream = self.stream_anthropic(anthropic_request, http_client, cx);
                 async move {

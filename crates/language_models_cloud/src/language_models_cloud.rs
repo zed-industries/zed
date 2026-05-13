@@ -39,7 +39,7 @@ use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 
-use anthropic::completion::{AnthropicEventMapper, into_anthropic};
+use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
     OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
@@ -419,6 +419,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     } else {
                         AnthropicModelMode::Default
                     },
+                    AnthropicPromptCacheMode::Automatic,
                 );
 
                 if enable_thinking && effort.is_some() {
