@@ -859,7 +859,9 @@ impl BreakpointStore {
                         log::debug!("Deserialized {count} {breakpoint_str} at path: {path}");
                     }
 
-                    this.breakpoints = new_breakpoints;
+                    for (path, entry) in new_breakpoints {
+                        this.breakpoints.insert(path, entry);
+                    }
 
                     cx.notify();
                 })?;
@@ -868,6 +870,22 @@ impl BreakpointStore {
             })
         } else {
             Task::ready(Ok(()))
+        }
+    }
+
+    pub fn clear_breakpoints_for_paths<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a Arc<Path>>,
+        cx: &mut Context<Self>,
+    ) {
+        let cleared: Vec<Arc<Path>> = paths
+            .into_iter()
+            .filter(|path| self.breakpoints.remove(*path).is_some())
+            .cloned()
+            .collect();
+        if !cleared.is_empty() {
+            cx.emit(BreakpointStoreEvent::BreakpointsCleared(cleared));
+            cx.notify();
         }
     }
 

@@ -666,7 +666,22 @@ impl BreakpointList {
 
 impl Render for BreakpointList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
+        // Phase 2 multi-tenant: pull breakpoints filtered to this
+        // workspace's Project so a sibling Project's breakpoints on
+        // the shared host `BreakpointStore` don't show up in our panel.
+        // Falls back to the unfiltered store view if the workspace is
+        // gone (shouldn't happen while the panel is rendering).
+        let breakpoints = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .serialized_breakpoints(cx)
+            })
+            .unwrap_or_else(|| self.breakpoint_store.read(cx).all_source_breakpoints(cx));
         self.breakpoints.clear();
         let path_style = self.worktree_store.read(cx).path_style();
         let weak = cx.weak_entity();

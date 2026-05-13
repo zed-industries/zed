@@ -254,8 +254,8 @@ impl TaskStore {
             .map(|json| json.trim())
             .filter(|json| !json.is_empty());
 
-        task_inventory.update(cx, |inventory, _| {
-            inventory.update_file_based_tasks(location, raw_tasks_json)
+        task_inventory.update(cx, |inventory, cx| {
+            inventory.update_file_based_tasks(location, raw_tasks_json, cx)
         })
     }
 
@@ -273,8 +273,8 @@ impl TaskStore {
             .map(|json| json.trim())
             .filter(|json| !json.is_empty());
 
-        task_inventory.update(cx, |inventory, _| {
-            inventory.update_file_based_scenarios(location, raw_tasks_json)
+        task_inventory.update(cx, |inventory, cx| {
+            inventory.update_file_based_scenarios(location, raw_tasks_json, cx)
         })
     }
 }

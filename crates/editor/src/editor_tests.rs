@@ -28285,12 +28285,8 @@ impl BookmarkTestContext {
     }
 
     fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
-        self.project.read_with(&self.cx, |project, cx| {
-            project
-                .bookmark_store(cx)
-                .read(cx)
-                .all_serialized_bookmarks(cx)
-        })
+        self.project
+            .read_with(&self.cx, |project, cx| project.serialized_bookmarks(cx))
     }
 
     fn assert_bookmark_rows(&self, expected_rows: Vec<u32>) {

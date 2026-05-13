@@ -10,7 +10,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskSourceKind, task_store::TaskStore};
+use project::{Project, TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
     ActiveTheme, Clickable, FluentBuilder as _, IconButtonShape, IconWithIndicator, Indicator,
@@ -32,6 +32,10 @@ pub struct TasksModalDelegate {
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
+    /// Phase 2 multi-tenant: held directly (rather than fetched via
+    /// `workspace.project()`) so reads during render don't collide
+    /// with an in-flight workspace update.
+    project: Entity<Project>,
     prompt: String,
     task_contexts: Arc<TaskContexts>,
     placeholder_text: Arc<str>,
@@ -50,6 +54,7 @@ impl TasksModalDelegate {
         task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
             reveal_target: Some(RevealTarget::Center),
@@ -62,6 +67,7 @@ impl TasksModalDelegate {
         Self {
             task_store,
             workspace,
+            project,
             candidates: None,
             matches: Vec::new(),
             last_used_candidate_index: None,
@@ -114,11 +120,11 @@ impl TasksModalDelegate {
         // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
         // the original list without a removed entry.
         candidates.remove(ix);
-        if let Some(inventory) = self.task_store.read(cx).task_inventory().cloned() {
-            inventory.update(cx, |inventory, _| {
-                inventory.delete_previously_used(&task.id);
-            })
-        };
+        // Phase 2 multi-tenant: deletion goes against this workspace's
+        // Project LRU only.
+        self.project.update(cx, |project, _| {
+            project.delete_previously_used_task(&task.id);
+        });
     }
 }
 
@@ -134,6 +140,7 @@ impl TasksModal {
         task_overrides: Option<TaskOverrides>,
         is_modal: bool,
         workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -144,6 +151,7 @@ impl TasksModal {
                     task_contexts,
                     task_overrides,
                     workspace.clone(),
+                    project,
                 ),
                 window,
                 cx,
@@ -268,8 +276,16 @@ impl PickerDelegate for TasksModalDelegate {
             Some(candidates) => Task::ready(string_match_candidates(candidates)),
             None => {
                 if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
+                    // Phase 2 multi-tenant: pull the LRU from this
+                    // workspace's Project and pass it into the
+                    // host-shared Inventory's compute method.
+                    let last_scheduled_tasks = self.project.read(cx).last_scheduled_tasks();
                     let task_list = task_inventory.update(cx, |this, cx| {
-                        this.used_and_current_resolved_tasks(self.task_contexts.clone(), cx)
+                        this.used_and_current_resolved_tasks(
+                            last_scheduled_tasks,
+                            self.task_contexts.clone(),
+                            cx,
+                        )
                     });
                     let workspace = self.workspace.clone();
                     let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
@@ -635,14 +651,10 @@ impl PickerDelegate for TasksModalDelegate {
     ) -> Option<gpui::AnyElement> {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
         let current_modifiers = window.modifiers();
-        let left_button = if self
-            .task_store
-            .read(cx)
-            .task_inventory()?
-            .read(cx)
-            .last_scheduled_task(None)
-            .is_some()
-        {
+        // Phase 2 multi-tenant: "rerun last task" reads this workspace's
+        // Project LRU, not the host-shared Inventory.
+        let has_last_task = self.project.read(cx).last_scheduled_task(None).is_some();
+        let left_button = if has_last_task {
             Some(("Rerun Last Task", Rerun::default().boxed_clone()))
         } else {
             None
@@ -1254,13 +1266,9 @@ mod tests {
                 .cloned()
                 .unwrap()
         });
-        project.update(cx, |project, cx| {
-            if let Some(task_inventory) = project.task_store(cx).read(cx).task_inventory().cloned() {
-                task_inventory.update(cx, |inventory, _| {
-                    let (kind, task) = scheduled_task;
-                    inventory.task_scheduled(kind, task);
-                });
-            }
+        project.update(cx, |project, _| {
+            let (kind, task) = scheduled_task;
+            project.task_scheduled(kind, task);
         });
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);

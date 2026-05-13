@@ -65,14 +65,11 @@ impl Workspace {
                 debugger_provider.task_scheduled(cx);
             }
 
-            self.project().update(cx, |project, cx| {
-                if let Some(task_inventory) =
-                    project.task_store(cx).read(cx).task_inventory().cloned()
-                {
-                    task_inventory.update(cx, |inventory, _| {
-                        inventory.task_scheduled(task_source_kind, resolved_task);
-                    })
-                }
+            // Phase 2 multi-tenant: per-project LRU lives on `Project`,
+            // not on the host-shared `Inventory`, so workspace A's
+            // task scheduling doesn't appear in workspace B's picker.
+            self.project().update(cx, |project, _| {
+                project.task_scheduled(task_source_kind, resolved_task);
             });
         }
 

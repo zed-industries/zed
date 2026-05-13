@@ -1498,10 +1498,18 @@ fn apply_local_settings(
             store.set_local_settings(worktree_id, path.clone(), kind, file_content.as_deref(), cx);
 
         match result {
-            Err(InvalidSettingsError::LocalSettings { path, message }) => {
+            Err(InvalidSettingsError::LocalSettings {
+                worktree_id,
+                path,
+                message,
+            }) => {
                 log::error!("Failed to set local settings in {path:?}: {message}");
                 cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(
-                    InvalidSettingsError::LocalSettings { path, message },
+                    InvalidSettingsError::LocalSettings {
+                        worktree_id,
+                        path,
+                        message,
+                    },
                 )));
             }
             Err(e) => log::error!("Failed to set local settings: {e}"),

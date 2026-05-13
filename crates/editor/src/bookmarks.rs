@@ -178,11 +178,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let bookmark_store = workspace.project().read(cx).bookmark_store(cx);
+        // Phase 2 multi-tenant: go through Project so the multibuffer
+        // only shows this workspace's bookmarks, not sibling Projects'.
+        let project = workspace.project().clone();
         cx.spawn_in(window, async move |workspace, cx| {
-            let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store, cx)
-                .await
-                .log_err()
+            let Some(locations) = Project::all_bookmark_locations(project, cx).await.log_err()
             else {
                 return;
             };

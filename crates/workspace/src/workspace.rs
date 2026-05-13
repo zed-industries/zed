@@ -6721,19 +6721,16 @@ impl Workspace {
 
         match self.workspace_location(cx) {
             WorkspaceLocation::Location(location, paths) => {
-                let bookmarks = self.project.update(cx, |project, cx| {
-                    project
-                        .bookmark_store(cx)
-                        .read(cx)
-                        .all_serialized_bookmarks(cx)
-                });
+                // Phase 2 multi-tenant: filter to this Project's worktrees
+                // so a shared host store doesn't leak sibling Projects'
+                // bookmarks/breakpoints into our serialized workspace.
+                let bookmarks = self
+                    .project
+                    .update(cx, |project, cx| project.serialized_bookmarks(cx));
 
-                let breakpoints = self.project.update(cx, |project, cx| {
-                    project
-                        .breakpoint_store(cx)
-                        .read(cx)
-                        .all_source_breakpoints(cx)
-                });
+                let breakpoints = self
+                    .project
+                    .update(cx, |project, cx| project.serialized_breakpoints(cx));
                 let user_toolchains = self
                     .project
                     .read(cx)
@@ -6964,23 +6961,19 @@ impl Workspace {
                 cx.notify();
             })?;
 
+            // Phase 2 multi-tenant: route restoration through Project so
+            // we only touch our own paths on the shared host stores and
+            // leave sibling Projects' bookmarks/breakpoints alone.
             project
                 .update(cx, |project, cx| {
-                    project.bookmark_store(cx).update(cx, |bookmark_store, cx| {
-                        bookmark_store.load_serialized_bookmarks(serialized_workspace.bookmarks, cx)
-                    })
+                    project.restore_serialized_bookmarks(serialized_workspace.bookmarks, cx)
                 })
                 .await
                 .log_err();
 
             let _ = project
                 .update(cx, |project, cx| {
-                    project
-                        .breakpoint_store(cx)
-                        .update(cx, |breakpoint_store, cx| {
-                            breakpoint_store
-                                .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)
-                        })
+                    project.restore_serialized_breakpoints(serialized_workspace.breakpoints, cx)
                 })
                 .await;
 

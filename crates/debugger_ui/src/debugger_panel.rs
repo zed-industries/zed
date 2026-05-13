@@ -159,12 +159,12 @@ impl DebugPanel {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
 
                 workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
-                    workspace.project().read(cx).breakpoint_store(cx).update(
-                        cx,
-                        |breakpoint_store, cx| {
-                            breakpoint_store.clear_breakpoints(cx);
-                        },
-                    )
+                    // Phase 2 multi-tenant: scope clearing to this
+                    // workspace's Project so we don't drop sibling
+                    // Projects' breakpoints from the shared host store.
+                    workspace
+                        .project()
+                        .update(cx, |project, cx| project.clear_breakpoints(cx));
                 });
 
                 workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
@@ -201,6 +201,12 @@ impl DebugPanel {
                 cx,
             )
         });
+        // Phase 2 multi-tenant: claim the session on this Project so
+        // the shared host `DapStore`'s lifecycle / log / notification
+        // events route only to us.
+        let session_id = session.read(cx).session_id();
+        self.project
+            .update(cx, |project, _| project.claim_dap_session(session_id));
         let worktree = worktree_id.or_else(|| {
             active_buffer
                 .as_ref()
@@ -217,23 +223,16 @@ impl DebugPanel {
         };
 
         self.debug_scenario_scheduled_last = true;
-        if let Some(inventory) = self
-            .project
-            .read(cx)
-            .task_store(cx)
-            .read(cx)
-            .task_inventory()
-            .cloned()
-        {
-            inventory.update(cx, |inventory, _| {
-                inventory.scenario_scheduled(
-                    scenario.clone(),
-                    task_context.clone(),
-                    worktree_id,
-                    active_buffer.as_ref().map(|buffer| buffer.downgrade()),
-                );
-            })
-        }
+        // Phase 2 multi-tenant: per-project scenario LRU lives on
+        // `Project`, not on the host-shared `Inventory`.
+        self.project.update(cx, |project, _| {
+            project.scenario_scheduled(
+                scenario.clone(),
+                task_context.clone(),
+                worktree_id,
+                active_buffer.as_ref().map(|buffer| buffer.downgrade()),
+            );
+        });
         let task = cx.spawn_in(window, {
             let session = session.clone();
             async move |this, cx| {
@@ -308,13 +307,12 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task_store = workspace.project().read(cx).task_store(cx);
-        let Some(task_inventory) = task_store.read(cx).task_inventory() else {
-            return;
-        };
-        let workspace = self.workspace.clone();
-        let Some((scenario, context)) = task_inventory.read(cx).last_scheduled_scenario().cloned()
+        // Phase 2 multi-tenant: the rerun-last action reads this
+        // workspace's Project LRU, not the host-shared inventory.
+        let workspace_handle = self.workspace.clone();
+        let Some((scenario, context)) = workspace.project().read(cx).last_scheduled_scenario()
         else {
+            let workspace = workspace_handle;
             window.defer(cx, move |window, cx| {
                 workspace
                     .update(cx, |workspace, cx| {
@@ -324,6 +322,7 @@ impl DebugPanel {
             });
             return;
         };
+        let _ = workspace_handle;
 
         let DebugScenarioContext {
             task_context,
@@ -393,6 +392,7 @@ impl DebugPanel {
             dap_store.shutdown_session(curr_session_id, cx)
         });
 
+        let project = self.project.clone();
         cx.spawn_in(window, async move |this, cx| {
             task.await.log_err();
 
@@ -404,6 +404,11 @@ impl DebugPanel {
                 });
                 (session, task)
             });
+            // Phase 2 multi-tenant: claim the new session on this
+            // Project so sibling Projects on the shared `DapStore`
+            // don't see its lifecycle / log / toast events.
+            let session_id = session.read_with(cx, |session, _| session.session_id());
+            project.update(cx, |project, _| project.claim_dap_session(session_id));
             Self::register_session(this.clone(), session.clone(), true, cx).await?;
 
             if let Err(error) = task.await {
@@ -450,6 +455,7 @@ impl DebugPanel {
         };
         let task_context = parent_session.read(cx).task_context().clone();
         binary.request_args = request.clone();
+        let project = self.project.clone();
         cx.spawn_in(window, async move |this, cx| {
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
                 let session = dap_store.new_session(
@@ -466,6 +472,12 @@ impl DebugPanel {
                 });
                 (session, task)
             });
+            // Phase 2 multi-tenant: claim the child session on this
+            // Project. Parent ownership is implicit (we never reach
+            // this code path without owning the parent), but the
+            // child has its own SessionId that must be claimed.
+            let session_id = session.read_with(cx, |session, _| session.session_id());
+            project.update(cx, |project, _| project.claim_dap_session(session_id));
             // Focus child sessions if the parent has never emitted a stopped event;
             // this improves our JavaScript experience, as it always spawns a "main" session that then spawns subsessions.
             let parent_ever_stopped = parent_session.update(cx, |this, _| this.has_ever_stopped());
@@ -1871,12 +1883,13 @@ impl Render for DebugPanel {
                             }),
                         );
 
+                    // Phase 2 multi-tenant: filter to this Project's
+                    // worktrees so a sibling Project's breakpoints
+                    // don't make our panel look non-empty.
                     let has_breakpoints = self
                         .project
                         .read(cx)
-                        .breakpoint_store(cx)
-                        .read(cx)
-                        .all_source_breakpoints(cx)
+                        .serialized_breakpoints(cx)
                         .values()
                         .any(|breakpoints| !breakpoints.is_empty());
 

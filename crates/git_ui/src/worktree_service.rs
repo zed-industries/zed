@@ -891,7 +891,7 @@ mod tests {
             else {
                 return;
             };
-            task_inventory.update(cx, |inventory, _| {
+            task_inventory.update(cx, |inventory, cx| {
                 inventory
                     .update_file_based_tasks(
                         TaskSettingsLocation::Worktree(SettingsLocation {
@@ -899,6 +899,7 @@ mod tests {
                             path: rel_path(".zed"),
                         }),
                         Some(hook_tasks_json),
+                        cx,
                     )
                     .expect("should inject create_worktree hook tasks for linked worktree");
             });

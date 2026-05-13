@@ -1,17 +1,114 @@
-use gpui::{AppContext, Entity, Task, TestAppContext};
+use collections::VecDeque;
+use gpui::{AppContext, Entity, Subscription, Task, TestAppContext};
 use itertools::Itertools;
 use paths::tasks_file;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use settings::SettingsLocation;
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
+use task::{DebugScenario, ResolvedTask};
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};
 
-use project::{WorktreeId, task_inventory::*};
+use project::{DebugScenarioContext, WorktreeId, task_inventory::*};
 use test_inventory::*;
+
+/// Per-test stand-in for the `Project`-side LRUs that `Inventory`
+/// methods now consume as inputs (the LRUs were moved to `Project`
+/// for Phase 2 multi-tenant). Wires a `cx.subscribe` to mirror
+/// `Project::on_inventory_event`'s pruning behaviour so tests can
+/// exercise the settings-reload invalidation path without spinning
+/// up a full `Project`.
+struct TestLru {
+    tasks: Rc<RefCell<VecDeque<(TaskSourceKind, ResolvedTask)>>>,
+    scenarios: Rc<RefCell<VecDeque<(DebugScenario, DebugScenarioContext)>>>,
+    _subscription: Subscription,
+}
+
+impl TestLru {
+    fn new(inventory: &Entity<Inventory>, cx: &mut TestAppContext) -> Self {
+        let tasks: Rc<RefCell<VecDeque<(TaskSourceKind, ResolvedTask)>>> = Default::default();
+        let scenarios: Rc<RefCell<VecDeque<(DebugScenario, DebugScenarioContext)>>> =
+            Default::default();
+        let subscription = cx.update(|cx| {
+            let tasks = tasks.clone();
+            let scenarios = scenarios.clone();
+            cx.subscribe(inventory, move |_, event: &InventoryEvent, _| match event {
+                InventoryEvent::TaskTemplatesReloaded { reload } => match reload {
+                    TaskTemplateReload::Global { abs_path } => {
+                        tasks.borrow_mut().retain(|(kind, _)| {
+                            if let TaskSourceKind::AbsPath {
+                                abs_path: kind_path,
+                                ..
+                            } = kind
+                            {
+                                kind_path != abs_path
+                            } else {
+                                true
+                            }
+                        });
+                    }
+                    TaskTemplateReload::Worktree {
+                        worktree_id,
+                        directory,
+                    } => {
+                        tasks.borrow_mut().retain(|(kind, _)| {
+                            if let TaskSourceKind::Worktree {
+                                id,
+                                directory_in_worktree,
+                                ..
+                            } = kind
+                            {
+                                id != worktree_id || directory_in_worktree != directory
+                            } else {
+                                true
+                            }
+                        });
+                    }
+                },
+                InventoryEvent::DebugScenariosReloaded {
+                    new_definitions,
+                    previously_existing,
+                } => {
+                    scenarios.borrow_mut().retain_mut(|(scenario, _)| {
+                        if !previously_existing.contains(&scenario.label) {
+                            return true;
+                        }
+                        if let Some(new_definition) = new_definitions.get(&scenario.label) {
+                            *scenario = new_definition.clone();
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                }
+            })
+        });
+        Self {
+            tasks,
+            scenarios,
+            _subscription: subscription,
+        }
+    }
+
+    fn task_snapshot(&self) -> VecDeque<(TaskSourceKind, ResolvedTask)> {
+        self.tasks.borrow().clone()
+    }
+
+    fn scenario_snapshot(&self) -> VecDeque<(DebugScenario, DebugScenarioContext)> {
+        self.scenarios.borrow().clone()
+    }
+
+    fn push_scenario(&self, scenario: DebugScenario, ctx: DebugScenarioContext) {
+        let mut deque = self.scenarios.borrow_mut();
+        deque.retain(|(s, _)| s.label != scenario.label);
+        deque.push_front((scenario, ctx));
+    }
+}
 
 mod test_inventory {
     use gpui::{AppContext as _, Entity, Task, TestAppContext};
@@ -19,6 +116,7 @@ mod test_inventory {
     use task::TaskContext;
     use worktree::WorktreeId;
 
+    use super::TestLru;
     use crate::Inventory;
 
     use super::TaskSourceKind;
@@ -43,6 +141,7 @@ mod test_inventory {
 
     pub(super) fn register_task_used(
         inventory: &Entity<Inventory>,
+        lru: &TestLru,
         task_name: &str,
         cx: &mut TestAppContext,
     ) -> Task<()> {
@@ -51,8 +150,8 @@ mod test_inventory {
         });
 
         let task_name = task_name.to_owned();
-        let inventory = inventory.clone();
-        cx.spawn(|mut cx| async move {
+        let tasks_handle = lru.tasks.clone();
+        cx.spawn(|_cx| async move {
             let (task_source_kind, task) = tasks
                 .await
                 .into_iter()
@@ -60,18 +159,18 @@ mod test_inventory {
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
 
             let id_base = task_source_kind.to_id_base();
-            inventory.update(&mut cx, |inventory, _| {
-                inventory.task_scheduled(
-                    task_source_kind.clone(),
-                    task.resolve_task(&id_base, &TaskContext::default())
-                        .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
-                )
-            });
+            let resolved = task
+                .resolve_task(&id_base, &TaskContext::default())
+                .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}"));
+            tasks_handle
+                .borrow_mut()
+                .push_back((task_source_kind, resolved));
         })
     }
 
     pub(super) fn register_worktree_task_used(
         inventory: &Entity<Inventory>,
+        lru: &TestLru,
         worktree_id: WorktreeId,
         task_name: &str,
         cx: &mut TestAppContext,
@@ -80,22 +179,21 @@ mod test_inventory {
             inventory.list_tasks(None, None, Some(worktree_id), cx)
         });
 
-        let inventory = inventory.clone();
         let task_name = task_name.to_owned();
-        cx.spawn(|mut cx| async move {
+        let tasks_handle = lru.tasks.clone();
+        cx.spawn(|_cx| async move {
             let (task_source_kind, task) = tasks
                 .await
                 .into_iter()
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
             let id_base = task_source_kind.to_id_base();
-            inventory.update(&mut cx, |inventory, _| {
-                inventory.task_scheduled(
-                    task_source_kind.clone(),
-                    task.resolve_task(&id_base, &TaskContext::default())
-                        .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
-                );
-            });
+            let resolved = task
+                .resolve_task(&id_base, &TaskContext::default())
+                .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}"));
+            tasks_handle
+                .borrow_mut()
+                .push_back((task_source_kind, resolved));
         })
     }
 
@@ -124,7 +222,8 @@ mod test_inventory {
 async fn test_task_list_sorting(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
-    let initial_tasks = resolved_task_names(&inventory, None, cx).await;
+    let lru = TestLru::new(&inventory, cx);
+    let initial_tasks = resolved_task_names(&inventory, &lru, None, cx).await;
     assert!(
         initial_tasks.is_empty(),
         "No tasks expected for empty inventory, but got {initial_tasks:?}"
@@ -142,13 +241,14 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         "3_task".to_string(),
     ];
 
-    inventory.update(cx, |inventory, _| {
+    inventory.update(cx, |inventory, cx| {
         inventory
             .update_file_based_tasks(
                 TaskSettingsLocation::Global(tasks_file()),
                 Some(&mock_tasks_from_names(
                     expected_initial_state.iter().map(|name| name.as_str()),
                 )),
+                cx,
             )
             .unwrap();
     });
@@ -157,18 +257,18 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         &expected_initial_state,
     );
     assert_eq!(
-        resolved_task_names(&inventory, None, cx).await,
+        resolved_task_names(&inventory, &lru, None, cx).await,
         &expected_initial_state,
         "Tasks with equal amount of usages should be sorted alphanumerically"
     );
 
-    register_task_used(&inventory, "2_task", cx).await;
+    register_task_used(&inventory, &lru, "2_task", cx).await;
     assert_eq!(
         task_template_names(&inventory, None, cx).await,
         &expected_initial_state,
     );
     assert_eq!(
-        resolved_task_names(&inventory, None, cx).await,
+        resolved_task_names(&inventory, &lru, None, cx).await,
         vec![
             "2_task".to_string(),
             "1_a_task".to_string(),
@@ -177,16 +277,16 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         ],
     );
 
-    register_task_used(&inventory, "1_task", cx).await;
-    register_task_used(&inventory, "1_task", cx).await;
-    register_task_used(&inventory, "1_task", cx).await;
-    register_task_used(&inventory, "3_task", cx).await;
+    register_task_used(&inventory, &lru, "1_task", cx).await;
+    register_task_used(&inventory, &lru, "1_task", cx).await;
+    register_task_used(&inventory, &lru, "1_task", cx).await;
+    register_task_used(&inventory, &lru, "3_task", cx).await;
     assert_eq!(
         task_template_names(&inventory, None, cx).await,
         &expected_initial_state,
     );
     assert_eq!(
-        resolved_task_names(&inventory, None, cx).await,
+        resolved_task_names(&inventory, &lru, None, cx).await,
         vec![
             "3_task".to_string(),
             "1_task".to_string(),
@@ -201,16 +301,17 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         worktree_id,
         path: rel_path("foo"),
     };
-    inventory.update(cx, |inventory, _| {
+    inventory.update(cx, |inventory, cx| {
         inventory
             .update_file_based_tasks(
                 TaskSettingsLocation::Worktree(local_worktree_location),
                 Some(&mock_tasks_from_names(["worktree_task_1"])),
+                cx,
             )
             .unwrap();
     });
     assert_eq!(
-        resolved_task_names(&inventory, None, cx).await,
+        resolved_task_names(&inventory, &lru, None, cx).await,
         vec![
             "3_task".to_string(),
             "1_task".to_string(),
@@ -220,7 +321,7 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         "Most recently used task should be at the top"
     );
     assert_eq!(
-        resolved_task_names(&inventory, Some(worktree_id), cx).await,
+        resolved_task_names(&inventory, &lru, Some(worktree_id), cx).await,
         vec![
             "3_task".to_string(),
             "1_task".to_string(),
@@ -229,9 +330,9 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
             "1_a_task".to_string(),
         ],
     );
-    register_worktree_task_used(&inventory, worktree_id, "worktree_task_1", cx).await;
+    register_worktree_task_used(&inventory, &lru, worktree_id, "worktree_task_1", cx).await;
     assert_eq!(
-        resolved_task_names(&inventory, Some(worktree_id), cx).await,
+        resolved_task_names(&inventory, &lru, Some(worktree_id), cx).await,
         vec![
             "worktree_task_1".to_string(),
             "3_task".to_string(),
@@ -242,7 +343,7 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         "Most recently used worktree task should be at the top"
     );
 
-    inventory.update(cx, |inventory, _| {
+    inventory.update(cx, |inventory, cx| {
         inventory
             .update_file_based_tasks(
                 TaskSettingsLocation::Global(tasks_file()),
@@ -251,6 +352,7 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
                         .into_iter()
                         .chain(expected_initial_state.iter().map(|name| name.as_str())),
                 )),
+                cx,
             )
             .unwrap();
     });
@@ -268,7 +370,7 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         &expected_updated_state,
     );
     assert_eq!(
-        resolved_task_names(&inventory, None, cx).await,
+        resolved_task_names(&inventory, &lru, None, cx).await,
         vec![
             "worktree_task_1".to_string(),
             "1_a_task".to_string(),
@@ -281,13 +383,13 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
         "After global tasks update, worktree task usage is not erased and it's the first still; global task is back to regular order as its file was updated"
     );
 
-    register_task_used(&inventory, "11_hello", cx).await;
+    register_task_used(&inventory, &lru, "11_hello", cx).await;
     assert_eq!(
         task_template_names(&inventory, None, cx).await,
         &expected_updated_state,
     );
     assert_eq!(
-        resolved_task_names(&inventory, None, cx).await,
+        resolved_task_names(&inventory, &lru, None, cx).await,
         vec![
             "11_hello".to_string(),
             "worktree_task_1".to_string(),
@@ -304,7 +406,8 @@ async fn test_task_list_sorting(cx: &mut TestAppContext) {
 async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
-    inventory.update(cx, |inventory, _| {
+    let lru = TestLru::new(&inventory, cx);
+    inventory.update(cx, |inventory, cx| {
         inventory
             .update_file_based_scenarios(
                 TaskSettingsLocation::Global(Path::new("")),
@@ -318,13 +421,21 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
                         }]
                         "#,
                 ),
+                cx,
             )
             .unwrap();
     });
 
     let (_, scenario) = inventory
         .update(cx, |this, cx| {
-            this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+            this.list_debug_scenarios(
+                lru.scenario_snapshot(),
+                &TaskContexts::default(),
+                vec![],
+                vec![],
+                false,
+                cx,
+            )
         })
         .await
         .1
@@ -332,14 +443,20 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
         .unwrap()
         .clone();
 
-    inventory.update(cx, |this, _| {
-        this.scenario_scheduled(scenario.clone(), Default::default(), None, None);
-    });
+    // Mirror Project's `scenario_scheduled` by pushing to our local LRU.
+    lru.push_scenario(scenario.clone(), DebugScenarioContext::default());
 
     assert_eq!(
         inventory
             .update(cx, |this, cx| {
-                this.list_debug_scenarios(&Default::default(), vec![], vec![], false, cx)
+                this.list_debug_scenarios(
+                    lru.scenario_snapshot(),
+                    &Default::default(),
+                    vec![],
+                    vec![],
+                    false,
+                    cx,
+                )
             })
             .await
             .0
@@ -350,7 +467,7 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
         scenario
     );
 
-    inventory.update(cx, |this, _| {
+    inventory.update(cx, |this, cx| {
         this.update_file_based_scenarios(
             TaskSettingsLocation::Global(Path::new("")),
             Some(
@@ -363,6 +480,7 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
                         }]
                         "#,
             ),
+            cx,
         )
         .unwrap();
     });
@@ -370,7 +488,14 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
     assert_eq!(
         inventory
             .update(cx, |this, cx| {
-                this.list_debug_scenarios(&Default::default(), vec![], vec![], false, cx)
+                this.list_debug_scenarios(
+                    lru.scenario_snapshot(),
+                    &Default::default(),
+                    vec![],
+                    vec![],
+                    false,
+                    cx,
+                )
             })
             .await
             .0
@@ -381,7 +506,7 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
         "Delve",
     );
 
-    inventory.update(cx, |this, _| {
+    inventory.update(cx, |this, cx| {
         this.update_file_based_scenarios(
             TaskSettingsLocation::Global(Path::new("")),
             Some(
@@ -394,6 +519,7 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
                         }]
                         "#,
             ),
+            cx,
         )
         .unwrap();
     });
@@ -401,7 +527,14 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
     assert!(
         inventory
             .update(cx, |this, cx| {
-                this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                this.list_debug_scenarios(
+                    lru.scenario_snapshot(),
+                    &TaskContexts::default(),
+                    vec![],
+                    vec![],
+                    false,
+                    cx,
+                )
             })
             .await
             .0
@@ -413,6 +546,7 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
 async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
+    let lru = TestLru::new(&inventory, cx);
     let common_name = "common_task_name";
     let worktree_1 = WorktreeId::from_usize(1);
     let worktree_2 = WorktreeId::from_usize(2);
@@ -478,7 +612,7 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
         ),
     ];
 
-    inventory.update(cx, |inventory, _| {
+    inventory.update(cx, |inventory, cx| {
         inventory
             .update_file_based_tasks(
                 TaskSettingsLocation::Global(tasks_file()),
@@ -487,6 +621,7 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
                         .iter()
                         .map(|(_, name)| name.as_str()),
                 )),
+                cx,
             )
             .unwrap();
         inventory
@@ -498,6 +633,7 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
                 Some(&mock_tasks_from_names(
                     worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
                 )),
+                cx,
             )
             .unwrap();
         inventory
@@ -509,17 +645,18 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
                 Some(&mock_tasks_from_names(
                     worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
                 )),
+                cx,
             )
             .unwrap();
     });
 
     assert_eq!(
-        list_tasks_sorted_by_last_used(&inventory, None, cx).await,
+        list_tasks_sorted_by_last_used(&inventory, &lru, None, cx).await,
         worktree_independent_tasks,
         "Without a worktree, only worktree-independent tasks should be listed"
     );
     assert_eq!(
-        list_tasks_sorted_by_last_used(&inventory, Some(worktree_1), cx).await,
+        list_tasks_sorted_by_last_used(&inventory, &lru, Some(worktree_1), cx).await,
         worktree_1_tasks
             .iter()
             .chain(worktree_independent_tasks.iter())
@@ -528,7 +665,7 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
             .collect::<Vec<_>>(),
     );
     assert_eq!(
-        list_tasks_sorted_by_last_used(&inventory, Some(worktree_2), cx).await,
+        list_tasks_sorted_by_last_used(&inventory, &lru, Some(worktree_2), cx).await,
         worktree_2_tasks
             .iter()
             .chain(worktree_independent_tasks.iter())
@@ -564,9 +701,10 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
 async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
+    let lru = TestLru::new(&inventory, cx);
     let worktree_id = WorktreeId::from_usize(0);
 
-    inventory.update(cx, |inventory, _| {
+    inventory.update(cx, |inventory, cx| {
         inventory
             .update_file_based_tasks(
                 TaskSettingsLocation::Worktree(SettingsLocation {
@@ -574,6 +712,7 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
                     path: rel_path(".vscode"),
                 }),
                 Some(&mock_tasks_from_names(["vscode_task"])),
+                cx,
             )
             .unwrap();
     });
@@ -583,7 +722,7 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
         "With only .vscode tasks, they should appear"
     );
 
-    inventory.update(cx, |inventory, _| {
+    inventory.update(cx, |inventory, cx| {
         inventory
             .update_file_based_tasks(
                 TaskSettingsLocation::Worktree(SettingsLocation {
@@ -591,6 +730,7 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
                     path: rel_path(".zed"),
                 }),
                 Some(&mock_tasks_from_names(["zed_task"])),
+                cx,
             )
             .unwrap();
     });
@@ -600,8 +740,8 @@ async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
         "With both .zed and .vscode tasks, only .zed tasks should appear"
     );
 
-    register_worktree_task_used(&inventory, worktree_id, "zed_task", cx).await;
-    let resolved = resolved_task_names(&inventory, Some(worktree_id), cx).await;
+    register_worktree_task_used(&inventory, &lru, worktree_id, "zed_task", cx).await;
+    let resolved = resolved_task_names(&inventory, &lru, Some(worktree_id), cx).await;
     assert!(
         !resolved.iter().any(|name| name == "vscode_task"),
         "Previously used .vscode tasks should not appear when .zed tasks exist, got: {resolved:?}"
@@ -615,15 +755,17 @@ fn init_test(_cx: &mut TestAppContext) {
 
 fn resolved_task_names(
     inventory: &Entity<Inventory>,
+    lru: &TestLru,
     worktree: Option<WorktreeId>,
     cx: &mut TestAppContext,
 ) -> Task<Vec<String>> {
+    let snapshot = lru.task_snapshot();
     let tasks = inventory.update(cx, |inventory, cx| {
         let mut task_contexts = TaskContexts::default();
         task_contexts.active_worktree_context =
             worktree.map(|worktree| (worktree, Default::default()));
 
-        inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+        inventory.used_and_current_resolved_tasks(snapshot, Arc::new(task_contexts), cx)
     });
 
     cx.background_spawn(async move {
@@ -653,16 +795,18 @@ fn mock_tasks_from_names<'a>(task_names: impl IntoIterator<Item = &'a str> + 'a)
 
 async fn list_tasks_sorted_by_last_used(
     inventory: &Entity<Inventory>,
+    lru: &TestLru,
     worktree: Option<WorktreeId>,
     cx: &mut TestAppContext,
 ) -> Vec<(TaskSourceKind, String)> {
+    let snapshot = lru.task_snapshot();
     let (used, current) = inventory
         .update(cx, |inventory, cx| {
             let mut task_contexts = TaskContexts::default();
             task_contexts.active_worktree_context =
                 worktree.map(|worktree| (worktree, Default::default()));
 
-            inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+            inventory.used_and_current_resolved_tasks(snapshot, Arc::new(task_contexts), cx)
         })
         .await;
     let mut all = used;

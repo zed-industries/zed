@@ -17,21 +17,17 @@ pub fn init(cx: &mut App) {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
-                    if let Some((task_source_kind, mut last_scheduled_task)) = workspace
-                        .project()
-                        .read(cx)
-                        .task_store(cx)
-                        .read(cx)
-                        .task_inventory()
-                        .and_then(|inventory| {
-                            inventory.read(cx).last_scheduled_task(
-                                action
-                                    .task_id
-                                    .as_ref()
-                                    .map(|id| TaskId(id.clone()))
-                                    .as_ref(),
-                            )
-                        })
+                    // Phase 2 multi-tenant: "rerun last task" reads this
+                    // workspace's Project LRU, not the host-shared
+                    // Inventory.
+                    if let Some((task_source_kind, mut last_scheduled_task)) =
+                        workspace.project().read(cx).last_scheduled_task(
+                            action
+                                .task_id
+                                .as_ref()
+                                .map(|id| TaskId(id.clone()))
+                                .as_ref(),
+                        )
                     {
                         if action.reevaluate_context {
                             let mut original_task = last_scheduled_task.original_task().clone();
@@ -147,6 +143,7 @@ pub fn toggle_modal(
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
     let task_store = workspace.project().read(cx).task_store(cx);
+    let project = workspace.project().clone();
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace
         .project()
@@ -166,6 +163,7 @@ pub fn toggle_modal(
                             }),
                             true,
                             workspace_handle,
+                            project,
                             window,
                             cx,
                         )

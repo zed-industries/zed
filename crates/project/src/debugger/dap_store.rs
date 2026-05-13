@@ -64,7 +64,14 @@ pub enum DapStoreEvent {
         session_id: SessionId,
         message: Message,
     },
-    Notification(String),
+    /// A toast-worthy debug notification. The optional `session_id`
+    /// scopes the toast to the Project that owns that session in
+    /// Phase 2 multi-tenant; `None` means "host-wide" (every Project
+    /// surfaces it).
+    Notification {
+        session_id: Option<SessionId>,
+        message: String,
+    },
     RemoteHasInitialized,
     /// A streaming log message produced while resolving a debug adapter binary
     /// for a downstream client. Listeners (`Project`, `HeadlessProject`)

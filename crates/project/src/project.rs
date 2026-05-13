@@ -40,7 +40,7 @@ use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use itertools::{Either, Itertools};
 
 use crate::{
-    bookmark_store::BookmarkStore,
+    bookmark_store::{BookmarkStore, SerializedBookmark},
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
@@ -65,14 +65,15 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::client::DebugAdapterClient;
+use dap::client::{DebugAdapterClient, SessionId};
 
-use collections::{HashMap, HashSet, IndexSet};
+use collections::{HashMap, HashSet, IndexSet, VecDeque};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
     breakpoint_store::{
         ActiveStackFrame, BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason,
+        SourceBreakpoint,
     },
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
@@ -161,9 +162,10 @@ pub use language::Location;
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
+use task::{DebugScenario, ResolvedTask, SharedTaskContext, TaskId};
 pub use task_inventory::{
-    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory, TaskContexts,
-    TaskSourceKind,
+    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory,
+    InventoryEvent, TaskContexts, TaskSourceKind, TaskTemplateReload,
 };
 
 pub use buffer_store::ProjectTransaction;
@@ -316,6 +318,27 @@ pub struct Project {
     /// `context_server_update_task` is already in flight; the in-flight
     /// task re-triggers itself on completion if this is `true`.
     context_server_needs_update: bool,
+    /// Per-project LRU of recently-scheduled tasks. Used for the
+    /// "recently used" section of the tasks picker and the
+    /// `task::Rerun` action's "last task" lookup. Lives on `Project`
+    /// (not the host-shared `Inventory`) so workspace A's task
+    /// scheduling doesn't appear in workspace B's picker.
+    last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    /// Per-project LRU of recently-scheduled debug scenarios. Same
+    /// per-Project rationale as `last_scheduled_tasks`. Used by the
+    /// debug rerun action and the debug-scenario picker.
+    last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
+    /// Per-project view of which DAP sessions (by id) this Project
+    /// considers "its own" out of the shared host `DapStore`. A
+    /// session is claimed when the Project initiates it via
+    /// `Project::new_dap_session` and pruned on
+    /// `DapStoreEvent::DebugClientShutdown`. Phase 2 uses this set
+    /// to gate `on_dap_store_event` (collab broadcasts of session
+    /// lifecycle / log messages / notifications) and to filter the
+    /// `Project::dap_sessions` / `Project::dap_session_by_id`
+    /// accessors so a sibling Project's debug sessions don't bleed
+    /// into our UI.
+    dap_sessions: HashSet<SessionId>,
 }
 
 struct DownloadingFile {
@@ -1351,8 +1374,12 @@ impl Project {
                 pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
+                last_scheduled_tasks: VecDeque::default(),
+                last_scheduled_scenarios: VecDeque::default(),
+                dap_sessions: HashSet::default(),
             }
         });
+        Self::subscribe_to_inventory_events(&project, cx);
         Self::trigger_initial_context_server_refresh(&project, cx);
         project
     }
@@ -1470,6 +1497,9 @@ impl Project {
                 pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
+                last_scheduled_tasks: VecDeque::default(),
+                last_scheduled_scenarios: VecDeque::default(),
+                dap_sessions: HashSet::default(),
             };
 
             // remote server -> local machine handlers
@@ -1541,6 +1571,7 @@ impl Project {
 
             this
         });
+        Self::subscribe_to_inventory_events(&project, cx);
         Self::trigger_initial_context_server_refresh(&project, cx);
         project
     }
@@ -1724,6 +1755,9 @@ impl Project {
                 pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
+                last_scheduled_tasks: VecDeque::default(),
+                last_scheduled_scenarios: VecDeque::default(),
+                dap_sessions: HashSet::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -1731,6 +1765,7 @@ impl Project {
             }
             project
         });
+        cx.update(|cx| Self::subscribe_to_inventory_events(&project, cx));
 
         let weak_project = project.downgrade();
         lsp_store.update(&mut cx, |lsp_store, cx| {
@@ -1990,6 +2025,13 @@ impl Project {
 
     pub fn active_debug_session(&self, cx: &App) -> Option<(Entity<Session>, ActiveStackFrame)> {
         let active_position = self.breakpoint_store(cx).read(cx).active_position()?;
+        // Phase 2 multi-tenant: the host `BreakpointStore` holds a
+        // single host-wide active stack frame; filter to ours so an
+        // "active debug line" set by a sibling Project's session
+        // doesn't show up here.
+        if !self.owns_dap_session(active_position.session_id) {
+            return None;
+        }
         let session = self
             .dap_store(cx)
             .read(cx)
@@ -1997,9 +2039,56 @@ impl Project {
         Some((session, active_position.clone()))
     }
 
+    /// Returns `true` when `session_id` was launched by this Project.
+    /// Used to scope the host-shared `DapStore` (sessions, log
+    /// messages, lifecycle events, notifications) to a single
+    /// Project's view in Phase 2.
+    #[inline]
+    pub fn owns_dap_session(&self, session_id: SessionId) -> bool {
+        self.dap_sessions.contains(&session_id)
+    }
+
+    /// Records `session_id` as belonging to this Project. Callers
+    /// should invoke this immediately after
+    /// `DapStore::new_session(...)` so subsequent
+    /// `DebugClientStarted` / `LogToDebugConsole` / `Notification`
+    /// events get routed to this Project (and not its siblings on the
+    /// shared host store).
+    pub fn claim_dap_session(&mut self, session_id: SessionId) {
+        self.dap_sessions.insert(session_id);
+    }
+
+    /// Filtered view of `DapStore::session_by_id` that only resolves
+    /// sessions launched by this Project.
+    pub fn dap_session_by_id(&self, session_id: SessionId, cx: &App) -> Option<Entity<Session>> {
+        if !self.owns_dap_session(session_id) {
+            return None;
+        }
+        self.dap_store(cx).read(cx).session_by_id(session_id)
+    }
+
+    /// Filtered view of `DapStore::sessions()` that only includes
+    /// sessions launched by this Project. UI surfaces that iterate
+    /// debug sessions (debug panel, inline values, breakpoint
+    /// indicators) should go through this rather than the host store
+    /// so sibling Projects' sessions don't leak in.
+    pub fn dap_sessions(&self, cx: &App) -> Vec<Entity<Session>> {
+        let dap_store = self.dap_store(cx);
+        let dap_store = dap_store.read(cx);
+        self.dap_sessions
+            .iter()
+            .filter_map(|id| dap_store.session_by_id(*id))
+            .collect()
+    }
+
     #[inline]
     pub fn lsp_store(&self, cx: &App) -> Entity<LspStore> {
         self.host.read(cx).lsp_store.clone()
+    }
+
+    #[inline]
+    pub fn image_store(&self, cx: &App) -> Entity<ImageStore> {
+        self.host.read(cx).image_store.clone()
     }
 
     #[inline]
@@ -2043,6 +2132,165 @@ impl Project {
             }
         })
         .detach();
+    }
+
+    /// Subscribe to the host-shared `Inventory`'s settings-reload
+    /// events so this Project can prune its per-Project task / scenario
+    /// LRU when the underlying template definitions change.
+    fn subscribe_to_inventory_events(project: &Entity<Self>, cx: &mut App) {
+        let Some(inventory) = project
+            .read(cx)
+            .task_store(cx)
+            .read(cx)
+            .task_inventory()
+            .cloned()
+        else {
+            return;
+        };
+        project.update(cx, |_, cx| {
+            cx.subscribe(&inventory, Self::on_inventory_event).detach();
+        });
+    }
+
+    fn on_inventory_event(
+        &mut self,
+        _: Entity<Inventory>,
+        event: &InventoryEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        match event {
+            InventoryEvent::TaskTemplatesReloaded { reload } => match reload {
+                TaskTemplateReload::Global { abs_path } => {
+                    self.last_scheduled_tasks.retain(|(kind, _)| {
+                        if let TaskSourceKind::AbsPath {
+                            abs_path: kind_path,
+                            ..
+                        } = kind
+                        {
+                            kind_path != abs_path
+                        } else {
+                            true
+                        }
+                    });
+                }
+                TaskTemplateReload::Worktree {
+                    worktree_id,
+                    directory,
+                } => {
+                    self.last_scheduled_tasks.retain(|(kind, _)| {
+                        if let TaskSourceKind::Worktree {
+                            id,
+                            directory_in_worktree,
+                            ..
+                        } = kind
+                        {
+                            id != worktree_id || directory_in_worktree != directory
+                        } else {
+                            true
+                        }
+                    });
+                }
+            },
+            InventoryEvent::DebugScenariosReloaded {
+                new_definitions,
+                previously_existing,
+            } => {
+                self.last_scheduled_scenarios.retain_mut(|(scenario, _)| {
+                    if !previously_existing.contains(&scenario.label) {
+                        return true;
+                    }
+                    if let Some(new_definition) = new_definitions.get(&scenario.label) {
+                        *scenario = new_definition.clone();
+                        true
+                    } else {
+                        false
+                    }
+                });
+            }
+        }
+    }
+
+    /// Records a task as just-scheduled in this Project's recent-tasks
+    /// LRU. Used by `Workspace::schedule_resolved_task`. The LRU is
+    /// capped at 5000 entries.
+    pub fn task_scheduled(
+        &mut self,
+        task_source_kind: TaskSourceKind,
+        resolved_task: ResolvedTask,
+    ) {
+        self.last_scheduled_tasks
+            .push_back((task_source_kind, resolved_task));
+        if self.last_scheduled_tasks.len() > 5_000 {
+            self.last_scheduled_tasks.pop_front();
+        }
+    }
+
+    /// Records a debug scenario as just-scheduled in this Project's
+    /// recent-scenarios LRU. Deduplicates by label — a later schedule
+    /// of the same label drops the earlier entry. Capped at 5000.
+    pub fn scenario_scheduled(
+        &mut self,
+        scenario: DebugScenario,
+        task_context: SharedTaskContext,
+        worktree_id: Option<WorktreeId>,
+        active_buffer: Option<WeakEntity<Buffer>>,
+    ) {
+        self.last_scheduled_scenarios
+            .retain(|(s, _)| s.label != scenario.label);
+        self.last_scheduled_scenarios.push_front((
+            scenario,
+            DebugScenarioContext {
+                task_context,
+                worktree_id,
+                active_buffer,
+            },
+        ));
+        if self.last_scheduled_scenarios.len() > 5_000 {
+            self.last_scheduled_scenarios.pop_front();
+        }
+    }
+
+    /// Returns the last scheduled task by `task_id` if provided.
+    /// Otherwise returns the most recently scheduled task overall.
+    pub fn last_scheduled_task(
+        &self,
+        task_id: Option<&TaskId>,
+    ) -> Option<(TaskSourceKind, ResolvedTask)> {
+        if let Some(task_id) = task_id {
+            self.last_scheduled_tasks
+                .iter()
+                .find(|(_, task)| &task.id == task_id)
+                .cloned()
+        } else {
+            self.last_scheduled_tasks.back().cloned()
+        }
+    }
+
+    /// Returns the most recently scheduled debug scenario for this
+    /// Project.
+    pub fn last_scheduled_scenario(&self) -> Option<(DebugScenario, DebugScenarioContext)> {
+        self.last_scheduled_scenarios.back().cloned()
+    }
+
+    /// Removes a task from this Project's recent-tasks LRU by its
+    /// resolved id. A similar task may resurface in
+    /// `Inventory::used_and_current_resolved_tasks` when its
+    /// [`TaskTemplate`](task::TaskTemplate) is resolved again.
+    pub fn delete_previously_used_task(&mut self, id: &TaskId) {
+        self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
+    }
+
+    /// Snapshot of this Project's recent-tasks LRU. Pass to
+    /// `Inventory::used_and_current_resolved_tasks` so the LRU sort
+    /// reflects only this Project's history.
+    pub fn last_scheduled_tasks(&self) -> VecDeque<(TaskSourceKind, ResolvedTask)> {
+        self.last_scheduled_tasks.clone()
+    }
+
+    /// Snapshot of this Project's recent-scenarios LRU. Pass to
+    /// `Inventory::list_debug_scenarios`.
+    pub fn last_scheduled_scenarios(&self) -> VecDeque<(DebugScenario, DebugScenarioContext)> {
+        self.last_scheduled_scenarios.clone()
     }
 
     /// Kick off the first maintain pass. The store no longer auto-starts
@@ -2271,6 +2519,11 @@ impl Project {
     #[inline]
     pub fn task_store(&self, cx: &App) -> Entity<TaskStore> {
         self.host.read(cx).task_store.clone()
+    }
+
+    #[inline]
+    pub fn settings_observer(&self, cx: &App) -> Entity<SettingsObserver> {
+        self.host.read(cx).settings_observer.clone()
     }
 
     #[inline]
@@ -3732,7 +3985,19 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            DapStoreEvent::Notification(message) => {
+            DapStoreEvent::Notification {
+                session_id,
+                message,
+            } => {
+                // Phase 2 multi-tenant: when the notification names a
+                // specific session, only the Project that launched
+                // that session should toast. A `None` session means
+                // host-wide (every Project surfaces it).
+                if let Some(session_id) = session_id
+                    && !self.owns_dap_session(*session_id)
+                {
+                    return;
+                }
                 cx.emit(Event::Toast {
                     notification_id: "dap".into(),
                     message: message.clone(),
@@ -3743,6 +4008,14 @@ impl Project {
                 session_id,
                 message,
             } => {
+                // Phase 2 multi-tenant: the shared `DapStore` emits
+                // log messages for every session on the host. Only
+                // forward to our collab peer when the session
+                // belongs to this Project, otherwise we leak sibling
+                // Projects' debug output into our share.
+                if !self.owns_dap_session(SessionId::from_proto(*session_id)) {
+                    return;
+                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::LogToDebugConsole {
@@ -3752,6 +4025,14 @@ impl Project {
                         })
                         .log_err();
                 }
+            }
+            DapStoreEvent::DebugClientShutdown(session_id) => {
+                // Drop the session from our per-project set; the host
+                // store removes it from its own map separately. Doing
+                // this on the shutdown event (rather than e.g. an
+                // `observe_release`) gives us deterministic cleanup
+                // synchronous with the broadcast.
+                self.dap_sessions.remove(session_id);
             }
             _ => {}
         }
@@ -4231,22 +4512,37 @@ impl Project {
             content,
         } = event
         {
-            if let ProjectClientState::Shared { remote_id } = &self.client_state {
-                self.collab_client
-                    .send(proto::UpdateWorktreeSettings {
-                        project_id: *remote_id,
-                        worktree_id: worktree_id.to_proto(),
-                        path: path.to_proto(),
-                        content: content.clone(),
-                        kind: Some(project_settings::local_settings_kind_to_proto(*kind).into()),
-                        outside_worktree: Some(path.is_outside_worktree()),
-                    })
-                    .log_err();
+            if self.owns_worktree_id(*worktree_id, cx) {
+                if let ProjectClientState::Shared { remote_id } = &self.client_state {
+                    self.collab_client
+                        .send(proto::UpdateWorktreeSettings {
+                            project_id: *remote_id,
+                            worktree_id: worktree_id.to_proto(),
+                            path: path.to_proto(),
+                            content: content.clone(),
+                            kind: Some(
+                                project_settings::local_settings_kind_to_proto(*kind).into(),
+                            ),
+                            outside_worktree: Some(path.is_outside_worktree()),
+                        })
+                        .log_err();
+                }
             }
         }
         match event {
             SettingsObserverEvent::LocalSettingsUpdated(result) => match result {
-                Err(InvalidSettingsError::LocalSettings { message, path }) => {
+                Err(InvalidSettingsError::LocalSettings {
+                    worktree_id,
+                    message,
+                    path,
+                }) => {
+                    // Phase 2 multi-tenant: scope the toast to the
+                    // Project that owns the failing worktree so a
+                    // sibling workspace's parse error doesn't pop a
+                    // notification in ours.
+                    if !self.owns_worktree_id(*worktree_id, cx) {
+                        return;
+                    }
                     let message = format!("Failed to set local settings in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-settings-{path:?}").into(),
@@ -4254,13 +4550,21 @@ impl Project {
                         message,
                     });
                 }
-                Ok(path) => cx.emit(Event::HideToast {
-                    notification_id: format!("local-settings-{path:?}").into(),
-                }),
+                Ok(path) => {
+                    if !self.toast_path_visible_to_us(path, cx) {
+                        return;
+                    }
+                    cx.emit(Event::HideToast {
+                        notification_id: format!("local-settings-{path:?}").into(),
+                    });
+                }
                 Err(_) => {}
             },
             SettingsObserverEvent::LocalTasksUpdated(result) => match result {
                 Err(InvalidSettingsError::Tasks { message, path }) => {
+                    if !self.toast_path_visible_to_us(path, cx) {
+                        return;
+                    }
                     let message = format!("Failed to set local tasks in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
                         notification_id: format!("local-tasks-{path:?}").into(),
@@ -4271,13 +4575,21 @@ impl Project {
                         message,
                     });
                 }
-                Ok(path) => cx.emit(Event::HideToast {
-                    notification_id: format!("local-tasks-{path:?}").into(),
-                }),
+                Ok(path) => {
+                    if !self.toast_path_visible_to_us(path, cx) {
+                        return;
+                    }
+                    cx.emit(Event::HideToast {
+                        notification_id: format!("local-tasks-{path:?}").into(),
+                    });
+                }
                 Err(_) => {}
             },
             SettingsObserverEvent::LocalDebugScenariosUpdated(result) => match result {
                 Err(InvalidSettingsError::Debug { message, path }) => {
+                    if !self.toast_path_visible_to_us(path, cx) {
+                        return;
+                    }
                     let message =
                         format!("Failed to set local debug scenarios in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
@@ -4286,13 +4598,26 @@ impl Project {
                         message,
                     });
                 }
-                Ok(path) => cx.emit(Event::HideToast {
-                    notification_id: format!("local-debug-scenarios-{path:?}").into(),
-                }),
+                Ok(path) => {
+                    if !self.toast_path_visible_to_us(path, cx) {
+                        return;
+                    }
+                    cx.emit(Event::HideToast {
+                        notification_id: format!("local-debug-scenarios-{path:?}").into(),
+                    });
+                }
                 Err(_) => {}
             },
             SettingsObserverEvent::LocalSettingsApplied { .. } => {}
         }
+    }
+
+    fn toast_path_visible_to_us(&self, path: &Path, cx: &App) -> bool {
+        if self.owns_abs_path(path, cx) {
+            return true;
+        }
+        let worktree_store = self.worktree_store(cx);
+        worktree_store.read(cx).find_worktree(path, cx).is_none()
     }
 
     fn on_worktree_store_event(
@@ -4786,6 +5111,112 @@ impl Project {
     ) -> Task<Result<()>> {
         let image_store = self.host.read(cx).image_store.clone();
         image_store.update(cx, |image_store, cx| image_store.reload_images(images, cx))
+    }
+
+    pub fn owns_abs_path(&self, abs_path: &Path, cx: &App) -> bool {
+        self.worktrees(cx)
+            .any(|worktree| abs_path.starts_with(worktree.read(cx).abs_path().as_ref()))
+    }
+
+    pub fn owns_worktree_id(&self, worktree_id: WorktreeId, cx: &App) -> bool {
+        self.worktrees(cx)
+            .any(|worktree| worktree.read(cx).id() == worktree_id)
+    }
+
+    pub fn images(&self, cx: &App) -> Vec<Entity<ImageItem>> {
+        self.image_store(cx)
+            .read(cx)
+            .images()
+            .filter(|image| self.owns_worktree_id(image.read(cx).file.worktree_id(cx), cx))
+            .collect()
+    }
+
+    pub async fn all_bookmark_locations(
+        project: Entity<Self>,
+        cx: &mut AsyncApp,
+    ) -> Result<std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>> {
+        let bookmark_store = project.read_with(cx, |project, cx| project.bookmark_store(cx));
+        let locations =
+            bookmark_store::BookmarkStore::all_bookmark_locations(bookmark_store, cx).await?;
+        let filtered = project.read_with(cx, |project, cx| {
+            locations
+                .into_iter()
+                .filter(|(buffer, _)| match buffer.read(cx).file() {
+                    Some(file) => project.owns_worktree_id(file.worktree_id(cx), cx),
+                    None => false,
+                })
+                .collect()
+        });
+        Ok(filtered)
+    }
+
+    pub fn serialized_bookmarks(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+        self.bookmark_store(cx)
+            .read(cx)
+            .all_serialized_bookmarks(cx)
+            .into_iter()
+            .filter(|(path, _)| self.owns_abs_path(path, cx))
+            .collect()
+    }
+
+    pub fn restore_serialized_bookmarks(
+        &self,
+        bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let bookmark_store = self.bookmark_store(cx);
+        let owned_paths: Vec<Arc<Path>> = bookmark_store
+            .read(cx)
+            .all_serialized_bookmarks(cx)
+            .into_keys()
+            .filter(|path| self.owns_abs_path(path, cx))
+            .collect();
+        bookmark_store.update(cx, |store, cx| {
+            store.clear_bookmarks_for_paths(&owned_paths, cx);
+            store.load_serialized_bookmarks(bookmarks, cx)
+        })
+    }
+
+    pub fn serialized_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
+        self.breakpoint_store(cx)
+            .read(cx)
+            .all_source_breakpoints(cx)
+            .into_iter()
+            .filter(|(path, _)| self.owns_abs_path(path, cx))
+            .collect()
+    }
+
+    pub fn restore_serialized_breakpoints(
+        &self,
+        breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let breakpoint_store = self.breakpoint_store(cx);
+        let owned_paths: Vec<Arc<Path>> = breakpoint_store
+            .read(cx)
+            .all_source_breakpoints(cx)
+            .into_keys()
+            .filter(|path| self.owns_abs_path(path, cx))
+            .collect();
+        breakpoint_store.update(cx, |store, cx| {
+            store.clear_breakpoints_for_paths(&owned_paths, cx);
+        });
+        breakpoint_store.update(cx, |store, cx| {
+            store.with_serialized_breakpoints(breakpoints, cx)
+        })
+    }
+
+    pub fn clear_breakpoints(&self, cx: &mut Context<Self>) {
+        let breakpoint_store = self.breakpoint_store(cx);
+        let owned_paths: Vec<Arc<Path>> = breakpoint_store
+            .read(cx)
+            .all_source_breakpoints(cx)
+            .into_keys()
+            .filter(|path| self.owns_abs_path(path, cx))
+            .collect();
+        breakpoint_store.update(cx, |store, cx| {
+            store.clear_breakpoints_for_paths(&owned_paths, cx);
+        });
     }
 
     pub fn format(

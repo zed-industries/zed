@@ -11,6 +11,7 @@ mod image_store;
 mod lsp_command;
 mod lsp_store;
 mod manifest_tree;
+mod multi_tenant;
 mod project_search;
 mod search;
 mod search_history;
@@ -1234,14 +1235,14 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
     project.update(cx, |project, cx| {
+        project.task_scheduled(topmost_local_task_source_kind.clone(), resolved_task);
         let task_inventory = project
             .task_store(cx)
             .read(cx)
             .task_inventory()
             .cloned()
             .unwrap();
-        task_inventory.update(cx, |inventory, _| {
-            inventory.task_scheduled(topmost_local_task_source_kind.clone(), resolved_task);
+        task_inventory.update(cx, |inventory, cx| {
             inventory
                 .update_file_based_tasks(
                     TaskSettingsLocation::Global(tasks_file()),
@@ -1260,6 +1261,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         }])
                         .to_string(),
                     ),
+                    cx,
                 )
                 .unwrap();
         });
@@ -12772,9 +12774,10 @@ fn get_all_tasks(
     cx: &mut App,
 ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
     let new_tasks = project.update(cx, |project, cx| {
+        let last_scheduled_tasks = project.last_scheduled_tasks();
         project.task_store(cx).update(cx, |task_store, cx| {
             task_store.task_inventory().unwrap().update(cx, |this, cx| {
-                this.used_and_current_resolved_tasks(task_contexts, cx)
+                this.used_and_current_resolved_tasks(last_scheduled_tasks, task_contexts, cx)
             })
         })
     });

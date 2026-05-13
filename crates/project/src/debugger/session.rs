@@ -468,6 +468,7 @@ impl RunningMode {
                     .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))
                     .await;
 
+                let owning_session_id = session.read_with(cx, |session, _| session.session_id())?;
                 dap_store.update(cx, |_, cx| {
                     let Some(worktree) = worktree.upgrade() else {
                         return;
@@ -491,7 +492,10 @@ impl RunningMode {
                                 n => format!(" and {} other paths", n - 1),
                             }
                         );
-                        cx.emit(super::dap_store::DapStoreEvent::Notification(message));
+                        cx.emit(super::dap_store::DapStoreEvent::Notification {
+                            session_id: Some(owning_session_id),
+                            message,
+                        });
                     }
                 })?;
 

@@ -1073,6 +1073,7 @@ impl SettingsStore {
                     ParseStatus::Success => Ok(()),
                     ParseStatus::Unchanged => Ok(()),
                     ParseStatus::Failed { error } => Err(InvalidSettingsError::LocalSettings {
+                        worktree_id: root_id,
                         path: directory_path.join(local_settings_file_relative_path()),
                         message: error,
                     }),
@@ -1515,6 +1516,11 @@ impl SettingsParseResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InvalidSettingsError {
     LocalSettings {
+        /// Worktree id this local-settings file belongs to. Lets
+        /// downstream consumers (e.g. multi-tenant `Project`s sharing
+        /// a host `SettingsObserver`) scope error toasts to the
+        /// worktree's owning Project.
+        worktree_id: WorktreeId,
         path: Arc<RelPath>,
         message: String,
     },
