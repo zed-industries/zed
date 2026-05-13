@@ -135,6 +135,7 @@ Claude Agent runs Claude Code under the hood. Claude Code can ring the terminal 
 You can also set this from within Claude Code by running `/config`, selecting `Local Notifications`, and choosing `Terminal Bell`.
 
 > If you run Claude Code inside tmux, bell notifications may not reach the outer terminal unless passthrough is enabled. Add this to `~/.tmux.conf`:
+>
 > ```
 > set -g allow-passthrough on
 > ```
