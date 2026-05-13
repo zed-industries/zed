@@ -290,7 +290,7 @@ mod property {
 
     impl Hsla {
         /// Proptest [`Strategy`] that produces opaque colors (i.e. alpha = 1).
-        /// 
+        ///
         /// For truly arbitrary colors, use the [`Arbitrary`] implementation.
         pub fn opaque_strategy() -> impl Strategy<Value = Self> {
             (0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0).prop_map(|(h, s, l)| Hsla { h, s, l, a: 1. })
