@@ -72,15 +72,15 @@ impl UpdateButton {
     }
 
     pub fn checking() -> Self {
-        Self::new(IconName::ArrowCircle, "Checking for Zed updates…").icon_animate(true)
+        Self::new(IconName::LoadCircle, "Checking for Zed Updates…").icon_animate(true)
     }
 
     pub fn downloading(version: impl Into<SharedString>) -> Self {
-        Self::new(IconName::Download, "Downloading Zed update…").tooltip(version)
+        Self::new(IconName::Download, "Downloading Zed Update…").tooltip(version)
     }
 
     pub fn installing(version: impl Into<SharedString>) -> Self {
-        Self::new(IconName::ArrowCircle, "Installing Zed update…")
+        Self::new(IconName::LoadCircle, "Installing Zed Update…")
             .icon_animate(true)
             .tooltip(version)
     }
@@ -92,7 +92,7 @@ impl UpdateButton {
     }
 
     pub fn errored(error: impl Into<SharedString>) -> Self {
-        Self::new(IconName::Warning, "Failed to update Zed")
+        Self::new(IconName::Warning, "Failed to Update")
             .icon_color(Color::Warning)
             .tooltip(error)
             .with_dismiss()
@@ -101,7 +101,7 @@ impl UpdateButton {
 
 impl RenderOnce for UpdateButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let border_color = cx.theme().colors().border;
+        let border_color = cx.theme().colors().text.opacity(0.1);
 
         let icon = Icon::new(self.icon)
             .size(IconSize::XSmall)
@@ -162,7 +162,7 @@ impl Component for UpdateButton {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        let version = "1.99.0";
+        let version = "1.3.0+stable.2025051";
 
         Some(
             v_flex()
