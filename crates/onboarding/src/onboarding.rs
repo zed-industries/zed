@@ -182,7 +182,6 @@ pub fn init(cx: &mut App) {
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
-    telemetry::event!("Onboarding Page Opened");
     open_new(
         Default::default(),
         app_state,
@@ -247,6 +246,7 @@ impl Onboarding {
             .filter(|id| installed_agents.contains_key(**id))
             .copied()
             .collect::<Vec<_>>();
+        telemetry::event!("Onboarding Page Opened");
         telemetry::event!(
             "Welcome Agent Setup Viewed",
             zed_agent = zed_agent_state,
@@ -401,7 +401,7 @@ impl Item for Onboarding {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("Onboarding Page Opened")
+        None
     }
 
     fn show_toolbar(&self) -> bool {
