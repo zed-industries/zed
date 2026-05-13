@@ -1090,7 +1090,7 @@ pub struct Editor {
     /// Whether the cursor is offset one character to the left when something is
     /// selected (needed for vim visual mode)
     cursor_offset_on_selection: bool,
-    highlight_secondary_local_selections: bool,
+    highlight_primary_local_selection: bool,
     current_line_highlight: Option<CurrentLineHighlight>,
     /// Whether to collapse search match ranges to just their start position.
     /// When true, navigating to a match positions the cursor at the match
@@ -2355,7 +2355,7 @@ impl Editor {
                 .cursor_shape
                 .unwrap_or_default(),
             cursor_offset_on_selection: false,
-            highlight_secondary_local_selections: false,
+            highlight_primary_local_selection: false,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3362,13 +3362,13 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
-    pub fn set_highlight_secondary_local_selections(
+    pub fn set_highlight_primary_local_selection(
         &mut self,
-        highlight_secondary_local_selections: bool,
+        highlight_primary_local_selection: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.highlight_secondary_local_selections != highlight_secondary_local_selections {
-            self.highlight_secondary_local_selections = highlight_secondary_local_selections;
+        if self.highlight_primary_local_selection != highlight_primary_local_selection {
+            self.highlight_primary_local_selection = highlight_primary_local_selection;
             cx.notify();
         }
     }
