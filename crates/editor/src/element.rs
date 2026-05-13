@@ -12687,10 +12687,7 @@ fn paint_cursor_animation_frame(
             && state.cursor_shape == CursorShape::Block
             && !state.is_target_redacted
         {
-            editor
-                .quad_cursor()
-                .map(|quad| quad.destination_pos())
-                .unwrap_or(state.cursor_pos)
+            editor.quad_cursor().map(|quad| quad.destination_pos())
         } else {
             None
         };
