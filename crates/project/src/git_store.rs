@@ -4589,7 +4589,7 @@ impl Repository {
                     cx,
                 )
                 .await
-                .map_err(|err| err.to_string())
+                .map_err(|err| format!("{:#}", err))
             })
             .shared();
         self.job_sender.close_channel();
