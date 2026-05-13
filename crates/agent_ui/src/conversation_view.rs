@@ -44,13 +44,13 @@ use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
-use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
+use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
 use rope::Point;
 use settings::{
     NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -792,7 +792,7 @@ impl ConversationView {
                     .and_then(|id| {
                         let store = ThreadMetadataStore::try_global(cx)?;
                         let entry = store.read(cx).entry_by_session(id)?;
-                        Some((Some(entry.folder_paths().clone()), entry.title.clone()))
+                        Some((Some(entry.folder_paths().clone()), entry.title()))
                     })
                     .unwrap_or((None, None));
                 (session_id, work_dirs, title)
@@ -1186,6 +1186,7 @@ impl ConversationView {
         let weak = cx.weak_entity();
         cx.new(|cx| {
             ThreadView::new(
+                self.thread_id,
                 thread,
                 conversation,
                 weak,
@@ -1614,7 +1615,14 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                if let Some(title) = thread.read(cx).title()
+                let override_title = ThreadMetadataStore::try_global(cx).and_then(|store| {
+                    store
+                        .read(cx)
+                        .entry(self.thread_id)
+                        .and_then(|m| m.title_override.clone())
+                });
+                let title = override_title.or_else(|| thread.read(cx).title());
+                if let Some(title) = title
                     && let Some(active_thread) = self.thread_view(&session_id)
                 {
                     let title_editor = active_thread.read(cx).title_editor.clone();
@@ -2154,6 +2162,7 @@ impl ConversationView {
                                 self.render_markdown(
                                     desc.clone(),
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    cx,
                                 )
                             }))
                         }
@@ -2469,11 +2478,19 @@ impl ConversationView {
         }
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            crate::conversation_view::thread_view::open_link(text, &workspace, window, cx);
-        })
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
+        render_agent_markdown(
+            markdown,
+            style,
+            &self.workspace,
+            &self.project.downgrade(),
+            cx,
+        )
     }
 
     fn notify_with_sound(
@@ -2974,6 +2991,31 @@ impl Render for ConversationView {
                 }
             })
     }
+}
+
+fn render_agent_markdown(
+    markdown: Entity<Markdown>,
+    style: MarkdownStyle,
+    workspace: &WeakEntity<Workspace>,
+    project: &WeakEntity<Project>,
+    cx: &App,
+) -> MarkdownElement {
+    let workspace = workspace.clone();
+    let worktree_roots: Vec<PathBuf> = project
+        .upgrade()
+        .map(|project| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect()
+        })
+        .unwrap_or_default();
+    MarkdownElement::new(markdown, style)
+        .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
+        .on_url_click(move |text, window, cx| {
+            thread_view::open_link(text, &workspace, window, cx);
+        })
 }
 
 fn plan_label_markdown_style(
@@ -3589,6 +3631,7 @@ pub(crate) mod tests {
                         session_id: Some(resume_session_id.clone()),
                         agent_id: ProjectAgentId::new("Flaky"),
                         title: Some(stored_title.clone()),
+                        title_override: None,
                         updated_at: Utc::now(),
                         created_at: Some(Utc::now()),
                         interacted_at: None,
@@ -7116,24 +7159,6 @@ pub(crate) mod tests {
         });
         thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.title(), Some("My Custom Title".into()));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_title_editor_is_read_only_when_set_title_unsupported(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
-
-        let active = active_thread(&conversation_view, cx);
-        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
-
-        title_editor.read_with(cx, |editor, cx| {
-            assert!(
-                editor.read_only(cx),
-                "Title editor should be read-only when the connection does not support set_title"
-            );
         });
     }
 

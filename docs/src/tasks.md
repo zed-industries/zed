@@ -255,6 +255,34 @@ Hook tasks are resolved from the same global and worktree-local `tasks.json` fil
 
 Tasks that define `hooks` are still available from the task modal like any other task, so the same template can be reused for manual runs.
 
+## Custom Git Commands
+
+The Git Graph supports running custom Git command tasks from the commit context menu.
+To add a command, define a task in your global `tasks.json` file with the `git-command` tag (worktree-local tasks are not supported yet).
+When shown from a commit's context menu, the task is resolved against the selected commit and repository, and runs from the selected repository root by default.
+
+Git Graph command tasks support the Git-specific task variables below.
+These variables are provided only when resolving Git Graph command tasks.
+Other task variables, such as `ZED_FILE`, `ZED_SELECTED_TEXT`, `ZED_WORKTREE_ROOT`, and `ZED_MAIN_GIT_WORKTREE`, are not provided to Git Graph command tasks unless they use default values.
+
+- `ZED_GIT_SHA`: full SHA of the selected commit.
+- `ZED_GIT_SHA_SHORT`: short SHA of the selected commit.
+- `ZED_GIT_REPOSITORY_NAME`: name of the selected Git repository.
+- `ZED_GIT_REPOSITORY_PATH`: absolute path to the selected Git repository's working directory.
+
+For example:
+
+```json [tasks]
+[
+  {
+    "label": "Branches containing commit: $ZED_GIT_SHA_SHORT",
+    "command": "git",
+    "args": ["branch", "-a", "--contains", "$ZED_GIT_SHA"],
+    "tags": ["git-command"]
+  }
+]
+```
+
 ## VS Code Task Format
 
 When importing VS Code tasks from `.vscode/tasks.json`, you can omit the `label` field. Zed automatically generates labels based on the task type:

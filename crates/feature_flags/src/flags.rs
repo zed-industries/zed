@@ -35,14 +35,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
-pub struct ExperimentalSystemPromptFeatureFlag;
-
-impl FeatureFlag for ExperimentalSystemPromptFeatureFlag {
-    const NAME: &'static str = "experimental-system-prompt";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(ExperimentalSystemPromptFeatureFlag);
-
 pub struct AgentPanelTerminalFeatureFlag;
 
 impl FeatureFlag for AgentPanelTerminalFeatureFlag {
@@ -139,3 +131,15 @@ impl FeatureFlag for AutoWatchFeatureFlag {
     type Value = PresenceFlag;
 }
 register_feature_flag!(AutoWatchFeatureFlag);
+
+pub struct SkillsFeatureFlag;
+
+impl FeatureFlag for SkillsFeatureFlag {
+    const NAME: &'static str = "skills";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(SkillsFeatureFlag);

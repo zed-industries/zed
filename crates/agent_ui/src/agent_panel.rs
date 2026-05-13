@@ -79,8 +79,8 @@ use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
-    Tooltip, prelude::*, utils::WithRemSize,
+    Button, ContextMenu, ContextMenuEntry, GradientFade, IconButton, PopoverMenu,
+    PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -679,6 +679,7 @@ fn thread_metadata_to_debug_json(
         "session_id": metadata.session_id.as_ref().map(|s| s.0.to_string()),
         "agent_id": metadata.agent_id.0.to_string(),
         "title": metadata.title.as_ref().map(|t| t.to_string()),
+        "title_override": metadata.title_override.as_ref().map(|t| t.to_string()),
         "updated_at": format_timestamp_human(&metadata.updated_at),
         "created_at": metadata.created_at.as_ref().map(format_timestamp_human),
         "interacted_at": metadata.interacted_at.as_ref().map(format_timestamp_human),
@@ -815,6 +816,7 @@ pub struct AgentPanel {
     _active_thread_focus_subscription: Option<Subscription>,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
+    _active_draft_reclaim_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
     last_context_source: Option<AgentContextSource>,
 
@@ -1149,6 +1151,7 @@ impl AgentPanel {
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
+            _active_draft_reclaim_observation: None,
             _thread_metadata_store_subscription,
             last_context_source: None,
             is_active: false,
@@ -1343,6 +1346,7 @@ impl AgentPanel {
         if let Some(draft) = self.draft_thread.clone()
             && self.active_thread_is_draft(cx)
             && !self.active_view_is_new_draft(cx)
+            && *draft.read(cx).agent_key() == self.selected_agent
         {
             self.set_base_view(
                 BaseView::AgentThread {
@@ -1355,13 +1359,20 @@ impl AgentPanel {
             return;
         }
 
-        if let Some(draft) = self.draft_thread.clone()
-            && self.draft_has_content(&draft, cx)
-        {
-            let draft_id = draft.read(cx).thread_id;
-            self.draft_thread = None;
-            self._draft_editor_observation = None;
-            self.retained_threads.insert(draft_id, draft);
+        if let Some(draft) = self.draft_thread.clone() {
+            if self.draft_has_content(&draft, cx) {
+                let draft_id = draft.read(cx).thread_id;
+                self.draft_thread = None;
+                self._draft_editor_observation = None;
+                self.retained_threads.insert(draft_id, draft);
+            } else if *draft.read(cx).agent_key() != self.selected_agent {
+                let old_draft_id = draft.read(cx).thread_id;
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.delete(old_draft_id, cx);
+                });
+                self.draft_thread = None;
+                self._draft_editor_observation = None;
+            }
         }
         self.activate_draft(focus, trigger, window, cx);
     }
@@ -2054,12 +2065,22 @@ impl AgentPanel {
                 BaseView::AgentThread { conversation_view }
                     if conversation_view.entity_id() == draft_entity
             );
+
             if agent_matches || has_editor_content || !draft_is_active {
                 return draft.clone();
             }
+
+            // Clean up the old empty draft's metadata so it doesn't
+            // linger as a ghost entry in the sidebar.
+            let old_draft_id = draft.read(cx).thread_id;
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.delete(old_draft_id, cx);
+            });
+
             self.draft_thread = None;
             self._draft_editor_observation = None;
         }
+
         let thread = self.create_agent_thread_with_server(
             desired_agent,
             None,
@@ -2071,6 +2092,7 @@ impl AgentPanel {
             window,
             cx,
         );
+
         self.draft_thread = Some(thread.conversation_view.clone());
         self.observe_draft_editor(&thread.conversation_view, cx);
         thread.conversation_view
@@ -2084,8 +2106,22 @@ impl AgentPanel {
         if let Some(acp_thread) = conversation_view.read(cx).root_thread(cx) {
             self._draft_editor_observation = Some(cx.subscribe(
                 &acp_thread,
-                |this, _, e: &AcpThreadEvent, cx| {
-                    if let AcpThreadEvent::PromptUpdated = e {
+                |this, acp_thread, event: &AcpThreadEvent, cx| {
+                    if !acp_thread.read(cx).is_draft_thread()
+                        && this.draft_thread.as_ref().is_some_and(|draft| {
+                            draft
+                                .read(cx)
+                                .root_thread(cx)
+                                .is_some_and(|thread| thread.entity_id() == acp_thread.entity_id())
+                        })
+                    {
+                        this.draft_thread = None;
+                        this._draft_editor_observation = None;
+                        this.serialize(cx);
+                        return;
+                    }
+
+                    if let AcpThreadEvent::PromptUpdated = event {
                         this.serialize(cx);
                     }
                 },
@@ -2100,6 +2136,125 @@ impl AgentPanel {
         }
     }
 
+    /// Sets up an editor observation on the active view that reclaims
+    /// it as ephemeral when the editor becomes empty. Only activates
+    /// for non-ephemeral draft threads.
+    fn observe_active_draft_for_empty_editor(
+        &mut self,
+        conversation_view: &Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) {
+        let thread_id = conversation_view.read(cx).thread_id;
+        let is_ephemeral = self
+            .draft_thread
+            .as_ref()
+            .is_some_and(|d| d.read(cx).thread_id == thread_id);
+        if is_ephemeral {
+            self._active_draft_reclaim_observation = None;
+            return;
+        }
+        let is_draft = conversation_view
+            .read(cx)
+            .root_thread(cx)
+            .is_some_and(|t| t.read(cx).is_draft_thread());
+        if !is_draft {
+            self._active_draft_reclaim_observation = None;
+            return;
+        }
+        let Some(editor) = conversation_view
+            .read(cx)
+            .active_thread()
+            .map(|tv| tv.read(cx).message_editor.clone())
+        else {
+            self._active_draft_reclaim_observation = None;
+            return;
+        };
+        let cv = conversation_view.clone();
+        self._active_draft_reclaim_observation =
+            Some(cx.observe(&editor, move |this, _editor, cx| {
+                let editor_has_text = cv.read(cx).active_thread().is_some_and(|tv| {
+                    !tv.read(cx)
+                        .message_editor
+                        .read(cx)
+                        .text(cx)
+                        .trim()
+                        .is_empty()
+                });
+                if editor_has_text {
+                    return;
+                }
+                if this.ephemeral_draft_thread_id(cx) == Some(thread_id) {
+                    return;
+                }
+                if this.active_thread_id(cx) != Some(thread_id) {
+                    return;
+                }
+                if this.try_make_empty_draft_ephemeral(cv.clone(), cx) {
+                    this._active_draft_reclaim_observation = None;
+                    cx.emit(AgentPanelEvent::EntryChanged);
+                    cx.notify();
+                }
+            }));
+    }
+
+    fn try_make_empty_draft_ephemeral(
+        &mut self,
+        conversation_view: Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (thread_id, is_draft, is_empty) = {
+            let conversation = conversation_view.read(cx);
+            let thread_id = conversation.thread_id;
+            let is_draft = conversation
+                .root_thread(cx)
+                .is_some_and(|thread| thread.read(cx).is_draft_thread());
+            let is_empty = if let Some(thread_view) = conversation.active_thread() {
+                thread_view
+                    .read(cx)
+                    .message_editor
+                    .read(cx)
+                    .text(cx)
+                    .trim()
+                    .is_empty()
+            } else {
+                !self.draft_has_content(&conversation_view, cx)
+            };
+
+            (thread_id, is_draft, is_empty)
+        };
+
+        if !is_draft || !is_empty {
+            return false;
+        }
+
+        self.retained_threads.remove(&thread_id);
+        self.set_ephemeral_draft(conversation_view, cx);
+        true
+    }
+
+    /// Moves a conversation view into the ephemeral `draft_thread` slot,
+    /// cleaning up any previous ephemeral draft and deleting the thread's
+    /// metadata so it no longer appears in the sidebar.
+    fn set_ephemeral_draft(
+        &mut self,
+        conversation_view: Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(old_draft) = self.draft_thread.take() {
+            let old_id = old_draft.read(cx).thread_id;
+            let new_id = conversation_view.read(cx).thread_id;
+            if old_id != new_id {
+                ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                    store.delete(old_id, cx);
+                });
+            }
+            self._draft_editor_observation = None;
+        }
+        self.draft_thread = Some(conversation_view.clone());
+        self.observe_draft_editor(&conversation_view, cx);
+        self.serialize(cx);
+    }
+
     pub fn activate_retained_thread(
         &mut self,
         id: ThreadId,
@@ -2108,6 +2263,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let conversation_view = if let Some(view) = self.retained_threads.remove(&id) {
+            self.try_make_empty_draft_ephemeral(view.clone(), cx);
             view
         } else if let Some(draft) = &self.draft_thread {
             if draft.read(cx).thread_id == id {
@@ -2163,9 +2319,12 @@ impl AgentPanel {
     }
 
     pub fn ephemeral_draft_thread_id(&self, cx: &App) -> Option<ThreadId> {
-        self.draft_thread
-            .as_ref()
-            .map(|draft| draft.read(cx).thread_id)
+        let draft = self.draft_thread.as_ref()?;
+        let draft = draft.read(cx);
+        draft
+            .root_thread(cx)
+            .is_some_and(|thread| thread.read(cx).is_draft_thread())
+            .then_some(draft.thread_id)
     }
 
     pub fn active_terminal_id(&self) -> Option<TerminalId> {
@@ -2196,6 +2355,10 @@ impl AgentPanel {
     }
 
     pub fn editor_text(&self, id: ThreadId, cx: &App) -> Option<String> {
+        self.editor_text_if_in_memory(id, cx).flatten()
+    }
+
+    pub fn editor_text_if_in_memory(&self, id: ThreadId, cx: &App) -> Option<Option<String>> {
         let cv = self
             .retained_threads
             .get(&id)
@@ -2215,9 +2378,9 @@ impl AgentPanel {
         let tv = cv.read(cx).root_thread_view()?;
         let text = tv.read(cx).message_editor.read(cx).text(cx);
         if text.trim().is_empty() {
-            None
+            Some(None)
         } else {
-            Some(text)
+            Some(Some(text))
         }
     }
 
@@ -2889,6 +3052,13 @@ impl AgentPanel {
             .as_ref()
             .is_some_and(|d| d.entity_id() == conversation_view.entity_id())
         {
+            if self.draft_has_content(&conversation_view, cx) {
+                let thread_id = conversation_view.read(cx).thread_id;
+                self.draft_thread = None;
+                self._draft_editor_observation = None;
+                self.retained_threads.insert(thread_id, conversation_view);
+                self.cleanup_retained_threads(cx);
+            }
             return;
         }
 
@@ -3007,17 +3177,16 @@ impl AgentPanel {
                         cx.emit(AgentPanelEvent::ActiveViewFocused);
                         cx.notify();
                     }));
-                Some(cx.observe_in(
-                    conversation_view,
-                    window,
-                    |this, server_view, window, cx| {
-                        this._thread_view_subscription =
-                            Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                        cx.emit(AgentPanelEvent::ActiveViewChanged);
-                        this.serialize(cx);
-                        cx.notify();
-                    },
-                ))
+                let cv = conversation_view.clone();
+                self.observe_active_draft_for_empty_editor(&cv, cx);
+                Some(cx.observe_in(&cv, window, |this, server_view, window, cx| {
+                    this._thread_view_subscription =
+                        Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                    this.observe_active_draft_for_empty_editor(&server_view, cx);
+                    cx.emit(AgentPanelEvent::ActiveViewChanged);
+                    this.serialize(cx);
+                    cx.notify();
+                }))
             }
             BaseView::Terminal { terminal_id } => {
                 self._thread_view_subscription = None;
@@ -3099,10 +3268,11 @@ impl AgentPanel {
                         // promoted to a real thread. Clear the ephemeral
                         // pointer; the ConversationView itself stays put as
                         // the active base view.
-                        if this.draft_thread.as_ref().is_some_and(|d| {
-                            this.active_conversation_view()
-                                .is_some_and(|active| active.entity_id() == d.entity_id())
-                        }) {
+                        if this
+                            .draft_thread
+                            .as_ref()
+                            .is_some_and(|draft| draft.read(cx).thread_id == thread_id)
+                        {
                             this.draft_thread = None;
                             this._draft_editor_observation = None;
                         }
@@ -3201,6 +3371,7 @@ impl AgentPanel {
             return;
         }
         if let Some(conversation_view) = self.retained_threads.remove(&thread_id) {
+            self.try_make_empty_draft_ephemeral(conversation_view.clone(), cx);
             self.set_base_view(
                 BaseView::AgentThread { conversation_view },
                 focus,
@@ -3385,10 +3556,15 @@ impl AgentPanel {
     }
 
     /// Whether the active view is in the **ephemeral** new-draft slot
-    pub fn active_view_is_new_draft(&self, _cx: &App) -> bool {
+    pub fn active_view_is_new_draft(&self, cx: &App) -> bool {
         self.draft_thread.as_ref().is_some_and(|draft| {
-            self.active_conversation_view()
-                .is_some_and(|active| active.entity_id() == draft.entity_id())
+            draft
+                .read(cx)
+                .root_thread(cx)
+                .is_some_and(|thread| thread.read(cx).is_draft_thread())
+                && self
+                    .active_conversation_view()
+                    .is_some_and(|active| active.entity_id() == draft.entity_id())
         })
     }
     /// Whether the active thread is any kind of draft
@@ -3664,7 +3840,22 @@ impl AgentPanel {
         true
     }
 
-    fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
+    fn is_title_editor_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
+        match self.visible_surface() {
+            VisibleSurface::AgentThread(conversation_view) => conversation_view
+                .read(cx)
+                .root_thread_view()
+                .is_some_and(|view| view.read(cx).title_editor.read(cx).is_focused(window)),
+            VisibleSurface::Terminal(_) => self
+                .active_terminal_id()
+                .and_then(|id| self.terminals.get(&id))
+                .and_then(|terminal| terminal.title_editor.as_ref())
+                .is_some_and(|editor| editor.read(cx).is_focused(window)),
+            _ => false,
+        }
+    }
+
+    fn render_title_view(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
         let content = match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => {
                 let server_view_ref = conversation_view.read(cx);
@@ -3717,7 +3908,6 @@ impl AgentPanel {
                             h_flex()
                                 .w_full()
                                 .gap_1()
-                                .items_center()
                                 .child(editable_title)
                                 .child(
                                     IconButton::new("retry-thread-title", IconName::XCircle)
@@ -3776,17 +3966,15 @@ impl AgentPanel {
                             .id("terminal-title")
                             .flex_1()
                             .cursor_text()
+                            .overflow_x_scroll()
+                            .child(Label::new(title).color(Color::Muted).single_line())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.edit_terminal_title(terminal_id, window, cx);
                             }))
-                            .child(Label::new(title).truncate())
                             .into_any_element()
                     }
                 } else {
-                    Label::new("Terminal")
-                        .color(Color::Muted)
-                        .truncate()
-                        .into_any_element()
+                    Label::new("Terminal").into_any_element()
                 }
             }
             VisibleSurface::Configuration(_) => {
@@ -3795,14 +3983,36 @@ impl AgentPanel {
             VisibleSurface::Uninitialized => Label::new("Agent").truncate().into_any_element(),
         };
 
+        let toolbar_bg = cx.theme().colors().tab_bar_background;
+        let gradient_overlay = GradientFade::new(toolbar_bg, toolbar_bg, toolbar_bg)
+            .width(px(64.0))
+            .right(px(0.0))
+            .gradient_stop(0.75);
+
         h_flex()
             .key_context("TitleEditor")
-            .id("TitleEditor")
+            .group("title_editor")
             .flex_grow()
             .w_full()
+            .min_w_0()
             .max_w_full()
-            .overflow_x_scroll()
+            .overflow_x_hidden()
             .child(content)
+            .when(!self.is_title_editor_focused(window, cx), |this| {
+                this.child(gradient_overlay).child(
+                    h_flex()
+                        .visible_on_hover("title_editor")
+                        .absolute()
+                        .right_0()
+                        .h_full()
+                        .bg(cx.theme().colors().tab_bar_background)
+                        .child(
+                            IconButton::new("edit_tile", IconName::Pencil)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Edit Thread Title")),
+                        ),
+                )
+            })
             .into_any()
     }
 
@@ -3902,8 +4112,7 @@ impl AgentPanel {
                                 .action("Add Custom Server…", Box::new(AddContextServer))
                                 .separator()
                                 .action("Rules", Box::new(OpenRulesLibrary::default()))
-                                .action("Profiles", Box::new(ManageProfiles::default()))
-                                .separator();
+                                .action("Profiles", Box::new(ManageProfiles::default()));
                         }
 
                         menu = menu
@@ -3940,9 +4149,10 @@ impl AgentPanel {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
-        let supports_terminal = self.supports_terminal(cx);
 
+        let supports_terminal = self.supports_terminal(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
+
         let (selected_agent_custom_icon, selected_agent_label) = if showing_terminal {
             (None, SharedString::from("Terminal"))
         } else if let Agent::Custom { id, .. } = &self.selected_agent {
@@ -4186,8 +4396,9 @@ impl AgentPanel {
 
         let selected_agent = div()
             .id("selected_agent_icon")
+            .px_0p5()
             .when_some(selected_agent_custom_icon, |this, icon_path| {
-                this.px_1().child(
+                this.child(
                     Icon::from_external_svg(icon_path)
                         .color(Color::Muted)
                         .size(IconSize::Small),
@@ -4195,7 +4406,7 @@ impl AgentPanel {
             })
             .when(!has_custom_icon, |this| {
                 this.when_some(selected_agent_builtin_icon, |this, icon| {
-                    this.px_1().child(Icon::new(icon).color(Color::Muted))
+                    this.child(Icon::new(icon).color(Color::Muted))
                 })
             })
             .tooltip(move |_, cx| {
@@ -4239,21 +4450,25 @@ impl AgentPanel {
         };
 
         let is_full_screen = self.is_zoomed(window, cx);
-        let full_screen_button = if is_full_screen {
-            IconButton::new("disable-full-screen", IconName::Minimize)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.toggle_zoom(&ToggleZoom, window, cx);
-                }))
+        let (icon_id, icon_name, tooltip_text) = if is_full_screen {
+            (
+                "disable-full-screen",
+                IconName::Minimize,
+                "Disable Full Screen",
+            )
         } else {
-            IconButton::new("enable-full-screen", IconName::Maximize)
-                .icon_size(IconSize::Small)
-                .tooltip(move |_, cx| Tooltip::for_action("Enable Full Screen", &ToggleZoom, cx))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.toggle_zoom(&ToggleZoom, window, cx);
-                }))
+            (
+                "enable-full-screen",
+                IconName::Maximize,
+                "Enable Full Screen",
+            )
         };
+        let full_screen_button = IconButton::new(icon_id, icon_name)
+            .icon_size(IconSize::Small)
+            .tooltip(move |_, cx| Tooltip::for_action(tooltip_text, &ToggleZoom, cx))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_zoom(&ToggleZoom, window, cx);
+            }));
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -4264,8 +4479,7 @@ impl AgentPanel {
                 |this| this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto()),
             )
             .flex_none()
-            .justify_between()
-            .gap_2();
+            .justify_between();
 
         let toolbar_content = if matches!(mode, ToolbarMode::EmptyThread) {
             let (chevron_icon, icon_color, label_color) =
@@ -4357,7 +4571,11 @@ impl AgentPanel {
             base_container
                 .child(
                     h_flex()
-                        .size_full()
+                        .relative()
+                        .h_full()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(if matches!(mode, ToolbarMode::Overlay) {
@@ -5295,6 +5513,7 @@ mod tests {
                         session_id: Some(resume_session_id.clone()),
                         agent_id: ProjectAgentId::new("Flaky"),
                         title: Some("Persistent chat".into()),
+                        title_override: None,
                         updated_at: Utc::now(),
                         created_at: Some(Utc::now()),
                         interacted_at: None,
@@ -5980,8 +6199,8 @@ mod tests {
         });
 
         // 4. Switch the active view back to the real thread. The ephemeral
-        //    draft remains in `draft_thread` (the ephemeral slot) but is
-        //    no longer the active view.
+        //    draft has content, so it gets parked into `retained_threads`
+        //    immediately (the `draft_thread` slot is cleared).
         panel.update_in(cx, |panel, window, cx| {
             panel.load_agent_thread(
                 Agent::Stub,
@@ -6010,8 +6229,9 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        // 6. The real thread is the active view on reload AND the draft
-        //    slot is still occupied by the ephemeral new-draft thread.
+        // 6. The real thread is the active view on reload. The draft
+        //    was parked when the user navigated away, so the draft_thread
+        //    slot is empty.
         loaded_panel.read_with(cx, |panel, cx| {
             assert_eq!(
                 panel.active_thread_id(cx),
@@ -6022,11 +6242,9 @@ mod tests {
                 !panel.active_thread_is_draft(cx),
                 "real thread is not a draft"
             );
-            let restored_draft_id = panel.draft_thread.as_ref().map(|d| d.read(cx).thread_id);
-            assert_eq!(
-                restored_draft_id,
-                Some(draft_thread_id),
-                "new-draft slot should be repopulated with the pre-reload draft"
+            assert!(
+                panel.draft_thread.is_none(),
+                "draft_thread slot should be empty since the draft was parked on navigate-away"
             );
         });
 
@@ -6053,9 +6271,9 @@ mod tests {
             assert_eq!(real_row.session_id.as_ref(), Some(&real_session_id));
         });
 
-        // 8. Opening the ephemeral draft via load_agent_thread activates
-        //    the restored new-draft ConversationView and exposes its
-        //    kvp-seeded prompt text in the editor.
+        // 8. Opening the parked draft via load_agent_thread activates
+        //    a fresh ConversationView and exposes its kvp-seeded prompt
+        //    text in the editor.
         loaded_panel.update_in(cx, |panel, window, cx| {
             panel.load_agent_thread(
                 Agent::Stub,
@@ -7616,16 +7834,19 @@ mod tests {
             parked_thread_id,
             "sanity: parked draft should be the active view after load_agent_thread"
         );
+        // The parked draft has content, so it was NOT reclaimed as
+        // ephemeral. The previous ephemeral draft should still be in
+        // the draft_thread slot.
         panel.read_with(cx, |panel, _cx| {
             assert_eq!(
                 panel.draft_thread.as_ref().unwrap().entity_id(),
                 ephemeral_entity_id,
-                "sanity: the ephemeral draft slot should still hold the fresh draft"
+                "ephemeral draft slot should still hold the fresh draft"
             );
         });
 
         // Now press `+`. The ephemeral draft should become the active
-        // view; no new draft should be created.
+        // view since it matches the selected agent.
         panel.update_in(cx, |panel, window, cx| {
             panel.new_thread(&NewThread, window, cx);
         });
@@ -7645,6 +7866,108 @@ mod tests {
             assert!(
                 panel.retained_threads.contains_key(&parked_thread_id),
                 "parked draft should remain in `retained_threads`"
+            );
+        });
+    }
+
+    /// When viewing a parked draft (agent A) and selecting a different
+    /// agent (B) from the dropdown menu, the panel should create a fresh
+    /// draft for agent B — not reuse the existing ephemeral draft that
+    /// was bound to agent A.
+    #[gpui::test]
+    async fn test_new_external_agent_replaces_mismatched_ephemeral_draft(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Create a draft with Stub agent, type into it, then press `+`
+        // to park it — this also creates a fresh ephemeral draft (Stub).
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_agent = Agent::Stub;
+            panel.activate_draft(true, "agent_panel", window, cx);
+        });
+        cx.run_until_parked();
+        let parked_thread_id = crate::test_support::active_thread_id(&panel, cx);
+        crate::test_support::type_draft_prompt(&panel, "parked prompt", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        let ephemeral_thread_id = crate::test_support::active_thread_id(&panel, cx);
+        assert_ne!(ephemeral_thread_id, parked_thread_id);
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.draft_thread.as_ref().unwrap().read(cx).agent_key(),
+                &Agent::Stub,
+                "ephemeral draft should be Stub agent"
+            );
+        });
+
+        // Navigate back to the parked draft (simulates sidebar click).
+        panel.update_in(cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                Agent::Stub,
+                parked_thread_id,
+                None,
+                None,
+                true,
+                "sidebar",
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            crate::test_support::active_thread_id(&panel, cx),
+            parked_thread_id,
+        );
+
+        // Now switch to NativeAgent (simulates selecting a different
+        // agent from the toolbar dropdown). This should NOT reuse the
+        // Stub ephemeral draft — it should replace it with one bound to
+        // NativeAgent.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_agent = Agent::NativeAgent;
+            panel.activate_new_thread(true, "agent_panel", window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            let draft = panel.draft_thread.as_ref().expect("draft should exist");
+            assert_eq!(
+                draft.read(cx).agent_key(),
+                &Agent::NativeAgent,
+                "ephemeral draft should be bound to NativeAgent, not Stub"
+            );
+            let active_id = panel.active_thread_id(cx).unwrap();
+            assert_ne!(
+                active_id, ephemeral_thread_id,
+                "old Stub ephemeral draft should have been replaced"
+            );
+            assert!(
+                panel.retained_threads.contains_key(&parked_thread_id),
+                "parked draft should still be in retained_threads"
             );
         });
     }

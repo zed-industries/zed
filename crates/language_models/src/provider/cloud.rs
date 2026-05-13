@@ -42,7 +42,7 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         })
     }
 
-    fn acquire_token(
+    fn cached_token(
         &self,
         organization_id: Self::AuthContext,
     ) -> BoxFuture<'static, Result<String>> {
@@ -50,7 +50,7 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
             client
-                .acquire_llm_token(&llm_api_token, organization_id)
+                .cached_llm_token(&llm_api_token, organization_id)
                 .await
         })
     }
