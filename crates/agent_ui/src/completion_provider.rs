@@ -1288,10 +1288,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 );
                 let skill_confirm_callbacks: Task<Vec<(AvailableCommand, Option<SkillInfo>)>> = {
                     let source = source.clone();
-                    let editor = editor.clone();
-                    let mention_set = mention_set.clone();
-                    let workspace = workspace.clone();
-                    let source_range = source_range.clone();
                     cx.spawn(async move |_this, cx| {
                         let commands = search_task.await;
                         cx.update(|cx| {
