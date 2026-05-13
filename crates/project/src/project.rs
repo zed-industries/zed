@@ -339,6 +339,8 @@ pub struct Project {
     /// accessors so a sibling Project's debug sessions don't bleed
     /// into our UI.
     dap_sessions: HashSet<SessionId>,
+
+    active_repo_id: Option<RepositoryId>,
 }
 
 struct DownloadingFile {

@@ -614,7 +614,7 @@ impl HeadlessProject {
                 self.git_repository_snapshots_for_peer
                     .insert(snapshot.id, snapshot.clone());
             }
-            GitStoreEvent::RepositorySnapshotRemovedForDownstream(id) => {
+            GitStoreEvent::RepositorySnapshotRemoved(id) => {
                 self.session
                     .send(proto::RemoveRepository {
                         project_id: REMOTE_SERVER_PROJECT_ID,
@@ -623,7 +623,7 @@ impl HeadlessProject {
                     .log_err();
                 self.git_repository_snapshots_for_peer.remove(id);
             }
-            GitStoreEvent::ForwardRepositoryUpdate(update) => {
+            GitStoreEvent::RepositoryUpdated(update) => {
                 let mut update = update.clone();
                 update.project_id = REMOTE_SERVER_PROJECT_ID;
                 self.session.send(update).log_err();
