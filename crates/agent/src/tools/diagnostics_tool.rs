@@ -21,7 +21,7 @@ type Result<T, E = String> = core::result::Result<T, E>;
 /// When no path is provided, shows a summary of error and warning counts for all files in the project.
 ///
 /// This tool attempts to refresh diagnostics before returning.
-/// If refreshing diagnostics fails (for example, if the langauge server does not support pull-based diagnostics), it will return any diagnostics already present.
+/// If refreshing diagnostics fails (for example, if the language server does not support pull-based diagnostics), it will return any diagnostics already present.
 /// Note that, in this case, the results may be out-of-date, and may or may not reflect the most recent edits.
 /// If this happens, do not attempt to re-run this tool in the hope that refreshing will later succeed. Failures are typically persistent.
 ///
