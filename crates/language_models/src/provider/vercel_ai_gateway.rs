@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,

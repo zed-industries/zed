@@ -10,7 +10,7 @@
 //!
 //! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
 pub mod clangd_ext;
-mod code_lens;
+pub mod code_lens;
 mod document_colors;
 mod document_symbols;
 mod folding_ranges;
@@ -65,7 +65,7 @@ use futures::{
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString,
-    Subscription, Task, WeakEntity,
+    Subscription, Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -2969,8 +2969,8 @@ impl LocalLspStore {
             .flat_map(|(worktree_id, servers)| {
                 servers
                     .roots
-                    .iter()
-                    .flat_map(|(_, language_servers)| language_servers)
+                    .values()
+                    .flatten()
                     .map(move |(_, (server_node, server_languages))| {
                         (worktree_id, server_node, server_languages)
                     })
@@ -4148,6 +4148,12 @@ impl SymbolLocation {
     }
 }
 
+fn should_log_lsp_request_failure(message: &str) -> bool {
+    // content modified is a weird failure mode of rust-analyzer
+    // where requests are denied before its loaded a project
+    message.ends_with("content modified") || message.ends_with("server cancelled the request")
+}
+
 impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_lsp_query);
@@ -5249,8 +5255,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
+                if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
                 return Task::ready(Err(anyhow!(message)));
@@ -5311,8 +5316,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
+                if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
                 anyhow::anyhow!(message)
@@ -7561,8 +7565,15 @@ impl LspStore {
     ) -> Task<anyhow::Result<()>> {
         let diagnostics = self.pull_diagnostics(buffer, cx);
         cx.spawn(async move |lsp_store, cx| {
-            let Some(diagnostics) = diagnostics.await.context("pulling diagnostics")? else {
-                return Ok(());
+            let diagnostics = match diagnostics.await {
+                Ok(Some(diagnostics)) => diagnostics,
+                Ok(None) => return Ok(()),
+                Err(error) if should_log_lsp_request_failure(&format!("{error:#}")) => {
+                    return Err(error).context("pulling diagnostics");
+                }
+                // This is a weird way to suppress diagnostic failures on server side cancellation,
+                // we should actually retry the request here?
+                Err(_) => return Ok(()),
             };
             lsp_store.update(cx, |lsp_store, cx| {
                 if lsp_store.as_local().is_none() {
@@ -14338,13 +14349,13 @@ impl LspInstaller for SshLspAdapter {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         _: (),
         _: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        async { anyhow::bail!("SshLspAdapter does not support fetch_server_binary") }
     }
 }
 

@@ -117,12 +117,52 @@ impl ProjectDiff {
     ) {
         telemetry::event!("Git Branch Diff Opened");
         let project = workspace.project().clone();
+        let intended_repo = project.read(cx).active_repository(cx);
 
         let existing = workspace
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }));
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
+
+            if let Some(intended_repo) = intended_repo {
+                let needs_switch = existing
+                    .read(cx)
+                    .branch_diff
+                    .read(cx)
+                    .repo()
+                    .map_or(true, |current| {
+                        current.read(cx).id != intended_repo.read(cx).id
+                    });
+
+                if needs_switch {
+                    let default_branch =
+                        intended_repo.update(cx, |repo, _| repo.default_branch(true));
+                    let existing = existing.downgrade();
+                    let workspace = cx.entity().downgrade();
+                    window
+                        .spawn(cx, async move |cx| {
+                            let default_branch = default_branch
+                                .await??
+                                .context("Could not determine default branch")?;
+
+                            existing.update(cx, |project_diff, cx| {
+                                project_diff.branch_diff.update(cx, |branch_diff, cx| {
+                                    branch_diff.set_repo(Some(intended_repo), cx);
+                                    branch_diff.set_diff_base(
+                                        DiffBase::Merge {
+                                            base_ref: default_branch,
+                                        },
+                                        cx,
+                                    );
+                                });
+                            })?;
+                            anyhow::Ok(())
+                        })
+                        .detach_and_notify_err(workspace, window, cx);
+                }
+            }
+
             return;
         }
         let workspace = cx.entity();
@@ -822,7 +862,7 @@ impl ProjectDiff {
 
         let mut buffers_to_fold = Vec::new();
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys) {
             if let Some((buffer, diff)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.

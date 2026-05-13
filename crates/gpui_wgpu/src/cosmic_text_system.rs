@@ -302,7 +302,15 @@ impl CosmicTextSystemState {
                 }
                 Ok((bitmap_size, image.data))
             }
-            swash::scale::image::Content::Mask => Ok((bitmap_size, image.data)),
+            swash::scale::image::Content::Mask => {
+                if params.subpixel_rendering {
+                    // We must always return RGBA data when subpixel rendering is requested.
+                    let expanded = image.data.iter().flat_map(|&a| [a, a, a, a]).collect();
+                    Ok((bitmap_size, expanded))
+                } else {
+                    Ok((bitmap_size, image.data))
+                }
+            }
         }
     }
 
@@ -333,7 +341,7 @@ impl CosmicTextSystemState {
                 Source::Outline,
             ]
         } else {
-            &[Source::Outline]
+            &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline]
         };
 
         let mut renderer = Render::new(sources);

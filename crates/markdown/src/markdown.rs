@@ -17,8 +17,6 @@ use mermaid::{
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
-use ui::Checkbox;
-use ui::CopyButton;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -36,7 +34,7 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
+    StyleRefinement, StyledImage, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
@@ -47,7 +45,7 @@ use parser::{
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
+use ui::{Checkbox, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -329,6 +327,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
@@ -501,6 +500,7 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
@@ -535,6 +535,27 @@ impl Markdown {
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
         self.code_block_scroll_handles
             .retain(|id, _| ids.contains(id));
+    }
+
+    /// Used in the agent panel to force a re-render when the theme changes
+    pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
+        if self.options.render_mermaid_diagrams && !self.parsed_markdown.mermaid_diagrams.is_empty()
+        {
+            self.mermaid_state.clear();
+            let parsed_markdown = self.parsed_markdown.clone();
+            self.mermaid_state.update(&parsed_markdown, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
+        self.mermaid_showing_code.contains(&source_offset)
+    }
+
+    pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
+        if !self.mermaid_showing_code.remove(&source_offset) {
+            self.mermaid_showing_code.insert(source_offset);
+        }
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -885,8 +906,11 @@ impl Markdown {
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
                     this.mermaid_state.update(&parsed_markdown, cx);
+                    this.mermaid_showing_code
+                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
                 } else {
                     this.mermaid_state.clear();
+                    this.mermaid_showing_code.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1130,27 +1154,25 @@ impl MarkdownElement {
         builder: &mut MarkdownElementBuilder,
         range: &Range<usize>,
         source: ImageSource,
+        dest_url: SharedString,
+        alt_text: Option<SharedString>,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        let align = builder.text_style().text_align;
-        builder.modify_current_div(|el| {
-            let mut image_container = el.flex().flex_row().items_center();
+        builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
 
-            image_container = match align {
-                TextAlign::Left => image_container.justify_start(),
-                TextAlign::Center => image_container.justify_center(),
-                TextAlign::Right => image_container.justify_end(),
-            };
+        let image_element = div().min_w_0().child(
+            img(source)
+                .id(("markdown-image", range.start))
+                .min_w_0()
+                .max_w_full()
+                .rounded_md()
+                .when_some(height, |this, height| this.h(height))
+                .when_some(width, |this, width| this.w(width))
+                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
+        );
 
-            image_container.child(
-                img(source)
-                    .id(("markdown-image", range.start))
-                    .max_w_full()
-                    .when_some(height, |this, height| this.h(height))
-                    .when_some(width, |this, width| this.w(width)),
-            )
-        });
+        builder.push_image_child(image_element);
     }
 
     fn push_markdown_paragraph(
@@ -1711,12 +1733,18 @@ impl Element for MarkdownElement {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Image { dest_url, .. } => {
+                            let alt_text = collect_image_alt_text(
+                                &parsed_markdown.events[index..],
+                                &parsed_markdown.source,
+                            );
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
                                     &mut builder,
                                     range,
                                     image.clone().into(),
+                                    dest_url.clone(),
+                                    alt_text,
                                     None,
                                     None,
                                 );
@@ -1726,19 +1754,40 @@ impl Element for MarkdownElement {
                                 .and_then(|resolve| resolve(dest_url.as_ref()))
                             {
                                 current_img_block_range = Some(range.clone());
-                                self.push_markdown_image(&mut builder, range, source, None, None);
+                                self.push_markdown_image(
+                                    &mut builder,
+                                    range,
+                                    source,
+                                    dest_url.clone(),
+                                    alt_text,
+                                    None,
+                                    None,
+                                );
                             }
                         }
                         MarkdownTag::Paragraph => {
-                            self.push_markdown_paragraph(&mut builder, range, markdown_end, None);
+                            let text_align_override = builder
+                                .table
+                                .current_cell_alignment()
+                                .and_then(alignment_to_text_align);
+                            self.push_markdown_paragraph(
+                                &mut builder,
+                                range,
+                                markdown_end,
+                                text_align_override,
+                            );
                         }
                         MarkdownTag::Heading { level, .. } => {
+                            let text_align_override = builder
+                                .table
+                                .current_cell_alignment()
+                                .and_then(alignment_to_text_align);
                             self.push_markdown_heading(
                                 &mut builder,
                                 *level,
                                 range,
                                 markdown_end,
-                                None,
+                                text_align_override,
                             );
                         }
                         MarkdownTag::BlockQuote(kind) => {
@@ -1754,12 +1803,25 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
+                                let showing_code =
+                                    self.markdown.read(cx).is_mermaid_showing_code(range.start);
+                                let copy_button_visibility = match &self.code_block_renderer {
+                                    CodeBlockRenderer::Default {
+                                        copy_button_visibility,
+                                        ..
+                                    } => *copy_button_visibility,
+                                    _ => CopyButtonVisibility::VisibleOnHover,
+                                };
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(
                                         mermaid_diagram,
                                         &mermaid_state,
                                         &self.style,
+                                        self.markdown.clone(),
+                                        range.start,
+                                        showing_code,
+                                        copy_button_visibility,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
@@ -2000,20 +2062,46 @@ impl Element for MarkdownElement {
                             let is_header = builder.table.in_head;
                             let row_index = builder.table.row_index;
                             let col_index = builder.table.col_index;
+                            let alignment = builder.table.current_cell_alignment();
+                            let text_align = alignment
+                                .and_then(alignment_to_text_align)
+                                .unwrap_or(self.style.base_text_style.text_align);
 
+                            let mut cell_div = div()
+                                .flex()
+                                .flex_col()
+                                .h_full()
+                                .when(col_index > 0, |this| this.border_l_1())
+                                .when(row_index > 0, |this| this.border_t_1())
+                                .border_color(cx.theme().colors().border)
+                                .px_1()
+                                .py_0p5()
+                                .when(is_header, |this| {
+                                    this.bg(cx.theme().colors().title_bar_background)
+                                })
+                                .when(!is_header && row_index % 2 == 1, |this| {
+                                    this.bg(cx.theme().colors().panel_background)
+                                });
+
+                            cell_div = match alignment {
+                                Some(Alignment::Center) => cell_div.items_center(),
+                                Some(Alignment::Right) => cell_div.items_end(),
+                                _ => cell_div,
+                            };
+
+                            builder.push_text_style(TextStyleRefinement {
+                                text_align: Some(text_align),
+                                ..Default::default()
+                            });
+                            builder.push_div(cell_div, range, markdown_end);
                             builder.push_div(
                                 div()
-                                    .when(col_index > 0, |this| this.border_l_1())
-                                    .when(row_index > 0, |this| this.border_t_1())
-                                    .border_color(cx.theme().colors().border)
-                                    .px_1()
-                                    .py_0p5()
-                                    .when(is_header, |this| {
-                                        this.bg(cx.theme().colors().title_bar_background)
-                                    })
-                                    .when(!is_header && row_index % 2 == 1, |this| {
-                                        this.bg(cx.theme().colors().panel_background)
-                                    }),
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .w_full()
+                                    .justify_center()
+                                    .text_align(text_align),
                                 range,
                                 markdown_end,
                             );
@@ -2113,6 +2201,8 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::TableCell => {
                         builder.replace_pending_checkbox(self.on_checkbox_toggle.clone());
                         builder.pop_div();
+                        builder.pop_div();
+                        builder.pop_text_style();
                         builder.table.end_cell();
                     }
                     MarkdownTagEnd::FootnoteDefinition => {
@@ -2253,6 +2343,44 @@ impl Element for MarkdownElement {
         self.paint_search_highlights(&rendered_markdown.text, window, cx);
         self.paint_selection(&rendered_markdown.text, window, cx);
     }
+}
+
+fn collect_image_alt_text(
+    events_from_image_start: &[(Range<usize>, MarkdownEvent)],
+    source: &str,
+) -> Option<SharedString> {
+    let mut alt_text = String::new();
+    for (range, event) in events_from_image_start.iter().skip(1) {
+        match event {
+            MarkdownEvent::End(MarkdownTagEnd::Image) => break,
+            MarkdownEvent::Text => alt_text.push_str(&source[range.clone()]),
+            _ => {}
+        }
+    }
+    if alt_text.is_empty() {
+        None
+    } else {
+        Some(alt_text.into())
+    }
+}
+
+fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>) -> AnyElement {
+    let link_label = alt_text
+        .filter(|alt| !alt.is_empty())
+        .unwrap_or_else(|| dest_url.clone());
+
+    let label = format!("Failed to Load: {link_label}");
+
+    div()
+        .id("image-fallback")
+        .cursor_pointer()
+        .min_w_0()
+        .child(Label::new(label).color(Color::Warning).underline())
+        .tooltip(Tooltip::text(
+            "Image failed to load. Open `zed: log` for more details.",
+        ))
+        .on_click(move |_, _, cx| cx.open_url(&dest_url))
+        .into_any_element()
 }
 
 fn apply_heading_style(
@@ -2414,6 +2542,25 @@ impl TableState {
     fn end_cell(&mut self) {
         self.col_index += 1;
     }
+
+    fn current_cell_alignment(&self) -> Option<Alignment> {
+        if self.alignments.is_empty() {
+            return None;
+        }
+        if self.in_head {
+            return Some(Alignment::Center);
+        }
+        self.alignments.get(self.col_index).copied()
+    }
+}
+
+fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
+    match alignment {
+        Alignment::Left => Some(TextAlign::Left),
+        Alignment::Center => Some(TextAlign::Center),
+        Alignment::Right => Some(TextAlign::Right),
+        Alignment::None => None,
+    }
 }
 
 struct MarkdownElementBuilder {
@@ -2527,6 +2674,14 @@ impl MarkdownElementBuilder {
             markdown_end,
         );
         self.push_div(div().pl_4(), range, markdown_end);
+    }
+
+    fn push_image_child(&mut self, child: impl IntoElement) {
+        self.flush_text();
+        self.div_stack
+            .last_mut()
+            .unwrap()
+            .extend([child.into_any_element()]);
     }
 
     fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
@@ -2702,7 +2857,7 @@ impl MarkdownElementBuilder {
         )
         .fill();
 
-        let element = if let Some(on_toggle) = on_toggle {
+        let checkbox = if let Some(on_toggle) = on_toggle {
             checkbox
                 .on_click(move |_state, window, cx| {
                     on_toggle(marker_source.clone(), !checked, window, cx);
@@ -2711,7 +2866,18 @@ impl MarkdownElementBuilder {
         } else {
             checkbox.visualization_only(true).into_any_element()
         };
-        self.div_stack.last_mut().unwrap().extend([element]);
+
+        let mut checkbox_container = h_flex().w_full();
+        checkbox_container = match self.text_style().text_align {
+            TextAlign::Left => checkbox_container.justify_start(),
+            TextAlign::Center => checkbox_container.justify_center(),
+            TextAlign::Right => checkbox_container.justify_end(),
+        };
+
+        self.div_stack
+            .last_mut()
+            .unwrap()
+            .extend([checkbox_container.child(checkbox).into_any_element()]);
     }
 
     fn source_range_for_rendered(&self, rendered: &Range<usize>) -> Option<Range<usize>> {
@@ -3430,6 +3596,37 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    #[test]
+    fn test_table_state_current_cell_alignment_centers_headers() {
+        let mut table = TableState::default();
+        table.start(vec![Alignment::Left, Alignment::Right, Alignment::None]);
+
+        table.start_head();
+        for _ in 0..3 {
+            assert_eq!(table.current_cell_alignment(), Some(Alignment::Center));
+            table.end_cell();
+        }
+
+        table.end_head();
+        table.start_row();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::Left));
+        table.end_cell();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::Right));
+        table.end_cell();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::None));
+        table.end_cell();
+        table.end_row();
+
+        table.end();
+        assert_eq!(table.current_cell_alignment(), None);
+    }
+
+    #[test]
+    fn test_table_state_current_cell_alignment_outside_table() {
+        let table = TableState::default();
+        assert_eq!(table.current_cell_alignment(), None);
     }
 
     #[test]
