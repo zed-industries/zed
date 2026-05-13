@@ -17,16 +17,23 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+editor.workspace = true
+language.workspace = true
+rope.workspace = true
 gpui.workspace = true
 menu.workspace = true
 schemars.workspace = true
 serde.workspace = true
+settings.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+multi_buffer.workspace = true
+log.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

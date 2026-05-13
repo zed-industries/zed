@@ -348,6 +348,18 @@ pub mod command_palette {
     );
 }
 
+pub mod text_finder {
+    use gpui::actions;
+
+    actions!(
+        text_finder,
+        [
+            /// Opens the Project Search Picker.
+            Toggle,
+        ]
+    );
+}
+
 pub mod quick_search {
     use gpui::actions;
 
