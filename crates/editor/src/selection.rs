@@ -591,6 +591,7 @@ impl Editor {
         }
         Ok(())
     }
+
     pub fn select_enclosing_symbol(
         &mut self,
         _: &SelectEnclosingSymbol,
@@ -1070,6 +1071,7 @@ impl Editor {
             self.add_selections_state = entry.add_selections_state;
         }
     }
+
     pub(super) fn select(
         &mut self,
         phase: SelectPhase,

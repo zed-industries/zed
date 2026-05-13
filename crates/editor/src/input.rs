@@ -1012,6 +1012,7 @@ impl Editor {
             this.insert("", window, cx);
         });
     }
+
     pub fn delete_to_next_word_end(
         &mut self,
         action: &DeleteToNextWordEnd,
@@ -1075,6 +1076,7 @@ impl Editor {
             this.insert("", window, cx);
         });
     }
+
     pub fn delete_to_beginning_of_line(
         &mut self,
         action: &DeleteToBeginningOfLine,
@@ -1102,6 +1104,7 @@ impl Editor {
             this.backspace(&Backspace, window, cx);
         });
     }
+
     pub fn delete_to_end_of_line(
         &mut self,
         _: &DeleteToEndOfLine,
@@ -1153,6 +1156,7 @@ impl Editor {
             cx.write_to_clipboard(item);
         });
     }
+
     pub fn insert_snippet_at_selections(
         &mut self,
         action: &InsertSnippet,
@@ -1657,6 +1661,7 @@ impl Editor {
             }
         });
     }
+
     pub fn unwrap_syntax_node(
         &mut self,
         _: &UnwrapSyntaxNode,
@@ -1735,6 +1740,7 @@ impl Editor {
             });
         });
     }
+
     pub(super) fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut pending: String = window
             .pending_input_keystrokes()
