@@ -71,6 +71,8 @@ actions!(
         OpenTelemetryLog,
         /// Opens the performance profiler.
         OpenPerformanceProfiler,
+        /// Opens the GPUI devtools overlay.
+        OpenGpuiDevtools,
         /// Opens the onboarding view.
         OpenOnboarding,
         /// Shows the auto-update notification for testing.

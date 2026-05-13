@@ -5,13 +5,13 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EntityMap, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
@@ -51,7 +51,7 @@ use std::{
     ops::{DerefMut, Range},
     rc::Rc,
     sync::{
-        Arc, LazyLock, Weak,
+        Arc, Weak,
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
     time::Duration,
@@ -75,16 +75,6 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
     width: Pixels(900.),
     height: Pixels(750.),
 };
-
-static GPUI_FRAME_STATS_ENABLED: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var_os("ZED_GPUI_FRAME_STATS").is_some()
-        || std::env::var_os("ZED_GPUI_RENDER_STATS").is_some()
-});
-
-static GPUI_INVALIDATION_STATS_ENABLED: LazyLock<bool> =
-    LazyLock::new(|| std::env::var_os("ZED_GPUI_NOTIFY_STATS").is_some());
-
-const FRAME_STATS_VIEW_DETAIL_LIMIT: usize = 8;
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -158,21 +148,11 @@ impl WindowInvalidator {
         self.inner.borrow().dirty
     }
 
-    #[track_caller]
     pub fn set_dirty(&self, dirty: bool) {
         let mut inner = self.inner.borrow_mut();
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
-            if *GPUI_INVALIDATION_STATS_ENABLED {
-                let caller = std::panic::Location::caller();
-                log::info!(
-                    target: "gpui::notify_stats",
-                    "gpui window_dirty caller={}:{}",
-                    caller.file(),
-                    caller.line(),
-                );
-            }
         }
     }
 
@@ -186,10 +166,6 @@ impl WindowInvalidator {
 
     pub fn dirty_view_count(&self) -> usize {
         self.inner.borrow().dirty_views.len()
-    }
-
-    pub fn dirty_view_ids(&self) -> Vec<EntityId> {
-        self.inner.borrow().dirty_views.iter().copied().collect()
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -1017,7 +993,6 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
-    frame_stats_dirty_views: Option<String>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
@@ -1112,11 +1087,6 @@ struct FrameDiagnostics {
     dirty_before_frame: bool,
     dirty_view_count: usize,
     invalidator_update_count: usize,
-    force_render: bool,
-    require_presentation: bool,
-    queued_presentation: bool,
-    high_rate_input: bool,
-    next_frame_callback_count: usize,
     draw_duration: Option<Duration>,
     present_duration: Duration,
 }
@@ -1159,14 +1129,6 @@ fn frame_diagnostics_reason(
     } else {
         FrameDiagnosticsReason::HighRateInput
     }
-}
-
-fn duration_ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1000.
-}
-
-fn frame_stats_short_type_name(type_name: &'static str) -> &'static str {
-    type_name.rsplit("::").next().unwrap_or(type_name)
 }
 
 /// A point-in-time snapshot of the input-latency histograms for a window,
@@ -1476,8 +1438,7 @@ impl Window {
                 last_frame_time.set(Some(now));
 
                 let next_frame_callbacks = next_frame_callbacks.take();
-                let next_frame_callback_count = next_frame_callbacks.len();
-                if next_frame_callback_count != 0 {
+                if !next_frame_callbacks.is_empty() {
                     handle
                         .update(&mut cx, |_, window, cx| {
                             for callback in next_frame_callbacks {
@@ -1506,11 +1467,6 @@ impl Window {
                     dirty_before_frame,
                     dirty_view_count: invalidator.dirty_view_count(),
                     invalidator_update_count: invalidator.update_count(),
-                    force_render: request_frame_options.force_render,
-                    require_presentation: request_frame_options.require_presentation,
-                    queued_presentation,
-                    high_rate_input,
-                    next_frame_callback_count,
                     draw_duration: None,
                     present_duration: Duration::default(),
                 };
@@ -1531,7 +1487,7 @@ impl Window {
                                 let present_start = Instant::now();
                                 window.present();
                                 frame_diagnostics.present_duration = present_start.elapsed();
-                                window.log_frame_diagnostics(frame_diagnostics);
+                                window.record_frame_diagnostics(frame_diagnostics);
                                 arena_clear_needed.clear();
                             })
                             .log_err();
@@ -1543,7 +1499,7 @@ impl Window {
                             let present_start = Instant::now();
                             window.present();
                             frame_diagnostics.present_duration = present_start.elapsed();
-                            window.log_frame_diagnostics(frame_diagnostics);
+                            window.record_frame_diagnostics(frame_diagnostics);
                         })
                         .log_err();
                 }
@@ -1730,7 +1686,6 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            frame_stats_dirty_views: None,
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -2187,74 +2142,41 @@ impl Window {
     #[track_caller]
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
-        let devtools_enabled = crate::devtools::enabled();
-        let collect_animation_diagnostics = *GPUI_INVALIDATION_STATS_ENABLED || devtools_enabled;
-        if collect_animation_diagnostics {
+        if crate::devtools::enabled() {
             let caller = std::panic::Location::caller();
             let entity_type = self.devtools_view_type_name(entity);
-            if devtools_enabled {
-                crate::devtools::record_animation(crate::devtools::animation_frame_request_event(
-                    self.handle.window_id(),
-                    entity,
-                    entity_type,
-                    caller,
-                ));
-            }
-
-            if *GPUI_INVALIDATION_STATS_ENABLED {
-                log::info!(
-                    target: "gpui::notify_stats",
-                    "gpui request_animation_frame entity={} type={} caller={}:{}",
-                    entity.as_u64(),
-                    frame_stats_short_type_name(entity_type),
-                    caller.file(),
-                    caller.line()
-                );
-            }
+            crate::devtools::record_animation(crate::devtools::animation_frame_request_event(
+                self.handle.window_id(),
+                entity,
+                entity_type,
+                caller,
+            ));
         }
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
-    pub(crate) fn log_animation_frame_request(
+    pub(crate) fn record_animation_frame_request(
         &self,
         element_id: &ElementId,
         animation_ix: usize,
         duration: Duration,
         repeats: bool,
     ) {
-        let devtools_enabled = crate::devtools::enabled();
-        if !*GPUI_INVALIDATION_STATS_ENABLED && !devtools_enabled {
+        if !crate::devtools::enabled() {
             return;
         }
 
         let entity = self.current_view();
         let entity_type = self.devtools_view_type_name(entity);
-        if devtools_enabled {
-            crate::devtools::record_animation(crate::devtools::animation_element_tick_event(
-                self.handle.window_id(),
-                entity,
-                entity_type,
-                element_id,
-                animation_ix,
-                duration,
-                repeats,
-            ));
-        }
-
-        if !*GPUI_INVALIDATION_STATS_ENABLED {
-            return;
-        }
-
-        log::info!(
-            target: "gpui::notify_stats",
-            "gpui animation_frame_request entity={} type={} element_id={:?} animation_ix={} duration_ms={:.3} repeats={}",
-            entity.as_u64(),
-            frame_stats_short_type_name(entity_type),
+        crate::devtools::record_animation(crate::devtools::animation_element_tick_event(
+            self.handle.window_id(),
+            entity,
+            entity_type,
             element_id,
             animation_ix,
-            duration_ms(duration),
+            duration,
             repeats,
-        );
+        ));
     }
 
     fn devtools_view_type_name(&self, entity: EntityId) -> &'static str {
@@ -2694,16 +2616,7 @@ impl Window {
         // This ensures that multiple test Apps have isolated arenas.
         let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
-        let invalidated_entities = if *GPUI_FRAME_STATS_ENABLED {
-            Some(self.invalidator.dirty_view_ids())
-        } else {
-            None
-        };
         self.invalidate_entities();
-        if let Some(invalidated_entities) = invalidated_entities {
-            self.frame_stats_dirty_views =
-                Some(self.format_frame_stats_dirty_views(&invalidated_entities, &cx.entities));
-        }
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
@@ -2830,134 +2743,24 @@ impl Window {
         profiling::finish_frame!();
     }
 
-    fn log_frame_diagnostics(&self, diagnostics: FrameDiagnostics) {
-        let devtools_enabled = crate::devtools::enabled();
-        if !*GPUI_FRAME_STATS_ENABLED && !devtools_enabled {
+    fn record_frame_diagnostics(&self, diagnostics: FrameDiagnostics) {
+        if !crate::devtools::enabled() {
             return;
         }
 
         let stats = self.rendered_frame.scene.stats();
-        if devtools_enabled {
-            crate::devtools::record_frame(crate::devtools::FrameEvent {
-                window_id: self.handle.window_id(),
-                reason: diagnostics.reason.as_str(),
-                dirty_before_frame: diagnostics.dirty_before_frame,
-                dirty_view_count: diagnostics.dirty_view_count,
-                invalidator_update_count: diagnostics.invalidator_update_count,
-                rebuilt_scene: diagnostics.draw_duration.is_some(),
-                draw_duration: diagnostics.draw_duration,
-                present_duration: diagnostics.present_duration,
-                scene_stats: stats,
-                timestamp: Instant::now(),
-            });
-        }
-
-        if !*GPUI_FRAME_STATS_ENABLED {
-            return;
-        }
-
-        let draw_ms = diagnostics.draw_duration.map(duration_ms).unwrap_or(0.);
-        let present_ms = duration_ms(diagnostics.present_duration);
-        let scaled_viewport_area =
-            self.viewport_size.width.0 * self.viewport_size.height.0 * self.scale_factor.powi(2);
-        let quad_coverage = if scaled_viewport_area > 0. {
-            stats.quad_area / scaled_viewport_area
-        } else {
-            0.
-        };
-        let dirty_view_details = diagnostics
-            .draw_duration
-            .and(self.frame_stats_dirty_views.as_deref())
-            .unwrap_or("");
-
-        log::info!(
-            target: "gpui::frame_stats",
-            "gpui frame reason={} dirty={} dirty_views={} invalidator_updates={} force_render={} require_presentation={} queued_presentation={} high_rate_input={} next_frame_callbacks={} rebuilt_scene={} draw_ms={:.3} present_ms={:.3} viewport={}x{} scale={:.2} paint_ops={} primitives={} batches={} quads={} quad_area={:.0} clipped_quad_area={:.0} quad_coverage={:.2} shadows={} paths={} underlines={} mono_sprites={} subpixel_sprites={} poly_sprites={} surfaces={} dirty_view_details={}",
-            diagnostics.reason.as_str(),
-            diagnostics.dirty_before_frame,
-            diagnostics.dirty_view_count,
-            diagnostics.invalidator_update_count,
-            diagnostics.force_render,
-            diagnostics.require_presentation,
-            diagnostics.queued_presentation,
-            diagnostics.high_rate_input,
-            diagnostics.next_frame_callback_count,
-            diagnostics.draw_duration.is_some(),
-            draw_ms,
-            present_ms,
-            self.viewport_size.width.0,
-            self.viewport_size.height.0,
-            self.scale_factor,
-            stats.paint_operation_count,
-            stats.primitive_count,
-            stats.batch_count,
-            stats.quad_count,
-            stats.quad_area,
-            stats.clipped_quad_area,
-            quad_coverage,
-            stats.shadow_count,
-            stats.path_count,
-            stats.underline_count,
-            stats.monochrome_sprite_count,
-            stats.subpixel_sprite_count,
-            stats.polychrome_sprite_count,
-            stats.surface_count,
-            dirty_view_details,
-        );
-    }
-
-    fn format_frame_stats_dirty_views(
-        &self,
-        invalidated_entities: &[EntityId],
-        entities: &EntityMap,
-    ) -> String {
-        let invalidated_entities =
-            self.format_frame_stats_entities(invalidated_entities.iter().copied(), entities);
-        let dirty_view_path =
-            self.format_frame_stats_entities(self.dirty_views.iter().copied(), entities);
-        format!("invalidated=[{invalidated_entities}]|dirty_view_path=[{dirty_view_path}]")
-    }
-
-    fn format_frame_stats_entities(
-        &self,
-        entity_ids: impl IntoIterator<Item = EntityId>,
-        entities: &EntityMap,
-    ) -> String {
-        let mut entity_ids = entity_ids.into_iter().collect::<Vec<_>>();
-        entity_ids.sort_unstable();
-        entity_ids.dedup();
-
-        let entity_count = entity_ids.len();
-        let mut summary = String::new();
-        for (ix, entity_id) in entity_ids
-            .iter()
-            .take(FRAME_STATS_VIEW_DETAIL_LIMIT)
-            .enumerate()
-        {
-            if ix > 0 {
-                summary.push(',');
-            }
-            summary.push_str(&entity_id.as_u64().to_string());
-            summary.push(':');
-            let type_name = self
-                .rendered_frame
-                .view_type_names
-                .get(entity_id)
-                .copied()
-                .or_else(|| entities.type_name(*entity_id))
-                .unwrap_or("<unknown>");
-            summary.push_str(frame_stats_short_type_name(type_name));
-        }
-
-        if entity_count > FRAME_STATS_VIEW_DETAIL_LIMIT {
-            if !summary.is_empty() {
-                summary.push(',');
-            }
-            summary.push('+');
-            summary.push_str(&(entity_count - FRAME_STATS_VIEW_DETAIL_LIMIT).to_string());
-        }
-
-        summary
+        crate::devtools::record_frame(crate::devtools::FrameEvent {
+            window_id: self.handle.window_id(),
+            reason: diagnostics.reason.as_str(),
+            dirty_before_frame: diagnostics.dirty_before_frame,
+            dirty_view_count: diagnostics.dirty_view_count,
+            invalidator_update_count: diagnostics.invalidator_update_count,
+            rebuilt_scene: diagnostics.draw_duration.is_some(),
+            draw_duration: diagnostics.draw_duration,
+            present_duration: diagnostics.present_duration,
+            scene_stats: stats,
+            timestamp: Instant::now(),
+        });
     }
 
     /// Returns a snapshot of the current input-latency histograms.
@@ -4407,10 +4210,7 @@ impl Window {
 
     #[inline]
     pub(crate) fn record_view_type_name(&mut self, id: EntityId, type_name: &'static str) {
-        if !crate::devtools::enabled()
-            && !*GPUI_FRAME_STATS_ENABLED
-            && !*GPUI_INVALIDATION_STATS_ENABLED
-        {
+        if !crate::devtools::enabled() {
             return;
         }
 

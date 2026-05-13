@@ -18,7 +18,7 @@ pub(super) fn register_input_handlers(window: &mut Window, prepared_overlay: &Pr
                 && event.button == MouseButton::Left
                 && hitbox.is_hovered(window)
             {
-                apply_filter_action(action.action);
+                apply_filter_action(action.action, window);
                 window.prevent_default();
                 window.refresh();
                 cx.stop_propagation();
@@ -97,7 +97,12 @@ fn register_drag_handlers(window: &mut Window, prepared_overlay: &PreparedOverla
     });
 }
 
-fn apply_filter_action(action: SourceFilterAction) {
+fn apply_filter_action(action: SourceFilterAction, window: &mut Window) {
+    if matches!(action, SourceFilterAction::CloseDevTools) {
+        super::super::close_window(window);
+        return;
+    }
+
     let mut devtools = GPUI_DEVTOOLS.write();
     match action {
         SourceFilterAction::ToggleSection(section) => {
@@ -124,6 +129,7 @@ fn apply_filter_action(action: SourceFilterAction) {
             devtools.hidden_notify_sources.clear();
             devtools.hidden_render_sources.clear();
         }
+        SourceFilterAction::CloseDevTools => {}
         SourceFilterAction::HideNotify(source) => {
             devtools.hidden_notify_sources.insert(source);
         }
@@ -132,11 +138,9 @@ fn apply_filter_action(action: SourceFilterAction) {
         }
         SourceFilterAction::PinNotify(source) => {
             devtools.pinned_notify_sources.insert(source);
-            devtools.initial_pinned_notify_source_resolved = true;
         }
         SourceFilterAction::UnpinNotify(source) => {
             devtools.pinned_notify_sources.remove(&source);
-            devtools.initial_pinned_notify_source_resolved = true;
         }
         SourceFilterAction::HideRender(source) => {
             devtools.hidden_render_sources.insert(source);

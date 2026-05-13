@@ -24,6 +24,7 @@ pub(super) struct GpuiDevTools {
     pub(super) renders: RingBuffer<ViewRenderEvent>,
     pub(super) dirty_paths: RingBuffer<DirtyPathEvent>,
     pub(super) animations: RingBuffer<AnimationEvent>,
+    pub(super) open_windows: FxHashSet<WindowId>,
     pub(super) windows: FxHashMap<WindowId, WindowDevToolsState>,
     pub(super) hidden_notify_sources: FxHashSet<NotifySourceKey>,
     pub(super) hidden_render_sources: FxHashSet<RenderSourceKey>,
@@ -42,7 +43,6 @@ pub(super) struct GpuiDevTools {
     pub(super) performance: DevtoolsPerformance,
     pub(super) show_flashes: bool,
     pub(super) show_heat: bool,
-    pub(super) initial_pinned_notify_source_resolved: bool,
 }
 
 impl GpuiDevTools {
@@ -53,6 +53,7 @@ impl GpuiDevTools {
             renders: RingBuffer::new(VIEW_RENDER_CAPACITY),
             dirty_paths: RingBuffer::new(DIRTY_PATH_CAPACITY),
             animations: RingBuffer::new(ANIMATION_CAPACITY),
+            open_windows: FxHashSet::default(),
             windows: FxHashMap::default(),
             hidden_notify_sources: FxHashSet::default(),
             hidden_render_sources: FxHashSet::default(),
@@ -71,8 +72,28 @@ impl GpuiDevTools {
             performance: DevtoolsPerformance::new(),
             show_flashes: true,
             show_heat: true,
-            initial_pinned_notify_source_resolved: false,
         }
+    }
+
+    pub(super) fn open_window(&mut self, window_id: WindowId) {
+        self.open_windows.insert(window_id);
+        self.window_state(window_id);
+    }
+
+    pub(super) fn close_window(&mut self, window_id: WindowId) {
+        self.open_windows.remove(&window_id);
+        if let Some(window_state) = self.windows.get_mut(&window_id) {
+            window_state.prepared_overlay = None;
+            window_state.hud_drag = None;
+        }
+    }
+
+    pub(super) fn has_open_windows(&self) -> bool {
+        !self.open_windows.is_empty()
+    }
+
+    pub(super) fn is_window_open(&self, window_id: WindowId) -> bool {
+        self.open_windows.contains(&window_id)
     }
 
     pub(super) fn window_state(&mut self, window_id: WindowId) -> &mut WindowDevToolsState {
@@ -82,6 +103,7 @@ impl GpuiDevTools {
     }
 
     pub(super) fn forget_window(&mut self, window_id: WindowId) {
+        self.open_windows.remove(&window_id);
         self.windows.remove(&window_id);
     }
 

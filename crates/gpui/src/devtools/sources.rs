@@ -4,52 +4,13 @@ use super::{
         AnimationEventKind, CacheMissReasons, DirtyPathEvent, NotifyEvent, ViewRenderEvent,
         ViewRenderPhase,
     },
-    format::{file_name, short_type_name},
+    format::short_type_name,
     state::GpuiDevTools,
 };
 use crate::{Bounds, EntityId, Pixels, WindowId};
 use collections::{FxHashMap, FxHashSet};
 use scheduler::Instant;
 use std::time::Duration;
-
-#[derive(Clone, Debug)]
-pub(super) struct PinnedNotifySource {
-    entity_type: String,
-    caller_file: String,
-    caller_line: u32,
-}
-
-impl PinnedNotifySource {
-    pub(super) fn matches(&self, event: &NotifyEvent) -> bool {
-        event.caller_line == self.caller_line
-            && (event.entity_type == self.entity_type
-                || short_type_name(event.entity_type) == self.entity_type)
-            && (event.caller_file.ends_with(&self.caller_file)
-                || file_name(event.caller_file) == self.caller_file)
-    }
-}
-
-pub(super) fn parse_pinned_notify_source(source: &str) -> Option<PinnedNotifySource> {
-    let source = source.trim();
-    if source.is_empty()
-        || source.eq_ignore_ascii_case("none")
-        || source.eq_ignore_ascii_case("off")
-    {
-        return None;
-    }
-
-    let source = source.replace([',', ':'], " ");
-    let mut parts = source.split_whitespace();
-    let entity_type = parts.next()?.to_string();
-    let caller_file = parts.next()?.to_string();
-    let caller_line = parts.next()?.parse().ok()?;
-
-    Some(PinnedNotifySource {
-        entity_type,
-        caller_file,
-        caller_line,
-    })
-}
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub(super) struct NotifySourceKey {
@@ -597,26 +558,6 @@ fn dirty_path_label(event: &DirtyPathEvent) -> String {
 mod tests {
     use super::super::events::DirtyPathSegment;
     use super::*;
-
-    #[test]
-    fn parses_pinned_notify_source() {
-        let Some(source) = parse_pinned_notify_source("Editor editor.rs:2111") else {
-            panic!("expected pinned notify source to parse");
-        };
-        assert_eq!(source.entity_type, "Editor");
-        assert_eq!(source.caller_file, "editor.rs");
-        assert_eq!(source.caller_line, 2111);
-
-        let Some(source) = parse_pinned_notify_source("Editor,crates/editor/src/editor.rs,2111")
-        else {
-            panic!("expected comma-separated pinned notify source to parse");
-        };
-        assert_eq!(source.entity_type, "Editor");
-        assert_eq!(source.caller_file, "crates/editor/src/editor.rs");
-        assert_eq!(source.caller_line, 2111);
-
-        assert!(parse_pinned_notify_source("off").is_none());
-    }
 
     #[test]
     fn hidden_notify_sources_are_excluded_from_top_sources() {

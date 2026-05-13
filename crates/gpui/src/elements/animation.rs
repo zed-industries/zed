@@ -172,7 +172,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
 
             if !done {
                 let animation = &self.animations[animation_ix];
-                window.log_animation_frame_request(
+                window.record_animation_frame_request(
                     &self.id,
                     animation_ix,
                     animation.duration,

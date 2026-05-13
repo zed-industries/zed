@@ -1,3 +1,5 @@
+//! Runtime GPUI invalidation and rendering diagnostics.
+
 mod events;
 mod format;
 mod overlay;
@@ -9,11 +11,16 @@ use crate::{App, Bounds, EntityId, Pixels, Window, WindowId};
 use parking_lot::RwLock;
 use scheduler::Instant;
 use sources::{
-    NotifyCause, NotifySourceKey, NotifySourceStats, PinnedNotifySource, RenderSourceKey,
-    RenderSourceStats, parse_pinned_notify_source,
+    NotifyCause, NotifySourceKey, NotifySourceStats, RenderSourceKey, RenderSourceStats,
 };
 use state::{FlashState, GpuiDevTools};
-use std::{sync::LazyLock, time::Duration};
+use std::{
+    sync::{
+        LazyLock,
+        atomic::{AtomicBool, Ordering::SeqCst},
+    },
+    time::Duration,
+};
 
 pub(crate) use events::{
     AnimationEvent, CacheMissReasons, DirtyPathEvent, DirtyPathSegment, FrameEvent, NotifyEvent,
@@ -38,20 +45,48 @@ const ANIMATION_EXPIRY: Duration = Duration::from_secs(1);
 const TOP_SOURCE_COUNT: usize = 5;
 const HUD_MAX_LINE_CHARS: usize = 110;
 
-static GPUI_DEVTOOLS_ENABLED: LazyLock<bool> =
-    LazyLock::new(|| std::env::var_os("ZED_GPUI_DEVTOOLS").is_some());
+static GPUI_DEVTOOLS_ENABLED: AtomicBool = AtomicBool::new(false);
 
 static GPUI_DEVTOOLS: LazyLock<RwLock<GpuiDevTools>> =
     LazyLock::new(|| RwLock::new(GpuiDevTools::new()));
 
-static INITIAL_PINNED_NOTIFY_SOURCE: LazyLock<Option<PinnedNotifySource>> = LazyLock::new(|| {
-    std::env::var("ZED_GPUI_DEVTOOLS_PIN_NOTIFY")
-        .ok()
-        .and_then(|source| parse_pinned_notify_source(&source))
-});
-
 pub(crate) fn enabled() -> bool {
-    *GPUI_DEVTOOLS_ENABLED
+    GPUI_DEVTOOLS_ENABLED.load(SeqCst)
+}
+
+/// Opens the GPUI devtools overlay for the given window.
+pub fn open(window: &mut Window) {
+    let was_enabled = GPUI_DEVTOOLS_ENABLED.swap(true, SeqCst);
+    let window_id = window.handle.window_id();
+    {
+        let mut devtools = GPUI_DEVTOOLS.write();
+        devtools.open_window(window_id);
+        devtools.resume();
+        if !was_enabled {
+            devtools.clear_counters();
+        }
+    }
+    window.refresh();
+}
+
+pub(crate) fn close_window(window: &mut Window) {
+    let window_id = window.handle.window_id();
+    let any_window_open = {
+        let mut devtools = GPUI_DEVTOOLS.write();
+        devtools.close_window(window_id);
+        let any_window_open = devtools.has_open_windows();
+        if !any_window_open {
+            devtools.clear_counters();
+            devtools.resume();
+        }
+        any_window_open
+    };
+    GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
+    window.refresh();
+}
+
+fn window_open(window_id: WindowId) -> bool {
+    GPUI_DEVTOOLS.read().is_window_open(window_id)
 }
 
 pub(super) fn event_age(now: Instant, timestamp: Instant) -> Option<Duration> {
@@ -81,20 +116,12 @@ pub(crate) fn record_notify(event: NotifyEvent) {
     devtools
         .notify_source_last_stats
         .insert(source, NotifySourceStats::from_event(&event));
-    if !devtools.initial_pinned_notify_source_resolved
-        && INITIAL_PINNED_NOTIFY_SOURCE
-            .as_ref()
-            .is_some_and(|pinned_source| pinned_source.matches(&event))
-    {
-        devtools.pinned_notify_sources.insert(source);
-        devtools.initial_pinned_notify_source_resolved = true;
-    }
     devtools.notifications.push(event);
     devtools.record_recording_duration(started_at, started_at.elapsed());
 }
 
 pub(crate) fn record_frame(event: FrameEvent) {
-    if !enabled() {
+    if !enabled() || !window_open(event.window_id) {
         return;
     }
 
@@ -113,11 +140,16 @@ pub(crate) fn forget_window(window_id: WindowId) {
         return;
     }
 
-    GPUI_DEVTOOLS.write().forget_window(window_id);
+    let any_window_open = {
+        let mut devtools = GPUI_DEVTOOLS.write();
+        devtools.forget_window(window_id);
+        devtools.has_open_windows()
+    };
+    GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
 }
 
 pub(crate) fn record_dirty_path(event: DirtyPathEvent) {
-    if !enabled() {
+    if !enabled() || !window_open(event.window_id) {
         return;
     }
 
@@ -151,7 +183,7 @@ pub(crate) fn record_dirty_path(event: DirtyPathEvent) {
 }
 
 pub(crate) fn record_view_bounds(window_id: WindowId, entity_id: EntityId, bounds: Bounds<Pixels>) {
-    if !enabled() {
+    if !enabled() || !window_open(window_id) {
         return;
     }
 
@@ -167,7 +199,7 @@ pub(crate) fn record_view_bounds(window_id: WindowId, entity_id: EntityId, bound
 }
 
 pub(crate) fn record_view_render(event: ViewRenderEvent) {
-    if !enabled() {
+    if !enabled() || !window_open(event.window_id) {
         return;
     }
 
@@ -234,7 +266,7 @@ pub(crate) fn record_view_render(event: ViewRenderEvent) {
 }
 
 pub(crate) fn record_animation(event: AnimationEvent) {
-    if !enabled() {
+    if !enabled() || !window_open(event.window_id) {
         return;
     }
 
@@ -245,7 +277,7 @@ pub(crate) fn record_animation(event: AnimationEvent) {
 }
 
 pub(crate) fn prepaint_window_overlay(window: &mut Window) {
-    if !enabled() {
+    if !enabled() || !window_open(window.handle.window_id()) {
         return;
     }
 
@@ -253,7 +285,7 @@ pub(crate) fn prepaint_window_overlay(window: &mut Window) {
 }
 
 pub(crate) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
-    if !enabled() {
+    if !enabled() || !window_open(window.handle.window_id()) {
         return;
     }
 
