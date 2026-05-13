@@ -3,8 +3,9 @@ use crate::SendImmediately;
 use crate::{
     ChatWithFollow,
     completion_provider::{
-        AgentContextSelection, PromptCompletionProvider, PromptCompletionProviderDelegate,
-        PromptContextAction, PromptContextType, SlashCommandCompletion,
+        AgentContextSelection, AvailableCommandKind, PromptCompletionProvider,
+        PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
+        SlashCommandCompletion,
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
@@ -47,16 +48,19 @@ use zed_actions::agent::{Chat, PasteRaw};
 pub struct SessionCapabilities {
     prompt_capabilities: acp::PromptCapabilities,
     available_commands: Vec<acp::AvailableCommand>,
+    trust_zed_skill_metadata: bool,
 }
 
 impl SessionCapabilities {
     pub fn new(
         prompt_capabilities: acp::PromptCapabilities,
         available_commands: Vec<acp::AvailableCommand>,
+        trust_zed_skill_metadata: bool,
     ) -> Self {
         Self {
             prompt_capabilities,
             available_commands,
+            trust_zed_skill_metadata,
         }
     }
 
@@ -91,11 +95,33 @@ impl SessionCapabilities {
     pub fn completion_commands(&self) -> Vec<crate::completion_provider::AvailableCommand> {
         self.available_commands
             .iter()
-            .map(|cmd| crate::completion_provider::AvailableCommand {
-                name: cmd.name.clone().into(),
-                description: cmd.description.clone().into(),
-                requires_argument: cmd.input.is_some(),
-                source: acp_thread::skill_source_from_meta(&cmd.meta),
+            .map(|cmd| {
+                let source = self
+                    .trust_zed_skill_metadata
+                    .then(|| acp_thread::skill_source_from_meta(&cmd.meta))
+                    .flatten();
+                let kind = if self.trust_zed_skill_metadata {
+                    match (
+                        source.clone(),
+                        acp_thread::skill_file_path_from_meta(&cmd.meta),
+                    ) {
+                        (Some(source), Some(skill_file_path)) => AvailableCommandKind::Skill {
+                            source,
+                            skill_file_path,
+                        },
+                        _ => AvailableCommandKind::Command,
+                    }
+                } else {
+                    AvailableCommandKind::Command
+                };
+
+                crate::completion_provider::AvailableCommand {
+                    name: cmd.name.clone().into(),
+                    description: cmd.description.clone().into(),
+                    requires_argument: cmd.input.is_some(),
+                    source,
+                    kind,
+                }
             })
             .collect()
     }
@@ -718,6 +744,7 @@ impl MessageEditor {
         text: &str,
         available_commands: &[acp::AvailableCommand],
         agent_id: &AgentId,
+        trust_zed_skill_metadata: bool,
     ) -> Result<()> {
         if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
             if let Some(command_name) = parsed_command.command {
@@ -729,7 +756,7 @@ impl MessageEditor {
                 //    (`/github.create_pr`), and skills (whose bare name
                 //    is registered for the unqualified `/<name>` form).
                 //
-                // 2. Skill scope qualifier `/<scope>:<name>`. The popup
+                // 2. Trusted native skill scope qualifier `/<scope>:<name>`. The popup
                 //    inserts this colon-separated form to disambiguate
                 //    same-named skills, so the validator splits on the
                 //    LAST `:` to recover scope + bare name. Skill
@@ -750,7 +777,8 @@ impl MessageEditor {
                 let direct_match = available_commands
                     .iter()
                     .any(|cmd| cmd.name == command_name);
-                let scope_match = !direct_match
+                let scope_match = trust_zed_skill_metadata
+                    && !direct_match
                     && command_name.rsplit_once(':').is_some_and(|(scope, bare)| {
                         !bare.is_empty()
                             && available_commands.iter().any(|cmd| {
@@ -765,7 +793,10 @@ impl MessageEditor {
                         "The /{} command is not supported by {}.\n\nAvailable commands: {}",
                         command_name,
                         agent_id,
-                        Self::format_available_commands(available_commands),
+                        Self::format_available_commands(
+                            available_commands,
+                            trust_zed_skill_metadata,
+                        ),
                     ));
                 }
             }
@@ -773,20 +804,26 @@ impl MessageEditor {
         Ok(())
     }
 
-    /// Render the available-commands list for error messages. Skills
+    /// Render the available-commands list for error messages. Trusted native skills
     /// are shown in their qualified `/<scope>:<name>` form so users
     /// see the exact text the popup would insert — otherwise the
     /// listing would contain confusing duplicates like `/foo, /foo`
     /// when both a global and a project-local skill share a name.
     /// Globals carry an empty scope and so render as `/:<name>`.
-    fn format_available_commands(commands: &[acp::AvailableCommand]) -> String {
+    fn format_available_commands(
+        commands: &[acp::AvailableCommand],
+        trust_zed_skill_metadata: bool,
+    ) -> String {
         if commands.is_empty() {
             return "none".to_string();
         }
         commands
             .iter()
             .map(|cmd| {
-                if let Some(scope) = acp_thread::skill_source_str_from_meta(&cmd.meta) {
+                if let Some(scope) = trust_zed_skill_metadata
+                    .then(|| acp_thread::skill_source_str_from_meta(&cmd.meta))
+                    .flatten()
+                {
                     format!("/{}:{}", scope, cmd.name)
                 } else {
                     format!("/{}", cmd.name)
@@ -802,16 +839,23 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         let text = self.editor.read(cx).text(cx);
-        let available_commands = self
-            .session_capabilities
-            .read()
-            .available_commands()
-            .to_vec();
+        let (available_commands, trust_zed_skill_metadata) = {
+            let session_capabilities = self.session_capabilities.read();
+            (
+                session_capabilities.available_commands().to_vec(),
+                session_capabilities.trust_zed_skill_metadata,
+            )
+        };
         let agent_id = self.agent_id.clone();
         let build_task = self.build_content_blocks(full_mention_content, cx);
 
         cx.spawn(async move |_, _cx| {
-            Self::validate_slash_commands(&text, &available_commands, &agent_id)?;
+            Self::validate_slash_commands(
+                &text,
+                &available_commands,
+                &agent_id,
+                trust_zed_skill_metadata,
+            )?;
             build_task.await
         })
     }
@@ -2113,7 +2157,9 @@ mod tests {
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, MultiWorkspace, Workspace};
 
-    use crate::completion_provider::{AgentContextSelection, PromptContextType};
+    use crate::completion_provider::{
+        AgentContextSelection, AvailableCommandKind, PromptContextType,
+    };
     use crate::{
         conversation_view::tests::init_test,
         mention_set::insert_crease_for_mention,
@@ -2121,6 +2167,37 @@ mod tests {
             Mention, MessageEditor, MessageEditorEvent, SessionCapabilities, parse_mention_links,
         },
     };
+
+    #[test]
+    fn test_completion_commands_only_trust_skill_paths_for_native_agent() {
+        let skill_file_path = PathBuf::from("/tmp/SKILL.md");
+        let command = acp::AvailableCommand::new("deploy", "Deploy the app")
+            .meta(acp_thread::meta_with_skill_info("", &skill_file_path));
+
+        let untrusted = SessionCapabilities::new(
+            acp::PromptCapabilities::default(),
+            vec![command.clone()],
+            false,
+        )
+        .completion_commands();
+        assert!(matches!(untrusted[0].kind, AvailableCommandKind::Command));
+
+        let trusted =
+            SessionCapabilities::new(acp::PromptCapabilities::default(), vec![command], true)
+                .completion_commands();
+        match &trusted[0].kind {
+            AvailableCommandKind::Skill {
+                source,
+                skill_file_path: trusted_skill_file_path,
+            } => {
+                assert_eq!(source.as_ref(), "");
+                assert_eq!(trusted_skill_file_path, &skill_file_path);
+            }
+            AvailableCommandKind::Command => {
+                panic!("expected trusted native command to be a skill")
+            }
+        }
+    }
 
     #[test]
     fn test_validate_slash_commands_accepts_scope_qualified_skill() {
@@ -2141,37 +2218,40 @@ mod tests {
 
         // Bare name still works (current behavior — the resolver
         // applies project-overrides-global for unqualified commands).
-        MessageEditor::validate_slash_commands("/deploy", &commands, &agent_id)
+        MessageEditor::validate_slash_commands("/deploy", &commands, &agent_id, true)
             .expect("bare /deploy should validate when a skill named `deploy` exists");
+        MessageEditor::validate_slash_commands("/zed:deploy", &commands, &agent_id, false)
+            .expect_err("scope-qualified skills should require trusted native skill metadata");
 
         // Scope-qualified forms both validate, each pointing at the
         // matching source. `/:<name>` is the qualified form for a
         // global skill; `/<worktree>:<name>` is the qualified form
         // for a project-local skill.
-        MessageEditor::validate_slash_commands("/:deploy", &commands, &agent_id)
+        MessageEditor::validate_slash_commands("/:deploy", &commands, &agent_id, true)
             .expect("/:deploy should validate when a global skill named `deploy` exists");
-        MessageEditor::validate_slash_commands("/zed:deploy", &commands, &agent_id).expect(
+        MessageEditor::validate_slash_commands("/zed:deploy", &commands, &agent_id, true).expect(
             "/zed:deploy should validate when a project skill named `deploy` exists in the `zed` worktree",
         );
 
         // Hand-typed `/global:<name>` is NOT an alias for `/:<name>`.
         // It looks for a project-local skill from a worktree named
         // `global`, and fails when no such worktree skill exists.
-        MessageEditor::validate_slash_commands("/global:deploy", &commands, &agent_id).expect_err(
-            "/global:deploy should fail when no worktree named `global` has a `deploy` skill",
-        );
+        MessageEditor::validate_slash_commands("/global:deploy", &commands, &agent_id, true)
+            .expect_err(
+                "/global:deploy should fail when no worktree named `global` has a `deploy` skill",
+            );
 
         // The `:` separator is what distinguishes a skill scope from
         // an MCP server prefix — the dotted form `/zed.deploy` is an
         // MCP-style lookup, which doesn't match here.
-        MessageEditor::validate_slash_commands("/zed.deploy", &commands, &agent_id)
+        MessageEditor::validate_slash_commands("/zed.deploy", &commands, &agent_id, true)
             .expect_err("/zed.deploy (dotted) should be treated as an MCP-style prefix and fail");
 
         // Wrong scope is rejected so the resolver doesn't silently
         // fall through when the user meant a skill. `zed:help` looks
         // like a skill scope qualifier but no skill named `help`
         // exists in the `zed` worktree (it's an MCP command).
-        let err = MessageEditor::validate_slash_commands("/zed:help", &commands, &agent_id)
+        let err = MessageEditor::validate_slash_commands("/zed:help", &commands, &agent_id, true)
             .expect_err("/zed:help should fail — `help` is an MCP command, not a worktree skill");
         let err_message = err.to_string();
         assert!(
@@ -2396,6 +2476,7 @@ mod tests {
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             acp::PromptCapabilities::default(),
             vec![],
+            false,
         )));
 
         let (multi_workspace, cx) =
@@ -2565,6 +2646,7 @@ mod tests {
                     )),
                 ),
             ],
+            false,
         )));
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -2732,6 +2814,7 @@ mod tests {
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             acp::PromptCapabilities::default(),
             vec![acp::AvailableCommand::new("hello", "Say hello")],
+            false,
         )));
 
         // Track every event emitted by the message editor across the
@@ -2887,6 +2970,7 @@ mod tests {
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             acp::PromptCapabilities::default(),
             vec![],
+            false,
         )));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {

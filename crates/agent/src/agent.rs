@@ -1274,7 +1274,10 @@ impl NativeAgent {
             // the inserted text is `/:<name>`) and the worktree root
             // name for project-locals. See `SkillSource::scope_prefix`.
             acp::AvailableCommand::new(skill.name.clone(), skill.description.clone()).meta(
-                acp_thread::meta_with_skill_source(skill.source.scope_prefix()),
+                acp_thread::meta_with_skill_info(
+                    skill.source.scope_prefix(),
+                    &skill.skill_file_path,
+                ),
             )
         });
 

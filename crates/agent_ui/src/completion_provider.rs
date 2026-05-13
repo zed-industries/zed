@@ -298,6 +298,15 @@ pub struct RulesContextEntry {
 }
 
 #[derive(Debug, Clone)]
+pub enum AvailableCommandKind {
+    Command,
+    Skill {
+        source: SharedString,
+        skill_file_path: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
@@ -307,6 +316,7 @@ pub struct AvailableCommand {
     /// autocomplete popup after the command name so users can
     /// disambiguate same-named commands from different scopes.
     pub source: Option<SharedString>,
+    pub kind: AvailableCommandKind,
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -1255,6 +1265,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
             PromptCompletion::SlashCommand(SlashCommandCompletion {
                 command, argument, ..
             }) => {
+                let show_section_headers = command.is_none() && argument.is_none();
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
                 // Resolve the muted-text highlight up front: the
                 // completion build happens on a background thread where
@@ -1264,80 +1275,146 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                     .syntax()
                     .highlight_id("variable")
                     .map(HighlightId::new);
+
+                // Pre-build confirm callbacks for skill commands on the
+                // foreground thread, since they need access to entities
+                // (mention_set, editor, workspace) that aren't Send.
+                // Non-skill commands get `None` here and use the
+                // send-immediately confirm callback built later.
+                type SkillInfo = (
+                    String,
+                    SharedString,
+                    Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>,
+                );
+                let skill_confirm_callbacks: Task<Vec<(AvailableCommand, Option<SkillInfo>)>> = {
+                    let source = source.clone();
+                    let editor = editor.clone();
+                    let mention_set = mention_set.clone();
+                    let workspace = workspace.clone();
+                    let source_range = source_range.clone();
+                    cx.spawn(async move |_this, cx| {
+                        let commands = search_task.await;
+                        cx.update(|cx| {
+                            commands
+                                .into_iter()
+                                .map(|command| {
+                                    if let AvailableCommandKind::Skill {
+                                        source: skill_source,
+                                        skill_file_path,
+                                    } = &command.kind
+                                    {
+                                        let uri = MentionUri::Skill {
+                                            name: command.name.to_string(),
+                                            source: skill_source.to_string(),
+                                            skill_file_path: skill_file_path.clone(),
+                                        };
+                                        let new_text = format!("{} ", uri.as_link());
+                                        let new_text_len = new_text.len();
+                                        let icon_path = uri.icon_path(cx);
+                                        let crease_text: SharedString = uri.name().into();
+                                        let confirm = confirm_completion_callback(
+                                            crease_text,
+                                            source_range.start,
+                                            new_text_len - 1,
+                                            uri,
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                        );
+                                        (command, Some((new_text, icon_path, confirm)))
+                                    } else {
+                                        (command, None)
+                                    }
+                                })
+                                .collect::<Vec<(AvailableCommand, Option<SkillInfo>)>>()
+                        })
+                    })
+                };
+
                 cx.background_spawn(async move {
-                    let completions = search_task
-                        .await
+                    let mut commands_with_callbacks = skill_confirm_callbacks.await;
+                    // Sort so skills come first, then non-skill commands.
+                    // This ensures group headers appear once per group.
+                    commands_with_callbacks
+                        .sort_by_key(|(_, skill_info)| if skill_info.is_some() { 0 } else { 1 });
+                    let completions = commands_with_callbacks
                         .into_iter()
-                        .map(|command| {
-                            // Qualify the inserted text with the skill's
-                            // scope prefix as `/<prefix>:<name>` when the
-                            // command carries one. The prefix is empty
-                            // for global skills (so the inserted text
-                            // is `/:<name>`) and the worktree root name
-                            // for project-locals (so the inserted text
-                            // is `/<worktree>:<name>`). The `:`
-                            // separator namespaces skill scopes away
-                            // from MCP server prefixes
-                            // (`/<server>.<name>`), and the empty
-                            // prefix means a worktree literally named
-                            // `global` no longer collides with the
-                            // global source. MCP commands have no
-                            // source meta and keep the bare `/<name>`
-                            // form.
-                            //
-                            // Composed in a single `format!` to avoid
-                            // building an intermediate `qualified_name`
-                            // string just to splice it into the final
-                            // text.
-                            let new_text = match (command.source.as_ref(), argument.as_ref()) {
-                                (Some(source), Some(argument)) => {
-                                    format!("/{}:{} {}", source, command.name, argument)
-                                }
-                                (Some(source), None) => {
-                                    format!("/{}:{} ", source, command.name)
-                                }
-                                (None, Some(argument)) => {
-                                    format!("/{} {}", command.name, argument)
-                                }
-                                (None, None) => format!("/{} ", command.name),
-                            };
-
-                            let is_missing_argument =
-                                command.requires_argument && argument.is_none();
-
+                        .map(|(command, skill_info)| {
                             let label = build_slash_command_label(&command, source_highlight_id);
 
-                            Completion {
-                                replace_range: source_range.clone(),
-                                new_text,
-                                label,
-                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
-                                    command.description.into(),
-                                )),
-                                source: project::CompletionSource::Custom,
-                                icon_path: None,
-                                match_start: None,
-                                snippet_deduplication_key: None,
-                                insert_text_mode: None,
-                                confirm: Some(Arc::new({
-                                    let source = source.clone();
-                                    move |intent, _window, cx| {
-                                        if !is_missing_argument {
-                                            cx.defer({
-                                                let source = source.clone();
-                                                move |cx| match intent {
-                                                    CompletionIntent::Complete
-                                                    | CompletionIntent::CompleteWithInsert
-                                                    | CompletionIntent::CompleteWithReplace => {
-                                                        source.confirm_command(cx);
-                                                    }
-                                                    CompletionIntent::Compose => {}
-                                                }
-                                            });
-                                        }
-                                        false
+                            if let Some((new_text, icon_path, confirm)) = skill_info {
+                                // Skill command: insert as a mention crease
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    new_text,
+                                    label,
+                                    documentation: Some(
+                                        CompletionDocumentation::MultiLinePlainText(
+                                            command.description.into(),
+                                        ),
+                                    ),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path: Some(icon_path),
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(confirm),
+                                    group: show_section_headers.then(|| "Skills".into()),
+                                }
+                            } else {
+                                // Non-skill slash command: send immediately on confirm
+                                let new_text = match (command.source.as_ref(), argument.as_ref()) {
+                                    (Some(source), Some(argument)) => {
+                                        format!("/{}:{} {}", source, command.name, argument)
                                     }
-                                })),
+                                    (Some(source), None) => {
+                                        format!("/{}:{} ", source, command.name)
+                                    }
+                                    (None, Some(argument)) => {
+                                        format!("/{} {}", command.name, argument)
+                                    }
+                                    (None, None) => format!("/{} ", command.name),
+                                };
+
+                                let is_missing_argument =
+                                    command.requires_argument && argument.is_none();
+
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    new_text,
+                                    label,
+                                    documentation: Some(
+                                        CompletionDocumentation::MultiLinePlainText(
+                                            command.description.into(),
+                                        ),
+                                    ),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path: None,
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(Arc::new({
+                                        let source = source.clone();
+                                        move |intent, _window, cx| {
+                                            if !is_missing_argument {
+                                                cx.defer({
+                                                    let source = source.clone();
+                                                    move |cx| match intent {
+                                                        CompletionIntent::Complete
+                                                        | CompletionIntent::CompleteWithInsert
+                                                        | CompletionIntent::CompleteWithReplace => {
+                                                            source.confirm_command(cx);
+                                                        }
+                                                        CompletionIntent::Compose => {}
+                                                    }
+                                                });
+                                            }
+                                            false
+                                        }
+                                    })),
+                                    group: show_section_headers.then(|| "Agent Commands".into()),
+                                }
                             }
                         })
                         .collect();
@@ -1347,8 +1424,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         display_options: CompletionDisplayOptions {
                             dynamic_width: true,
                         },
-                        // Since this does its own filtering (see `filter_completions()` returns false),
-                        // there is no benefit to computing whether this set of completions is incomplete.
                         is_incomplete: true,
                     }])
                 })

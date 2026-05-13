@@ -180,6 +180,11 @@ fn open_mention_uri(
         MentionUri::Rule { id, .. } => {
             open_rule(workspace, id, window, cx);
         }
+        MentionUri::Skill {
+            skill_file_path, ..
+        } => {
+            open_skill_file(workspace, skill_file_path, window, cx);
+        }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
@@ -190,6 +195,25 @@ fn open_mention_uri(
         | MentionUri::GitDiff { .. }
         | MentionUri::MergeConflict { .. } => {}
     });
+}
+
+fn open_skill_file(
+    workspace: &mut Workspace,
+    skill_file_path: PathBuf,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .open_abs_path(
+            skill_file_path,
+            OpenOptions {
+                focus: Some(true),
+                ..Default::default()
+            },
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
 }
 
 fn open_file(
