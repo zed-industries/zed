@@ -923,6 +923,15 @@ impl Editor {
         self.go_to_singleton_buffer_range(point..point, window, cx);
     }
 
+    pub fn go_to_singleton_buffer_range(
+        &mut self,
+        range: Range<Point>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_singleton_buffer_range_impl(range, true, window, cx);
+    }
+
     /// Like `go_to_singleton_buffer_point`, but does not push a navigation
     /// history entry. Useful when the caller already recorded one (e.g. when
     /// a file was just opened and we only need to move the cursor).
@@ -2297,15 +2306,6 @@ impl Editor {
             });
             Ok(location)
         })
-    }
-
-    fn go_to_singleton_buffer_range(
-        &mut self,
-        range: Range<Point>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.go_to_singleton_buffer_range_impl(range, true, window, cx);
     }
 
     fn go_to_singleton_buffer_range_impl(
