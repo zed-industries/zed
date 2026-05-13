@@ -3961,9 +3961,9 @@ mod internal_tests {
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
 
         let connection = NativeAgentConnection(agent.clone());
-        let _acp_thread = cx
+        let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection).new_session(
+                Rc::new(connection.clone()).new_session(
                     project.clone(),
                     PathList::new(&[Path::new("/project")]),
                     cx,
@@ -3974,6 +3974,7 @@ mod internal_tests {
         cx.run_until_parked();
 
         let project_id = project.entity_id();
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -4014,15 +4015,18 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        agent.read_with(cx, |agent, cx| {
+        agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
             let names: Vec<&str> = state.skills.iter().map(|s| s.name.as_str()).collect();
             assert_eq!(names, vec!["my-skill"]);
-            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
-            let command_names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+        });
+
+        cx.update(|cx| {
+            let skills = connection.available_skills(&session_id, cx);
+            let skill_names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
             assert!(
-                command_names.contains(&"my-skill"),
-                "trusted skill should appear in slash commands: {command_names:?}"
+                skill_names.contains(&"my-skill"),
+                "trusted skill should appear in available skills: {skill_names:?}"
             );
         });
     }
