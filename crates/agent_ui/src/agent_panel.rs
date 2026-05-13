@@ -60,7 +60,6 @@ use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
-use feature_flags::{AgentPanelTerminalFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -1488,9 +1487,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
-            return;
-        }
         let working_directory = self.terminal_working_directory(workspace, cx);
         self.spawn_terminal(TerminalId::new(), working_directory, true, window, cx);
     }
@@ -1505,13 +1501,9 @@ impl AgentPanel {
             .unwrap_or_else(|| self.default_terminal_working_directory(cx))
     }
 
-    pub fn supports_terminal(&self, cx: &App) -> bool {
-        cx.has_flag::<AgentPanelTerminalFeatureFlag>()
-            && self.project.read(cx).supports_terminal(cx)
-    }
-
     pub fn should_create_terminal_for_new_entry(&self, cx: &App) -> bool {
-        self.last_created_entry_kind == AgentPanelEntryKind::Terminal && self.supports_terminal(cx)
+        self.last_created_entry_kind == AgentPanelEntryKind::Terminal
+            && self.project.read(cx).supports_terminal(cx)
     }
 
     fn set_last_created_entry_kind(
@@ -1570,9 +1562,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
-            return;
-        }
         let terminal_entity = terminal_view.read(cx).terminal().clone();
         let view_subscription = cx.subscribe(
             &terminal_view,
@@ -1634,9 +1623,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
-            return;
-        }
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
@@ -2359,10 +2345,6 @@ impl AgentPanel {
     }
 
     pub fn terminals(&self, cx: &App) -> Vec<AgentPanelTerminalInfo> {
-        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
-            return Vec::new();
-        }
-
         self.terminals
             .iter()
             .map(|(id, terminal)| AgentPanelTerminalInfo {
@@ -4170,7 +4152,7 @@ impl AgentPanel {
 
         let focus_handle = self.focus_handle(cx);
 
-        let supports_terminal = self.supports_terminal(cx);
+        let supports_terminal = self.project.read(cx).supports_terminal(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
         let (selected_agent_custom_icon, selected_agent_label) = if showing_terminal {
@@ -5088,10 +5070,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<TerminalId> {
-        if !cx.has_flag::<AgentPanelTerminalFeatureFlag>() {
-            anyhow::bail!("agent-panel-terminal feature flag must be enabled");
-        }
-
         let terminal_id = TerminalId::new();
         let settings = TerminalSettings::get_global(cx).clone();
         let path_style = self.project.read(cx).path_style(cx);
@@ -6460,12 +6438,8 @@ mod tests {
     #[gpui::test]
     async fn test_terminal_entry_kind_controls_new_entry(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
-        cx.update(|_, cx| {
-            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-        });
-
         panel.read_with(&cx, |panel, cx| {
-            assert!(panel.supports_terminal(cx));
+            assert!(panel.project.read(cx).supports_terminal(cx));
             assert!(!panel.should_create_terminal_for_new_entry(cx));
         });
 
@@ -6500,10 +6474,6 @@ mod tests {
     #[gpui::test]
     async fn test_terminal_title_omits_placeholder_title(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
-        cx.update(|_, cx| {
-            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-        });
-
         let terminal_id = panel
             .update_in(&mut cx, |panel, window, cx| {
                 panel.insert_test_terminal("", true, window, cx)
@@ -6571,10 +6541,6 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (workspace, panel, mut cx) = setup_workspace_panel(cx).await;
-        cx.update(|_, cx| {
-            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-        });
-
         panel
             .update_in(&mut cx, |panel, window, cx| {
                 panel.insert_test_terminal("Dev Server", false, window, cx)
@@ -6606,10 +6572,6 @@ mod tests {
     #[gpui::test]
     async fn test_terminal_title_editor_is_created_only_while_editing(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
-        cx.update(|_, cx| {
-            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-        });
-
         let terminal_id = panel
             .update_in(&mut cx, |panel, window, cx| {
                 panel.insert_test_terminal("Dev Server", true, window, cx)
@@ -6674,10 +6636,6 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (panel, mut cx) = setup_panel(cx).await;
-        cx.update(|_, cx| {
-            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-        });
-
         let terminal_id = panel
             .update_in(&mut cx, |panel, window, cx| {
                 panel.insert_test_terminal("Initial Custom Title", true, window, cx)
@@ -6763,10 +6721,6 @@ mod tests {
     #[gpui::test]
     async fn test_terminal_bell_marks_and_activation_clears_notification(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
-        cx.update(|_, cx| {
-            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-        });
-
         let first_terminal_id = panel
             .update_in(&mut cx, |panel, window, cx| {
                 panel.insert_test_terminal("Build", true, window, cx)
