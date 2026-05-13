@@ -156,11 +156,15 @@ This creates a temporary file with the stdin content and opens it in Zed.
 
 ## URL Handling
 
-The CLI can open `zed://`, `http://`, and `https://` URLs:
+The CLI can open `zed://`, `file://`, and `ssh://` URLs:
 
 ```sh
 zed zed://settings
-zed https://github.com/zed-industries/zed
+zed file:///Users/whatever/.zshrc
+zed ssh://me@example.com/abs/path
+zed ssh://me@example.com:/abs/path
+zed ssh://me@example.com/~/project
+zed ssh://me@example.com:~/project
 ```
 
 ## Using Zed as Your Default Editor

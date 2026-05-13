@@ -576,6 +576,7 @@ pub async fn fetch_rejected_examples_after(
                 input_payload AS input,
                 prompt AS prompt,
                 requested_output AS output,
+                settled_editable_region AS settled_editable_region,
                 is_ep_shown_before_rejected AS was_shown,
                 ep_rejected_reason AS reason,
                 zed_version AS zed_version
@@ -623,6 +624,7 @@ pub async fn fetch_rejected_examples_after(
                 "input",
                 "prompt",
                 "output",
+                "settled_editable_region",
                 "was_shown",
                 "reason",
                 "zed_version",
@@ -928,6 +930,7 @@ pub async fn fetch_rated_examples_after(
                 ep_request_id AS request_id,
                 rated_inputs AS inputs,
                 rated_output AS output,
+                settled_editable_region AS settled_editable_region,
                 rating AS rating,
                 feedback AS feedback,
                 device_id AS device_id,
@@ -971,6 +974,7 @@ pub async fn fetch_rated_examples_after(
                 "request_id",
                 "inputs",
                 "output",
+                "settled_editable_region",
                 "rating",
                 "feedback",
                 "device_id",
@@ -1043,6 +1047,7 @@ fn rated_examples_from_response<'a>(
                 None => None,
             };
             let output = get_string("output");
+            let settled_editable_region = get_string("settled_editable_region");
             let rating = get_string("rating");
             let feedback = get_string("feedback").unwrap_or_default();
             let device_id = get_string("device_id");
@@ -1059,6 +1064,7 @@ fn rated_examples_from_response<'a>(
                         time,
                         inputs,
                         output,
+                        settled_editable_region,
                         rating,
                         feedback,
                         experiment_name,
@@ -1088,6 +1094,7 @@ fn build_rated_example(
     time: String,
     input: ZetaPromptInput,
     output: String,
+    settled_editable_region: Option<String>,
     rating: String,
     feedback: String,
     experiment_name: Option<String>,
@@ -1115,6 +1122,16 @@ fn build_rated_example(
         tags.push(format!("environment:{env}"));
     }
 
+    let expected_patch = settled_editable_region
+        .as_ref()
+        .map(|settled_editable_region| {
+            build_output_patch(
+                &input.cursor_path,
+                input.cursor_excerpt.as_ref(),
+                &input.excerpt_ranges.editable_350,
+                settled_editable_region,
+            )
+        });
     let mut example =
         build_example_from_snowflake(request_id, device_id, time, input, tags, None, zed_version);
 
@@ -1127,9 +1144,13 @@ fn build_rated_example(
             .push(edit_prediction::example_spec::HumanFeedback { message: feedback });
     }
 
-    if is_positive {
-        example.spec.expected_patches = vec![output];
-    } else {
+    if let Some(expected_patch) = expected_patch {
+        example.spec.expected_patches = vec![expected_patch];
+    } else if is_positive {
+        example.spec.expected_patches = vec![output.clone()];
+    }
+
+    if !is_positive {
         example.spec.rejected_patch = Some(output);
     }
 
@@ -1608,6 +1629,7 @@ fn rejected_examples_from_response<'a>(
                 input_json.clone().and_then(|v| serde_json::from_value(v).ok());
             let prompt = get_string("prompt");
             let output = get_string("output");
+            let settled_editable_region = get_string("settled_editable_region");
             let was_shown = get_bool("was_shown");
             let reason = get_string("reason");
             let zed_version = get_string("zed_version");
@@ -1621,6 +1643,7 @@ fn rejected_examples_from_response<'a>(
                         input,
                         prompt,
                         output,
+                        settled_editable_region,
                         was_shown,
                         reason,
                         zed_version,
@@ -1652,6 +1675,7 @@ fn build_rejected_example(
     input: ZetaPromptInput,
     prompt: Option<String>,
     output: String,
+    settled_editable_region: Option<String>,
     was_shown: bool,
     reason: String,
     zed_version: Option<String>,
@@ -1662,6 +1686,16 @@ fn build_rejected_example(
         &input.excerpt_ranges.editable_350,
         &output,
     );
+    let expected_patch = settled_editable_region
+        .as_ref()
+        .map(|settled_editable_region| {
+            build_output_patch(
+                &input.cursor_path,
+                input.cursor_excerpt.as_ref(),
+                &input.excerpt_ranges.editable_350,
+                settled_editable_region,
+            )
+        });
     let mut example = build_example_from_snowflake(
         request_id,
         device_id,
@@ -1672,6 +1706,9 @@ fn build_rejected_example(
         zed_version,
     );
     example.spec.rejected_patch = Some(rejected_patch);
+    if let Some(expected_patch) = expected_patch {
+        example.spec.expected_patches = vec![expected_patch];
+    }
     example.prompt = prompt.map(|prompt| ExamplePrompt {
         input: prompt,
         expected_output: None,

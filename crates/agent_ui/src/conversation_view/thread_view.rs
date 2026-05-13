@@ -7,6 +7,7 @@ use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry};
+use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
@@ -332,6 +333,15 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
+    /// Errors emitted by the agent while loading SKILL.md files. Each one
+    /// renders as a clickable banner that opens the offending file.
+    pub skill_loading_errors: Vec<SkillLoadingError>,
+    /// Errors the user has explicitly dismissed. Each entry is matched against
+    /// emitted errors by full equality; when an error no longer appears in the
+    /// emitted list (i.e. the underlying file was fixed or removed), it's
+    /// dropped from this set so a future regression of the same kind would
+    /// re-show.
+    dismissed_skill_loading_errors: HashSet<SkillLoadingError>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -470,6 +480,42 @@ impl ThreadView {
             Self::handle_message_editor_event,
         ));
 
+        // If this thread is backed by a NativeAgent, listen for skill loading
+        // errors so we can surface them as banners. The agent emits a single
+        // replacement-style event per project refresh, so we overwrite our
+        // local list rather than appending — this also clears stale errors
+        // once a user resolves them.
+        if let Some(native_connection) = thread
+            .read(cx)
+            .connection()
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+        {
+            let project_id = thread.read(cx).project().entity_id();
+            subscriptions.push(cx.subscribe(
+                &native_connection.0,
+                move |this: &mut Self, _agent, event: &SkillLoadingErrorsUpdated, cx| {
+                    if event.project_id != project_id {
+                        return;
+                    }
+                    // Drop dismissals for errors that no longer appear in the emitted
+                    // list — the underlying file must have been fixed or removed, so a
+                    // future regression should re-show.
+                    this.dismissed_skill_loading_errors
+                        .retain(|dismissed| event.errors.contains(dismissed));
+
+                    // Show only errors that haven't been dismissed.
+                    this.skill_loading_errors = event
+                        .errors
+                        .iter()
+                        .filter(|e| !this.dismissed_skill_loading_errors.contains(e))
+                        .cloned()
+                        .collect();
+                    cx.notify();
+                },
+            ));
+        }
+
         subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
             let is_empty = editor.read(cx).text(cx).is_empty();
             let draft_contents_task = if is_empty {
@@ -560,6 +606,8 @@ impl ThreadView {
             show_codex_windows_warning,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
+            skill_loading_errors: Vec::new(),
+            dismissed_skill_loading_errors: HashSet::default(),
         };
 
         this.sync_generating_indicator(cx);
@@ -616,6 +664,24 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The three skill-watcher trigger points all live here:
+        // - `Focus` fires when the user clicks into the input box.
+        // - `SlashAutocompleteOpened` fires when the completion
+        //   provider is asked for slash commands.
+        // - `Send` fires when the user submits the conversation.
+        // All three triggers are idempotent; firing the same one
+        // repeatedly is a no-op once a scan or watch is active.
+        if matches!(
+            event,
+            MessageEditorEvent::Focus
+                | MessageEditorEvent::SlashAutocompleteOpened
+                | MessageEditorEvent::Send
+        ) {
+            if let Some(connection) = self.as_native_connection(cx) {
+                connection.ensure_skills_scan_started(cx);
+            }
+        }
+
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
@@ -624,6 +690,7 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             MessageEditorEvent::LostFocus => {}
+            MessageEditorEvent::SlashAutocompleteOpened => {}
             MessageEditorEvent::InputAttempted { .. } => {}
         }
     }
@@ -762,6 +829,8 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
+            }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
@@ -4695,7 +4764,7 @@ impl ThreadView {
                                     }
 
                                     Some(
-                                        self.render_markdown(md.clone(), style.clone())
+                                        self.render_markdown(md.clone(), style.clone(), cx)
                                             .into_any_element(),
                                     )
                                 })
@@ -5656,6 +5725,7 @@ impl ThreadView {
                                 .child(self.render_markdown(
                                     chunk,
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    cx,
                                 )),
                         )
                         .when(is_constrained, |this| {
@@ -5921,12 +5991,12 @@ impl ThreadView {
         // Suppress the code block's built-in copy button so we don't stack two
         // copy buttons on top of each other; the outer button below is the one
         // we want, because it copies the unfenced command text.
-        let markdown_element =
-            self.render_markdown(command, style)
-                .code_block_renderer(CodeBlockRenderer::Default {
-                    copy_button_visibility: CopyButtonVisibility::Hidden,
-                    border: false,
-                });
+        let markdown_element = self
+            .render_markdown(command, style, cx)
+            .code_block_renderer(CodeBlockRenderer::Default {
+                copy_button_visibility: CopyButtonVisibility::Hidden,
+                border: false,
+            });
         let copy_button = CopyButton::new("copy-command", command_text)
             .tooltip_label("Copy Command")
             .visible_on_hover(group.clone());
@@ -6445,6 +6515,7 @@ impl ThreadView {
                                                     window,
                                                     cx,
                                                 ),
+                                                cx,
                                             )
                                         },
                                     ))
@@ -6488,6 +6559,7 @@ impl ThreadView {
                                         self.render_markdown(
                                             input,
                                             MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                            cx,
                                         ),
                                     )
                                 }))
@@ -7414,6 +7486,7 @@ impl ThreadView {
                                 ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
                                     .with_muted_text(cx)
                             },
+                            cx,
                         ),
                     )
                     .tooltip(Tooltip::text("Go to File"))
@@ -7427,6 +7500,7 @@ impl ThreadView {
                     .child(self.render_markdown(
                         tool_call.label.clone(),
                         MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
+                        cx,
                     ))
                     .into_any()
             })
@@ -7683,6 +7757,7 @@ impl ThreadView {
             .child(self.render_markdown(
                 markdown,
                 MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                cx,
             ))
             .when(!card_layout, |this| {
                 this.child(
@@ -8579,7 +8654,7 @@ impl ThreadView {
         let markdown_style =
             MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx);
         let description = self
-            .render_markdown(markdown, markdown_style)
+            .render_markdown(markdown, markdown_style, cx)
             .into_any_element();
 
         Callout::new()
@@ -8605,11 +8680,13 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            open_link(text, &workspace, window, cx);
-        })
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
+        render_agent_markdown(markdown, style, &self.workspace, &self.project, cx)
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
@@ -8672,6 +8749,54 @@ impl ThreadView {
                         }
                     })),
             )
+    }
+
+    fn render_skill_loading_errors(&self, cx: &mut Context<Self>) -> Vec<Callout> {
+        self.skill_loading_errors
+            .iter()
+            .enumerate()
+            .map(|(index, error)| {
+                let abs_path = error.path.clone();
+                let workspace = self.workspace.clone();
+                let path_label = error.path.display().to_string();
+                let target = error.clone();
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title("Skill failed to load")
+                    .description(format!("{}\n{path_label}", error.message))
+                    .actions_slot(
+                        Button::new(("open-skill-file", index), "Open File").on_click(cx.listener(
+                            move |_, _, window, cx| {
+                                let abs_path = abs_path.clone();
+                                workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace
+                                            .open_abs_path(
+                                                abs_path,
+                                                workspace::OpenOptions::default(),
+                                                window,
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                            },
+                        )),
+                    )
+                    .dismiss_action(
+                        IconButton::new(("dismiss-skill-error", index), IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Dismiss"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.skill_loading_errors.retain(|e| *e != target);
+                                this.dismissed_skill_loading_errors.insert(target.clone());
+                                cx.notify();
+                            })),
+                    )
+            })
+            .collect()
     }
 
     fn render_external_source_prompt_warning(&self, cx: &mut Context<Self>) -> Callout {
@@ -9161,6 +9286,7 @@ impl Render for ThreadView {
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
+            .children(self.render_skill_loading_errors(cx))
             .children(self.render_activity_bar(window, cx))
             .when(self.show_external_source_prompt_warning, |this| {
                 this.child(self.render_external_source_prompt_warning(cx))

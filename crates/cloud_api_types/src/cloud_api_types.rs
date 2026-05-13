@@ -41,6 +41,7 @@ pub struct AuthenticatedUser {
     pub name: Option<String>,
     pub is_staff: bool,
     pub accepted_tos_at: Option<Timestamp>,
+    pub has_connected_to_collab_once: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]

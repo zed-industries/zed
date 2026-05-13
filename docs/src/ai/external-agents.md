@@ -21,7 +21,7 @@ Under the hood we run Gemini CLI in the background, and talk to it over ACP.
 
 ### Getting Started
 
-First open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Gemini CLI thread.
+First open the agent panel with {#kb agent::ToggleFocus}, and then start a new Gemini CLI thread using the agent selector button on the left (in the empty state) or the `+` button in the top right.
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
@@ -64,7 +64,7 @@ Under the hood, Zed runs the Claude Agent SDK, which runs Claude Code under the 
 
 ### Getting Started
 
-Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Claude Agent thread.
+Open the agent panel with {#kb agent::ToggleFocus}, and then start a new Claude Agent thread using the agent selector button on the left (in the empty state) or the `+` button in the top right.
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
@@ -136,7 +136,7 @@ Under the hood, Zed runs Codex CLI and communicates to it over ACP, through [a d
 ### Getting Started
 
 As of version `0.208`, you should be able to use Codex directly from Zed.
-Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Codex thread.
+Open the agent panel with {#kb agent::ToggleFocus}, and then start a new Codex thread using the agent selector button on the left (in the empty state) or the `+` button in the top right.
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the {#action zed::OpenKeymapFile} command to include:
 
