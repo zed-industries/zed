@@ -1739,16 +1739,12 @@ impl Render for BranchDiffToolbar {
                                 let base_ref: SharedString = branch.name().to_owned().into();
                                 project_diff
                                     .update(cx, |project_diff, cx| {
-                                        {
-                                            let this = &mut *project_diff;
-                                            this.branch_diff.update(cx, |branch_diff, cx| {
-                                                branch_diff.set_diff_base(
-                                                    DiffBase::Merge { base_ref: base_ref },
-                                                    cx,
-                                                );
-                                            });
-                                            cx.notify();
-                                        };
+                                        let branch_diff = &mut project_diff.branch_diff;
+                                        branch_diff.update(cx, |branch_diff, cx| {
+                                            branch_diff
+                                                .set_diff_base(DiffBase::Merge { base_ref }, cx);
+                                        });
+                                        cx.notify();
                                     })
                                     .ok();
                             });
