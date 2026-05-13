@@ -172,11 +172,21 @@ pub struct ProjectPanel {
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
     state: State,
-    /// Payload from the most recent scheduled save. Used to skip rescheduling
-    /// when `update_visible_entries` runs but the persisted state hasn't
-    /// actually changed (e.g. git status updates) — including the rename case,
-    /// where entry IDs stay the same but the relative paths change.
+    /// Entry-ID snapshot from the most recent scheduled save. Used as a
+    /// cheap first-level guard against running the path-building slow path
+    /// for events that don't touch expansion state (git status updates,
+    /// settings changes, worktree order changes).
+    last_scheduled_expanded_dir_ids: Option<HashMap<WorktreeId, Vec<ProjectEntryId>>>,
+    /// Path payload from the most recent scheduled save. Used as the
+    /// second-level guard so a `WorktreeUpdatedEntries` event that doesn't
+    /// actually change persisted paths (e.g. file content modified) doesn't
+    /// trigger a redundant DB write.
     last_scheduled_expanded_paths: Option<collections::HashMap<Arc<Path>, Vec<String>>>,
+    /// Set when a `WorktreeUpdatedEntries` event fires, so we know to force
+    /// the slow path on the next scheduled save in case a rename changed a
+    /// persisted path without changing any entry id. Cleared on each
+    /// scheduled save.
+    worktree_entries_changed_since_last_save: bool,
     _save_collapse_state_task: Task<()>,
 }
 
@@ -687,8 +697,16 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
-                    project::Event::WorktreeUpdatedEntries(_, _)
-                    | project::Event::WorktreeAdded(_)
+                    project::Event::WorktreeUpdatedEntries(_, _) => {
+                        // A rename keeps `ProjectEntryId` stable while changing
+                        // the entry's path, which the cheap entry-id guard in
+                        // `schedule_save_collapse_state` cannot detect. Flag
+                        // it so the next schedule recomputes the path payload.
+                        this.worktree_entries_changed_since_last_save = true;
+                        this.update_visible_entries(None, false, false, window, cx);
+                        cx.notify();
+                    }
+                    project::Event::WorktreeAdded(_)
                     | project::Event::WorktreeOrderChanged => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
@@ -878,7 +896,9 @@ impl ProjectPanel {
                 },
                 update_visible_entries_task: Default::default(),
                 undo_manager: UndoManager::new(workspace.weak_handle(), weak_project_panel, &cx),
+                last_scheduled_expanded_dir_ids: None,
                 last_scheduled_expanded_paths: None,
+                worktree_entries_changed_since_last_save: false,
                 _save_collapse_state_task: Task::ready(()),
             };
             this.update_visible_entries(None, false, false, window, cx);
@@ -4380,17 +4400,37 @@ impl ProjectPanel {
     /// Debounced save of the expanded directory state to the database.
     /// No-ops when persistence is disabled, the workspace has no
     /// `database_id` yet, or the persisted payload hasn't changed since the
-    /// last scheduled save. The comparison is done on the path payload so
-    /// renames (which preserve `ProjectEntryId` but change `RelPath`) still
-    /// trigger a reschedule.
+    /// last scheduled save.
+    ///
+    /// Uses a two-tier guard so unrelated `update_visible_entries` passes
+    /// (git status updates, settings changes, worktree order changes) don't
+    /// pay the cost of rebuilding the path payload:
+    ///
+    /// 1. Cheap entry-id comparison against the last scheduled snapshot. If
+    ///    unchanged and no `WorktreeUpdatedEntries` event has fired since
+    ///    last save, return without rebuilding paths.
+    /// 2. Otherwise build the path payload and compare it (this catches
+    ///    renames, where entry ids stay the same but paths change).
     fn schedule_save_collapse_state(&mut self, cx: &mut Context<Self>) {
+        let ids_unchanged = self.last_scheduled_expanded_dir_ids.as_ref()
+            == Some(&self.state.expanded_dir_ids);
+        if ids_unchanged && !self.worktree_entries_changed_since_last_save {
+            return;
+        }
         let Some((workspace_id, entries)) = self.collapse_state_save_payload(cx) else {
             return;
         };
+
+        // Update the cheap-guard caches even when the path payload turns out
+        // to be unchanged, so we don't redo this work on the next call.
+        self.last_scheduled_expanded_dir_ids = Some(self.state.expanded_dir_ids.clone());
+        self.worktree_entries_changed_since_last_save = false;
+
         if self.last_scheduled_expanded_paths.as_ref() == Some(&entries) {
             return;
         }
         self.last_scheduled_expanded_paths = Some(entries.clone());
+
         let db = persistence::ProjectPanelDb::global(cx);
         let executor = cx.background_executor().clone();
         self._save_collapse_state_task = cx.background_executor().spawn(async move {
