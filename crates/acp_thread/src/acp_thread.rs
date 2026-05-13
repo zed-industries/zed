@@ -33,12 +33,7 @@ use std::ops::Range;
 use std::process::ExitStatus;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use std::{
-    fmt::Display,
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 use text::Bias;
@@ -125,26 +120,6 @@ pub fn skill_source_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> 
 /// Helper to create meta tagging an `AvailableCommand` with a skill source.
 pub fn meta_with_skill_source(source: &str) -> acp::Meta {
     acp::Meta::from_iter([(SKILL_SOURCE_META_KEY.into(), source.into())])
-}
-
-pub const SKILL_FILE_PATH_META_KEY: &str = "zed.skill_file_path";
-
-pub fn skill_file_path_from_meta(meta: &Option<acp::Meta>) -> Option<PathBuf> {
-    meta.as_ref()
-        .and_then(|m| m.get(SKILL_FILE_PATH_META_KEY))
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-}
-
-/// Helper to create meta tagging an `AvailableCommand` with skill source and file path.
-pub fn meta_with_skill_info(source: &str, skill_file_path: &Path) -> acp::Meta {
-    acp::Meta::from_iter([
-        (SKILL_SOURCE_META_KEY.into(), source.into()),
-        (
-            SKILL_FILE_PATH_META_KEY.into(),
-            skill_file_path.to_string_lossy().into_owned().into(),
-        ),
-    ])
 }
 
 #[derive(Debug)]
