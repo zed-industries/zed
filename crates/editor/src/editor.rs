@@ -205,7 +205,7 @@ use project::{
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
-use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
+use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollAmount, ScrollManager, SharedScrollAnchor};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -18225,6 +18225,41 @@ impl Editor {
             offset if offset < 0.0 || offset >= visible => None,
             offset => Some(offset),
         }
+    }
+    pub fn scroll_line_down_and_move_down(
+        &mut self,
+        _: &ScrollLineDownAndMoveDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.take_rename(true, window, cx).is_some() {
+            return;
+        }
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        self.move_down(&MoveDown::default(), window, cx);
+        self.scroll_screen(&ScrollAmount::Line(1.), window, cx);
+    }
+
+    pub fn scroll_line_up_and_move_up(
+        &mut self,
+        _: &ScrollLineUpAndMoveUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.take_rename(true, window, cx).is_some() {
+            return;
+        }
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+
+        self.move_up(&MoveUp::default(), window, cx);
+        self.scroll_screen(&ScrollAmount::Line(-1.), window, cx);
     }
 }
 
