@@ -3,10 +3,7 @@ use ui::{
     IntoElement as _, ParentElement as _, Styled as _, Tooltip, Window, div, h_flex,
 };
 
-use crate::{
-    CsvPreviewView,
-    settings::{FontType, VerticalAlignment},
-};
+use crate::{CsvPreviewView, settings::VerticalAlignment};
 
 ///// Settings related /////
 impl CsvPreviewView {
@@ -19,11 +16,6 @@ impl CsvPreviewView {
         let current_alignment_text = match self.settings.vertical_alignment {
             VerticalAlignment::Top => "Top",
             VerticalAlignment::Center => "Center",
-        };
-
-        let current_font_text = match self.settings.font_type {
-            FontType::Ui => "UI Font",
-            FontType::Monospace => "Monospace",
         };
 
         let view = cx.entity();
@@ -42,27 +34,6 @@ impl CsvPreviewView {
                 move |_window, cx| {
                     view.update(cx, |this, cx| {
                         this.settings.vertical_alignment = VerticalAlignment::Center;
-                        cx.notify();
-                    });
-                }
-            })
-        });
-
-        let font_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-            menu.entry("UI Font", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.font_type = FontType::Ui;
-                        cx.notify();
-                    });
-                }
-            })
-            .entry("Monospace", None, {
-                let view = view.clone();
-                move |_window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.font_type = FontType::Monospace;
                         cx.notify();
                     });
                 }
@@ -95,28 +66,6 @@ impl CsvPreviewView {
                         .trigger_size(ButtonSize::Compact)
                         .trigger_tooltip(Tooltip::text(
                             "Choose vertical text alignment within cells",
-                        )),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Font Type:"),
-                    )
-                    .child(
-                        DropdownMenu::new(
-                            ElementId::Name("font-type-dropdown".into()),
-                            current_font_text,
-                            font_dropdown_menu,
-                        )
-                        .trigger_size(ButtonSize::Compact)
-                        .trigger_tooltip(Tooltip::text(
-                            "Choose between UI font and monospace font for better readability",
                         )),
                     ),
             );

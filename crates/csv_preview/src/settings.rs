@@ -18,15 +18,6 @@ pub enum VerticalAlignment {
 }
 
 #[derive(Default, Clone, Copy)]
-pub enum FontType {
-    /// Use the default UI font
-    #[default]
-    Ui,
-    /// Use monospace font (same as buffer/editor font)
-    Monospace,
-}
-
-#[derive(Default, Clone, Copy)]
 pub enum RowIdentifiers {
     /// Show original line numbers from CSV file
     #[default]
@@ -39,7 +30,6 @@ pub enum RowIdentifiers {
 pub(crate) struct CsvPreviewSettings {
     pub(crate) rendering_with: RowRenderMechanism,
     pub(crate) vertical_alignment: VerticalAlignment,
-    pub(crate) font_type: FontType,
     pub(crate) numbering_type: RowIdentifiers,
     pub(crate) show_debug_info: bool,
     #[cfg(feature = "dev-tools")]

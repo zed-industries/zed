@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use ui::{div, prelude::*};
 
-use crate::{CsvPreviewView, settings::FontType};
+use crate::CsvPreviewView;
 
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -23,10 +23,7 @@ impl Render for CsvPreviewView {
                         .justify_center()
                         .h_32()
                         .text_ui(cx)
-                        .map(|div| match self.settings.font_type {
-                            FontType::Ui => div.font_ui(cx),
-                            FontType::Monospace => div.font_buffer(cx),
-                        })
+                        .font_buffer(cx)
                         .text_color(cx.theme().colors().text_muted)
                         .child("No CSV content to display")
                         .into_any_element()
