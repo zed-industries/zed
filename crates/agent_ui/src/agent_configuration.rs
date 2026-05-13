@@ -404,6 +404,14 @@ impl AgentConfiguration {
                             let key_to_remove: Arc<str> = Arc::from(provider_id.0.as_ref());
                             openai_compatible.remove(&key_to_remove);
                         }
+                        if let Some(ref mut anthropic_compatible) = settings
+                            .language_models
+                            .as_mut()
+                            .and_then(|lm| lm.anthropic_compatible.as_mut())
+                        {
+                            let key_to_remove: Arc<str> = Arc::from(provider_id.0.as_ref());
+                            anthropic_compatible.remove(&key_to_remove);
+                        }
                     }
                 });
             })
@@ -1525,13 +1533,18 @@ fn find_text_in_buffer(
     }
 }
 
-// OpenAI-compatible providers are user-configured and can be removed,
-// whereas built-in providers (like Anthropic, OpenAI, Google, etc.) can't.
+// OpenAI-compatible and Anthropic-compatible providers are user-configured and can be
+// removed, whereas built-in providers (like Anthropic, OpenAI, Google, etc.) can't.
 //
 // If in the future we have more "API-compatible-type" of providers,
 // they should be included here as removable providers.
 fn is_removable_provider(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
-    AllLanguageModelSettings::get_global(cx)
+    let settings = AllLanguageModelSettings::get_global(cx);
+    let is_openai_compatible = settings
         .openai_compatible
-        .contains_key(provider_id.0.as_ref())
+        .contains_key(provider_id.0.as_ref());
+    let is_anthropic_compatible = settings
+        .anthropic_compatible
+        .contains_key(provider_id.0.as_ref());
+    is_openai_compatible || is_anthropic_compatible
 }

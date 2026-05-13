@@ -330,7 +330,8 @@ impl AddAnthropicCompatibleInput {
 
     fn add_model(&mut self, window: &mut Window, cx: &mut App) {
         let model_index = self.models.len();
-        self.models.push(AnthropicModelInput::new(model_index, window, cx));
+        self.models
+            .push(AnthropicModelInput::new(model_index, window, cx));
     }
 
     fn remove_model(&mut self, index: usize) {
@@ -680,13 +681,15 @@ impl AddLlmProviderModal {
                             model.capabilities.supports_parallel_tool_calls,
                         )
                         .label("Supports parallel_tool_calls")
-                        .on_click(cx.listener(move |this, checked, _window, cx| {
-                            if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
-                                input.models[ix].capabilities.supports_parallel_tool_calls =
-                                    *checked;
-                            }
-                            cx.notify();
-                        })),
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_parallel_tool_calls =
+                                        *checked;
+                                }
+                                cx.notify();
+                            },
+                        )),
                     )
                     .child(
                         Checkbox::new(
@@ -694,12 +697,15 @@ impl AddLlmProviderModal {
                             model.capabilities.supports_prompt_cache_key,
                         )
                         .label("Supports prompt_cache_key")
-                        .on_click(cx.listener(move |this, checked, _window, cx| {
-                            if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
-                                input.models[ix].capabilities.supports_prompt_cache_key = *checked;
-                            }
-                            cx.notify();
-                        })),
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_prompt_cache_key =
+                                        *checked;
+                                }
+                                cx.notify();
+                            },
+                        )),
                     )
                     .child(
                         Checkbox::new(
@@ -707,12 +713,15 @@ impl AddLlmProviderModal {
                             model.capabilities.supports_chat_completions,
                         )
                         .label("Supports /chat/completions")
-                        .on_click(cx.listener(move |this, checked, _window, cx| {
-                            if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
-                                input.models[ix].capabilities.supports_chat_completions = *checked;
-                            }
-                            cx.notify();
-                        })),
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                if let ProviderInput::OpenAiCompatible(input) = &mut this.input {
+                                    input.models[ix].capabilities.supports_chat_completions =
+                                        *checked;
+                                }
+                                cx.notify();
+                            },
+                        )),
                     ),
             )
             .when(has_more_than_one_model, |this| {
