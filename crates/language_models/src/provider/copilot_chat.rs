@@ -357,8 +357,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                     AnthropicPromptCacheMode::Legacy,
                 );
 
-                dbg!(&anthropic_request);
-
                 anthropic_request.temperature = None;
 
                 // The Copilot proxy doesn't support eager_input_streaming on tools.
