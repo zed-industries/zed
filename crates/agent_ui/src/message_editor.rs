@@ -95,6 +95,7 @@ impl SessionCapabilities {
                 name: cmd.name.clone().into(),
                 description: cmd.description.clone().into(),
                 requires_argument: cmd.input.is_some(),
+                source: acp_thread::skill_source_from_meta(&cmd.meta),
             })
             .collect()
     }
@@ -131,6 +132,20 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
         self.session_capabilities.read().completion_commands()
     }
 
+    fn slash_autocomplete_invoked(&self, cx: &mut App) {
+        // This may be called synchronously from inside a `MessageEditor`
+        // update (e.g. when pasting a slash command triggers completions),
+        // so we defer the emit to avoid a reentrant update panic.
+        let Some(editor) = self.message_editor.upgrade() else {
+            return;
+        };
+        cx.defer(move |cx| {
+            editor.update(cx, |_editor, cx| {
+                cx.emit(MessageEditorEvent::SlashAutocompleteOpened);
+            });
+        });
+    }
+
     fn confirm_command(&self, cx: &mut App) {
         let _ = self.message_editor.update(cx, |this, cx| this.send(cx));
     }
@@ -160,6 +175,10 @@ pub enum MessageEditorEvent {
     Cancel,
     Focus,
     LostFocus,
+    /// Emitted when the user opens slash-command autocomplete in this
+    /// editor. Used by `ThreadView` to fire the global-skills scan
+    /// trigger; see `NativeAgent::ensure_skills_scan_started`.
+    SlashAutocompleteOpened,
     InputAttempted {
         attempt: InputAttempt,
         cursor_offset: usize,
@@ -702,30 +721,79 @@ impl MessageEditor {
     ) -> Result<()> {
         if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
             if let Some(command_name) = parsed_command.command {
-                // Check if this command is in the list of available commands from the server
-                let is_supported = available_commands
+                // Two acceptance paths:
+                //
+                // 1. Direct name match. Covers bare slash commands
+                //    (`/help`), MCP prompts that were prefixed at the
+                //    agent because of a server-name collision
+                //    (`/github.create_pr`), and skills (whose bare name
+                //    is registered for the unqualified `/<name>` form).
+                //
+                // 2. Skill scope qualifier `/<scope>:<name>`. The popup
+                //    inserts this colon-separated form to disambiguate
+                //    same-named skills, so the validator splits on the
+                //    LAST `:` to recover scope + bare name. Skill
+                //    names are restricted to `[a-z0-9-]+` (no colons),
+                //    so the rightmost colon is always the scope/name
+                //    boundary — this lets scope labels (e.g. worktree
+                //    root names) themselves contain colons. The
+                //    scope is allowed to be empty: `/:<name>` is the
+                //    qualified form for a global skill (see
+                //    `SkillSource::scope_prefix`). The validator then
+                //    confirms an available command with that bare
+                //    name has a `zed.skill_source` meta tag whose
+                //    value equals the typed scope (including empty
+                //    for globals). Without this branch, every
+                //    autocomplete pick of a same-named skill would be
+                //    rejected as "not supported" before reaching the
+                //    resolver.
+                let direct_match = available_commands
                     .iter()
                     .any(|cmd| cmd.name == command_name);
+                let scope_match = !direct_match
+                    && command_name.rsplit_once(':').is_some_and(|(scope, bare)| {
+                        !bare.is_empty()
+                            && available_commands.iter().any(|cmd| {
+                                cmd.name == bare
+                                    && acp_thread::skill_source_str_from_meta(&cmd.meta)
+                                        == Some(scope)
+                            })
+                    });
 
-                if !is_supported {
+                if !direct_match && !scope_match {
                     return Err(anyhow!(
                         "The /{} command is not supported by {}.\n\nAvailable commands: {}",
                         command_name,
                         agent_id,
-                        if available_commands.is_empty() {
-                            "none".to_string()
-                        } else {
-                            available_commands
-                                .iter()
-                                .map(|cmd| format!("/{}", cmd.name))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
+                        Self::format_available_commands(available_commands),
                     ));
                 }
             }
         }
         Ok(())
+    }
+
+    /// Render the available-commands list for error messages. Skills
+    /// are shown in their qualified `/<scope>:<name>` form so users
+    /// see the exact text the popup would insert — otherwise the
+    /// listing would contain confusing duplicates like `/foo, /foo`
+    /// when both a global and a project-local skill share a name.
+    /// Globals carry an empty scope and so render as `/:<name>`.
+    fn format_available_commands(commands: &[acp::AvailableCommand]) -> String {
+        if commands.is_empty() {
+            return "none".to_string();
+        }
+        commands
+            .iter()
+            .map(|cmd| {
+                if let Some(scope) = acp_thread::skill_source_str_from_meta(&cmd.meta) {
+                    format!("/{}:{}", scope, cmd.name)
+                } else {
+                    format!("/{}", cmd.name)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn contents(
@@ -2037,20 +2105,95 @@ mod tests {
     use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
     use parking_lot::RwLock;
-    use project::{CompletionIntent, Project, ProjectPath};
+    use project::{AgentId, CompletionIntent, Project, ProjectPath};
     use serde_json::{Value, json};
 
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
     use util::{path, paths::PathStyle, rel_path::rel_path};
-    use workspace::{AppState, Item, MultiWorkspace};
+    use workspace::{AppState, Item, MultiWorkspace, Workspace};
 
     use crate::completion_provider::{AgentContextSelection, PromptContextType};
     use crate::{
         conversation_view::tests::init_test,
         mention_set::insert_crease_for_mention,
-        message_editor::{Mention, MessageEditor, SessionCapabilities, parse_mention_links},
+        message_editor::{
+            Mention, MessageEditor, MessageEditorEvent, SessionCapabilities, parse_mention_links,
+        },
     };
+
+    #[test]
+    fn test_validate_slash_commands_accepts_scope_qualified_skill() {
+        let agent_id = AgentId::from("Zed");
+        let make_skill_command = |name: &str, scope: &str| {
+            acp::AvailableCommand::new(name, "desc").meta(acp_thread::meta_with_skill_source(scope))
+        };
+
+        // Global skills carry an empty scope (so the popup inserts
+        // `/:<name>`); project-local skills carry their worktree root
+        // name. The empty-scope encoding means a worktree literally
+        // named `global` no longer collides with the global source.
+        let commands = vec![
+            make_skill_command("deploy", ""),
+            make_skill_command("deploy", "zed"),
+            acp::AvailableCommand::new("help", "Get help"),
+        ];
+
+        // Bare name still works (current behavior — the resolver
+        // applies project-overrides-global for unqualified commands).
+        MessageEditor::validate_slash_commands("/deploy", &commands, &agent_id)
+            .expect("bare /deploy should validate when a skill named `deploy` exists");
+
+        // Scope-qualified forms both validate, each pointing at the
+        // matching source. `/:<name>` is the qualified form for a
+        // global skill; `/<worktree>:<name>` is the qualified form
+        // for a project-local skill.
+        MessageEditor::validate_slash_commands("/:deploy", &commands, &agent_id)
+            .expect("/:deploy should validate when a global skill named `deploy` exists");
+        MessageEditor::validate_slash_commands("/zed:deploy", &commands, &agent_id).expect(
+            "/zed:deploy should validate when a project skill named `deploy` exists in the `zed` worktree",
+        );
+
+        // Hand-typed `/global:<name>` is NOT an alias for `/:<name>`.
+        // It looks for a project-local skill from a worktree named
+        // `global`, and fails when no such worktree skill exists.
+        MessageEditor::validate_slash_commands("/global:deploy", &commands, &agent_id).expect_err(
+            "/global:deploy should fail when no worktree named `global` has a `deploy` skill",
+        );
+
+        // The `:` separator is what distinguishes a skill scope from
+        // an MCP server prefix — the dotted form `/zed.deploy` is an
+        // MCP-style lookup, which doesn't match here.
+        MessageEditor::validate_slash_commands("/zed.deploy", &commands, &agent_id)
+            .expect_err("/zed.deploy (dotted) should be treated as an MCP-style prefix and fail");
+
+        // Wrong scope is rejected so the resolver doesn't silently
+        // fall through when the user meant a skill. `zed:help` looks
+        // like a skill scope qualifier but no skill named `help`
+        // exists in the `zed` worktree (it's an MCP command).
+        let err = MessageEditor::validate_slash_commands("/zed:help", &commands, &agent_id)
+            .expect_err("/zed:help should fail — `help` is an MCP command, not a worktree skill");
+        let err_message = err.to_string();
+        assert!(
+            err_message.contains("/zed:help"),
+            "error should mention the typed command: {err_message}"
+        );
+        // Error listing shows qualified forms for skills so users see
+        // the exact text the popup would have inserted. Globals
+        // render with an empty scope as `/:<name>`.
+        assert!(
+            err_message.contains("/:deploy"),
+            "error listing should show qualified global form: {err_message}"
+        );
+        assert!(
+            err_message.contains("/zed:deploy"),
+            "error listing should show qualified worktree form: {err_message}"
+        );
+        assert!(
+            err_message.contains("/help"),
+            "error listing should still show bare MCP commands: {err_message}"
+        );
+    }
 
     #[test]
     fn test_parse_mention_links() {
@@ -2558,6 +2701,102 @@ mod tests {
             assert_eq!(editor.display_text(cx), "/say-hell");
             assert!(!editor.has_visible_completions_menu());
         });
+    }
+
+    /// Opening slash-command autocomplete must emit
+    /// [`MessageEditorEvent::SlashAutocompleteOpened`]. `ThreadView`
+    /// subscribes to that event to fire the global-skills scan trigger
+    /// (see `NativeAgent::ensure_skills_scan_started`); without the
+    /// event the trigger never runs and lazily-discovered skills never
+    /// appear in autocomplete.
+    #[gpui::test]
+    async fn test_slash_autocomplete_emits_opened_event(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+            acp::PromptCapabilities::default(),
+            vec![acp::AvailableCommand::new("hello", "Say hello")],
+        )));
+
+        // Track every event emitted by the message editor across the
+        // lifetime of the test. We expect to see Focus (from the focus
+        // call below) and SlashAutocompleteOpened (from typing "/").
+        let received_events: Arc<parking_lot::Mutex<Vec<MessageEditorEvent>>> =
+            Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    None,
+                    None,
+                    session_capabilities.clone(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+
+            let received_events = received_events.clone();
+            cx.subscribe(
+                &message_editor,
+                move |_editor: &mut Workspace, _, event: &MessageEditorEvent, _cx| {
+                    received_events.lock().push(event.clone());
+                },
+            )
+            .detach();
+
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            message_editor.read(cx).editor().clone()
+        });
+
+        cx.simulate_input("/");
+
+        editor.update_in(&mut cx, |editor, _window, cx| {
+            assert_eq!(editor.text(cx), "/");
+            assert!(editor.has_visible_completions_menu());
+        });
+
+        let events = received_events.lock();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, MessageEditorEvent::SlashAutocompleteOpened)),
+            "expected SlashAutocompleteOpened to have been emitted; saw events: {events:?}",
+        );
     }
 
     #[gpui::test]
