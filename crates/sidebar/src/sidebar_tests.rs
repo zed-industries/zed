@@ -33,12 +33,6 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
-fn enable_agent_panel_terminal(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-    });
-}
-
 #[track_caller]
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     let active = sidebar.active_entry.as_ref();
@@ -1448,7 +1442,6 @@ fn setup_sidebar_with_agent_panel(
 #[gpui::test]
 async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1529,7 +1522,6 @@ async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut Te
         .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
 
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -1560,7 +1552,6 @@ async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut Te
 #[gpui::test]
 async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1613,7 +1604,6 @@ async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestApp
 #[gpui::test]
 async fn test_thread_switcher_can_activate_agent_panel_terminal(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1690,7 +1680,6 @@ async fn test_archive_selected_thread_closes_selected_agent_panel_terminal(
     cx: &mut TestAppContext,
 ) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1730,7 +1719,6 @@ async fn test_archive_selected_thread_closes_selected_agent_panel_terminal(
 #[gpui::test]
 async fn test_closing_active_agent_panel_terminal_activates_neighbor(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
