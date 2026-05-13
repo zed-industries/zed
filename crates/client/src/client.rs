@@ -1396,7 +1396,7 @@ impl Client {
                     // any other app running on the user's device.
                     let (public_key, private_key) =
                         rpc::auth::keypair().context("failed to generate keypair for auth")?;
-                    let public_key_string = String::try_from(public_key)
+                    let public_key = String::try_from(public_key)
                         .context("failed to serialize public key for auth")?;
 
                     if let Some((login, token)) =
@@ -1420,11 +1420,22 @@ impl Client {
                         .context("server not bound to a TCP address")?
                         .port();
 
+                    #[derive(Serialize)]
+                    struct NativeAppSignInQueryParams {
+                        native_app_port: u16,
+                        native_app_public_key: String,
+                        system_id: Option<Arc<str>>,
+                    }
+
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
                     let url = http.build_url(&format!(
-                        "/native_app_signin?native_app_port={}&native_app_public_key={}",
-                        port, public_key_string
+                        "/native_app_signin?{}",
+                        serde_urlencoded::to_string(&NativeAppSignInQueryParams {
+                            native_app_port: port,
+                            native_app_public_key: public_key,
+                            system_id: this.telemetry.system_id(),
+                        })?
                     ));
 
                     open_url_tx.send(url).log_err();
