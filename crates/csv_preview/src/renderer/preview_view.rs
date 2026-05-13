@@ -45,9 +45,20 @@ impl Render for CsvPreviewView {
             .child(table_with_settings);
 
         #[cfg(feature = "dev-tools")]
-        let div = div.when(self.settings.show_perf_metrics_overlay, |div| {
+        let show_perf_metrics_overlay = self.settings.show_perf_metrics_overlay;
+
+        #[cfg(feature = "dev-tools")]
+        let div = div.when(show_perf_metrics_overlay, |div| {
             div.child(self.render_performance_metrics_overlay(cx))
         });
+
+        #[cfg(feature = "dev-tools")]
+        if !show_perf_metrics_overlay {
+            self.performance_metrics.rendered_indices.clear();
+        }
+
+        #[cfg(not(feature = "dev-tools"))]
+        self.performance_metrics.rendered_indices.clear();
 
         div
     }
