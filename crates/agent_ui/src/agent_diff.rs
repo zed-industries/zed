@@ -139,7 +139,7 @@ impl AgentDiffPane {
 
         // Sort edited files alphabetically for consistency with Git diff view
         let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
-        sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
+        sorted_buffers.sort_by(|buffer_a, buffer_b| {
             let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
             let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
             path_a.cmp(&path_b)
@@ -153,7 +153,7 @@ impl AgentDiffPane {
             .map(|excerpt| excerpt.context.start.buffer_id)
             .collect::<HashSet<_>>();
 
-        for (buffer, diff_handle) in sorted_buffers {
+        for buffer in sorted_buffers {
             if buffer.read(cx).file().is_none() {
                 continue;
             }
@@ -1537,7 +1537,7 @@ impl AgentDiff {
 
         let mut unaffected = self.reviewing_editors.clone();
 
-        for (buffer, diff_handle) in changed_buffers {
+        for buffer in changed_buffers {
             if buffer.read(cx).file().is_none() {
                 continue;
             }

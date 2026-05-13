@@ -335,7 +335,7 @@ impl RatePredictionsModal {
                 let end = Point::new(range.end.row + 5, 0).min(new_buffer_snapshot.max_point());
 
                 let language = new_buffer_snapshot.language().cloned();
-                let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
+                let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot, cx));
                 diff.update(cx, |diff, cx| {
                     let update = diff.update_diff(
                         new_buffer_snapshot.text.clone(),

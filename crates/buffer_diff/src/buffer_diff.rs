@@ -684,8 +684,8 @@ impl BufferDiffSnapshot {
 }
 
 impl BufferDiffUpdate {
-    pub fn set_base_text(&mut self, base_text: Option<language::BufferSnapshot>) {
-        self.inner.base_text = base_text;
+    pub fn set_base_text(&mut self, base_text: language::BufferSnapshot) {
+        self.inner.base_text = Some(base_text);
     }
 }
 
@@ -1101,62 +1101,17 @@ fn build_diff_options(
 }
 
 fn compute_hunks(
-    diff_base: Option<(Arc<str>, language::BufferSnapshot)>,
+    diff_base: Arc<str>,
+    diff_base_snapshot: language::BufferSnapshot,
     buffer: &text::BufferSnapshot,
     diff_options: Option<DiffOptions>,
 ) -> SumTree<InternalDiffHunk> {
     let mut tree = SumTree::new(buffer);
 
-    if let Some((diff_base, diff_base_snapshot)) = diff_base {
-        let buffer_text = buffer.as_rope().to_string();
-
-        let mut options = GitOptions::default();
-        options.context_lines(0);
-        let patch = GitPatch::from_buffers(
-            diff_base.as_bytes(),
-            None,
-            buffer_text.as_bytes(),
-            None,
-            Some(&mut options),
-        )
-        .log_err();
-
-        // A common case in Zed is that the empty buffer is represented as just a newline,
-        // but if we just compute a naive diff you get a "preserved" line in the middle,
-        // which is a bit odd.
-        if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
-            tree.push(
-                InternalDiffHunk {
-                    buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
-                    diff_base_byte_range: 0..diff_base.len() - 1,
-                    diff_base_point_range: Point::new(0, 0)
-                        ..diff_base_snapshot.offset_to_point(diff_base.len() - 1),
-                    base_word_diffs: Vec::default(),
-                    buffer_word_diffs: Vec::default(),
-                },
-                buffer,
-            );
-            return tree;
-        }
-
-        if let Some(patch) = patch {
-            let mut divergence = 0;
-            for hunk_index in 0..patch.num_hunks() {
-                let hunk = process_patch_hunk(
-                    &patch,
-                    hunk_index,
-                    diff_base_snapshot.as_rope(),
-                    buffer,
-                    &mut divergence,
-                    diff_options.as_ref(),
-                );
-                tree.push(hunk, buffer);
-            }
-        }
-    } else {
+    if diff_base.is_empty() {
         tree.push(
             InternalDiffHunk {
-                buffer_range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                buffer_range: text::Anchor::min_max_range_for_buffer(buffer.remote_id()),
                 diff_base_byte_range: 0..0,
                 diff_base_point_range: Point::new(0, 0)..Point::new(0, 0),
                 base_word_diffs: Vec::default(),
@@ -1164,6 +1119,53 @@ fn compute_hunks(
             },
             buffer,
         );
+        return tree;
+    }
+
+    let buffer_text = buffer.as_rope().to_string();
+
+    let mut options = GitOptions::default();
+    options.context_lines(0);
+    let patch = GitPatch::from_buffers(
+        diff_base.as_bytes(),
+        None,
+        buffer_text.as_bytes(),
+        None,
+        Some(&mut options),
+    )
+    .log_err();
+
+    // A common case in Zed is that the empty buffer is represented as just a newline,
+    // but if we just compute a naive diff you get a "preserved" line in the middle,
+    // which is a bit odd.
+    if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
+        tree.push(
+            InternalDiffHunk {
+                buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
+                diff_base_byte_range: 0..diff_base.len() - 1,
+                diff_base_point_range: Point::new(0, 0)
+                    ..diff_base_snapshot.offset_to_point(diff_base.len() - 1),
+                base_word_diffs: Vec::default(),
+                buffer_word_diffs: Vec::default(),
+            },
+            buffer,
+        );
+        return tree;
+    }
+
+    if let Some(patch) = patch {
+        let mut divergence = 0;
+        for hunk_index in 0..patch.num_hunks() {
+            let hunk = process_patch_hunk(
+                &patch,
+                hunk_index,
+                diff_base_snapshot.as_rope(),
+                buffer,
+                &mut divergence,
+                diff_options.as_ref(),
+            );
+            tree.push(hunk, buffer);
+        }
     }
 
     tree
@@ -1559,7 +1561,8 @@ impl BufferDiff {
             let mut diff = BufferDiff::new(buffer, cx);
             let inner = cx.foreground_executor().block_on(diff.update_diff(
                 buffer.clone(),
-                Some((base_text_arc, base_text_snapshot)),
+                base_text_arc,
+                base_text_snapshot,
                 cx,
             ));
             diff.set_snapshot(inner, cx);
@@ -1674,7 +1677,8 @@ impl BufferDiff {
     pub fn update_diff(
         &self,
         buffer_snapshot: language::BufferSnapshot,
-        base_text: Option<(Arc<str>, language::BufferSnapshot)>,
+        base_text: Arc<str>,
+        base_text_snapshot: language::BufferSnapshot,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let diff_options = build_diff_options(
@@ -1684,10 +1688,14 @@ impl BufferDiff {
         );
 
         cx.background_executor().spawn(async move {
-            let hunks = compute_hunks(base_text.clone(), &buffer_snapshot, diff_options);
-            let base_text = base_text.map(|(_, base_text)| base_text.clone());
+            let hunks = compute_hunks(
+                base_text.clone(),
+                base_text_snapshot.clone(),
+                &buffer_snapshot,
+                diff_options,
+            );
             let inner = BufferDiffInner {
-                base_text,
+                base_text: Some(base_text_snapshot),
                 hunks,
                 pending_hunks: SumTree::new(&buffer_snapshot.text),
                 buffer_snapshot,
@@ -1857,7 +1865,8 @@ impl BufferDiff {
     /// Used in cases where the change set isn't derived from git.
     pub fn set_base_text(
         &mut self,
-        base_text: Option<(Arc<str>, language::BufferSnapshot)>,
+        base_text: Arc<str>,
+        base_text_snapshot: language::BufferSnapshot,
         buffer: language::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
@@ -1868,7 +1877,7 @@ impl BufferDiff {
         cx.spawn(async move |this, cx| {
             let Some(state) = this
                 .update(cx, |this, cx| {
-                    this.update_diff(buffer.clone(), base_text, cx)
+                    this.update_diff(buffer.clone(), base_text, base_text_snapshot, cx)
                 })
                 .log_err()
             else {
@@ -1896,12 +1905,9 @@ impl BufferDiff {
         buffer: &language::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        let base_text = self
-            .inner
-            .base_text
-            .as_ref()
-            .map(|snapshot| (Arc::from(snapshot.text()) as Arc<str>, snapshot.clone()));
-        let fut = self.update_diff(buffer.clone(), base_text, cx);
+        let base_text_snapshot = self.inner.base_text.as_ref().unwrap();
+        let base_text = Arc::from(base_text_snapshot.text()) as Arc<str>;
+        let fut = self.update_diff(buffer.clone(), base_text, base_text_snapshot.clone(), cx);
         let fg_executor = cx.foreground_executor().clone();
         let snapshot = fg_executor.block_on(fut);
         let result = self.set_snapshot_with_secondary_inner(snapshot, None, false, cx);
@@ -3284,7 +3290,8 @@ mod tests {
             .update(cx, |diff, cx| {
                 diff.update_diff(
                     snapshot.clone(),
-                    Some((Arc::from(base_text.as_str()), base_text_snapshot)),
+                    Arc::from(base_text.as_str()),
+                    base_text_snapshot,
                     cx,
                 )
             })
@@ -3472,7 +3479,8 @@ mod tests {
 
         let old_base_snapshot_1 = base_text_buffer.read_with(cx, |b, _| b.snapshot());
         let old_hunks_1 = compute_hunks(
-            Some((Arc::from(initial_base), old_base_snapshot_1.clone())),
+            Arc::from(initial_base),
+            old_base_snapshot_1.clone(),
             &buffer_snapshot,
             None,
         );
@@ -3484,7 +3492,8 @@ mod tests {
         });
 
         let new_hunks_1 = compute_hunks(
-            Some((new_base_str_1.clone(), new_base_snapshot_1.clone())),
+            new_base_str_1.clone(),
+            new_base_snapshot_1.clone(),
             &buffer_snapshot,
             None,
         );
@@ -3529,7 +3538,8 @@ mod tests {
 
         let old_base_snapshot_2 = base_buf_2.read_with(cx, |b, _| b.snapshot());
         let old_hunks_2 = compute_hunks(
-            Some((Arc::from(simple_base), old_base_snapshot_2.clone())),
+            Arc::from(simple_base),
+            old_base_snapshot_2.clone(),
             &buffer_snapshot_2,
             None,
         );
@@ -3541,7 +3551,8 @@ mod tests {
         });
 
         let new_hunks_2 = compute_hunks(
-            Some((new_base_str_2.clone(), new_base_snapshot_2.clone())),
+            new_base_str_2.clone(),
+            new_base_snapshot_2.clone(),
             &buffer_snapshot_2,
             None,
         );
@@ -3591,7 +3602,8 @@ mod tests {
 
         let old_base_snapshot_3 = base_buf_3.read_with(cx, |b, _| b.snapshot());
         let old_hunks_3 = compute_hunks(
-            Some((Arc::from(base_3), old_base_snapshot_3.clone())),
+            Arc::from(base_3),
+            old_base_snapshot_3.clone(),
             &buffer_snapshot_3,
             None,
         );
@@ -3604,7 +3616,8 @@ mod tests {
         });
 
         let new_hunks_3 = compute_hunks(
-            Some((new_base_str_3.clone(), new_base_snapshot_3.clone())),
+            new_base_str_3.clone(),
+            new_base_snapshot_3.clone(),
             &buffer_snapshot_3,
             None,
         );
@@ -3652,7 +3665,8 @@ mod tests {
         let old_base_snapshot_4 = base_buf_4.read_with(cx, |b, _| b.snapshot());
         let old_buffer_snapshot_4 = buffer_4.read_with(cx, |b, _| b.snapshot());
         let old_hunks_4 = compute_hunks(
-            Some((Arc::from(base_4), old_base_snapshot_4.clone())),
+            Arc::from(base_4),
+            old_base_snapshot_4.clone(),
             &old_buffer_snapshot_4,
             None,
         );
@@ -3680,7 +3694,8 @@ mod tests {
         });
 
         let new_hunks_4 = compute_hunks(
-            Some((new_base_str_4.clone(), new_base_snapshot_4.clone())),
+            new_base_str_4.clone(),
+            new_base_snapshot_4.clone(),
             &new_buffer_snapshot_4,
             None,
         );

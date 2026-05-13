@@ -143,7 +143,7 @@ struct BufferGitState {
 
     head_text: Option<Arc<str>>,
     index_text: Option<Arc<str>>,
-    oid_texts: HashMap<git::Oid, Arc<str>>,
+    oid_texts: HashMap<git::Oid, Option<Arc<str>>>,
     head_changed: bool,
     index_changed: bool,
     // todo!() unused now?
@@ -955,10 +955,8 @@ impl GitStore {
                         buffer_diff
                             .update(cx, |buffer_diff, cx| {
                                 buffer_diff.set_base_text(
-                                    Some((
-                                        content.clone(),
-                                        oid_buffer.read_with(cx, |buffer, _| buffer.snapshot()),
-                                    )),
+                                    content.clone(),
+                                    oid_buffer.read_with(cx, |buffer, _| buffer.snapshot()),
                                     buffer_snapshot,
                                     cx,
                                 )
@@ -3746,11 +3744,14 @@ impl BufferGitState {
         let oid_diffs: Vec<(
             Option<git::Oid>,
             Entity<BufferDiff>,
-            Option<(Arc<str>, language::BufferSnapshot)>,
+            Arc<str>,
+            language::BufferSnapshot,
         )> = self
             .oid_diffs
             .iter()
             .filter_map(|(oid, (weak, base_text))| {
+                // if the weak upgrade is none, filter it out
+                // if we don't have an entry in oid texts,
                 let base_text = oid
                     .and_then(|oid| self.oid_texts.get(&oid).cloned())
                     .map(|text| (text, base_text.read(cx).snapshot()));
@@ -3768,9 +3769,10 @@ impl BufferGitState {
             alive
         });
 
-        let new_index = if let Some(index_text) = self.index_text.clone() {
+        let new_index = {
             let index_buffer = self.index_buffer.clone();
             let old_index = index_buffer.read(cx).snapshot();
+            let index_text = self.index_text.clone().unwrap_or_default();
             let language = language.clone();
             let language_registry = language_registry.clone();
             cx.spawn(async move |_, cx| {
@@ -3790,12 +3792,12 @@ impl BufferGitState {
                         index_buffer.snapshot_with_edits(edits, cx)
                     })
                     .await;
-                Some((index_text.clone(), edited_snapshot))
+                (index_text.clone(), edited_snapshot)
             })
-        } else {
-            cx.spawn(async move |_, _| None)
         };
-        let new_head = if let Some(head_text) = self.head_text.clone() {
+
+        let new_head = {
+            let head_text = self.head_text.clone().unwrap_or_default();
             let head_buffer = self.head_buffer.clone();
             let old_head = head_buffer.read(cx).snapshot();
             cx.spawn(async move |_, cx| {
@@ -3815,10 +3817,8 @@ impl BufferGitState {
                         head_buffer.snapshot_with_edits(edits, cx)
                     })
                     .await;
-                Some((head_text.clone(), edited_snapshot))
+                (head_text.clone(), edited_snapshot)
             })
-        } else {
-            cx.spawn(async move |_, _| None)
         };
 
         let index_buffer = self.index_buffer.clone();
@@ -3830,8 +3830,8 @@ impl BufferGitState {
                 buffer.remote_id()
             );
 
-            let new_index = new_index.await;
-            let new_head = new_head.await;
+            let (new_index, new_index_snapshot) = new_index.await;
+            let (new_head, new_head_snapshot) = new_head.await;
 
             let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
@@ -3839,9 +3839,8 @@ impl BufferGitState {
                     cx.update(|cx| {
                         unstaged_diff.read(cx).update_diff(
                             buffer.clone(),
-                            new_index
-                                .as_ref()
-                                .map(|(text, edited)| (text.clone(), edited.snapshot().clone())),
+                            new_index,
+                            new_index_snapshot.snapshot().clone(),
                             cx,
                         )
                     })
@@ -3859,11 +3858,7 @@ impl BufferGitState {
                     let mut update = new_unstaged_diff.clone();
                     // Ensure we use the right base text buffer for updating the uncommitted diff
                     if let Some(update) = &mut update {
-                        update.set_base_text(
-                            new_head
-                                .as_ref()
-                                .map(|(_, edited)| edited.snapshot().clone()),
-                        );
+                        update.set_base_text(new_head_snapshot.snapshot().clone());
                     }
                     update
                 } else {
@@ -3871,9 +3866,8 @@ impl BufferGitState {
                         cx.update(|cx| {
                             uncommitted_diff.read(cx).update_diff(
                                 buffer.clone(),
-                                new_head.as_ref().map(|(text, edited)| {
-                                    (text.clone(), edited.snapshot().clone())
-                                }),
+                                new_head,
+                                new_head_snapshot.snapshot().clone(),
                                 cx,
                             )
                         })
@@ -3911,11 +3905,9 @@ impl BufferGitState {
                 return Ok(());
             }
 
-            if let Some((_, edited)) = new_index {
-                index_buffer.update(cx, |index_buffer, cx| {
-                    index_buffer.fast_forward(edited, cx);
-                });
-            }
+            index_buffer.update(cx, |index_buffer, cx| {
+                index_buffer.fast_forward(new_index_snapshot, cx);
+            });
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
@@ -3926,11 +3918,9 @@ impl BufferGitState {
 
             yield_now().await;
 
-            if let Some((_, edited)) = new_head {
-                head_buffer.update(cx, |head_buffer, cx| {
-                    head_buffer.fast_forward(edited, cx);
-                });
-            }
+            head_buffer.update(cx, |head_buffer, cx| {
+                head_buffer.fast_forward(new_head_snapshot, cx);
+            });
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {

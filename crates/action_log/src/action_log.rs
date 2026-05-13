@@ -502,7 +502,8 @@ impl ActionLog {
             .update(cx, |diff, cx| {
                 diff.update_diff(
                     buffer_snapshot.clone(),
-                    Some((new_base_text, snapshot_with_edits.snapshot().clone())),
+                    new_base_text,
+                    snapshot_with_edits.snapshot().clone(),
                     cx,
                 )
             })
