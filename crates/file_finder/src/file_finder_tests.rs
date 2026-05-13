@@ -786,8 +786,9 @@ async fn test_line_range_query_selects_lines(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_eq!(finder.delegate.matches.len(), 2);
         assert_match_at_position(finder, 0, "first.rs");
+        assert_match_at_position(finder, 1, "first.rs:2-4");
 
         let latest_search_query = finder
             .delegate

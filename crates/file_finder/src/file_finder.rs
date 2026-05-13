@@ -1148,7 +1148,7 @@ impl FileFinderDelegate {
                 }
             }
 
-            let query_path = query.path_query();
+            let query_path = query.raw_query.as_str();
             if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
                     .project
@@ -1183,8 +1183,8 @@ impl FileFinderDelegate {
                 if let Some(worktree) = expect_worktree {
                     let worktree = worktree.read(cx);
                     if worktree.entry_for_path(&query_path).is_none()
-                        && !query.path_query().ends_with("/")
-                        && !(path_style.is_windows() && query.path_query().ends_with("\\"))
+                        && !query.raw_query.ends_with("/")
+                        && !(path_style.is_windows() && query.raw_query.ends_with("\\"))
                     {
                         self.matches.matches.push(Match::CreateNew(ProjectPath {
                             worktree_id: worktree.id(),
