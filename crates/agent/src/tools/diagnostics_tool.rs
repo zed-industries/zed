@@ -1,22 +1,29 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema as acp;
-use anyhow::Result;
-use futures::FutureExt as _;
-use gpui::{App, Entity, Task};
+use futures::{Future, FutureExt as _};
+use gpui::{App, AsyncApp, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::{fmt::Write, sync::Arc};
 use ui::SharedString;
 use util::markdown::MarkdownInlineCode;
 
+type Result<T, E = String> = core::result::Result<T, E>;
+
 /// Get errors and warnings for the project or a specific file.
 ///
 /// This tool can be invoked after a series of edits to determine if further edits are necessary, or if the user asks to fix errors or warnings in their codebase.
-///
+/// 
 /// When a path is provided, shows all diagnostics for that specific file.
 /// When no path is provided, shows a summary of error and warning counts for all files in the project.
+/// 
+/// This tool attempts to refresh diagnostics before returning. 
+/// If refreshing diagnostics fails (for example, if the langauge server does not support pull-based diagnostics), it will return any diagnostics already present. 
+/// Note that, in this case, the results may be out-of-date, and may or may not reflect the most recent edits.
+/// If this happens, do not attempt to re-run this tool in the hope that refreshing will later succeed. Failures are typically persistent.
 ///
 /// <example>
 /// To get diagnostics for a specific file:
@@ -60,6 +67,57 @@ impl DiagnosticsTool {
     }
 }
 
+async fn with_cancellation<T>(f: impl Future<Output = T>, s: &ToolCallEventStream) -> Result<T> {
+    futures::select! {
+        result = f.fuse() => Ok(result),
+        _ = s.cancelled_by_user().fuse() => {
+            Err("Diagnostics cancelled by user".to_string())
+        }
+    }
+}
+
+/// Attempt to pull fresh diagnostics from the LSP before reading them.
+///
+/// This is a best-effort operation: if the LSP doesn't support pull
+/// diagnostics or the request fails, this returns without error and
+/// callers should fall through to read whatever cached diagnostics
+/// are available.
+async fn pull_diagnostics(
+    project: &Entity<Project>,
+    path: Option<&Path>,
+    event_stream: &ToolCallEventStream,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    match path {
+        Some(path) => {
+            let open_buffer_task = project.update(cx, |project, cx| {
+                let Some(project_path) = project.find_project_path(path, cx) else {
+                    return Err(format!("Could not find path {} in project", path.display()));
+                };
+                Ok(project.open_buffer(project_path, cx))
+            })?;
+
+            let buffer = with_cancellation(open_buffer_task, event_stream)
+                .await?
+                .map_err(|e| e.to_string())?;
+
+            let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store());
+            let pull_task = lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+            });
+            let pull_result = with_cancellation(pull_task, event_stream).await?;
+            if let Err(error) = pull_result {
+                log::warn!("Failed to pull diagnostics, using cached: {error:#}");
+            }
+            Ok(())
+        }
+        None => {
+            // TODO: workspace-level pull diagnostics
+            Ok(())
+        }
+    }
+}
+
 impl AgentTool for DiagnosticsTool {
     type Input = DiagnosticsToolInput;
     type Output = String;
@@ -96,40 +154,19 @@ impl AgentTool for DiagnosticsTool {
             let input = input.recv().await.map_err(|e| e.to_string())?;
 
             match input.path {
-                Some(path) if !path.is_empty() => {
-                    let (_project_path, open_buffer_task) = project.update(cx, |project, cx| {
-                        let Some(project_path) = project.find_project_path(&path, cx) else {
+                Some(ref path) if !path.is_empty() => {
+                    pull_diagnostics(&project, Some(Path::new(path)), &event_stream, cx).await?;
+
+                    let open_buffer_task = project.update(cx, |project, cx| {
+                        let Some(project_path) = project.find_project_path(path, cx) else {
                             return Err(format!("Could not find path {path} in project"));
                         };
-                        let task = project.open_buffer(project_path.clone(), cx);
-                        Ok((project_path, task))
+                        Ok(project.open_buffer(project_path, cx))
                     })?;
 
-                    let buffer = futures::select! {
-                        result = open_buffer_task.fuse() => result.map_err(|e| e.to_string())?,
-                        _ = event_stream.cancelled_by_user().fuse() => {
-                            return Err("Diagnostics cancelled by user".to_string());
-                        }
-                    };
-
-                    // Attempt to pull fresh diagnostics from the LSP before reading.
-                    // This is a best-effort operation: if the LSP doesn't support
-                    // pull diagnostics (returns Ok(None) internally) or the request
-                    // fails, we fall through to read whatever cached diagnostics
-                    // the buffer already has.
-                    let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store());
-                    let pull_task = lsp_store.update(cx, |lsp_store, cx| {
-                        lsp_store.pull_diagnostics_for_buffer(buffer.clone(), cx)
-                    });
-                    let pull_result = futures::select! {
-                        result = pull_task.fuse() => result,
-                        _ = event_stream.cancelled_by_user().fuse() => {
-                            return Err("Diagnostics cancelled by user".to_string());
-                        }
-                    };
-                    if let Err(error) = pull_result {
-                        log::warn!("Failed to pull diagnostics, using cached: {error:#}");
-                    }
+                    let buffer = with_cancellation(open_buffer_task, &event_stream)
+                        .await?
+                        .map_err(|e| e.to_string())?;
 
                     let mut output = String::new();
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
@@ -160,6 +197,8 @@ impl AgentTool for DiagnosticsTool {
                     }
                 }
                 _ => {
+                    pull_diagnostics(&project, None, &event_stream, cx).await?;
+
                     let (output, has_diagnostics) = project.read_with(cx, |project, cx| {
                         let mut output = String::new();
                         let mut has_diagnostics = false;
