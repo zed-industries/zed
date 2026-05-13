@@ -128,6 +128,8 @@ You can turn this off, though, through the `agent.single_file_review` setting.
 
 The Agent Panel can host terminal threads alongside your agent threads. Each Terminal Thread appears as its own entry in the [Threads Sidebar](./parallel-agents.md#threads-sidebar) with a terminal icon, letting you switch between conversations and shell sessions from the same list.
 
+External agents like Claude Agent and Codex can also run as terminal threads. Some support terminal signals — such as bell notifications or title updates — that Zed uses to show useful context in the sidebar. See the [External Agents](./external-agents.md) docs for how to configure this per agent.
+
 ### Opening a Terminal Thread {#opening-a-terminal-thread}
 
 Open the menu using the agent selector button on the left (in the empty state) or the `+` icon in the top-right of the panel toolbar, and choose **Terminal**. The terminal opens in the panel body, just like switching to a thread. You can open as many terminals as you like — each gets its own sidebar entry.
