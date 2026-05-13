@@ -898,6 +898,16 @@ codegen-units = 16
 split-debuginfo = "unpacked"
 debug = "limited"
 
+
+# "debug" is reserved.
+[profile.dbg]
+inherits = "dev"
+debug = "full"
+
+[profile.dbg.build-override]
+debug = "full"
+
+
 [profile.dev.package]
 # proc-macros start
 gpui_macros = { opt-level = 3 }
