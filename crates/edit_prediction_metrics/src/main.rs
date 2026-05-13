@@ -5,10 +5,10 @@ use std::path::Path;
 use std::process;
 
 use edit_prediction_metrics::{
-    ClassificationMetrics, DeltaChrFMetrics, KeptRateResult, TokenAnnotation,
-    annotate_kept_rate_tokens, braces_disbalance, compute_kept_rate, count_patch_token_changes,
-    delta_chr_f, exact_lines_match, extract_changed_lines_from_diff,
-    has_isolated_whitespace_changes, is_editable_region_correct,
+    ClassificationMetrics, DeltaChrFMetrics, EditableContextCoverage, Excerpt, KeptRateResult,
+    TokenAnnotation, annotate_kept_rate_tokens, braces_disbalance, compute_kept_rate,
+    count_patch_token_changes, delta_chr_f, editable_context_coverage, exact_lines_match,
+    extract_changed_lines_from_diff, has_isolated_whitespace_changes, is_editable_region_correct,
 };
 use serde::Deserialize;
 
@@ -43,8 +43,16 @@ fn run() -> Result<(), String> {
 
             let expected = apply_patch_to_excerpt(&base, &expected_patch, 0)?;
             let actual = apply_patch_to_excerpt(&base, &actual_patch, 0)?;
+            let context = [];
 
-            EvaluationReport::new(base, expected_patch, actual_patch, expected, actual)
+            EvaluationReport::new(
+                base,
+                expected_patch,
+                actual_patch,
+                expected,
+                actual,
+                &context,
+            )
         }
         CliInput::Json {
             json_path,
@@ -55,6 +63,7 @@ fn run() -> Result<(), String> {
             let example: JsonExample = serde_json::from_str(&json)
                 .map_err(|err| format!("failed to parse {}: {err}", json_path.display()))?;
 
+            let context = get_context_excerpts(&example);
             let base = example.prompt_inputs.cursor_excerpt;
             let excerpt_start_row = example.prompt_inputs.excerpt_start_row;
             let expected_patch = example
@@ -74,12 +83,47 @@ fn run() -> Result<(), String> {
             let expected = apply_patch_to_excerpt(&base, &expected_patch, excerpt_start_row)?;
             let actual = apply_patch_to_excerpt(&base, &actual_patch, excerpt_start_row)?;
 
-            EvaluationReport::new(base, expected_patch, actual_patch, expected, actual)
+            EvaluationReport::new(
+                base,
+                expected_patch,
+                actual_patch,
+                expected,
+                actual,
+                &context,
+            )
         }
     };
 
     print_report(&report);
     Ok(())
+}
+
+fn get_context_excerpts(example: &JsonExample) -> Vec<Excerpt> {
+    let mut context = vec![get_cursor_excerpt(example)];
+
+    if let Some(related) = &example.prompt_inputs.related_files {
+        context.extend(related.iter().flat_map(|file| {
+            file.excerpts.iter().map(|excerpt| Excerpt {
+                path: file.path.clone(),
+                row_range: excerpt.row_range.clone(),
+                content: excerpt.text.clone(),
+            })
+        }));
+    }
+
+    context
+}
+
+fn get_cursor_excerpt(example: &JsonExample) -> Excerpt {
+    let content = example.prompt_inputs.cursor_excerpt.clone();
+    let start_row = example.prompt_inputs.excerpt_start_row;
+    let rows = content.lines().count() as u32;
+    let row_range = start_row..start_row + rows;
+    Excerpt {
+        path: example.cursor_path.clone(),
+        row_range,
+        content,
+    }
 }
 
 fn print_usage() {
@@ -199,6 +243,7 @@ struct EvaluationReport {
     editable_region_correct: bool,
     expected_braces_disbalance: usize,
     actual_braces_disbalance: usize,
+    editable_context_coverage: EditableContextCoverage,
 }
 
 impl EvaluationReport {
@@ -208,6 +253,7 @@ impl EvaluationReport {
         actual_patch: String,
         expected: String,
         actual: String,
+        context: &[Excerpt],
     ) -> Self {
         let kept_rate = compute_kept_rate(&base, &actual, &expected);
         let exact_lines = exact_lines_match(&expected_patch, &actual_patch);
@@ -223,6 +269,7 @@ impl EvaluationReport {
         let editable_region_correct = is_editable_region_correct(&actual_patch);
         let expected_braces_disbalance = braces_disbalance(&expected);
         let actual_braces_disbalance = braces_disbalance(&actual);
+        let editable_context_coverage = editable_context_coverage(&actual_patch, context);
 
         Self {
             base,
@@ -238,6 +285,7 @@ impl EvaluationReport {
             editable_region_correct,
             expected_braces_disbalance,
             actual_braces_disbalance,
+            editable_context_coverage,
         }
     }
 }
@@ -319,6 +367,15 @@ fn print_report(report: &EvaluationReport) {
     println!();
 
     print_kept_rate_explanation(&report.base, &report.actual, &report.expected);
+
+    println!("Jumps metrics");
+    println!("-------------");
+    println!(
+        "Editable context coverage: {} ({} / {})",
+        report.editable_context_coverage.score,
+        report.editable_context_coverage.changed_lines_reachable,
+        report.editable_context_coverage.total_changed_lines
+    );
 }
 
 fn print_kept_rate_explanation(base: &str, actual: &str, expected: &str) {
@@ -373,6 +430,7 @@ fn visualize_whitespace(token: &str) -> String {
 #[derive(Debug, Deserialize)]
 struct JsonExample {
     prompt_inputs: PromptInputs,
+    cursor_path: String,
     expected_patches: Vec<String>,
     predictions: Vec<Prediction>,
 }
@@ -381,6 +439,20 @@ struct JsonExample {
 struct PromptInputs {
     cursor_excerpt: String,
     excerpt_start_row: u32,
+    pub related_files: Option<Vec<RelatedFile>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+pub struct RelatedFile {
+    pub path: String,
+    pub max_row: u32,
+    pub excerpts: Vec<RelatedExcerpt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Hash, Deserialize)]
+pub struct RelatedExcerpt {
+    pub row_range: std::ops::Range<u32>,
+    pub text: String,
 }
 
 #[derive(Debug, Deserialize)]
