@@ -63,34 +63,7 @@ fn run() -> Result<(), String> {
             let example: JsonExample = serde_json::from_str(&json)
                 .map_err(|err| format!("failed to parse {}: {err}", json_path.display()))?;
 
-            let context = get_context_excerpts(&example);
-            let base = example.prompt_inputs.cursor_excerpt;
-            let excerpt_start_row = example.prompt_inputs.excerpt_start_row;
-            let expected_patch = example
-                .expected_patches
-                .into_iter()
-                .next()
-                .ok_or_else(|| "JSON input is missing expected_patches[0]".to_string())?;
-            let actual_patch = example
-                .predictions
-                .into_iter()
-                .nth(prediction_index)
-                .ok_or_else(|| {
-                    format!("JSON input does not contain predictions[{prediction_index}]")
-                })?
-                .actual_patch;
-
-            let expected = apply_patch_to_excerpt(&base, &expected_patch, excerpt_start_row)?;
-            let actual = apply_patch_to_excerpt(&base, &actual_patch, excerpt_start_row)?;
-
-            EvaluationReport::new(
-                base,
-                expected_patch,
-                actual_patch,
-                expected,
-                actual,
-                &context,
-            )
+            report_from_json_example(example, prediction_index)?
         }
     };
 
@@ -124,6 +97,42 @@ fn get_cursor_excerpt(example: &JsonExample) -> Excerpt {
         row_range,
         content,
     }
+}
+
+fn report_from_json_example(
+    example: JsonExample,
+    prediction_index: usize,
+) -> Result<EvaluationReport, String> {
+    let context = get_context_excerpts(&example);
+    let excerpt_start_row = example.prompt_inputs.excerpt_start_row;
+    let base = example.prompt_inputs.cursor_excerpt;
+    let expected_patch = example
+        .expected_patches
+        .into_iter()
+        .next()
+        .ok_or_else(|| "JSON input is missing expected_patches[0]".to_string())?;
+    let actual_patch = if example.predictions.is_empty() {
+        String::new()
+    } else {
+        example
+            .predictions
+            .into_iter()
+            .nth(prediction_index)
+            .ok_or_else(|| format!("JSON input does not contain predictions[{prediction_index}]"))?
+            .actual_patch
+    };
+
+    let expected = apply_patch_to_excerpt(&base, &expected_patch, excerpt_start_row)?;
+    let actual = apply_patch_to_excerpt(&base, &actual_patch, excerpt_start_row)?;
+
+    Ok(EvaluationReport::new(
+        base,
+        expected_patch,
+        actual_patch,
+        expected,
+        actual,
+        &context,
+    ))
 }
 
 fn print_usage() {
@@ -269,7 +278,7 @@ impl EvaluationReport {
         let editable_region_correct = is_editable_region_correct(&actual_patch);
         let expected_braces_disbalance = braces_disbalance(&expected);
         let actual_braces_disbalance = braces_disbalance(&actual);
-        let editable_context_coverage = editable_context_coverage(&actual_patch, context);
+        let editable_context_coverage = editable_context_coverage(&expected_patch, context);
 
         Self {
             base,
@@ -432,6 +441,7 @@ struct JsonExample {
     prompt_inputs: PromptInputs,
     cursor_path: String,
     expected_patches: Vec<String>,
+    #[serde(default)]
     predictions: Vec<Prediction>,
 }
 
@@ -778,5 +788,58 @@ mod tests {
 
         let actual = apply_patch_to_excerpt(base, patch, 5).unwrap();
         assert_eq!(actual, "x\ny\nc\n");
+    }
+
+    fn json_example(predictions: Option<&str>) -> String {
+        let predictions = predictions
+            .map(|predictions| {
+                format!(
+                    r#",
+    "predictions": {predictions}"#
+                )
+            })
+            .unwrap_or_default();
+
+        format!(
+            r#"{{
+    "prompt_inputs": {{
+        "cursor_excerpt": "first\nsecond\nthird\n",
+        "excerpt_start_row": 0
+    }},
+    "cursor_path": "src/main.rs",
+    "expected_patches": [
+        "--- a/src/main.rs\n+++ b/src/main.rs\n@@ -2,1 +2,1 @@\n-second\n+changed\n"
+    ]{predictions}
+}}"#
+        )
+    }
+
+    fn report_from_json(predictions: Option<&str>) -> EvaluationReport {
+        let example = serde_json::from_str(&json_example(predictions)).unwrap();
+        report_from_json_example(example, 0).unwrap()
+    }
+
+    #[test]
+    fn json_report_with_missing_predictions_uses_expected_patch_for_context_coverage() {
+        let report = report_from_json(None);
+
+        assert_eq!(report.actual, "first\nsecond\nthird\n");
+        assert_eq!(report.actual_changed_lines, 0);
+        assert_eq!(
+            report.editable_context_coverage,
+            EditableContextCoverage::new(2, 2)
+        );
+    }
+
+    #[test]
+    fn json_report_with_empty_predictions_uses_expected_patch_for_context_coverage() {
+        let report = report_from_json(Some("[]"));
+
+        assert_eq!(report.actual, "first\nsecond\nthird\n");
+        assert_eq!(report.actual_changed_lines, 0);
+        assert_eq!(
+            report.editable_context_coverage,
+            EditableContextCoverage::new(2, 2)
+        );
     }
 }
