@@ -173,6 +173,77 @@ pub fn into_open_ai(
             LanguageModelToolChoice::None => crate::ToolChoice::None,
         }),
         reasoning_effort,
+        extra_body: None,
+    }
+}
+
+/// Strips OpenAI-specific extensions from a request that MiMo and other
+/// compatible APIs reject:
+/// - `stream_options` parameter
+/// - `parallel_tool_calls` parameter
+/// - `strict: true` on tool function definitions
+/// - `additionalProperties` on JSON Schema objects (recursively)
+/// - Empty `content` on assistant messages with tool_calls
+pub fn strip_openai_extensions_from_request(request: &mut crate::Request) {
+    request.stream_options = None;
+    request.parallel_tool_calls = None;
+
+    for tool in &mut request.tools {
+        let crate::ToolDefinition::Function { function } = tool;
+        strip_additional_properties(&mut function.parameters);
+    }
+
+    for msg in &mut request.messages {
+        if let crate::RequestMessage::Assistant {
+            content,
+            tool_calls,
+            ..
+        } = msg
+        {
+            if !tool_calls.is_empty() && content.is_none() {
+                *content = Some(crate::MessageContent::Plain(" ".into()));
+            }
+        }
+    }
+}
+
+fn strip_additional_properties(schema: &mut Option<serde_json::Value>) {
+    let Some(schema) = schema else {
+        return;
+    };
+
+    let serde_json::Value::Object(map) = schema else {
+        return;
+    };
+
+    map.remove("additionalProperties");
+
+    if let Some(serde_json::Value::Object(props)) = map.get_mut("properties") {
+        for prop in props.values_mut() {
+            strip_additional_properties_value(prop);
+        }
+    }
+
+    if let Some(items) = map.get_mut("items") {
+        strip_additional_properties_value(items);
+    }
+}
+
+fn strip_additional_properties_value(value: &mut serde_json::Value) {
+    let serde_json::Value::Object(map) = value else {
+        return;
+    };
+
+    map.remove("additionalProperties");
+
+    if let Some(serde_json::Value::Object(props)) = map.get_mut("properties") {
+        for prop in props.values_mut() {
+            strip_additional_properties_value(prop);
+        }
+    }
+
+    if let Some(items) = map.get_mut("items") {
+        strip_additional_properties_value(items);
     }
 }
 

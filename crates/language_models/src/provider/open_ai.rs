@@ -26,6 +26,7 @@ use util::ResultExt;
 
 pub use open_ai::completion::{
     OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+    strip_openai_extensions_from_request,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = OPEN_AI_PROVIDER_ID;

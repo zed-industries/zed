@@ -16,6 +16,7 @@ pub struct AllLanguageModelSettingsContent {
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
+    pub mimo: Option<MimoSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub opencode: Option<OpenCodeSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
@@ -216,6 +217,58 @@ pub struct DeepseekSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct DeepseekAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct MimoSettingsContent {
+    pub api_url: Option<String>,
+    pub region: Option<MimoRegion>,
+    pub available_models: Option<Vec<MimoAvailableModel>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum MimoRegion {
+    Singapore,
+    China,
+    Europe,
+    PayAsYouGo,
+}
+
+impl Default for MimoRegion {
+    fn default() -> Self {
+        Self::Singapore
+    }
+}
+
+impl MimoRegion {
+    pub fn api_url(&self) -> &'static str {
+        match self {
+            Self::Singapore => "https://token-plan-sgp.xiaomimimo.com/v1",
+            Self::China => "https://token-plan-cn.xiaomimimo.com/v1",
+            Self::Europe => "https://token-plan-ams.xiaomimimo.com/v1",
+            Self::PayAsYouGo => "https://api.xiaomimimo.com/v1",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Singapore => "Singapore (Token Plan)",
+            Self::China => "China (Token Plan)",
+            Self::Europe => "Europe / AMS (Token Plan)",
+            Self::PayAsYouGo => "Pay-as-you-go",
+        }
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct MimoAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: u64,

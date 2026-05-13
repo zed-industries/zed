@@ -9,6 +9,7 @@ use language_model::{
     ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
 };
 use provider::deepseek::DeepSeekLanguageModelProvider;
+use provider::mimo::MimoLanguageModelProvider;
 
 pub mod extension;
 pub mod provider;
@@ -267,6 +268,14 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         Arc::new(DeepSeekLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(MimoLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
             cx,
