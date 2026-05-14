@@ -3921,6 +3921,47 @@ impl AgentPanel {
         }
     }
 
+    fn focus_active_title_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.visible_surface() {
+            VisibleSurface::AgentThread(conversation_view) => {
+                if let Some(title_editor) = conversation_view
+                    .read(cx)
+                    .root_thread_view()
+                    .map(|view| view.read(cx).title_editor.clone())
+                {
+                    title_editor.update(cx, |editor, cx| {
+                        editor.focus_handle(cx).focus(window, cx);
+                        editor.select_all(&editor::actions::SelectAll, window, cx);
+                    });
+                }
+            }
+            VisibleSurface::Terminal(_) => {
+                if let Some(terminal_id) = self.active_terminal_id() {
+                    if self
+                        .terminals
+                        .get(&terminal_id)
+                        .and_then(|terminal| terminal.title_editor.as_ref())
+                        .is_none()
+                    {
+                        self.edit_terminal_title(terminal_id, window, cx);
+                    }
+                    if let Some(title_editor) = self
+                        .terminals
+                        .get(&terminal_id)
+                        .and_then(|terminal| terminal.title_editor.as_ref())
+                        .cloned()
+                    {
+                        title_editor.update(cx, |editor, cx| {
+                            editor.focus_handle(cx).focus(window, cx);
+                            editor.select_all(&editor::actions::SelectAll, window, cx);
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn render_title_view(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
         let content = match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => {
@@ -4077,7 +4118,10 @@ impl AgentPanel {
                             .child(
                                 IconButton::new("edit_tile", IconName::Pencil)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Edit Thread Title")),
+                                    .tooltip(Tooltip::text("Edit Thread Title"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.focus_active_title_editor(window, cx);
+                                    })),
                             ),
                     )
                 },
