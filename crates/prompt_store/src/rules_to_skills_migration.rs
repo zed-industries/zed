@@ -321,19 +321,52 @@ async fn mark_migration_done() {
 
 /// Write a single migrated rule to disk as `<skills_dir>/<name>/SKILL.md`.
 ///
-/// If `<skills_dir>/<slug>/` is already taken, picks the first free
-/// `<slug>-2`, `<slug>-3`, … so two rules whose titles slugify to the
-/// same value don't clobber each other (and an existing skill the user
-/// already created by hand isn't overwritten either).
+/// Three cases:
+///
+/// 1. `<skills_dir>/<slug>/SKILL.md` already exists with byte-identical
+///    content to what we'd write — likely because the migration ran
+///    successfully on a previous launch and is now being asked to
+///    re-migrate the same source rule. Skip silently; don't create a
+///    `<slug>-2` duplicate of the same content.
+/// 2. `<skills_dir>/<slug>/` doesn't exist — happy path. Create it and
+///    write the SKILL.md there.
+/// 3. `<skills_dir>/<slug>/` exists with *different* content (a real
+///    name collision or a hand-edited skill we shouldn't touch). Pick
+///    the first free `<slug>-2`, `<slug>-3`, … and write there with the
+///    suffixed name baked into the SKILL.md frontmatter.
 async fn write_migrated_skill(
     fs: &dyn Fs,
     skills_dir: &Path,
     slug: &str,
     body: &str,
 ) -> Result<()> {
+    let primary_dir = skills_dir.join(slug);
+    let primary_file = primary_dir.join(SKILL_FILE_NAME);
+    let primary_content = format_skill_file(slug, body);
+
+    // Case 1: primary exists with identical content — nothing to do.
+    // Compare trimmed so a stray leading/trailing newline difference
+    // (which is meaningless inside a SKILL.md) doesn't trick us into
+    // generating a `<slug>-N` duplicate.
+    if fs.is_file(&primary_file).await
+        && fs
+            .load(&primary_file)
+            .await
+            .ok()
+            .is_some_and(|existing| existing.trim() == primary_content.trim())
+    {
+        return Ok(());
+    }
+
+    // Cases 2 and 3: find a free directory (the primary if free,
+    // otherwise a `-N` suffix) and write the SKILL.md there.
     let (name, dir) = pick_available_skill_dir(fs, skills_dir, slug).await?;
     fs.create_dir(&dir).await?;
-    let content = format_skill_file(&name, body);
+    let content = if name == slug {
+        primary_content
+    } else {
+        format_skill_file(&name, body)
+    };
     let skill_file_path = dir.join(SKILL_FILE_NAME);
     fs.write(&skill_file_path, content.as_bytes()).await?;
     Ok(())
@@ -470,6 +503,67 @@ mod tests {
         .expect("written SKILL.md should parse");
         assert_eq!(skill.name, "my-rule");
         assert!(skill.disable_model_invocation);
+    }
+
+    #[gpui::test]
+    async fn write_migrated_skill_skips_when_primary_content_is_identical(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = PathBuf::from("/skills");
+        fs.create_dir(&skills_dir.join("my-rule")).await.unwrap();
+        // Seed the primary location with byte-identical content to what the
+        // migration would write.
+        let identical = format_skill_file("my-rule", "Body.");
+        fs.insert_file(
+            &skills_dir.join("my-rule").join(SKILL_FILE_NAME),
+            identical.as_bytes().to_vec(),
+        )
+        .await;
+
+        write_migrated_skill(fs.as_ref(), &skills_dir, "my-rule", "Body.")
+            .await
+            .unwrap();
+
+        // No `-2` duplicate should have been produced.
+        assert!(!fs.is_dir(&skills_dir.join("my-rule-2")).await);
+        // Primary still has the same content.
+        let primary = fs
+            .load(&skills_dir.join("my-rule").join(SKILL_FILE_NAME))
+            .await
+            .unwrap();
+        assert_eq!(primary, identical);
+    }
+
+    #[gpui::test]
+    async fn write_migrated_skill_skips_when_primary_differs_only_in_whitespace(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = PathBuf::from("/skills");
+        fs.create_dir(&skills_dir.join("my-rule")).await.unwrap();
+        // Same logical content but with extra leading/trailing whitespace
+        // (which is meaningless inside a SKILL.md).
+        let mut padded = String::from("\n\n");
+        padded.push_str(format_skill_file("my-rule", "Body.").trim());
+        padded.push_str("\n\n");
+        fs.insert_file(
+            &skills_dir.join("my-rule").join(SKILL_FILE_NAME),
+            padded.as_bytes().to_vec(),
+        )
+        .await;
+
+        write_migrated_skill(fs.as_ref(), &skills_dir, "my-rule", "Body.")
+            .await
+            .unwrap();
+
+        // No `-2` duplicate.
+        assert!(!fs.is_dir(&skills_dir.join("my-rule-2")).await);
+        // Primary content was NOT overwritten — the user's whitespace is
+        // preserved verbatim.
+        let primary = fs
+            .load(&skills_dir.join("my-rule").join(SKILL_FILE_NAME))
+            .await
+            .unwrap();
+        assert_eq!(primary, padded);
     }
 
     #[gpui::test]
