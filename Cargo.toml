@@ -140,6 +140,7 @@ members = [
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/oauth_callback_server",
     "crates/ollama",
     "crates/onboarding",
     "crates/opencode",
@@ -399,6 +400,7 @@ nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+oauth_callback_server = { path = "crates/oauth_callback_server" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 opencode = { path = "crates/opencode" }
