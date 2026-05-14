@@ -1136,6 +1136,11 @@ pub struct AcpThread {
     /// gradually to create a fluid typing effect instead of choppy chunk-at-a-time
     /// updates.
     streaming_text_buffer: Option<StreamingTextBuffer>,
+    /// Per-tool-call timers honoring `agent.external_agent_tool_timeout_seconds`.
+    /// Inserted when a tool call enters `InProgress` and removed when it leaves.
+    /// Dropping a `Task` cancels its work, so removing the entry implicitly
+    /// disarms the timeout.
+    tool_call_timeout_tasks: HashMap<acp::ToolCallId, Task<()>>,
 }
 
 struct StreamingTextBuffer {
@@ -1339,6 +1344,7 @@ impl AcpThread {
             draft_prompt: None,
             ui_scroll_position: None,
             streaming_text_buffer: None,
+            tool_call_timeout_tasks: HashMap::default(),
         }
     }
 
@@ -2022,6 +2028,7 @@ impl AcpThread {
             );
         }
 
+        let now_in_progress;
         if let Some(ix) = self.index_for_tool_call(&id) {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()
@@ -2036,6 +2043,7 @@ impl AcpThread {
                 cx,
             )?;
             call.status = status;
+            now_in_progress = matches!(call.status, ToolCallStatus::InProgress);
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
@@ -2047,11 +2055,88 @@ impl AcpThread {
                 &self.terminals,
                 cx,
             )?;
+            now_in_progress = matches!(call.status, ToolCallStatus::InProgress);
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         };
 
+        if now_in_progress {
+            self.arm_tool_call_timeout(id.clone(), cx);
+        } else {
+            self.tool_call_timeout_tasks.remove(&id);
+        }
+
         self.resolve_locations(id, cx);
         Ok(())
+    }
+
+    fn arm_tool_call_timeout(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
+        // Read the setting at arm-time. Reading inside the spawned task would
+        // race with setting changes that happen before the timer fires; we
+        // intentionally snapshot the value the user had in effect when this
+        // tool call started.
+        let timeout_secs = <agent_settings::AgentSettings as settings::Settings>::get_global(cx)
+            .external_agent_tool_timeout_seconds;
+        let Some(timeout_secs) = timeout_secs else {
+            self.tool_call_timeout_tasks.remove(&id);
+            return;
+        };
+        if timeout_secs == 0 {
+            self.tool_call_timeout_tasks.remove(&id);
+            return;
+        }
+        let duration = Duration::from_secs(timeout_secs);
+        let task = cx.spawn({
+            let id = id.clone();
+            async move |this, cx| {
+                cx.background_executor().timer(duration).await;
+                this.update(cx, |this, cx| {
+                    this.fire_tool_call_timeout(id, timeout_secs, cx);
+                })
+                .ok();
+            }
+        });
+        self.tool_call_timeout_tasks.insert(id, task);
+    }
+
+    fn fire_tool_call_timeout(
+        &mut self,
+        id: acp::ToolCallId,
+        timeout_secs: u64,
+        cx: &mut Context<Self>,
+    ) {
+        // The timer self-removes from the map *after* this method returns; if
+        // the call already left InProgress it was removed when the status
+        // transitioned and this method won't be called.
+        let Some(ix) = self.index_for_tool_call(&id) else {
+            self.tool_call_timeout_tasks.remove(&id);
+            return;
+        };
+        let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
+            self.tool_call_timeout_tasks.remove(&id);
+            return;
+        };
+        if !matches!(call.status, ToolCallStatus::InProgress) {
+            self.tool_call_timeout_tasks.remove(&id);
+            return;
+        }
+
+        log::warn!(
+            "ACP tool call {:?} exceeded inactivity timeout of {timeout_secs}s; sending session/cancel",
+            id
+        );
+
+        // ACP only exposes a session-level cancel, so this aborts the entire
+        // running turn — every other in-flight tool call on this session is
+        // also marked Canceled below.
+        self.connection.cancel(&self.session_id, cx);
+        self.mark_pending_tools_as_canceled();
+        if let Some(turn) = self.running_turn.take() {
+            Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+            cx.background_spawn(turn.send_task).detach();
+        }
+        self.tool_call_timeout_tasks.clear();
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        cx.notify();
     }
 
     fn index_for_tool_call(&self, id: &acp::ToolCallId) -> Option<usize> {
@@ -4722,6 +4807,7 @@ mod tests {
         supports_truncate: bool,
         sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
         set_title_calls: Rc<RefCell<Vec<SharedString>>>,
+        cancel_calls: Arc<parking_lot::Mutex<Vec<acp::SessionId>>>,
         on_user_message: Option<
             Rc<
                 dyn Fn(
@@ -4742,6 +4828,7 @@ mod tests {
                 on_user_message: None,
                 sessions: Arc::default(),
                 set_title_calls: Default::default(),
+                cancel_calls: Arc::default(),
             }
         }
 
@@ -4844,7 +4931,9 @@ mod tests {
             }
         }
 
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+        fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
+            self.cancel_calls.lock().push(session_id.clone());
+        }
 
         fn truncate(
             &self,
@@ -5876,6 +5965,212 @@ mod tests {
             thread.read_with(cx, |t, _| t.status()),
             ThreadStatus::Idle,
             "running_turn must be cleared even when tx was dropped without send"
+        );
+    }
+
+    fn init_test_with_agent_settings(cx: &mut TestAppContext, timeout_secs: Option<u64>) {
+        use settings::Settings as _;
+        env_logger::try_init().ok();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            agent_settings::AgentSettings::register(cx);
+            let mut overridden = agent_settings::AgentSettings::get_global(cx).clone();
+            overridden.external_agent_tool_timeout_seconds = timeout_secs;
+            agent_settings::AgentSettings::override_global(overridden, cx);
+        });
+    }
+
+    fn insert_in_progress_tool_call(
+        thread: &Entity<AcpThread>,
+        cx: &mut TestAppContext,
+        id: &str,
+    ) {
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_tool_call(
+                    acp::ToolCall::new(
+                        acp::ToolCallId::new(id),
+                        format!("Searching the web for {id}"),
+                    )
+                    .kind(acp::ToolKind::Fetch)
+                    .status(acp::ToolCallStatus::InProgress),
+                    cx,
+                )
+                .expect("upsert should succeed");
+        });
+    }
+
+    #[gpui::test]
+    async fn external_agent_tool_timeout_cancels_after_threshold(cx: &mut TestAppContext) {
+        init_test_with_agent_settings(cx, Some(5));
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let cancel_calls = connection.cancel_calls.clone();
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        insert_in_progress_tool_call(&thread, cx, "search-1");
+        cx.run_until_parked();
+        assert_eq!(
+            cancel_calls.lock().len(),
+            0,
+            "no cancel should fire before the timeout"
+        );
+
+        cx.executor().advance_clock(Duration::from_secs(6));
+        cx.run_until_parked();
+
+        assert_eq!(
+            cancel_calls.lock().len(),
+            1,
+            "exactly one session/cancel should be sent once the timeout elapses"
+        );
+        thread.read_with(cx, |thread, _| {
+            let entry = thread
+                .entries
+                .iter()
+                .find_map(|e| match e {
+                    AgentThreadEntry::ToolCall(call)
+                        if call.id == acp::ToolCallId::new("search-1") =>
+                    {
+                        Some(call)
+                    }
+                    _ => None,
+                })
+                .expect("tool call entry should still exist");
+            assert!(
+                matches!(entry.status, ToolCallStatus::Canceled),
+                "timed-out tool call should be marked Canceled, got {:?}",
+                entry.status
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn external_agent_tool_timeout_does_not_fire_when_call_completes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_with_agent_settings(cx, Some(5));
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let cancel_calls = connection.cancel_calls.clone();
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        insert_in_progress_tool_call(&thread, cx, "search-2");
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_tool_call(
+                    acp::ToolCallUpdate::new(
+                        acp::ToolCallId::new("search-2"),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::Completed),
+                    ),
+                    cx,
+                )
+                .expect("status update should succeed");
+        });
+
+        cx.executor().advance_clock(Duration::from_secs(60));
+        cx.run_until_parked();
+
+        assert_eq!(
+            cancel_calls.lock().len(),
+            0,
+            "completed tool calls must not trigger a timeout cancel"
+        );
+    }
+
+    #[gpui::test]
+    async fn external_agent_tool_timeout_disabled_by_default(cx: &mut TestAppContext) {
+        init_test_with_agent_settings(cx, None);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let cancel_calls = connection.cancel_calls.clone();
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        insert_in_progress_tool_call(&thread, cx, "search-3");
+        cx.executor().advance_clock(Duration::from_secs(60 * 60));
+        cx.run_until_parked();
+
+        assert_eq!(
+            cancel_calls.lock().len(),
+            0,
+            "with the timeout setting unset, no automatic cancel should ever fire"
+        );
+    }
+
+    #[gpui::test]
+    async fn external_agent_tool_timeout_respects_subsequent_status_change(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_with_agent_settings(cx, Some(5));
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let cancel_calls = connection.cancel_calls.clone();
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        insert_in_progress_tool_call(&thread, cx, "search-4");
+
+        // Tool call transitions to Failed before the timer fires; the timer
+        // task must be dropped so it cannot subsequently call cancel.
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_tool_call(
+                    acp::ToolCallUpdate::new(
+                        acp::ToolCallId::new("search-4"),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::Failed),
+                    ),
+                    cx,
+                )
+                .expect("status update should succeed");
+        });
+
+        cx.executor().advance_clock(Duration::from_secs(60));
+        cx.run_until_parked();
+
+        assert_eq!(
+            cancel_calls.lock().len(),
+            0,
+            "tool calls that left InProgress before the timeout must not trigger cancel"
         );
     }
 }

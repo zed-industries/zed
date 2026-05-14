@@ -174,6 +174,37 @@ They are checked against both the raw command and each parsed sub-command in cha
 There are no other built-in rules.
 The default settings file ({#action zed::OpenDefaultSettings}) includes commented-out examples for protecting `.env` files, secrets directories, and private keys — you can uncomment or adapt these to suit your needs.
 
+## External ACP Agent Tool Timeout
+
+External agents that talk to Zed over the [Agent Client Protocol](https://agentclientprotocol.com)
+(Cursor, Claude Code, Gemini CLI, etc.) own their own tool execution. If the
+agent — or the network call inside one of its tools, like `web_search` —
+hangs, Zed will sit on the spinner indefinitely because the only signal
+that a tool has finished is a `session/update` from the agent.
+
+To bound how long Zed will wait, set:
+
+```json [settings]
+{
+  "agent": {
+    "external_agent_tool_timeout_seconds": 120
+  }
+}
+```
+
+When set, any external-agent tool call that has been in the `InProgress`
+state for longer than this many seconds is automatically cancelled. ACP
+only exposes a session-level cancel primitive, so this fires the same
+`session/cancel` Zed sends when you press <kbd>Esc</kbd> in the agent
+panel — every other in-flight tool call on that session is cancelled with
+it. The timed-out call is shown with the `Canceled` status; check
+`zed: open log` to confirm a timeout was the cause (look for
+`exceeded inactivity timeout`).
+
+The default is `null`, which preserves the previous behavior of waiting
+indefinitely. This setting has no effect on Zed's own native agent —
+Zed's native tools already report progress and failure on their own.
+
 ## Permission Request in the UI
 
 When the agent requests permission, you'll see in the thread view a tool card with a menu that includes:

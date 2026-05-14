@@ -211,6 +211,13 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+    /// When set, automatically cancel external ACP agent tool calls
+    /// (e.g. Cursor's `web_search`) that have been running without progress
+    /// for more than this many seconds. The cancellation is sent as
+    /// `session/cancel` — the same primitive used when you press Escape — so
+    /// it cancels the entire current turn, not a single tool call. Leave
+    /// unset (the default) to wait indefinitely.
+    pub external_agent_tool_timeout_seconds: Option<u64>,
 }
 
 impl AgentSettingsContent {

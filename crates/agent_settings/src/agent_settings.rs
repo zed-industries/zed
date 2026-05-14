@@ -168,6 +168,14 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
+    /// When `Some(secs)`, automatically cancel any external ACP agent
+    /// (Cursor, Claude Code, Gemini CLI, etc.) tool call that has been in the
+    /// `InProgress` state for longer than `secs` seconds without a status
+    /// change. The cancellation is delivered via the same `session/cancel`
+    /// path the user gets when pressing Escape, so it cancels the current
+    /// turn — ACP does not provide per-call cancellation. `None` (the
+    /// default) preserves the existing behavior of waiting indefinitely.
+    pub external_agent_tool_timeout_seconds: Option<u64>,
 }
 
 impl AgentSettings {
@@ -672,6 +680,7 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            external_agent_tool_timeout_seconds: agent.external_agent_tool_timeout_seconds,
         }
     }
 }

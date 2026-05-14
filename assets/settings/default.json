@@ -1102,6 +1102,13 @@
         // },
       },
     },
+    // When set, automatically cancel an external ACP agent (e.g. Cursor,
+    // Claude Code, Gemini CLI) tool call that has been running without
+    // progress for more than this many seconds. The cancellation is sent
+    // via `session/cancel` (the same path as Escape), so it cancels the
+    // entire current turn — ACP has no per-call cancel primitive. Leave
+    // null to wait indefinitely.
+    "external_agent_tool_timeout_seconds": null,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": false,
     // When enabled, show voting thumbs for feedback on agent edits.
