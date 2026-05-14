@@ -4149,13 +4149,6 @@ impl AgentPanel {
             _ => false,
         };
 
-        // When the Skills feature flag is on, Rules are surfaced through
-        // the Skills UI instead, so we hide the legacy Rules menu entry.
-        // The flag is read from a global store populated asynchronously,
-        // and the menu closure runs on every open, so by the time the
-        // user clicks the ellipsis the resolved value is reflected here.
-        let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
-
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
@@ -4176,6 +4169,12 @@ impl AgentPanel {
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
+                    // When the Skills feature flag is on, hide the legacy Rules menu entry.
+                    // The flag is read from a global store populated asynchronously, and
+                    // this menu builder runs on every open, so the latest resolved value is
+                    // reflected when the user clicks the ellipsis.
+                    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
 
