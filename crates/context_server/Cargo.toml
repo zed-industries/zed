@@ -26,6 +26,7 @@ gpui.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
 log.workspace = true
 net.workspace = true
+oauth_callback_server.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 postage.workspace = true
@@ -36,7 +37,6 @@ settings.workspace = true
 sha2.workspace = true
 slotmap.workspace = true
 tempfile.workspace = true
-tiny_http.workspace = true
 url = { workspace = true, features = ["serde"] }
 util.workspace = true
 
