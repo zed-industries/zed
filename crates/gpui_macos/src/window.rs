@@ -25,11 +25,11 @@ use cocoa::{
 };
 use dispatch2::DispatchQueue;
 use gpui::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, ExternalPaths, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
-    RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
     px, size,
 };
@@ -174,6 +174,10 @@ unsafe fn build_classes() {
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
                 decl.add_method(
+                    sel!(resetCursorRects),
+                    reset_cursor_rects as extern "C" fn(&Object, Sel),
+                );
+                decl.add_method(
                     sel!(pressureChangeWithEvent:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
@@ -313,6 +317,46 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
+/// Stores the cursor style on the active GPUI window and invalidates its cursor rects.
+///
+/// # Safety
+///
+/// This function is not thread safe. Callers must ensure this is called on the AppKit main
+/// thread because it reads the active AppKit window and updates GPUI window state associated
+/// with Objective-C objects.
+pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
+    // SAFETY: The caller guarantees AppKit main-thread access. The class check ensures the
+    // window has our WINDOW_STATE_IVAR before reading it.
+    unsafe {
+        let app = NSApplication::sharedApplication(nil);
+        let key_window: id = msg_send![app, keyWindow];
+        let main_window: id = msg_send![app, mainWindow];
+        let active_window = if !key_window.is_null()
+            && msg_send![key_window, isKindOfClass: WINDOW_CLASS]
+        {
+            Some(key_window)
+        } else if !main_window.is_null() && msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+            Some(main_window)
+        } else {
+            None
+        };
+
+        let Some(active_window) = active_window else {
+            return;
+        };
+
+        let window_state = get_window_state(&*active_window);
+        let mut window_state = window_state.lock();
+        if window_state.cursor_style != style {
+            window_state.cursor_style = style;
+            let _: () = msg_send![
+                window_state.native_window,
+                invalidateCursorRectsForView: window_state.native_view.as_ptr()
+            ];
+        }
+    }
+}
+
 unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
     unsafe {
         let mut decl = ClassDecl::new(name, superclass).unwrap();
@@ -429,6 +473,8 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
+    cursor_style: CursorStyle,
+    cursor_visible: Arc<AtomicBool>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -630,6 +676,7 @@ impl MacWindow {
             tabbing_identifier,
             ..
         }: WindowParams,
+        cursor_visible: Arc<AtomicBool>,
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
@@ -746,6 +793,8 @@ impl MacWindow {
                 native_view: NonNull::new_unchecked(native_view),
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
+                cursor_style: CursorStyle::Arrow,
+                cursor_visible,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -1223,30 +1272,17 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
-        // macOs applies overrides to modal window buttons after they are added.
-        // Two most important for this logic are:
-        // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
-        // * Last button added to the modal via `addButtonWithTitle` stays focused
-        // * Focused buttons react on "space"/" " keypresses
-        // * Usage of `keyEquivalent`, `makeFirstResponder` or `setInitialFirstResponder` does not change the focus
-        //
-        // See also https://developer.apple.com/documentation/appkit/nsalert/1524532-addbuttonwithtitle#discussion
-        // ```
-        // By default, the first button has a key equivalent of Return,
-        // any button with a title of “Cancel” has a key equivalent of Escape,
-        // and any button with the title “Don’t Save” has a key equivalent of Command-D (but only if it’s not the first button).
-        // ```
-        //
-        // To avoid situations when the last element added is "Cancel" and it gets the focus
-        // (hence stealing both ESC and Space shortcuts), we find and add one non-Cancel button
-        // last, so it gets focus and a Space shortcut.
-        // This way, "Save this file? Yes/No/Cancel"-ish modals will get all three buttons mapped with a key.
-        let latest_non_cancel_label = answers
+        // NSAlert's first button keeps Return and Cancel keeps Escape, but the keyboard
+        // focus (and therefore Space) defaults to Cancel, leaving the middle button of
+        // prompts like "Save / Don't Save / Cancel" unreachable from the keyboard. Move
+        // the initial focus onto the last non-cancel, non-default button instead.
+        let initial_focus_ix = answers
             .iter()
             .enumerate()
             .rev()
             .find(|(_, label)| !label.is_cancel())
-            .filter(|&(label_index, _)| label_index > 0);
+            .map(|(ix, _)| ix)
+            .filter(|&ix| ix > 0);
 
         unsafe {
             let alert: id = msg_send![class!(NSAlert), alloc];
@@ -1262,25 +1298,24 @@ impl PlatformWindow for MacWindow {
                 let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
             }
 
-            for (ix, answer) in answers
-                .iter()
-                .enumerate()
-                .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
-            {
+            let mut initial_focus_button: Option<id> = None;
+            for (ix, answer) in answers.iter().enumerate() {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
 
                 if answer.is_cancel() {
-                    // Bind Escape Key to Cancel Button
                     if let Some(key) = std::char::from_u32(crate::events::ESCAPE_KEY as u32) {
                         let _: () =
                             msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
                     }
+                } else if Some(ix) == initial_focus_ix {
+                    initial_focus_button = Some(button);
                 }
             }
-            if let Some((ix, answer)) = latest_non_cancel_label {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
-                let _: () = msg_send![button, setTag: ix as NSInteger];
+
+            if let Some(button) = initial_focus_button {
+                let alert_window: id = msg_send![alert, window];
+                let _: () = msg_send![alert_window, setInitialFirstResponder: button];
             }
 
             let (done_tx, done_rx) = oneshot::channel();
@@ -1445,6 +1480,10 @@ impl PlatformWindow for MacWindow {
             let filename = path.map_or(ns_string(""), |p| ns_string(&p.to_string_lossy()));
             let _: () = msg_send![window, setRepresentedFilename: filename];
         }
+
+        // Changing the document path state resets the traffic light position,
+        // so we have to move it again.
+        self.0.lock().move_traffic_light();
     }
 
     fn show_character_palette(&self) {
@@ -1767,6 +1806,57 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
     }
 }
 
+extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
+    // SAFETY: AppKit invokes cursor-rect updates on the main thread for GPUIView instances,
+    // whose WINDOW_STATE_IVAR is initialized when the view is created. The cursor registered
+    // below is a valid NSCursor.
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
+
+        let window_state = get_window_state(this);
+        let cursor_style = window_state.lock().cursor_style;
+
+        let cursor: id = match cursor_style {
+            CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+            CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+            CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
+            CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
+            CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
+            CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+            CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
+            CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
+            CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
+            CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
+
+            // Undocumented, private class methods:
+            // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
+            CursorStyle::ResizeUpLeftDownRight => {
+                msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+            }
+            CursorStyle::ResizeUpRightDownLeft => {
+                msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
+            }
+
+            CursorStyle::IBeamCursorForVerticalLayout => {
+                msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
+            }
+            CursorStyle::OperationNotAllowed => {
+                msg_send![class!(NSCursor), operationNotAllowedCursor]
+            }
+            CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
+            CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
+            CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
+        };
+
+        let bounds = NSView::bounds(this as *const Object as id);
+        let _: () = msg_send![this, addCursorRect: bounds cursor: cursor];
+    }
+}
+
 extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
     handle_key_event(this, native_event, true)
 }
@@ -1992,6 +2082,20 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
+        // AppKit unhides the cursor on the next mouse movement; mirror that here.
+        if matches!(
+            event,
+            PlatformInput::MouseMove(_)
+                | PlatformInput::MouseDown(_)
+                | PlatformInput::MouseUp(_)
+                | PlatformInput::MousePressure(_)
+                | PlatformInput::MouseExited(_)
+                | PlatformInput::ScrollWheel(_)
+                | PlatformInput::Pinch(_)
+        ) {
+            lock.cursor_visible.store(true, Ordering::Relaxed);
+        }
+
         match &mut event {
             PlatformInput::MouseDown(
                 event @ MouseDownEvent {
@@ -2216,6 +2320,9 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     let window_state = unsafe { get_window_state(this) };
     let lock = window_state.lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
+
+    // AppKit also unhides the cursor on activation changes, so mirror that here.
+    lock.cursor_visible.store(true, Ordering::Relaxed);
 
     // When opening a pop-up while the application isn't active, Cocoa sends a spurious
     // `windowDidBecomeKey` message to the previous key window even though that window

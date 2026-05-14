@@ -24,6 +24,11 @@ async fn test_core_channels(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
+    // Subscribe to channels (simulates opening the collab panel)
+    client_a.initialize_channel_store(cx_a);
+    client_b.initialize_channel_store(cx_b);
+    executor.run_until_parked();
+
     let channel_a_id = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
@@ -290,6 +295,11 @@ async fn test_core_channels(
 
     server.allow_connections();
     executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+
+    // Re-subscribe to channels after reconnection (simulates collab panel re-rendering)
+    client_a.initialize_channel_store(cx_a);
+    executor.run_until_parked();
+
     assert_channels(
         client_a.channel_store(),
         cx_a,
@@ -304,7 +314,7 @@ async fn test_core_channels(
 #[track_caller]
 fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u64]) {
     assert_eq!(
-        participants.iter().map(|p| p.id).collect::<Vec<_>>(),
+        participants.iter().map(|p| p.legacy_id).collect::<Vec<_>>(),
         expected_partitipants
     );
 }
@@ -317,7 +327,7 @@ fn assert_members_eq(
     assert_eq!(
         members
             .iter()
-            .map(|member| (member.user.id, member.role, member.kind))
+            .map(|member| (member.user.legacy_id, member.role, member.kind))
             .collect::<Vec<_>>(),
         expected_members
     );
@@ -1249,7 +1259,7 @@ async fn test_guest_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_a);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     });
 }
 
@@ -1310,7 +1320,7 @@ async fn test_invite_access(
     client_a.channel_store().update(cx_a, |channel_store, _| {
         let participants = channel_store.channel_participants(channel_b_id);
         assert_eq!(participants.len(), 1);
-        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+        assert_eq!(participants[0].legacy_id, client_b.user_id().unwrap());
     })
 }
 

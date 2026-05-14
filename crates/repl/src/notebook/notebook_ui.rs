@@ -11,7 +11,7 @@ use futures::FutureExt;
 use futures::future::Shared;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, ListScrollEvent,
-    ListState, Point, Task, actions, list, prelude::*,
+    ListState, Point, Task, TaskExt, actions, list, prelude::*,
 };
 use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
@@ -809,6 +809,7 @@ impl NotebookEditor {
 
         let code_cell = cx.new(|cx| {
             super::CodeCell::new(
+                super::CellSource::None,
                 new_cell_id.clone(),
                 metadata,
                 String::new(),

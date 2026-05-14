@@ -22,7 +22,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut positions = vim.save_selection_starts(editor, cx);
-                editor.rewrap_impl(
+                editor.rewrap(
                     RewrapOptions {
                         override_language_settings: true,
                         line_length: action.line_length,
@@ -74,7 +74,7 @@ impl Vim {
                         );
                     });
                 });
-                editor.rewrap_impl(
+                editor.rewrap(
                     RewrapOptions {
                         override_language_settings: true,
                         ..Default::default()
@@ -112,7 +112,7 @@ impl Vim {
                         object.expand_selection(map, selection, around, times);
                     });
                 });
-                editor.rewrap_impl(
+                editor.rewrap(
                     RewrapOptions {
                         override_language_settings: true,
                         ..Default::default()

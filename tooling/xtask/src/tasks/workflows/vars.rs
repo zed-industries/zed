@@ -51,6 +51,9 @@ secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
 secret!(R2_ACCOUNT_ID);
 secret!(R2_ACCESS_KEY_ID);
 secret!(R2_SECRET_ACCESS_KEY);
+secret!(CLOUDFLARE_API_TOKEN);
+secret!(CLOUDFLARE_ACCOUNT_ID);
+secret!(DOCS_AMPLITUDE_API_KEY);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
