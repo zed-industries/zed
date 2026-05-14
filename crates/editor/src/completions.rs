@@ -975,6 +975,11 @@ impl Editor {
             self.show_signature_help(&ShowSignatureHelp, window, cx);
         }
 
+        // After the code completion is finished, we should finalize the last transaction.
+        // This ensure vim/helix not group the edits together.
+        self.buffer
+            .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
+
         Some(cx.spawn_in(window, async move |editor, cx| {
             let additional_edits_tx = apply_edits.await?;
 
