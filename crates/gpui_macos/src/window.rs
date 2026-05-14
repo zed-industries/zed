@@ -2800,41 +2800,42 @@ extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint
 // adds dynamically. We add them directly since we own the GPUIView class.
 // https://github.com/AccessKit/accesskit/blob/accesskit_macos-v0.26.0/platforms/macos/src/subclass.rs#L89-L109
 extern "C" fn accessibility_children(this: &Object, _: Sel) -> id {
-    dbg!("accessibility_children called");
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
-    if let (Some(adapter), Some(handler)) = (
+    let result = if let (Some(adapter), Some(handler)) = (
         state.accesskit_adapter.as_mut(),
         state.a11y_activation_handler.as_mut(),
     ) {
         adapter.view_children(handler) as id
     } else {
         nil
-    }
+    };
+    dbg!("accessibility_children", result);
+    result
 }
 
 extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
-    dbg!("accessibility_focused_ui_element called");
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
-    if let (Some(adapter), Some(handler)) = (
+    let result = if let (Some(adapter), Some(handler)) = (
         state.accesskit_adapter.as_mut(),
         state.a11y_activation_handler.as_mut(),
     ) {
         adapter.focus(handler) as id
     } else {
         nil
-    }
+    };
+    dbg!("accessibility_focused_ui_element", result);
+    result
 }
 
 extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
-    dbg!("accessibility_hit_test called");
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
-    if let (Some(adapter), Some(handler)) = (
+    let result = if let (Some(adapter), Some(handler)) = (
         state.accesskit_adapter.as_mut(),
         state.a11y_activation_handler.as_mut(),
     ) {
@@ -2847,7 +2848,9 @@ extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> i
         ) as id
     } else {
         nil
-    }
+    };
+    dbg!("accessibility_hit_test", result);
+    result
 }
 
 fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels> {
