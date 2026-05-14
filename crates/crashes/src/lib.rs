@@ -1,8 +1,8 @@
 #[cfg(not(target_os = "freebsd"))]
-mod crashes_full;
+mod crashes;
 
 #[cfg(not(target_os = "freebsd"))]
-pub use crashes_full::*;
+pub use crashes::*;
 
 #[cfg(target_os = "freebsd")]
 mod crashes_freebsd;
