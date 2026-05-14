@@ -6,11 +6,9 @@ edition.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
-cfg-if.workspace = true
 futures.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-release_channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
