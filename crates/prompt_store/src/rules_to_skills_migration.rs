@@ -1,28 +1,42 @@
-//! One-time migration from non-Default Rules (stored in the user's
-//! `PromptStore` LMDB database) to global Agent Skills under
-//! `~/.agents/skills/`.
+//! One-time migration from Rules (stored in the user's `PromptStore`
+//! LMDB database) to two destinations:
 //!
-//! This is gated by:
+//! * **Non-Default Rules → global Agent Skills** under
+//!   `~/.agents/skills/<slug>/SKILL.md`. Non-Default Rules were only ever
+//!   included in a conversation when the user explicitly invoked them by
+//!   name, which maps cleanly onto Skills with
+//!   `disable-model-invocation: true` (slash-only, never auto-suggested
+//!   to the model). See [`migrate_non_default_rules_to_skills`].
+//!
+//! * **Default Rules → global AGENTS.md** at the platform-appropriate
+//!   path (see [`paths::agents_file`]). Default Rules were auto-included
+//!   in every conversation; the global AGENTS.md is loaded into the
+//!   system prompt of every conversation, so the migration target
+//!   preserves the behavior. Each rule is appended under an `## H2`
+//!   heading containing the rule's title. See
+//!   [`migrate_default_rules_to_agents_md`].
+//!
+//!   **Customized built-in prompts** (currently just
+//!   [`BuiltInPrompt::CommitMessage`]) are treated the same as Default
+//!   user Rules — if the user has edited the body away from the
+//!   built-in's `default_content()`, the edited body is appended to
+//!   AGENTS.md ahead of any user Default Rules. Uncustomized built-ins
+//!   (still using Zed's shipped default content) are skipped so we don't
+//!   pollute AGENTS.md with text the user never wrote.
+//!
+//! Both migrations are gated by:
 //!
 //! * the `skills` feature flag — users without it never have their Rules
 //!   touched in any way;
-//! * a global "migration already ran" flag persisted in
+//! * a single global "migration already ran" flag persisted in
 //!   [`GlobalKeyValueStore`] — keyed by [`MIGRATION_DONE_KEY`], so a
-//!   `~/.agents/skills/` tree shared across release channels only gets
-//!   populated once per machine.
+//!   shared home directory only gets populated once per machine even
+//!   across release channels.
 //!
 //! The migration is intentionally non-destructive: rule rows in the LMDB
-//! database are left in place after their Skill counterparts are written.
-//! That way users can still see and edit their Rules via the existing UI,
-//! and a user who downgrades to a Zed build without skills support won't
-//! lose anything.
-//!
-//! Migrated Skills are written with `disable-model-invocation: true` —
-//! the model never auto-invokes them based on the description. This
-//! preserves the original behavior of non-Default Rules, which were also
-//! only included when the user explicitly invoked them by name. The
-//! description defaults to a placeholder since it's never seen by the
-//! model anyway.
+//! database are left in place after the migration. That way users can
+//! still see and edit their Rules via the existing UI, and a user who
+//! downgrades to a Zed build without skills support won't lose anything.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,10 +47,11 @@ use anyhow::{Context as _, Result};
 use db::kvp::GlobalKeyValueStore;
 use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
-use gpui::{App, TaskExt as _};
+use gpui::{App, AsyncApp, Entity, TaskExt as _};
 use util::ResultExt as _;
 
-use crate::{PromptId, PromptStore};
+use crate::{BuiltInPrompt, PromptId, PromptStore};
+use strum::IntoEnumIterator as _;
 
 /// Global KVP flag: set to `"1"` once the migration has been considered
 /// for this machine, regardless of whether any rules were actually
@@ -106,57 +121,195 @@ pub fn migrate_rules_to_skills_if_needed(fs: Arc<dyn Fs>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let prompt_store = prompt_store.await.context("loading prompt store")?;
 
-        // Snapshot the (id, title) pairs for every non-Default user rule.
-        // BuiltIn prompts (e.g. the commit-message prompt) are intentionally
-        // excluded — they're not user-facing "Rules" in the agent sense.
-        let user_rules: Vec<(PromptId, String)> = prompt_store.read_with(cx, |store, _| {
-            store
-                .all_prompt_metadata()
-                .into_iter()
-                .filter(|metadata| !metadata.default)
-                .filter_map(|metadata| {
-                    let _ = metadata.id.as_user()?;
-                    let title = metadata.title.as_ref()?.to_string();
-                    Some((metadata.id, title))
-                })
-                .collect()
-        });
-
-        if user_rules.is_empty() {
-            mark_migration_done().await;
-            return anyhow::Ok(());
-        }
-
-        let skills_dir = global_skills_dir();
-        for (id, title) in user_rules {
-            let body = prompt_store
-                .update(cx, |store, cx| store.load(id, cx))
-                .await;
-            let body = match body {
-                Ok(body) => body,
-                Err(err) => {
-                    log::warn!("Skipping rule {title:?}: failed to load body: {err:#}");
+        // Snapshot the (id, title) pairs for every user rule, split by
+        // whether it's a Default rule or not. BuiltIn prompts (e.g. the
+        // commit-message prompt) are excluded — they're not user-facing
+        // "Rules" in the agent sense.
+        let (default_rules, non_default_rules) = prompt_store.read_with(cx, |store, _| {
+            let mut default = Vec::new();
+            let mut non_default = Vec::new();
+            for metadata in store.all_prompt_metadata() {
+                if metadata.id.as_user().is_none() {
                     continue;
                 }
-            };
-
-            let Some(slug) = slugify_skill_name(&title) else {
-                log::warn!(
-                    "Skipping rule {title:?}: title contains no characters \
-                     valid for a skill name"
-                );
-                continue;
-            };
-
-            if let Err(err) = write_migrated_skill(fs.as_ref(), &skills_dir, &slug, &body).await {
-                log::warn!("Failed to write skill for rule {title:?}: {err:#}");
+                let Some(title) = metadata.title.as_ref().map(|t| t.to_string()) else {
+                    continue;
+                };
+                if metadata.default {
+                    default.push((metadata.id, title));
+                } else {
+                    non_default.push((metadata.id, title));
+                }
             }
-        }
+            (default, non_default)
+        });
+
+        migrate_non_default_rules_to_skills(fs.as_ref(), &prompt_store, cx, non_default_rules)
+            .await;
+
+        migrate_default_rules_to_agents_md(
+            fs.as_ref(),
+            paths::agents_file(),
+            &prompt_store,
+            cx,
+            default_rules,
+        )
+        .await;
 
         mark_migration_done().await;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+/// Returns `true` if `body` (the result of `PromptStore::load` for the
+/// given built-in) differs from the built-in's shipped `default_content`.
+/// Customization detection is done by trimmed-string comparison so that
+/// whitespace-only differences (e.g. trailing newlines) don't count as a
+/// customization.
+fn is_customized_builtin_body(builtin: BuiltInPrompt, body: &str) -> bool {
+    body.trim() != builtin.default_content().trim()
+}
+
+/// Convert every non-Default user rule into a global Agent Skill on disk.
+async fn migrate_non_default_rules_to_skills(
+    fs: &dyn Fs,
+    prompt_store: &Entity<PromptStore>,
+    cx: &mut AsyncApp,
+    rules: Vec<(PromptId, String)>,
+) {
+    if rules.is_empty() {
+        return;
+    }
+    let skills_dir = global_skills_dir();
+    for (id, title) in rules {
+        let body = match load_rule_body(prompt_store, cx, id, &title).await {
+            Some(body) => body,
+            None => continue,
+        };
+        let Some(slug) = slugify_skill_name(&title) else {
+            log::warn!(
+                "Skipping rule {title:?}: title contains no characters \
+                 valid for a skill name"
+            );
+            continue;
+        };
+        if let Err(err) = write_migrated_skill(fs, &skills_dir, &slug, &body).await {
+            log::warn!("Failed to write skill for rule {title:?}: {err:#}");
+        }
+    }
+}
+
+/// Append all auto-included Rules to the global `AGENTS.md`, creating it
+/// if necessary. Each rule lands under an `## H2` heading containing its
+/// title, with the rule body underneath.
+///
+/// The appended block contains, in order:
+///
+/// 1. Each [`BuiltInPrompt`] the user has customized (uncustomized
+///    built-ins are skipped so we don't write Zed's shipped default text
+///    into the user's personal AGENTS.md).
+/// 2. Each user Default Rule, in the order given.
+async fn migrate_default_rules_to_agents_md(
+    fs: &dyn Fs,
+    agents_md_path: &Path,
+    prompt_store: &Entity<PromptStore>,
+    cx: &mut AsyncApp,
+    default_user_rules: Vec<(PromptId, String)>,
+) {
+    let mut entries: Vec<(String, String)> = Vec::new();
+
+    // Customized built-ins come first.
+    for builtin in BuiltInPrompt::iter() {
+        let id = PromptId::BuiltIn(builtin);
+        let title = builtin.title().to_string();
+        let Some(body) = load_rule_body(prompt_store, cx, id, &title).await else {
+            continue;
+        };
+        if !is_customized_builtin_body(builtin, &body) {
+            continue;
+        }
+        entries.push((title, body));
+    }
+
+    // Then user Default Rules.
+    for (id, title) in default_user_rules {
+        let Some(body) = load_rule_body(prompt_store, cx, id, &title).await else {
+            continue;
+        };
+        entries.push((title, body));
+    }
+
+    if entries.is_empty() {
+        return;
+    }
+    if let Err(err) = append_default_rules_to_agents_md(fs, agents_md_path, &entries).await {
+        log::warn!("Failed to append default rules to AGENTS.md: {err:#}");
+    }
+}
+
+async fn load_rule_body(
+    prompt_store: &Entity<PromptStore>,
+    cx: &mut AsyncApp,
+    id: PromptId,
+    title: &str,
+) -> Option<String> {
+    let task = prompt_store.update(cx, |store, cx| store.load(id, cx));
+    match task.await {
+        Ok(body) => Some(body),
+        Err(err) => {
+            log::warn!("Skipping rule {title:?}: failed to load body: {err:#}");
+            None
+        }
+    }
+}
+
+/// Build the markdown text to append for the given (title, body) rules
+/// and write it to `agents_md_path`, preserving any existing AGENTS.md
+/// content above the appended block.
+async fn append_default_rules_to_agents_md(
+    fs: &dyn Fs,
+    agents_md_path: &Path,
+    rules: &[(String, String)],
+) -> Result<()> {
+    if rules.is_empty() {
+        return Ok(());
+    }
+    let appended = format_default_rules_section(rules);
+
+    // `fs.load` errors when the file is missing OR unreadable; treat both
+    // as "no existing content" so the file gets (re-)created from the
+    // migrated text.
+    let existing_trimmed = fs
+        .load(agents_md_path)
+        .await
+        .ok()
+        .map(|s| s.trim().to_string());
+
+    let final_contents = match existing_trimmed.as_deref() {
+        Some(existing) if !existing.is_empty() => format!("{existing}\n\n{appended}\n"),
+        _ => format!("{appended}\n"),
+    };
+
+    fs.write(agents_md_path, final_contents.as_bytes()).await?;
+    Ok(())
+}
+
+/// Build the markdown text representing the migrated Default Rules block.
+/// Each rule contributes an `## H2` heading followed by its body, with
+/// rules separated by blank lines.
+fn format_default_rules_section(rules: &[(String, String)]) -> String {
+    let mut out = String::new();
+    for (title, body) in rules {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str("## ");
+        out.push_str(title);
+        out.push_str("\n\n");
+        out.push_str(body.trim());
+    }
+    out
 }
 
 async fn mark_migration_done() {
@@ -346,5 +499,156 @@ mod tests {
             .expect("migrated SKILL.md should have landed at the suffixed path");
         assert!(migrated.contains("Migrated body."));
         assert!(migrated.contains("disable-model-invocation: true"));
+    }
+
+    #[test]
+    fn format_default_rules_section_renders_headings_and_bodies() {
+        let rules = vec![
+            (
+                "My First Rule".to_string(),
+                "Body of first rule.".to_string(),
+            ),
+            (
+                "Second Rule".to_string(),
+                "Body of second rule.".to_string(),
+            ),
+        ];
+        let section = format_default_rules_section(&rules);
+        let expected = "## My First Rule\n\nBody of first rule.\n\n\
+                        ## Second Rule\n\nBody of second rule.";
+        assert_eq!(section, expected);
+    }
+
+    #[test]
+    fn format_default_rules_section_trims_individual_bodies() {
+        // Leading and trailing whitespace on each body is trimmed, so we
+        // don't end up with weird gaps between sections.
+        let rules = vec![(
+            "Whitespace Rule".to_string(),
+            "\n\n  Body with surrounding whitespace.  \n\n".to_string(),
+        )];
+        let section = format_default_rules_section(&rules);
+        assert_eq!(
+            section,
+            "## Whitespace Rule\n\nBody with surrounding whitespace."
+        );
+    }
+
+    #[test]
+    fn format_default_rules_section_handles_empty_input() {
+        assert_eq!(format_default_rules_section(&[]), "");
+    }
+
+    #[test]
+    fn is_customized_builtin_body_returns_false_for_exact_default() {
+        let default = BuiltInPrompt::CommitMessage.default_content();
+        assert!(!is_customized_builtin_body(
+            BuiltInPrompt::CommitMessage,
+            default,
+        ));
+    }
+
+    #[test]
+    fn is_customized_builtin_body_ignores_surrounding_whitespace() {
+        // Trailing/leading whitespace doesn't count as a real edit.
+        let default = BuiltInPrompt::CommitMessage.default_content();
+        let padded = format!("\n\n  {}  \n\n", default.trim());
+        assert!(!is_customized_builtin_body(
+            BuiltInPrompt::CommitMessage,
+            &padded,
+        ));
+    }
+
+    #[test]
+    fn is_customized_builtin_body_returns_true_for_real_edit() {
+        let mut edited = BuiltInPrompt::CommitMessage.default_content().to_string();
+        edited.push_str("\n\nAlways mention the ticket number.");
+        assert!(is_customized_builtin_body(
+            BuiltInPrompt::CommitMessage,
+            &edited,
+        ));
+    }
+
+    #[test]
+    fn is_customized_builtin_body_returns_true_for_completely_different_body() {
+        assert!(is_customized_builtin_body(
+            BuiltInPrompt::CommitMessage,
+            "Use emoji and rhyming couplets.",
+        ));
+    }
+
+    #[gpui::test]
+    async fn append_default_rules_creates_agents_md_when_missing(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let agents_md = PathBuf::from("/config/AGENTS.md");
+        // Don't pre-create the file or its parent dir; `fs.write` should
+        // create both.
+        let rules = vec![("Rule One".to_string(), "Body one.".to_string())];
+
+        append_default_rules_to_agents_md(fs.as_ref(), &agents_md, &rules)
+            .await
+            .unwrap();
+
+        let contents = fs.load(&agents_md).await.unwrap();
+        assert_eq!(contents, "## Rule One\n\nBody one.\n");
+    }
+
+    #[gpui::test]
+    async fn append_default_rules_appends_to_existing_agents_md(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let agents_md = PathBuf::from("/config/AGENTS.md");
+        fs.create_dir(agents_md.parent().unwrap()).await.unwrap();
+        fs.insert_file(
+            &agents_md,
+            b"# Top-level Agents Doc\n\nPre-existing user content.\n".to_vec(),
+        )
+        .await;
+
+        let rules = vec![
+            ("Rule One".to_string(), "Body one.".to_string()),
+            ("Rule Two".to_string(), "Body two.".to_string()),
+        ];
+        append_default_rules_to_agents_md(fs.as_ref(), &agents_md, &rules)
+            .await
+            .unwrap();
+
+        let contents = fs.load(&agents_md).await.unwrap();
+        // Existing content is preserved (verbatim, just trimmed of
+        // trailing whitespace), followed by a blank-line separator and
+        // the appended migrated section.
+        assert!(contents.starts_with("# Top-level Agents Doc\n\nPre-existing user content."));
+        assert!(contents.contains("\n\n## Rule One\n\nBody one."));
+        assert!(contents.contains("\n\n## Rule Two\n\nBody two.\n"));
+    }
+
+    #[gpui::test]
+    async fn append_default_rules_treats_whitespace_only_file_as_empty(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let agents_md = PathBuf::from("/config/AGENTS.md");
+        fs.create_dir(agents_md.parent().unwrap()).await.unwrap();
+        fs.insert_file(&agents_md, b"   \n\n  \n".to_vec()).await;
+
+        let rules = vec![("Rule One".to_string(), "Body one.".to_string())];
+        append_default_rules_to_agents_md(fs.as_ref(), &agents_md, &rules)
+            .await
+            .unwrap();
+
+        // Existing whitespace is discarded; the result is just the
+        // migrated section as if the file had been missing.
+        let contents = fs.load(&agents_md).await.unwrap();
+        assert_eq!(contents, "## Rule One\n\nBody one.\n");
+    }
+
+    #[gpui::test]
+    async fn append_default_rules_no_op_for_empty_rules(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let agents_md = PathBuf::from("/config/AGENTS.md");
+
+        append_default_rules_to_agents_md(fs.as_ref(), &agents_md, &[])
+            .await
+            .unwrap();
+
+        // The file should not have been created.
+        assert!(!fs.is_file(&agents_md).await);
     }
 }
