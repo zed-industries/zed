@@ -3856,7 +3856,7 @@ async fn test_all_ephemeral_drafts_in_group_are_hidden_from_sidebar(cx: &mut Tes
             None,
             None,
             false,
-            "agent_panel",
+            agent_ui::AgentThreadSource::AgentPanel,
             window,
             cx,
         );
