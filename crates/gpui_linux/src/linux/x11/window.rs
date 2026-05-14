@@ -1905,17 +1905,15 @@ impl PlatformWindow for X11Window {
 
     fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
         let a11y_active = self.0.state.borrow().a11y_active.clone();
-        let a11y_active_for_activation = a11y_active.clone();
-        let a11y_active_for_deactivation = a11y_active.clone();
 
         let activation_handler = TrivialActivationHandler {
             callback: callbacks.activation,
-            a11y_active: a11y_active_for_activation,
+            a11y_active: Arc::clone(&a11y_active),
         };
         let action_handler = TrivialActionHandler(callbacks.action);
         let deactivation_handler = TrivialDeactivationHandler {
             callback: callbacks.deactivation,
-            a11y_active: a11y_active_for_deactivation,
+            a11y_active,
         };
 
         let adapter =
