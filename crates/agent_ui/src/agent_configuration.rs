@@ -329,7 +329,7 @@ impl AgentConfiguration {
                             "No configuration view for {provider_name}",
                         ))),
                     })
-                    .when(is_expanded && provider.is_authenticated(cx), |parent| {
+                    .when(is_expanded && provider.is_authenticated(cx) && (!is_zed_provider || !matches!(current_plan, Some(Plan::ZedFree) | None)), |parent| {
                         parent.child(
                             Button::new(
                                 SharedString::from(format!("new-thread-{provider_id}")),
