@@ -3580,7 +3580,6 @@ dependencies = [
  "http_client",
  "log",
  "net",
- "oauth_callback_server",
  "parking_lot",
  "pollster 0.4.0",
  "postage",
@@ -3592,6 +3591,7 @@ dependencies = [
  "sha2",
  "slotmap",
  "tempfile",
+ "tiny_http",
  "url",
  "util",
 ]
@@ -9675,26 +9675,20 @@ dependencies = [
  "log",
  "menu",
  "mistral",
- "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
  "opencode",
- "parking_lot",
  "pretty_assertions",
- "rand 0.9.4",
  "release_channel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
- "sha2",
- "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
- "url",
  "util",
  "x_ai",
 ]
@@ -11504,17 +11498,6 @@ dependencies = [
  "rmpv",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "oauth_callback_server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.32",
- "log",
- "tiny_http",
- "url",
 ]
 
 [[package]]
@@ -22410,7 +22393,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "acp_thread",
  "acp_tools",
