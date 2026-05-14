@@ -346,7 +346,8 @@ impl PickerDelegate for OpenPathDelegate {
                             DirectoryState::None { create: true }
                             | DirectoryState::Create { .. } => match paths {
                                 Ok(paths) => {
-                                    let mut entries = path_candidates(parent_path_is_root, paths, sort_mode);
+                                    let mut entries =
+                                        path_candidates(parent_path_is_root, paths, sort_mode);
                                     let mut exists = false;
                                     let mut is_dir = false;
                                     let mut new_id = None;
