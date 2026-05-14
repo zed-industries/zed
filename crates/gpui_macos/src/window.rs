@@ -1792,11 +1792,14 @@ impl PlatformWindow for MacWindow {
     }
 
     fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
-        let mut lock = self.0.lock();
-        if let Some(adapter) = lock.accesskit_adapter.as_mut() {
-            if let Some(events) = adapter.update_if_active(|| tree_update) {
-                events.raise();
-            }
+        let events = {
+            let mut lock = self.0.lock();
+            lock.accesskit_adapter
+                .as_mut()
+                .and_then(|adapter| adapter.update_if_active(|| tree_update))
+        };
+        if let Some(events) = events {
+            events.raise();
         }
     }
 
@@ -2438,13 +2441,14 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     let executor = lock.foreground_executor.clone();
     drop(lock);
 
-    {
+    let a11y_events = {
         let mut lock = window_state.lock();
-        if let Some(adapter) = lock.accesskit_adapter.as_mut() {
-            if let Some(events) = adapter.update_view_focus_state(is_active) {
-                events.raise();
-            }
-        }
+        lock.accesskit_adapter
+            .as_mut()
+            .and_then(|adapter| adapter.update_view_focus_state(is_active))
+    };
+    if let Some(events) = a11y_events {
+        events.raise();
     }
 
     // When a window becomes active, trigger an immediate synchronous frame request to prevent

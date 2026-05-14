@@ -1252,6 +1252,8 @@ impl Window {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<Self> {
+        dbg!("creating window");
+    
         let WindowOptions {
             window_bounds,
             titlebar,
@@ -1582,11 +1584,11 @@ impl Window {
 
             platform_window.a11y_init(crate::A11yCallbacks {
                 activation: Box::new(move || {
-                    log::info!("Accessibility activated: screen reader connected");
+                    dbg!("Accessibility activated: screen reader connected");
                     Some(initial_tree.clone())
                 }),
                 action: Box::new(move |request| {
-                    log::debug!(
+                    dbg!(
                         "Accessibility action requested: {:?} on node {:?}",
                         request.action,
                         request.target_node
@@ -1594,7 +1596,7 @@ impl Window {
                     action_sender.send_blocking(request).log_err();
                 }),
                 deactivation: Box::new(|| {
-                    log::info!("Accessibility deactivated: screen reader disconnected");
+                    dbg!("Accessibility deactivated: screen reader disconnected");
                 }),
             });
 
