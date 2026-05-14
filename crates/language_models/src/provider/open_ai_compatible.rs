@@ -375,15 +375,31 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         >,
     > {
         if self.model.capabilities.chat_completions {
-            let request = into_open_ai(
+            let api_url = self
+                .state
+                .read_with(cx, |state, _cx| state.settings.api_url.clone());
+            let is_mimo = is_mimo_provider(&api_url);
+
+            let interleaved_reasoning = if is_mimo {
+                true
+            } else {
+                self.model.capabilities.interleaved_reasoning
+            };
+
+            let mut request = into_open_ai(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
                 self.model.reasoning_effort,
-                self.model.capabilities.interleaved_reasoning,
+                interleaved_reasoning,
             );
+
+            if is_mimo {
+                strip_openai_extensions(&mut request);
+            }
+
             let completions = self.stream_completion(request, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
@@ -409,6 +425,52 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             }
             .boxed()
         }
+    }
+}
+
+fn is_mimo_provider(api_url: &str) -> bool {
+    api_url.contains("xiaomimimo")
+}
+
+fn strip_openai_extensions(request: &mut open_ai::Request) {
+    request.stream_options = None;
+    request.parallel_tool_calls = None;
+
+    for tool in &mut request.tools {
+        let open_ai::ToolDefinition::Function { function } = tool;
+        if let Some(ref mut params) = function.parameters {
+            strip_additional_properties(params);
+        }
+    }
+
+    for msg in &mut request.messages {
+        if let open_ai::RequestMessage::Assistant {
+            content,
+            tool_calls,
+            ..
+        } = msg
+        {
+            if !tool_calls.is_empty() && content.is_none() {
+                *content = Some(open_ai::MessageContent::Plain(String::new()));
+            }
+        }
+    }
+}
+
+fn strip_additional_properties(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("additionalProperties");
+            for v in map.values_mut() {
+                strip_additional_properties(v);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                strip_additional_properties(v);
+            }
+        }
+        _ => {}
     }
 }
 
