@@ -251,63 +251,99 @@ impl HttpTransport {
     }
 
     /// Set up SSE streaming from the response
-    async fn setup_sse_stream(&self, mut response: Response<AsyncBody>) -> Result<()> {
+    async fn setup_sse_stream(&self, response: Response<AsyncBody>) -> Result<()> {
         let response_tx = self.response_tx.clone();
         let error_tx = self.error_tx.clone();
+        let http_client = self.http_client.clone();
+        let endpoint = self.endpoint.clone();
+        let session_id = self.session_id.clone();
+        let protocol_version = self.protocol_version.clone();
+        let headers = self.headers.clone();
+        let token_provider = self.token_provider.clone();
 
-        // Spawn a task to handle the SSE stream
         self.executor
             .spawn(async move {
-                let reader = futures::io::BufReader::new(response.body_mut());
-                let mut lines = futures::AsyncBufReadExt::lines(reader);
+                let mut current = response;
+                let mut last_event_id: Option<String> = None;
 
-                let mut data_buffer = Vec::new();
-                let mut in_message = false;
+                loop {
+                    let outcome = pump_sse_body(
+                        current.body_mut(),
+                        &response_tx,
+                        &mut last_event_id,
+                    )
+                    .await;
 
-                while let Some(line_result) = lines.next().await {
-                    match line_result {
-                        Ok(line) => {
-                            if line.is_empty() {
-                                // Empty line signals end of event
-                                if !data_buffer.is_empty() {
-                                    let message = data_buffer.join("\n");
-
-                                    // Filter out ping messages and empty data
-                                    if !message.trim().is_empty() && message != "ping" {
-                                        if let Err(e) = response_tx.send(message).await {
-                                            log::error!("Failed to send SSE message: {}", e);
-                                            break;
-                                        }
-                                    }
-                                    data_buffer.clear();
-                                }
-                                in_message = false;
-                            } else if let Some(data) = line.strip_prefix("data: ") {
-                                // Handle data lines
-                                let data = data.trim();
-                                if !data.is_empty() {
-                                    // Check if this is a ping message
-                                    if data == "ping" {
-                                        log::trace!("Received SSE ping");
-                                        continue;
-                                    }
-                                    data_buffer.push(data.to_string());
-                                    in_message = true;
-                                }
-                            } else if line.starts_with("event:")
-                                || line.starts_with("id:")
-                                || line.starts_with("retry:")
-                            {
-                                // Ignore other SSE fields
-                                continue;
-                            } else if in_message {
-                                // Continuation of data
-                                data_buffer.push(line);
-                            }
-                        }
-                        Err(e) => {
-                            let _ = error_tx.send(format!("SSE stream error: {}", e)).await;
+                    match outcome {
+                        SseOutcome::Eof => {
+                            // Server closed the stream after delivering all
+                            // responses. This is the normal end of a per-POST
+                            // SSE response per the streamable-HTTP spec; do
+                            // NOT attempt to resume — that would re-execute
+                            // tool calls or pester servers that don't support
+                            // resumability.
                             break;
+                        }
+                        SseOutcome::SendChannelClosed => {
+                            // No one's listening anymore (transport dropped).
+                            // Nothing to do.
+                            break;
+                        }
+                        SseOutcome::ReadError(err) => {
+                            // Abrupt termination: HTTP/2 CANCEL, network reset,
+                            // intermediary keepalive timeout, etc. Try to
+                            // resume per MCP streamable-HTTP §4.5 if (a) the
+                            // server gave us a session ID and (b) we observed
+                            // at least one `id:` field on this stream
+                            // (otherwise the server isn't using resumability
+                            // and a GET would just 405).
+                            let session = session_id.lock().clone();
+                            let resume_id = last_event_id.clone();
+                            let (Some(session), Some(resume_id)) = (session, resume_id) else {
+                                let _ = error_tx
+                                    .send(format!("SSE stream error: {}", err))
+                                    .await;
+                                break;
+                            };
+                            let pv = protocol_version.lock().clone();
+
+                            match attempt_sse_resume(
+                                http_client.as_ref(),
+                                &endpoint,
+                                &headers,
+                                token_provider.as_deref(),
+                                pv.as_deref(),
+                                &session,
+                                &resume_id,
+                            )
+                            .await
+                            {
+                                Ok(Some(resumed)) => {
+                                    log::info!(
+                                        "SSE stream broke ({}); resumed via GET with Last-Event-ID: {}",
+                                        err,
+                                        resume_id,
+                                    );
+                                    current = resumed;
+                                    continue;
+                                }
+                                Ok(None) => {
+                                    // Server doesn't support resumability (405 / 404).
+                                    let _ = error_tx
+                                        .send(format!("SSE stream error: {}", err))
+                                        .await;
+                                    break;
+                                }
+                                Err(reconnect_err) => {
+                                    let _ = error_tx
+                                        .send(format!(
+                                            "SSE stream error: {} (reconnect failed: {})",
+                                            err, reconnect_err,
+                                        ))
+                                        .await;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -316,6 +352,145 @@ impl HttpTransport {
 
         Ok(())
     }
+}
+
+/// Outcome of pumping one SSE body to completion or failure.
+enum SseOutcome {
+    /// Stream ended cleanly (server closed the connection after sending its
+    /// final frame). For a per-POST MCP stream this is the normal terminal
+    /// state.
+    Eof,
+    /// The receiver side of `response_tx` was dropped (transport closed).
+    SendChannelClosed,
+    /// Read failed mid-stream (HTTP/2 CANCEL, network reset, etc.). The
+    /// caller may attempt to resume.
+    ReadError(std::io::Error),
+}
+
+/// Pump one SSE body, parsing events and forwarding `data:` payloads to
+/// `response_tx`. Updates `last_event_id` whenever the server emits an `id:`
+/// field so a downstream resume can reference it.
+async fn pump_sse_body(
+    body: &mut AsyncBody,
+    response_tx: &async_channel::Sender<String>,
+    last_event_id: &mut Option<String>,
+) -> SseOutcome {
+    let reader = futures::io::BufReader::new(body);
+    let mut lines = futures::AsyncBufReadExt::lines(reader);
+
+    let mut data_buffer = Vec::new();
+    let mut in_message = false;
+
+    while let Some(line_result) = lines.next().await {
+        match line_result {
+            Ok(line) => {
+                if line.is_empty() {
+                    if !data_buffer.is_empty() {
+                        let message = data_buffer.join("\n");
+                        if !message.trim().is_empty() && message != "ping" {
+                            if response_tx.send(message).await.is_err() {
+                                return SseOutcome::SendChannelClosed;
+                            }
+                        }
+                        data_buffer.clear();
+                    }
+                    in_message = false;
+                } else if let Some(data) = line.strip_prefix("data: ") {
+                    let data = data.trim();
+                    if !data.is_empty() {
+                        if data == "ping" {
+                            log::trace!("Received SSE ping");
+                            continue;
+                        }
+                        data_buffer.push(data.to_string());
+                        in_message = true;
+                    }
+                } else if let Some(id) = line.strip_prefix("id: ") {
+                    // Per MCP streamable-HTTP §4.5, the client MUST echo the
+                    // most-recently-seen `id` back in `Last-Event-ID` on
+                    // resume. We hold this in the SSE-pump's local state and
+                    // only consult it on stream termination so it doesn't get
+                    // racy with concurrent reconnects.
+                    let id = id.trim();
+                    if !id.is_empty() {
+                        *last_event_id = Some(id.to_string());
+                    }
+                } else if line.starts_with("event:") || line.starts_with("retry:") {
+                    continue;
+                } else if in_message {
+                    data_buffer.push(line);
+                }
+            }
+            Err(err) => return SseOutcome::ReadError(err),
+        }
+    }
+
+    SseOutcome::Eof
+}
+
+/// Issue a GET to the MCP endpoint with `Last-Event-ID` to resume a broken
+/// SSE stream.
+///
+/// Returns:
+/// - `Ok(Some(response))` — server accepted resumption and is streaming
+///   again. Caller should resume pumping.
+/// - `Ok(None)` — server explicitly does not support resumability (405 or
+///   404). Caller should give up cleanly.
+/// - `Err(_)` — anything else (network failure, 5xx, malformed response).
+///   Caller should give up and surface the error.
+async fn attempt_sse_resume(
+    http_client: &dyn HttpClient,
+    endpoint: &str,
+    headers: &HashMap<String, String>,
+    token_provider: Option<&dyn OAuthTokenProvider>,
+    protocol_version: Option<&str>,
+    session_id: &str,
+    last_event_id: &str,
+) -> Result<Option<Response<AsyncBody>>> {
+    let mut builder = Request::builder()
+        .method(Method::GET)
+        .uri(endpoint)
+        .header("Accept", EVENT_STREAM_MIME_TYPE)
+        .header(HEADER_SESSION_ID, session_id)
+        .header("Last-Event-ID", last_event_id);
+
+    for (key, value) in headers {
+        builder = builder.header(key.as_str(), value.as_str());
+    }
+
+    if let Some(token) = token_provider.and_then(|p| p.access_token()) {
+        builder = builder.header("Authorization", format!("Bearer {}", token));
+    }
+
+    if let Some(version) = protocol_version
+        && types::requires_protocol_version_header(version)
+    {
+        builder = builder.header(HEADER_PROTOCOL_VERSION, version);
+    }
+
+    let request = builder.body(AsyncBody::empty())?;
+    let response = http_client.send(request).await?;
+
+    let status = response.status().as_u16();
+    if status == 404 || status == 405 {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(anyhow!("resume returned HTTP {}", status));
+    }
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !content_type.starts_with(EVENT_STREAM_MIME_TYPE) {
+        return Err(anyhow!(
+            "resume returned non-SSE content-type: {content_type}"
+        ));
+    }
+
+    Ok(Some(response))
 }
 
 #[async_trait]
@@ -747,6 +922,170 @@ mod tests {
                 assert!(www_authenticate.scope.is_none());
             }
         }
+    }
+
+    /// An `AsyncRead` body that yields a fixed slice of bytes and then returns
+    /// an `io::Error` to simulate an abrupt stream termination (HTTP/2 CANCEL,
+    /// connection-reset, intermediary keepalive). Used to drive SSE
+    /// reconnection tests without standing up a full streaming HTTP server.
+    struct BrokenAfter {
+        bytes: Vec<u8>,
+        cursor: usize,
+    }
+
+    impl BrokenAfter {
+        fn new(bytes: impl Into<Vec<u8>>) -> Self {
+            Self {
+                bytes: bytes.into(),
+                cursor: 0,
+            }
+        }
+    }
+
+    impl futures::AsyncRead for BrokenAfter {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            let this = self.get_mut();
+            if this.cursor >= this.bytes.len() {
+                return std::task::Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "simulated HTTP/2 CANCEL",
+                )));
+            }
+            let remaining = &this.bytes[this.cursor..];
+            let to_copy = remaining.len().min(buf.len());
+            buf[..to_copy].copy_from_slice(&remaining[..to_copy]);
+            this.cursor += to_copy;
+            std::task::Poll::Ready(Ok(to_copy))
+        }
+    }
+
+    #[gpui::test]
+    async fn sse_stream_error_triggers_get_reconnect_with_last_event_id(
+        cx: &mut TestAppContext,
+    ) {
+        let request_log: Arc<SyncMutex<Vec<(http_client::http::Method, Option<String>)>>> =
+            Arc::new(SyncMutex::new(Vec::new()));
+        let log = request_log.clone();
+
+        let client = make_fake_http_client(move |req| {
+            let method = req.method().clone();
+            let last_event_id = req
+                .headers()
+                .get("Last-Event-ID")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from);
+            log.lock().push((method.clone(), last_event_id));
+
+            Box::pin(async move {
+                if method == Method::POST {
+                    // Initial POST: emit one SSE event with id:1, then break.
+                    let body = b"id: 1\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\n".to_vec();
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/event-stream")
+                        .header("Mcp-Session-Id", "session-abc")
+                        .body(AsyncBody::from_reader(BrokenAfter::new(body)))
+                        .unwrap())
+                } else {
+                    // Resumption GET: deliver the actual final response.
+                    let body = b"id: 2\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n".to_vec();
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/event-stream")
+                        .body(AsyncBody::from(body))
+                        .unwrap())
+                }
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_string())
+            .await
+            .expect("initial POST should succeed");
+
+        // Pump the SSE reader so the first event is delivered, the body
+        // errors, and the reconnect GET fires.
+        let mut rx = transport.receive();
+        let progress = rx.next().await.expect("progress event");
+        assert!(
+            progress.contains("notifications/progress"),
+            "expected progress, got: {progress}",
+        );
+
+        let response = rx.next().await.expect("final response");
+        assert!(
+            response.contains("\"id\":1"),
+            "expected response, got: {response}",
+        );
+
+        let log = request_log.lock();
+        assert_eq!(log.len(), 2, "expected POST + GET reconnect, got {log:?}");
+        assert_eq!(log[0].0, Method::POST);
+        assert_eq!(log[0].1, None, "POST should not carry Last-Event-ID");
+        assert_eq!(log[1].0, Method::GET);
+        assert_eq!(
+            log[1].1.as_deref(),
+            Some("1"),
+            "GET reconnect must echo last-seen event ID",
+        );
+    }
+
+    #[gpui::test]
+    async fn sse_clean_eof_does_not_trigger_reconnect(cx: &mut TestAppContext) {
+        let request_log: Arc<SyncMutex<Vec<http_client::http::Method>>> =
+            Arc::new(SyncMutex::new(Vec::new()));
+        let log = request_log.clone();
+
+        let client = make_fake_http_client(move |req| {
+            log.lock().push(req.method().clone());
+            Box::pin(async {
+                let body = b"id: 1\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n".to_vec();
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .header("Mcp-Session-Id", "session-abc")
+                    .body(AsyncBody::from(body))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_string())
+            .await
+            .expect("POST should succeed");
+
+        let mut rx = transport.receive();
+        let response = rx.next().await.expect("response");
+        assert!(response.contains("\"id\":1"));
+
+        // Give the SSE reader a chance to observe EOF and (incorrectly) reconnect.
+        cx.run_until_parked();
+
+        let log = request_log.lock();
+        assert_eq!(
+            log.len(),
+            1,
+            "clean EOF must not trigger a reconnect, got {log:?}",
+        );
+        assert_eq!(log[0], Method::POST);
     }
 
     #[gpui::test]
