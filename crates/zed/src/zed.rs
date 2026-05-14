@@ -15,7 +15,7 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent::{UserAgentsMdStatus, init_user_agents_md};
+use agent::{UserAgentsMd, init_user_agents_md};
 use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -1885,15 +1885,16 @@ pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     struct UserAgentsMdParseError;
     let notification_id = NotificationId::unique::<UserAgentsMdParseError>();
 
-    init_user_agents_md(fs, cx, move |status, cx| match status {
-        UserAgentsMdStatus::Loaded | UserAgentsMdStatus::Empty => {
+    init_user_agents_md(fs, cx, move |state, cx| match state {
+        UserAgentsMd::Loaded(_) | UserAgentsMd::Empty => {
             dismiss_app_notification(&notification_id, cx);
         }
-        UserAgentsMdStatus::Error(message) => {
+        UserAgentsMd::Error(message) => {
             let path = paths::agents_file().display().to_string();
             log::error!("Failed to load user AGENTS.md from {path}: {message}");
             let body = format!("Failed to load {path}\n{message}");
-            show_app_notification(notification_id.clone(), cx, move |cx| {
+            let notification_id = notification_id.clone();
+            show_app_notification(notification_id, cx, move |cx| {
                 let body = body.clone();
                 cx.new(|cx| MessageNotification::new(body, cx))
             });
