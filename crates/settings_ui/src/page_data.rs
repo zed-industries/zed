@@ -10,12 +10,12 @@ use theme::SystemAppearance;
 use ui::IntoElement;
 
 use crate::{
-    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
-    SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
-    pages::{
+    active_language, all_language_names, pages::{
         open_audio_test_window, render_edit_prediction_setup_page,
         render_tool_permissions_setup_page,
-    },
+    }, ActionLink, DynamicItem, SettingField,
+    SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink, PROJECT,
+    USER,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -1873,6 +1873,27 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
+    fn expand_selection_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Expand Selection"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Expand Selection By Subwords",
+                description: "When enabled, the expand selection command first expands through camelCase/subword boundaries before jumping to syntax nodes (e.g., cursor → `Case` → `camelCaseVar` → syntax node).",
+                field: Box::new(SettingField {
+                    json_path: Some("use_expand_selection_by_subwords"),
+                    pick: |settings_content| {
+                        settings_content.editor.use_expand_selection_by_subwords.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.use_expand_selection_by_subwords = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn drag_and_drop_selection_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Drag And Drop Selection"),
@@ -2855,6 +2876,7 @@ fn editor_page() -> SettingsPage {
         signature_help_section(),
         hover_popover_section(),
         drag_and_drop_selection_section(),
+        expand_selection_section(),
         gutter_section(),
         scrollbar_section(),
         minimap_section(),
