@@ -64,8 +64,6 @@ pub enum Model {
     FourOmniMini,
     #[serde(rename = "o3")]
     O3,
-    #[serde(rename = "o4-mini")]
-    O4Mini,
     #[serde(rename = "gpt-5")]
     Five,
     #[serde(rename = "gpt-5-mini")]
@@ -125,7 +123,6 @@ impl Model {
             "gpt-4" => Ok(Self::Four),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
             "o3" => Ok(Self::O3),
-            "o4-mini" => Ok(Self::O4Mini),
             "gpt-5" => Ok(Self::Five),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
@@ -147,7 +144,6 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourOmniMini => "gpt-4o-mini",
             Self::O3 => "o3",
-            Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
@@ -169,7 +165,6 @@ impl Model {
             Self::Four => "gpt-4",
             Self::FourOmniMini => "gpt-4o-mini",
             Self::O3 => "o3",
-            Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
@@ -191,7 +186,6 @@ impl Model {
             Self::Four => 8_192,
             Self::FourOmniMini => 128_000,
             Self::O3 => 200_000,
-            Self::O4Mini => 200_000,
             Self::Five => 272_000,
             Self::FiveMini => 400_000,
             Self::FiveNano => 400_000,
@@ -216,7 +210,6 @@ impl Model {
             Self::Four => Some(8_192),
             Self::FourOmniMini => Some(16_384),
             Self::O3 => Some(100_000),
-            Self::O4Mini => Some(100_000),
             Self::Five => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
@@ -243,7 +236,6 @@ impl Model {
             | Self::FivePointFourMini
             | Self::FivePointFourNano => Some(ReasoningEffort::None),
             Self::O3
-            | Self::O4Mini
             | Self::Five
             | Self::FiveMini
             | Self::FiveNano
@@ -340,7 +332,7 @@ impl Model {
             | Self::FivePointFive
             | Self::FivePointFivePro
             | Self::FiveNano => true,
-            Self::O3 | Self::O4Mini | Model::Custom { .. } => false,
+            Self::O3 | Model::Custom { .. } => false,
         }
     }
 

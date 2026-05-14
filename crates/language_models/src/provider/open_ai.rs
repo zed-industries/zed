@@ -430,8 +430,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointFourPro
             | Model::FivePointFive
             | Model::FivePointFivePro
-            | Model::O3
-            | Model::O4Mini => true,
+            | Model::O3 => true,
             Model::Four => false,
             Model::Custom {
                 supports_images, ..
