@@ -6180,7 +6180,10 @@ impl ThreadView {
 
         container
             .child(open_as_markdown)
-            .child(scroll_to_recent_user_prompt)
+            .children(
+                (!AgentSettings::get_global(cx).sticky_user_messages)
+                    .then_some(scroll_to_recent_user_prompt),
+            )
             .child(scroll_to_top)
             .into_any_element()
     }
