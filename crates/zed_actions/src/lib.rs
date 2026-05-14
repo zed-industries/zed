@@ -512,6 +512,10 @@ pub mod agent {
             ResetAgentZoom,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
+            /// Opens the "Skills have replaced Rules" explainer modal,
+            /// describing the one-time migration of non-Default Rules to
+            /// global Skills. Dispatched from the title-bar banner.
+            OpenRulesToSkillsMigrationInfo,
         ]
     );
 
