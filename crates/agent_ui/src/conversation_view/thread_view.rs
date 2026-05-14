@@ -18,7 +18,7 @@ use gpui::List;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
-use settings::{SidebarSide, update_settings_file};
+use settings::update_settings_file;
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
@@ -1120,10 +1120,7 @@ impl ThreadView {
         })
         .detach();
 
-        let side = match AgentSettings::get_global(cx).sidebar_side() {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
+        let side = crate::agent_sidebar_side(cx);
 
         let task = cx.spawn_in(window, async move |this, cx| {
             let Some((contents, tracked_buffers)) = contents_task.await? else {
