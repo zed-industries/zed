@@ -105,7 +105,6 @@ fn generate_fallback_array(fallbacks: &FontFallbacks, font: &mut FontKitFont) ->
         let all_traits = font.native_font().all_traits();
 
         let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-
         for user_fallback in fallbacks.fallback_list() {
             let name = CFString::from(user_fallback.as_str());
 
