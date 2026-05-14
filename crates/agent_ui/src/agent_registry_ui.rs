@@ -292,10 +292,12 @@ impl AgentRegistryPage {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
         let registry_store = self.registry_store.read(cx);
+        let is_fetching = registry_store.is_fetching();
+        let fetch_error = registry_store.fetch_error();
 
-        let message = if registry_store.is_fetching() {
+        let message = if is_fetching {
             "Loading registry..."
-        } else if registry_store.fetch_error().is_some() {
+        } else if fetch_error.is_some() {
             "Failed to load the agent registry. Please check your connection and try again."
         } else {
             match self.filter {
@@ -325,15 +327,42 @@ impl AgentRegistryPage {
 
         h_flex()
             .py_4()
+            .min_w_0()
+            .w_full()
             .gap_1p5()
-            .when(registry_store.fetch_error().is_some(), |this| {
+            .items_start()
+            .when(fetch_error.is_some(), |this| {
                 this.child(
                     Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
             })
-            .child(Label::new(message))
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_1()
+                    .child(Label::new(message))
+                    .when_some(fetch_error.clone(), |this, fetch_error| {
+                        this.child(
+                            Label::new(fetch_error)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
+            )
+            .when_some(fetch_error, |this, _| {
+                let registry_store = self.registry_store.clone();
+                this.child(
+                    Button::new("retry-agent-registry", "Retry")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Compact)
+                        .on_click(move |_, _, cx| {
+                            registry_store.update(cx, |store, cx| store.refresh(cx));
+                        }),
+                )
+            })
     }
 
     fn render_agents(

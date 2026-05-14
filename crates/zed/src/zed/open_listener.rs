@@ -264,12 +264,20 @@ impl OpenRequest {
     }
 
     fn parse_ssh_file_path(&mut self, file: &str, cx: &App) -> Result<()> {
-        let url = url::Url::parse(file)?;
-        let host = url
+        let url = parse_ssh_url(file)?;
+        let host = match url
             .host()
-            .with_context(|| format!("missing host in ssh url: {file}"))?
-            .to_string();
-        let username = Some(url.username().to_string()).filter(|s| !s.is_empty());
+            .with_context(|| format!("missing host in ssh url: {url}"))?
+        {
+            url::Host::Domain(host) => host.to_string(),
+            url::Host::Ipv4(host) => host.to_string(),
+            url::Host::Ipv6(host) => host.to_string(),
+        };
+        let username = if url.username().is_empty() {
+            None
+        } else {
+            Some(urlencoding::decode(url.username())?.into_owned())
+        };
         let port = url.port();
         anyhow::ensure!(
             self.open_paths.is_empty(),
@@ -278,7 +286,7 @@ impl OpenRequest {
         let mut connection_options =
             RemoteSettings::get_global(cx).connection_options_for(host, port, username);
         if let Some(password) = url.password() {
-            connection_options.password = Some(password.to_string());
+            connection_options.password = Some(urlencoding::decode(password)?.into_owned());
         }
 
         let connection_options = RemoteConnectionOptions::Ssh(connection_options);
@@ -292,6 +300,62 @@ impl OpenRequest {
         self.parse_file_path(url.path());
         Ok(())
     }
+}
+
+fn parse_ssh_url(url: &str) -> Result<url::Url> {
+    if let Ok(url) = url::Url::parse(url) {
+        return Ok(url);
+    }
+    // SCP/git style urls use ':' to separate from Authority and Path.
+    // They are unsupported by Url::parse, but can be normalized into a Url.
+    //   SCPUrl("ssh://user@host:~/relpath") => Url("ssh://user@host/~/relpath")
+    //   SCPUrl("ssh://user@host:/abs/path") => Url("ssh://user@host/abs/path")
+    //
+    // TODO: Add IPv6 support: "ssh://[2600::]:~/foo"
+    let ssh_target = url
+        .strip_prefix("ssh://")
+        .with_context(|| format!("invalid ssh url: {url}"))?;
+
+    let (authority, path) = if let Some((authority, path)) = ssh_target.rsplit_once(":~/") {
+        (authority, format!("/~/{path}"))
+    } else if let Some((authority, path)) = ssh_target.rsplit_once(":/") {
+        (authority, format!("/{path}"))
+    } else {
+        anyhow::bail!("invalid ssh url: {url}");
+    };
+
+    let (userinfo, host) = authority
+        .rsplit_once('@')
+        .map_or((None, authority), |(userinfo, host)| (Some(userinfo), host));
+    anyhow::ensure!(
+        !host.is_empty() && !host.starts_with('[') && !host.contains(':'),
+        "invalid ssh url: {url}"
+    );
+
+    let normalized_authority = if let Some(userinfo) = userinfo {
+        let (username, colon_password) =
+            if let Some((username, password)) = userinfo.split_once(':') {
+                (
+                    urlencoding::encode(&urlencoding::decode(username)?).into_owned(),
+                    format!(
+                        ":{}",
+                        urlencoding::encode(&urlencoding::decode(password)?).into_owned()
+                    ),
+                )
+            } else {
+                (
+                    urlencoding::encode(&urlencoding::decode(userinfo)?).into_owned(),
+                    String::new(),
+                )
+            };
+        format!("{username}{colon_password}@{host}")
+    } else {
+        authority.to_string()
+    };
+
+    Ok(url::Url::parse(&format!(
+        "ssh://{normalized_authority}{path}"
+    ))?)
 }
 
 #[derive(Clone)]
@@ -399,7 +463,7 @@ pub async fn open_paths_with_positions(
         opened_items: mut items,
         ..
     } = cx
-        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
+        .update(|cx| workspace::open_paths(&paths, app_state.clone(), open_options, cx))
         .await?;
 
     if diff_all && !diff_paths.is_empty() {
@@ -416,9 +480,26 @@ pub async fn open_paths_with_positions(
         let workspace_weak = multi_workspace.read_with(cx, |multi_workspace, _cx| {
             multi_workspace.workspace().downgrade()
         })?;
+        let canonicalize = async |raw: &str| {
+            app_state
+                .fs
+                .canonicalize(Path::new(raw))
+                .await
+                .with_context(|| format!("opening --diff path {raw:?}"))
+        };
         for diff_pair in diff_paths {
-            let old_path = Path::new(&diff_pair[0]).canonicalize()?;
-            let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+            let (old_path, new_path) =
+                match futures::join!(canonicalize(&diff_pair[0]), canonicalize(&diff_pair[1])) {
+                    (Ok(old), Ok(new)) => (old, new),
+                    (old, new) => {
+                        for result in [old, new] {
+                            if let Err(err) = result {
+                                items.push(Some(Err(err)));
+                            }
+                        }
+                        continue;
+                    }
+                };
             if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
                 FileDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
             }) {
@@ -431,7 +512,7 @@ pub async fn open_paths_with_positions(
 
     for (item, path) in items.iter_mut().zip(&paths) {
         if let Some(Err(error)) = item {
-            *error = anyhow!("error opening {path:?}: {error}");
+            *error = anyhow!("error opening {path:?}: {error:#}");
         }
     }
 
@@ -465,6 +546,7 @@ pub async fn handle_cli_connection(
                 env,
                 user_data_dir: _,
                 dev_container,
+                cwd,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -528,6 +610,7 @@ pub async fn handle_cli_connection(
                     dev_container,
                     app_state.clone(),
                     env,
+                    cwd,
                     cx,
                 )
                 .await;
@@ -648,6 +731,7 @@ async fn open_workspaces(
     dev_container: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
+    cwd: Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
     if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
@@ -737,6 +821,7 @@ async fn open_workspaces(
                     diff_paths.clone(),
                     diff_all,
                     open_options,
+                    cwd.clone(),
                     responses,
                     &app_state,
                     cx,
@@ -781,18 +866,23 @@ async fn open_local_workspace(
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_options: workspace::OpenOptions,
+    cwd: Option<PathBuf>,
     responses: &dyn CliResponseSink,
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
     let user_provided_paths = !workspace_paths.is_empty();
 
-    // When only diff paths are provided (no regular paths), add the current
+    // When only diff paths are provided (no regular paths), add the CLI's
     // working directory so the workspace opens with the right context.
-    if !user_provided_paths && !diff_paths.is_empty() {
-        if let Ok(cwd) = std::env::current_dir() {
-            workspace_paths.push(cwd.to_string_lossy().into_owned());
-        }
+    // Note: must use the CLI process's cwd (forwarded via `cli_cwd`), not
+    // `std::env::current_dir()`, since the Zed app process's cwd is typically
+    // `/` on macOS bundles or the launch dir of an already-running instance.
+    if !user_provided_paths
+        && !diff_paths.is_empty()
+        && let Some(cwd) = cwd
+    {
+        workspace_paths.push(cwd.to_string_lossy().to_string());
     }
 
     let paths_with_position =
@@ -810,9 +900,15 @@ async fn open_local_workspace(
     {
         Ok(result) => result,
         Err(error) => {
+            let paths = paths_with_position
+                .iter()
+                .map(|p| p.path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::error!("failed to open workspace [{paths}]: {error:#}");
             responses
                 .send(CliResponse::Stderr {
-                    message: format!("error opening {paths_with_position:?}: {error}"),
+                    message: format!("error opening [{paths}]: {error:#}"),
                 })
                 .log_err();
             return true;
@@ -863,9 +959,10 @@ async fn open_local_workspace(
                 }
             }
             Some(Err(err)) => {
+                log::error!("{err:#}");
                 responses
                     .send(CliResponse::Stderr {
-                        message: err.to_string(),
+                        message: format!("{err:#}"),
                     })
                     .log_err();
                 errored = true;
@@ -965,34 +1062,110 @@ mod tests {
         }
     }
 
-    #[gpui::test]
-    fn test_parse_ssh_url(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
+    fn assert_ssh_parse(
+        cx: &mut TestAppContext,
+        input: &str,
+        expected_url: Option<&str>,
+        host: &str,
+        username: Option<&str>,
+        port: Option<u16>,
+        path: &str,
+    ) {
+        if let Some(expected_url) = expected_url {
+            assert_eq!(parse_ssh_url(input).unwrap().as_str(), expected_url);
+        }
+
         let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec!["ssh://me@localhost:/".into()],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
+            let rq = RawOpenRequest {
+                urls: vec![input.into()],
+                ..Default::default()
+            };
+            OpenRequest::parse(rq, cx).unwrap()
         });
         assert_eq!(
             request.remote_connection.unwrap(),
             RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: "localhost".into(),
-                username: Some("me".into()),
-                port: None,
-                password: None,
-                args: None,
-                port_forwards: None,
-                nickname: None,
-                upload_binary_over_ssh: false,
-                connection_timeout: None,
+                host: host.into(),
+                username: username.map(str::to_string),
+                port,
+                ..Default::default()
             })
         );
-        assert_eq!(request.open_paths, vec!["/"]);
+        assert_eq!(request.open_paths, vec![path]);
+    }
+
+    #[gpui::test]
+    fn test_parse_ssh_urls(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let cases = [
+            ("ssh://me@host:/", None, "host", Some("me"), None, "/"),
+            (
+                "ssh://me@host:~/code",
+                None,
+                "host",
+                Some("me"),
+                None,
+                "/~/code",
+            ),
+            (
+                "ssh://me@host:22/tmp",
+                None,
+                "host",
+                Some("me"),
+                Some(22),
+                "/tmp",
+            ),
+            (
+                "ssh://user@domain.tld@host:22/tmp",
+                None,
+                "host",
+                Some("user@domain.tld"),
+                Some(22),
+                "/tmp",
+            ),
+            (
+                "ssh://domain\\user@host/dir",
+                Some("ssh://domain%5Cuser@host/dir"),
+                "host",
+                Some("domain\\user"),
+                None,
+                "/dir",
+            ),
+            (
+                r"ssh://domain\\user@localhost/project",
+                Some("ssh://domain%5C%5Cuser@localhost/project"),
+                "localhost",
+                Some(r"domain\\user"),
+                None,
+                "/project",
+            ),
+        ];
+
+        for (input, expected_url, host, username, port, path) in cases {
+            assert_ssh_parse(cx, input, expected_url, host, username, port, path);
+        }
+    }
+
+    #[gpui::test]
+    fn test_reject_ssh_urls(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for input in [
+            "ssh://me@localhost:code/vibes/mine-bot",
+            "ssh://me@localhost:2222:~/project",
+            "ssh://me@[2001:db8::1]:~/project",
+        ] {
+            let result = cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![input.into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            });
+            assert!(result.is_err(), "{input} should be rejected");
+        }
     }
 
     #[gpui::test]
@@ -1304,6 +1477,7 @@ mod tests {
                         wait: true,
                         ..Default::default()
                     },
+                    None,
                     &response_sink,
                     &app_state,
                     &mut cx,
@@ -1423,6 +1597,7 @@ mod tests {
                     vec![],
                     false,
                     open_options,
+                    None,
                     &response_sink,
                     &app_state,
                     &mut cx,
@@ -1493,6 +1668,7 @@ mod tests {
                         vec![],
                         false,
                         workspace::OpenOptions::default(),
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1529,6 +1705,7 @@ mod tests {
                             requesting_window: Some(window_to_replace),
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1675,6 +1852,7 @@ mod tests {
                         Vec::new(),
                         false,
                         workspace::OpenOptions::default(),
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1702,6 +1880,7 @@ mod tests {
                             workspace_matching: workspace::WorkspaceMatching::None, // Force new window
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1748,6 +1927,7 @@ mod tests {
                             workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory, // --add flag
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1812,6 +1992,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1866,6 +2047,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
+                        None,
                         &response_sink,
                         &app_state,
                         &mut cx,
@@ -1909,6 +2091,7 @@ mod tests {
             env: None,
             user_data_dir: None,
             dev_container: false,
+            cwd: None,
         }
     }
 
