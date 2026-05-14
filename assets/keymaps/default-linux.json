@@ -1511,6 +1511,7 @@
       "ctrl-0": "image_viewer::ResetZoom",
       "ctrl-1": "image_viewer::ZoomToActualSize",
       "ctrl-shift-0": "image_viewer::FitToView",
+      "ctrl-c": "image_viewer::CopyImage",
     },
   },
   {

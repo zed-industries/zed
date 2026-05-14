@@ -1566,6 +1566,7 @@
       "cmd-0": "image_viewer::ResetZoom",
       "cmd-1": "image_viewer::ZoomToActualSize",
       "cmd-shift-0": "image_viewer::FitToView",
+      "cmd-c": "image_viewer::CopyImage",
     },
   },
   {

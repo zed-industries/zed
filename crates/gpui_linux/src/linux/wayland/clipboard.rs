@@ -177,20 +177,40 @@ impl Clipboard {
         self.self_mime.clone()
     }
 
-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
-            self.send_internal(fd, text.as_bytes().to_owned());
+    pub fn send(&self, mime_type: String, fd: OwnedFd) {
+        if let Some(bytes) = self.bytes_for_mime_type(&self.contents, &mime_type) {
+            self.send_internal(fd, bytes);
         }
     }
 
-    pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
-        if let Some(text) = self
-            .primary_contents
-            .as_ref()
-            .and_then(|contents| contents.text())
-        {
-            self.send_internal(fd, text.as_bytes().to_owned());
+    pub fn send_primary(&self, mime_type: String, fd: OwnedFd) {
+        if let Some(bytes) = self.bytes_for_mime_type(&self.primary_contents, &mime_type) {
+            self.send_internal(fd, bytes);
         }
+    }
+
+    fn bytes_for_mime_type(
+        &self,
+        contents: &Option<ClipboardItem>,
+        mime_type: &str,
+    ) -> Option<Vec<u8>> {
+        let contents = contents.as_ref()?;
+
+        for entry in contents.entries() {
+            if let ClipboardEntry::Image(image) = entry {
+                if image.format.mime_type() == mime_type {
+                    return Some(image.bytes.clone());
+                }
+            }
+        }
+
+        if TEXT_MIME_TYPES.contains(&mime_type) {
+            if let Some(text) = contents.text() {
+                return Some(text.as_bytes().to_owned());
+            }
+        }
+
+        None
     }
 
     pub fn read(&mut self) -> Option<ClipboardItem> {

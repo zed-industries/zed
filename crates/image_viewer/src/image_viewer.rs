@@ -7,24 +7,26 @@ use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
-    AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
-    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled,
-    Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
+    AnyElement, App, Bounds, ClipboardItem, Context, DismissEvent, DispatchPhase, Element,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, Font, GlobalElementId,
+    InspectorElementId, InteractiveElement, IntoElement, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta,
+    ScrollWheelEvent, Style, Styled, Subscription, Task, WeakEntity, Window, actions, anchored,
+    checkerboard, deferred, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{Tooltip, prelude::*};
+use ui::{ContextMenu, Tooltip, prelude::*};
 use util::paths::PathExt;
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    WorkspaceId, delete_unloaded_items,
+    ItemId, ItemSettings, Pane, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace, WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
     item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
+    notifications::NotificationId,
 };
 
 pub use crate::image_info::*;
@@ -42,7 +44,9 @@ actions!(
         /// Fit the image to view.
         FitToView,
         /// Zoom to actual size (100%).
-        ZoomToActualSize
+        ZoomToActualSize,
+        /// Copy the image to the clipboard.
+        CopyImage,
     ]
 );
 
@@ -61,6 +65,7 @@ pub struct ImageView {
     last_mouse_position: Option<Point<Pixels>>,
     container_bounds: Option<Bounds<Pixels>>,
     image_size: Option<(u32, u32)>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
 impl ImageView {
@@ -104,6 +109,7 @@ impl ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size,
+            context_menu: None,
         }
     }
 
@@ -264,6 +270,45 @@ impl ImageView {
     fn handle_pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let zoom_factor = 1.0 + event.delta;
         self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
+    }
+
+    fn copy_image(&mut self, _: &CopyImage, window: &mut Window, cx: &mut Context<Self>) {
+        let image = self.image_item.read(cx).image.clone();
+        cx.write_to_clipboard(ClipboardItem::new_image(&image));
+
+        if let Some(workspace) = Workspace::for_window(window, cx) {
+            workspace.update(cx, |workspace, cx| {
+                struct ImageCopiedToClipboard;
+
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<ImageCopiedToClipboard>(),
+                        "Copied image to clipboard",
+                    )
+                    .autohide(),
+                    cx,
+                );
+            });
+        }
+    }
+
+    fn deploy_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _cx| {
+            menu.action("Copy Image", Box::new(CopyImage))
+        });
+
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.context_menu.take();
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, position, subscription));
+        cx.notify();
     }
 }
 
@@ -562,6 +607,7 @@ impl Item for ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size: self.image_size,
+            context_menu: None,
         })))
     }
 
@@ -678,6 +724,7 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::reset_zoom))
             .on_action(cx.listener(Self::fit_to_view))
             .on_action(cx.listener(Self::zoom_to_actual_size))
+            .on_action(cx.listener(Self::copy_image))
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
@@ -695,6 +742,12 @@ impl Render for ImageView {
                     .on_pinch(cx.listener(Self::handle_pinch))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            this.deploy_context_menu(event.position, window, cx);
+                        }),
+                    )
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
                     .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
                     .on_mouse_move(cx.listener(Self::handle_mouse_move))
@@ -702,6 +755,14 @@ impl Render for ImageView {
 
                 container
             })
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::Corner::TopLeft)
+                        .child(menu.clone()),
+                )
+            }))
     }
 }
 

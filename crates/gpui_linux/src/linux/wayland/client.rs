@@ -972,15 +972,22 @@ impl LinuxClient for WaylandClient {
             return;
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set(item);
             let serial = state
                 .serial_tracker
                 .latest_of(&[SerialKind::KeyPress, SerialKind::MousePress]);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
-            for mime_type in TEXT_MIME_TYPES {
-                data_source.offer(mime_type.to_string());
+            if item.text().is_some() {
+                for mime_type in TEXT_MIME_TYPES {
+                    data_source.offer(mime_type.to_string());
+                }
+            }
+            for entry in item.entries() {
+                if let gpui::ClipboardEntry::Image(image) = entry {
+                    data_source.offer(image.format.mime_type().to_string());
+                }
             }
             data_source.offer(state.clipboard.self_mime());
+            state.clipboard.set(item);
             data_device.set_selection(Some(&data_source), serial);
         }
     }
