@@ -116,7 +116,7 @@ fn render_migration_summary(mut modal: AlertModal, result: &MigrationResult) -> 
 
     if !result.agents_md_names.is_empty() {
         modal = modal.child(Label::new(format!(
-            "These Default Rules have been added to {GLOBAL_AGENTS_FILE_DISPLAY}:"
+            "These Default Rules were added to {GLOBAL_AGENTS_FILE_DISPLAY}:"
         )));
         modal = add_bulleted_names(modal, &result.agents_md_names);
     }
