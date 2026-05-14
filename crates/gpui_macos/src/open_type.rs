@@ -101,10 +101,10 @@ fn generate_feature_array(features: &FontFeatures) -> CFMutableArrayRef {
 
 fn generate_fallback_array(fallbacks: &FontFallbacks, font: &mut FontKitFont) -> CFMutableArrayRef {
     unsafe {
-        let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-
         let symbolic_traits = font.native_font().symbolic_traits();
         let all_traits = font.native_font().all_traits();
+
+        let fallback_array = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
 
         for user_fallback in fallbacks.fallback_list() {
             let name = CFString::from(user_fallback.as_str());
