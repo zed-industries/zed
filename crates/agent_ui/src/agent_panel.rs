@@ -80,7 +80,7 @@ use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
     Button, ContextMenu, ContextMenuEntry, GradientFade, IconButton, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    PopoverMenuHandle, ProjectEmptyState, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -4206,31 +4206,19 @@ impl AgentPanel {
     fn render_no_project_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        v_flex()
-            .id("agent-panel-no-project-state")
-            .size_full()
-            .p_4()
-            .items_center()
-            .justify_center()
-            .gap_2()
-            .track_focus(&focus_handle)
-            .child(
-                Label::new("Open a project to use the agent panel")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                Button::new("open_project", "Open Project")
-                    .style(ButtonStyle::Filled)
-                    .key_binding(KeyBinding::for_action_in(
-                        &workspace::Open::default(),
-                        &focus_handle,
-                        cx,
-                    ))
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
-                    }),
-            )
+        ProjectEmptyState::new(
+            "Agent Panel",
+            focus_handle.clone(),
+            KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
+        )
+        .on_open_project(|_, window, cx| {
+            telemetry::event!("Agent Panel Add Project Clicked");
+            window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
+        })
+        .on_clone_repo(|_, window, cx| {
+            telemetry::event!("Agent Panel Clone Repo Clicked");
+            window.dispatch_action(git::Clone.boxed_clone(), cx);
+        })
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4920,10 +4908,11 @@ impl Render for AgentPanel {
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
+            .key_context(self.key_context())
             .relative()
             .size_full()
             .justify_between()
-            .key_context(self.key_context())
+            .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                 this.new_thread(action, window, cx);
             }))
