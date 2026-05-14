@@ -1521,9 +1521,7 @@ impl AgentPanel {
     }
 
     pub fn supports_terminal(&self, cx: &App) -> bool {
-        cx.has_flag::<AgentPanelTerminalFeatureFlag>()
-            && self.has_open_project(cx)
-            && self.project.read(cx).supports_terminal(cx)
+        self.has_open_project(cx) && self.project.read(cx).supports_terminal(cx)
     }
 
     pub fn should_create_terminal_for_new_entry(&self, cx: &App) -> bool {
