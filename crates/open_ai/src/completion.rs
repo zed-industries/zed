@@ -190,8 +190,8 @@ pub fn into_open_ai_response(
         tool_choice,
         stop: _,
         temperature,
-        thinking_allowed: _,
-        thinking_effort: _,
+        thinking_allowed,
+        thinking_effort,
         speed: _,
     } = request;
 
@@ -233,10 +233,18 @@ pub fn into_open_ai_response(
         } else {
             None
         },
-        reasoning: reasoning_effort.map(|effort| crate::responses::ReasoningConfig {
-            effort,
-            summary: Some(crate::responses::ReasoningSummaryMode::Auto),
-        }),
+        reasoning: if thinking_allowed {
+            thinking_effort
+                .as_deref()
+                .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
+                .or(reasoning_effort)
+                .map(|effort| crate::responses::ReasoningConfig {
+                    effort,
+                    summary: Some(crate::responses::ReasoningSummaryMode::Auto),
+                })
+        } else {
+            None
+        },
     }
 }
 
@@ -1000,8 +1008,8 @@ mod tests {
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
-            thinking_allowed: false,
-            thinking_effort: None,
+            thinking_allowed: true,
+            thinking_effort: Some("high".into()),
             speed: None,
         };
 
@@ -1065,10 +1073,44 @@ mod tests {
                 }
             ],
             "prompt_cache_key": "thread-123",
-            "reasoning": { "effort": "low", "summary": "auto" }
+            "reasoning": { "effort": "high", "summary": "auto" }
         });
 
         assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn into_open_ai_response_omits_reasoning_when_thinking_is_disabled() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: Some("high".into()),
+            speed: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5",
+            true,
+            true,
+            None,
+            Some(ReasoningEffort::Medium),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized.get("reasoning"), None);
     }
 
     #[test]
