@@ -1,9 +1,13 @@
 use anyhow::Result;
-use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, global_llm_token};
+use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
-use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
+use cloud_api_types::{
+    EditPredictionSettledKeptChars, OrganizationId, SubmitEditPredictionFeedbackBody,
+    SubmitEditPredictionSettledBody,
+};
 use cloud_llm_client::predict_edits_v3::{
-    PREDICT_EDITS_MODE_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
+    PREDICT_EDITS_MODE_HEADER_NAME, PREDICT_EDITS_REQUEST_ID_HEADER_NAME,
+    PREDICT_EDITS_TRIGGER_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
     PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
@@ -24,6 +28,7 @@ use futures::{
     select_biased,
 };
 use gpui::BackgroundExecutor;
+use gpui::TaskExt;
 use gpui::http_client::Url;
 use gpui::{
     App, AsyncApp, Entity, EntityId, Global, SharedString, Task, WeakEntity, actions,
@@ -32,15 +37,16 @@ use gpui::{
 };
 use heapless::Vec as ArrayVec;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPredictionsMode, EditPreview, File, OffsetRangeExt, Point,
-    TextBufferSnapshot, ToOffset, ToPoint, language_settings::all_language_settings,
+    Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, EditPredictionsMode, EditPreview,
+    File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset, ToPoint,
+    language_settings::all_language_settings,
 };
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{
-    EditPredictionPromptFormat, EditPredictionProvider, Settings as _, update_settings_file,
+    EditPredictionDataCollectionChoice, EditPredictionProvider, Settings as _, update_settings_file,
 };
 use std::collections::{VecDeque, hash_map};
 use std::env;
@@ -112,7 +118,7 @@ const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
-const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
+
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
 const EDIT_PREDICTION_SETTLED_QUIESCENCE: Duration = Duration::from_secs(10);
 
@@ -151,7 +157,7 @@ pub struct EditPredictionStore {
     preferred_experiment: Option<String>,
     available_experiments: Vec<String>,
     pub mercury: Mercury,
-    data_collection_choice: DataCollectionChoice,
+    legacy_data_collection_enabled: bool,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
     settled_predictions_tx: mpsc::UnboundedSender<Instant>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -353,7 +359,7 @@ impl ProjectState {
             drop(pending_prediction.task);
         } else {
             cx.spawn(async move |this, cx| {
-                let Some(prediction_id) = pending_prediction.task.await else {
+                let Some((prediction_id, model_version)) = pending_prediction.task.await else {
                     return;
                 };
 
@@ -362,7 +368,7 @@ impl ProjectState {
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
-                        None,
+                        model_version,
                         None,
                         cx,
                     );
@@ -460,7 +466,7 @@ pub enum DiagnosticSearchScope {
 #[derive(Debug)]
 struct PendingPrediction {
     id: usize,
-    task: Task<Option<EditPredictionId>>,
+    task: Task<Option<(EditPredictionId, Option<String>)>>,
     /// If true, the task is dropped immediately on cancel (cancelling the HTTP request).
     /// If false, the task is awaited to completion so rejection can be reported.
     drop_on_cancel: bool,
@@ -493,7 +499,11 @@ struct PendingSettledPrediction {
     predicted_editable_region: String,
     ts_error_count_before_prediction: usize,
     ts_error_count_after_prediction: usize,
+    organization_id: Option<OrganizationId>,
+    can_collect_data: bool,
+    is_in_open_source_repo: bool,
     example: Option<ExampleSpec>,
+    model_version: Option<String>,
     enqueued_at: Instant,
     last_edit_at: Instant,
     e2e_latency: std::time::Duration,
@@ -724,7 +734,7 @@ fn compute_diff_between_snapshots_in_range(
     Some((diff, new_start_point..new_end_point))
 }
 
-fn buffer_path_with_id_fallback(
+pub(crate) fn buffer_path_with_id_fallback(
     file: Option<&Arc<dyn File>>,
     snapshot: &TextBufferSnapshot,
     cx: &App,
@@ -757,9 +767,8 @@ impl EditPredictionStore {
     }
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
-        let data_collection_choice = Self::load_data_collection_choice(cx);
-
         let llm_token = global_llm_token(cx);
+        let legacy_data_collection_enabled = Self::load_legacy_data_collection_enabled(cx);
 
         let (reject_tx, reject_rx) = mpsc::unbounded();
         cx.background_spawn({
@@ -781,8 +790,21 @@ impl EditPredictionStore {
         .detach();
 
         let (settled_predictions_tx, settled_predictions_rx) = mpsc::unbounded();
-        cx.spawn(async move |this, cx| {
-            Self::run_settled_predictions_worker(this, settled_predictions_rx, cx).await;
+        cx.spawn({
+            let client = client.clone();
+            let llm_token = llm_token.clone();
+            let app_version = AppVersion::global(cx);
+            async move |this, cx| {
+                Self::run_settled_predictions_worker(
+                    this,
+                    settled_predictions_rx,
+                    client,
+                    llm_token,
+                    app_version,
+                    cx,
+                )
+                .await;
+            }
         })
         .detach();
 
@@ -814,8 +836,8 @@ impl EditPredictionStore {
             preferred_experiment: None,
             available_experiments: Vec::new(),
             mercury: Mercury::new(cx),
+            legacy_data_collection_enabled,
 
-            data_collection_choice,
             reject_predictions_tx: reject_tx,
             settled_predictions_tx,
             rated_predictions: Default::default(),
@@ -887,18 +909,19 @@ impl EditPredictionStore {
         cx.spawn(async move |this, cx| {
             let experiments = cx
                 .background_spawn(async move {
-                    let http_client = client.http_client();
-                    let token = client
-                        .acquire_llm_token(&llm_token, organization_id.clone())
+                    let url = client
+                        .http_client()
+                        .build_zed_llm_url("/edit_prediction_experiments", &[])?;
+                    let mut response = client
+                        .authenticated_llm_request(&llm_token, organization_id, |token| {
+                            Ok(http_client::Request::builder()
+                                .method(Method::GET)
+                                .uri(url.as_ref())
+                                .header("Authorization", format!("Bearer {token}"))
+                                .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                                .body(Default::default())?)
+                        })
                         .await?;
-                    let url = http_client.build_zed_llm_url("/edit_prediction_experiments", &[])?;
-                    let request = http_client::Request::builder()
-                        .method(Method::GET)
-                        .uri(url.as_ref())
-                        .header("Authorization", format!("Bearer {}", token))
-                        .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
-                        .body(Default::default())?;
-                    let mut response = http_client.send(request).await?;
                     if response.status().is_success() {
                         let mut body = Vec::new();
                         response.body_mut().read_to_end(&mut body).await?;
@@ -1578,7 +1601,6 @@ impl EditPredictionStore {
                 llm_token.clone(),
                 organization_id,
                 app_version.clone(),
-                true,
             )
             .await;
 
@@ -1591,6 +1613,9 @@ impl EditPredictionStore {
     async fn run_settled_predictions_worker(
         this: WeakEntity<Self>,
         mut rx: UnboundedReceiver<Instant>,
+        client: Arc<Client>,
+        llm_token: LlmApiToken,
+        app_version: Version,
         cx: &mut AsyncApp,
     ) {
         let mut next_wake_time: Option<Instant> = None;
@@ -1664,7 +1689,11 @@ impl EditPredictionStore {
                     predicted_editable_region,
                     ts_error_count_before_prediction,
                     ts_error_count_after_prediction,
+                    organization_id,
+                    can_collect_data,
+                    is_in_open_source_repo,
                     example,
+                    model_version,
                     e2e_latency,
                     ..
                 } = pending_prediction;
@@ -1690,25 +1719,68 @@ impl EditPredictionStore {
                     });
                 }
 
-                telemetry::event!(
-                    EDIT_PREDICTION_SETTLED_EVENT,
-                    request_id = request_id.0.clone(),
-                    settled_editable_region,
-                    ts_error_count_before_prediction,
-                    ts_error_count_after_prediction,
-                    edit_bytes_candidate_new = kept_rate_result.candidate_new_chars,
-                    edit_bytes_reference_new = kept_rate_result.reference_new_chars,
-                    edit_bytes_candidate_deleted = kept_rate_result.candidate_deleted_chars,
-                    edit_bytes_reference_deleted = kept_rate_result.reference_deleted_chars,
-                    edit_bytes_kept = kept_rate_result.kept_chars,
-                    edit_bytes_correctly_deleted = kept_rate_result.correctly_deleted_chars,
-                    edit_bytes_discarded = kept_rate_result.discarded_chars,
-                    edit_bytes_context = kept_rate_result.context_chars,
-                    edit_bytes_kept_rate = kept_rate_result.kept_rate,
-                    edit_bytes_recall_rate = kept_rate_result.recall_rate,
-                    example,
-                    e2e_latency = e2e_latency.as_millis(),
-                );
+                cx.background_spawn({
+                    let client = client.clone();
+                    let llm_token = llm_token.clone();
+                    let app_version = app_version.clone();
+                    async move {
+                        let result: anyhow::Result<()> = async {
+                            let settled_editable_region =
+                                can_collect_data.then_some(settled_editable_region);
+                            let example = if can_collect_data {
+                                example.map(serde_json::to_value).transpose()?
+                            } else {
+                                None
+                            };
+
+                            let body = SubmitEditPredictionSettledBody {
+                                request_id: request_id.0.to_string(),
+                                settled_editable_region,
+                                ts_error_count_before_prediction,
+                                ts_error_count_after_prediction,
+                                can_collect_data,
+                                is_in_open_source_repo,
+                                kept_chars: EditPredictionSettledKeptChars {
+                                    candidate_new: kept_rate_result.candidate_new_chars,
+                                    reference_new: kept_rate_result.reference_new_chars,
+                                    candidate_deleted: kept_rate_result.candidate_deleted_chars,
+                                    reference_deleted: kept_rate_result.reference_deleted_chars,
+                                    kept: kept_rate_result.kept_chars,
+                                    correctly_deleted: kept_rate_result.correctly_deleted_chars,
+                                    discarded: kept_rate_result.discarded_chars,
+                                    context: kept_rate_result.context_chars,
+                                    kept_rate: kept_rate_result.kept_rate,
+                                    recall_rate: kept_rate_result.recall_rate,
+                                },
+                                example,
+                                model_version,
+                                e2e_latency_ms: e2e_latency.as_millis(),
+                            };
+                            let url = client
+                                .http_client()
+                                .build_zed_llm_url("/predict_edits/settled", &[])?;
+                            Self::send_api_request::<serde_json::Value>(
+                                |builder| {
+                                    Ok(builder
+                                        .uri(url.as_ref())
+                                        .body(serde_json::to_string(&body)?.into())?)
+                                },
+                                client,
+                                llm_token,
+                                organization_id,
+                                app_version,
+                            )
+                            .await?;
+                            Ok(())
+                        }
+                        .await;
+
+                        if let Err(error) = result {
+                            log::error!("failed to submit edit prediction settled: {error:?}");
+                        }
+                    }
+                })
+                .detach();
             }
 
             next_wake_time = oldest_edited_at.map(|time| time + EDIT_PREDICTION_SETTLED_QUIESCENCE);
@@ -1724,10 +1796,24 @@ impl EditPredictionStore {
         editable_offset_range: Range<usize>,
         edit_preview: &EditPreview,
         example: Option<ExampleSpec>,
+        model_version: Option<String>,
         e2e_latency: std::time::Duration,
         cx: &mut Context<Self>,
     ) {
         let this = &mut *self;
+        let is_in_open_source_repo = edited_buffer_snapshot
+            .file()
+            .map_or(false, |file| this.is_file_open_source(project, file, cx));
+        let can_collect_data = !cfg!(test)
+            && is_in_open_source_repo
+            && this.is_data_collection_enabled(cx)
+            && matches!(this.edit_prediction_model, EditPredictionModel::Zeta);
+
+        let organization_id = this
+            .user_store
+            .read(cx)
+            .current_organization()
+            .map(|organization| organization.id.clone());
         let project_state = this.get_or_init_project(project, cx);
         let Some(registered_buffer) = project_state
             .registered_buffers
@@ -1768,7 +1854,11 @@ impl EditPredictionStore {
                 predicted_editable_region,
                 ts_error_count_before_prediction,
                 ts_error_count_after_prediction,
+                organization_id,
+                can_collect_data,
+                is_in_open_source_repo,
                 example,
+                model_version,
                 e2e_latency,
                 enqueued_at: now,
                 last_edit_at: now,
@@ -2039,6 +2129,7 @@ impl EditPredictionStore {
                                 EditPredictionResult {
                                     id: prediction_result.id,
                                     prediction: Err(EditPredictionRejectReason::CurrentPreferred),
+                                    model_version: prediction_result.model_version,
                                     e2e_latency: prediction_result.e2e_latency,
                                 }
                             },
@@ -2108,8 +2199,7 @@ fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
         EditPredictionProvider::Zed
         | EditPredictionProvider::Mercury
         | EditPredictionProvider::Ollama
-        | EditPredictionProvider::OpenAiCompatibleApi
-        | EditPredictionProvider::Experimental(_) => true,
+        | EditPredictionProvider::OpenAiCompatibleApi => true,
         EditPredictionProvider::None
         | EditPredictionProvider::Copilot
         | EditPredictionProvider::Codestral => false,
@@ -2144,9 +2234,7 @@ impl EditPredictionStore {
 
         let (needs_acceptance_tracking, max_pending_predictions) =
             match all_language_settings(None, cx).edit_predictions.provider {
-                EditPredictionProvider::Zed
-                | EditPredictionProvider::Mercury
-                | EditPredictionProvider::Experimental(_) => (true, 2),
+                EditPredictionProvider::Zed | EditPredictionProvider::Mercury => (true, 2),
                 EditPredictionProvider::Ollama => (false, 1),
                 EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
                 EditPredictionProvider::None
@@ -2213,9 +2301,9 @@ impl EditPredictionStore {
             }
 
             let new_prediction_result = do_refresh(this.clone(), cx).await.log_err().flatten();
-            let new_prediction_id = new_prediction_result
+            let new_prediction_metadata = new_prediction_result
                 .as_ref()
-                .map(|(prediction, _)| prediction.id.clone());
+                .map(|(prediction, _)| (prediction.id.clone(), prediction.model_version.clone()));
 
             // When a prediction completes, remove it from the pending list, and cancel
             // any pending predictions that were enqueued before it.
@@ -2271,7 +2359,7 @@ impl EditPredictionStore {
                                 prediction_result.id,
                                 reject_reason,
                                 false,
-                                None,
+                                prediction_result.model_version,
                                 Some(prediction_result.e2e_latency),
                                 cx,
                             );
@@ -2303,7 +2391,7 @@ impl EditPredictionStore {
             })
             .ok();
 
-            new_prediction_id
+            new_prediction_metadata
         });
 
         if project_state.pending_predictions.len() < max_pending_predictions {
@@ -2516,7 +2604,7 @@ impl EditPredictionStore {
                     .collect()
             });
 
-            candidates.sort_by(|a, b| b.1.cmp(&a.1));
+            candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
 
             for (path, _) in candidates {
                 let candidate_buffer = project
@@ -2582,7 +2670,6 @@ impl EditPredictionStore {
             llm_token,
             organization_id,
             app_version,
-            true,
         )
         .await
     }
@@ -2601,7 +2688,8 @@ impl EditPredictionStore {
             .http_client()
             .build_zed_llm_url("/predict_edits/v3", &[])?;
 
-        let request = PredictEditsV3Request { input, trigger };
+        let request = PredictEditsV3Request { input };
+        let request_id = uuid::Uuid::new_v4().to_string();
 
         let json_bytes = serde_json::to_vec(&request)?;
         let compressed = zstd::encode_all(&json_bytes[..], 3)?;
@@ -2611,7 +2699,9 @@ impl EditPredictionStore {
                 let builder = builder
                     .uri(url.as_ref())
                     .header("Content-Encoding", "zstd")
-                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref());
+                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref())
+                    .header(PREDICT_EDITS_REQUEST_ID_HEADER_NAME, request_id.as_str())
+                    .header(PREDICT_EDITS_TRIGGER_HEADER_NAME, trigger.as_ref());
                 let builder = if let Some(preferred_experiment) = preferred_experiment.as_deref() {
                     builder.header(PREFERRED_EXPERIMENT_HEADER_NAME, preferred_experiment)
                 } else {
@@ -2624,7 +2714,6 @@ impl EditPredictionStore {
             llm_token,
             organization_id,
             app_version,
-            true,
         )
         .await
     }
@@ -2635,78 +2724,55 @@ impl EditPredictionStore {
         llm_token: LlmApiToken,
         organization_id: Option<OrganizationId>,
         app_version: Version,
-        require_auth: bool,
     ) -> Result<(Res, Option<EditPredictionUsage>)>
     where
         Res: DeserializeOwned,
     {
-        let http_client = client.http_client();
-        let mut token = if require_auth {
-            Some(
-                client
-                    .acquire_llm_token(&llm_token, organization_id.clone())
-                    .await?,
-            )
+        let response = client
+            .authenticated_llm_request(&llm_token, organization_id, |token| {
+                build(
+                    http_client::Request::builder()
+                        .method(Method::POST)
+                        .header("Content-Type", "application/json")
+                        .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                        .header("Authorization", format!("Bearer {token}")),
+                )
+            })
+            .await?;
+
+        Self::process_api_response(response, &app_version).await
+    }
+
+    async fn process_api_response<Res>(
+        mut response: http_client::Response<AsyncBody>,
+        app_version: &Version,
+    ) -> Result<(Res, Option<EditPredictionUsage>)>
+    where
+        Res: DeserializeOwned,
+    {
+        if let Some(minimum_required_version) = response
+            .headers()
+            .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
+            .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
+        {
+            anyhow::ensure!(
+                *app_version >= minimum_required_version,
+                ZedUpdateRequiredError {
+                    minimum_version: minimum_required_version
+                }
+            );
+        }
+
+        if response.status().is_success() {
+            let usage = EditPredictionUsage::from_headers(response.headers()).ok();
+            let mut body = Vec::new();
+            response.body_mut().read_to_end(&mut body).await?;
+            Ok((serde_json::from_slice(&body)?, usage))
         } else {
-            client
-                .acquire_llm_token(&llm_token, organization_id.clone())
-                .await
-                .ok()
-        };
-        let mut did_retry = false;
-
-        loop {
-            let request_builder = http_client::Request::builder().method(Method::POST);
-
-            let mut request_builder = request_builder
-                .header("Content-Type", "application/json")
-                .header(ZED_VERSION_HEADER_NAME, app_version.to_string());
-
-            // Only add Authorization header if we have a token
-            if let Some(ref token_value) = token {
-                request_builder =
-                    request_builder.header("Authorization", format!("Bearer {}", token_value));
-            }
-
-            let request = build(request_builder)?;
-
-            let mut response = http_client.send(request).await?;
-
-            if let Some(minimum_required_version) = response
-                .headers()
-                .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                .and_then(|version| Version::from_str(version.to_str().ok()?).ok())
-            {
-                anyhow::ensure!(
-                    app_version >= minimum_required_version,
-                    ZedUpdateRequiredError {
-                        minimum_version: minimum_required_version
-                    }
-                );
-            }
-
-            if response.status().is_success() {
-                let usage = EditPredictionUsage::from_headers(response.headers()).ok();
-
-                let mut body = Vec::new();
-                response.body_mut().read_to_end(&mut body).await?;
-                return Ok((serde_json::from_slice(&body)?, usage));
-            } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
-                did_retry = true;
-                token = Some(
-                    client
-                        .refresh_llm_token(&llm_token, organization_id.clone())
-                        .await?,
-                );
-            } else {
-                let mut body = String::new();
-                response.body_mut().read_to_string(&mut body).await?;
-                anyhow::bail!(
-                    "Request failed with status: {:?}\nBody: {}",
-                    response.status(),
-                    body
-                );
-            }
+            let status = response.status();
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            anyhow::bail!("Request failed with status: {status:?}\nBody: {body}");
         }
     }
 
@@ -2769,38 +2835,45 @@ impl EditPredictionStore {
     }
 
     pub(crate) fn is_data_collection_enabled(&self, cx: &App) -> bool {
-        self.data_collection_choice.is_enabled(cx)
-    }
+        if !self.is_data_collection_allowed_by_organization(cx) {
+            return false;
+        }
 
-    fn load_data_collection_choice(cx: &App) -> DataCollectionChoice {
-        let choice = KeyValueStore::global(cx)
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
-            .log_err()
-            .flatten();
+        if cx.is_staff() {
+            return true;
+        }
 
-        match choice.as_deref() {
-            Some("true") => DataCollectionChoice::Enabled,
-            Some("false") => DataCollectionChoice::Disabled,
-            Some(_) => {
-                log::error!("unknown value in '{ZED_PREDICT_DATA_COLLECTION_CHOICE}'");
-                DataCollectionChoice::NotAnswered
-            }
-            None => DataCollectionChoice::NotAnswered,
+        match all_language_settings(None, cx)
+            .edit_predictions
+            .allow_data_collection
+        {
+            EditPredictionDataCollectionChoice::Yes => true,
+            EditPredictionDataCollectionChoice::No => false,
+            // Fall back to the legacy KV entry captured when the store was
+            // created, preserving existing users' choices without per-request
+            // database reads.
+            EditPredictionDataCollectionChoice::Default => self.legacy_data_collection_enabled,
         }
     }
 
-    fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
-        self.data_collection_choice = self.data_collection_choice.toggle();
-        let new_choice = self.data_collection_choice;
-        let is_enabled = new_choice.is_enabled(cx);
-        let kvp = KeyValueStore::global(cx);
-        db::write_and_log(cx, move || async move {
-            kvp.write_kvp(
-                ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-                is_enabled.to_string(),
-            )
-            .await
-        });
+    fn load_legacy_data_collection_enabled(cx: &App) -> bool {
+        KeyValueStore::global(cx)
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .log_err()
+            .flatten()
+            .as_deref()
+            == Some("true")
+    }
+
+    pub(crate) fn is_data_collection_allowed_by_organization(&self, cx: &App) -> bool {
+        self.user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_none_or(|organization_configuration| {
+                organization_configuration
+                    .edit_prediction
+                    .is_feedback_enabled
+            })
     }
 
     pub fn shown_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
@@ -2820,6 +2893,7 @@ impl EditPredictionStore {
         prediction: &EditPrediction,
         rating: EditPredictionRating,
         feedback: String,
+        expected_output: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let organization = self.user_store.read(cx).current_organization();
@@ -2845,6 +2919,7 @@ impl EditPredictionStore {
                         },
                         inputs: inputs?,
                         output,
+                        expected_output,
                         feedback,
                     })
                     .await?;
@@ -2993,70 +3068,37 @@ pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum DataCollectionChoice {
-    NotAnswered,
-    Enabled,
-    Disabled,
-}
-
-impl DataCollectionChoice {
-    pub fn is_enabled(self, cx: &App) -> bool {
-        if cx.is_staff() {
-            return true;
-        }
-        match self {
-            Self::Enabled => true,
-            Self::NotAnswered | Self::Disabled => false,
-        }
-    }
-
-    #[must_use]
-    pub fn toggle(&self) -> DataCollectionChoice {
-        match self {
-            Self::Enabled => Self::Disabled,
-            Self::Disabled => Self::Enabled,
-            Self::NotAnswered => Self::Enabled,
-        }
-    }
-}
-
-impl From<bool> for DataCollectionChoice {
-    fn from(value: bool) -> Self {
-        match value {
-            true => DataCollectionChoice::Enabled,
-            false => DataCollectionChoice::Disabled,
-        }
-    }
-}
-
 struct ZedPredictUpsell;
+
+fn is_upsell_dismissed(cx: &App) -> bool {
+    // To make this backwards compatible with older versions of Zed, we
+    // check if the user has seen the previous Edit Prediction Onboarding
+    // before, by checking the data collection choice which was written to
+    // the database once the user clicked on "Accept and Enable"
+    let kvp = KeyValueStore::global(cx);
+    if kvp
+        .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+        .log_err()
+        .is_some_and(|s| s.is_some())
+    {
+        return true;
+    }
+
+    kvp.read_kvp(ZedPredictUpsell::KEY)
+        .log_err()
+        .is_some_and(|s| s.is_some())
+}
 
 impl Dismissable for ZedPredictUpsell {
     const KEY: &'static str = "dismissed-edit-predict-upsell";
 
     fn dismissed(cx: &App) -> bool {
-        // To make this backwards compatible with older versions of Zed, we
-        // check if the user has seen the previous Edit Prediction Onboarding
-        // before, by checking the data collection choice which was written to
-        // the database once the user clicked on "Accept and Enable"
-        let kvp = KeyValueStore::global(cx);
-        if kvp
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
-            .log_err()
-            .is_some_and(|s| s.is_some())
-        {
-            return true;
-        }
-
-        kvp.read_kvp(Self::KEY)
-            .log_err()
-            .is_some_and(|s| s.is_some())
+        is_upsell_dismissed(cx)
     }
 }
 
 pub fn should_show_upsell_modal(cx: &App) -> bool {
-    !ZedPredictUpsell::dismissed(cx)
+    !is_upsell_dismissed(cx)
 }
 
 pub fn init(cx: &mut App) {

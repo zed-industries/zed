@@ -25,6 +25,7 @@ impl std::fmt::Display for EditPredictionId {
 pub struct EditPredictionResult {
     pub id: EditPredictionId,
     pub prediction: Result<EditPrediction, EditPredictionRejectReason>,
+    pub model_version: Option<String>,
     pub e2e_latency: std::time::Duration,
 }
 
@@ -35,6 +36,7 @@ impl EditPredictionResult {
         edited_buffer_snapshot: &BufferSnapshot,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cursor_position: Option<PredictedCursorPosition>,
+        editable_range: Option<Range<Anchor>>,
         inputs: ZetaPromptInput,
         model_version: Option<String>,
         e2e_latency: std::time::Duration,
@@ -43,8 +45,9 @@ impl EditPredictionResult {
         if edits.is_empty() {
             return Self {
                 id,
-                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::Empty),
+                model_version,
+                e2e_latency,
             };
         }
 
@@ -59,8 +62,9 @@ impl EditPredictionResult {
         else {
             return Self {
                 id,
-                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::InterpolatedEmpty),
+                model_version,
+                e2e_latency,
             };
         };
 
@@ -68,17 +72,19 @@ impl EditPredictionResult {
 
         Self {
             id: id.clone(),
-            e2e_latency,
             prediction: Ok(EditPrediction {
                 id,
                 edits,
                 cursor_position,
+                editable_range,
                 snapshot,
                 edit_preview,
                 inputs,
                 buffer: edited_buffer.clone(),
-                model_version,
+                model_version: model_version.clone(),
             }),
+            model_version,
+            e2e_latency,
         }
     }
 }
@@ -88,6 +94,7 @@ pub struct EditPrediction {
     pub id: EditPredictionId,
     pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     pub cursor_position: Option<PredictedCursorPosition>,
+    pub editable_range: Option<Range<Anchor>>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     pub buffer: Entity<Buffer>,
@@ -141,6 +148,7 @@ mod tests {
             id: EditPredictionId("prediction-1".into()),
             edits,
             cursor_position: None,
+            editable_range: None,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,

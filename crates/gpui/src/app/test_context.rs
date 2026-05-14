@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
+    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
@@ -82,6 +82,15 @@ impl AppContext for TestAppContext {
     {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
+    }
+
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        let mut lock = self.app.borrow_mut();
+        lock.with_window(entity_id, f)
     }
 
     fn read_window<T, R>(
@@ -191,12 +200,6 @@ impl TestAppContext {
     /// Returns an executor (for running tasks on the main thread)
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
-    }
-
-    #[expect(clippy::wrong_self_convention)]
-    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
-        let mut cx = self.app.borrow_mut();
-        cx.new(build_entity)
     }
 
     /// Gives you an `&mut App` for the duration of the closure
@@ -735,6 +738,16 @@ impl VisualTestContext {
         self.cx.test_window(self.window).0.lock().title.clone()
     }
 
+    /// Read the document path off the window (set by `Window#set_document_path`)
+    pub fn document_path(&mut self) -> Option<std::path::PathBuf> {
+        self.cx
+            .test_window(self.window)
+            .0
+            .lock()
+            .document_path
+            .clone()
+    }
+
     /// Simulate a sequence of keystrokes `cx.simulate_keystrokes("cmd-p escape")`
     /// Automatically runs until parked.
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
@@ -930,7 +943,9 @@ impl VisualTestContext {
 
 impl AppContext for VisualTestContext {
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
-        self.cx.new(build_entity)
+        self.window
+            .update(&mut self.cx, |_, _, cx| cx.new(build_entity))
+            .expect("window was unexpectedly closed")
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> crate::Reservation<T> {
@@ -942,7 +957,11 @@ impl AppContext for VisualTestContext {
         reservation: crate::Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Entity<T> {
-        self.cx.insert_entity(reservation, build_entity)
+        self.window
+            .update(&mut self.cx, |_, _, cx| {
+                cx.insert_entity(reservation, build_entity)
+            })
+            .expect("window was unexpectedly closed")
     }
 
     fn update_entity<T, R>(
@@ -975,6 +994,14 @@ impl AppContext for VisualTestContext {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.cx.update_window(window, f)
+    }
+
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        self.cx.with_window(entity_id, f)
     }
 
     fn read_window<T, R>(
@@ -1027,11 +1054,14 @@ impl VisualContext for VisualTestContext {
         view: &Entity<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
     ) -> R {
-        self.window
-            .update(&mut self.cx, |_, window, cx| {
-                view.update(cx, |v, cx| update(v, window, cx))
+        let view = view.clone();
+        self.cx
+            .app
+            .borrow_mut()
+            .with_window(view.entity_id(), |window, app| {
+                view.update(app, |v, cx| update(v, window, cx))
             })
-            .expect("window was unexpectedly closed")
+            .expect("entity has no current window; use `update` instead of `update_in`")
     }
 
     fn replace_root_view<V>(

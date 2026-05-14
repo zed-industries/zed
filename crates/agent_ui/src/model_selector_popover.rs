@@ -92,7 +92,7 @@ impl Render for ModelSelectorPopover {
                 })
                 .end_icon(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
             tooltip,
-            gpui::Corner::BottomRight,
+            gpui::Anchor::BottomRight,
             cx,
         )
         .with_handle(self.menu_handle.clone())

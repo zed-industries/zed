@@ -11,8 +11,8 @@ use editor::{
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
-    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
+    Action, Anchor, Animation, AnimationExt, App, AsyncWindowContext, Entity, FocusHandle,
+    Focusable, IntoElement, ParentElement, Render, Subscription, TaskExt, WeakEntity, actions, div,
     ease_in_out, pulsating_between,
 };
 use indoc::indoc;
@@ -37,7 +37,7 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
+    HideStatusItem, StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
@@ -172,7 +172,7 @@ impl Render for EditPredictionButton {
                             }
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("copilot-icon", icon),
                             |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
@@ -216,7 +216,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("codestral-icon", IconName::AiMistral)
                                 .shape(IconButtonShape::Square)
@@ -260,7 +260,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger(
                             IconButton::new("openai-compatible-api-icon", IconName::AiOpenAiCompat)
                                 .shape(IconButtonShape::Square)
@@ -290,7 +290,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("ollama-icon", IconName::AiOllama)
                                 .shape(IconButtonShape::Square)
@@ -323,15 +323,12 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-            provider @ (EditPredictionProvider::Experimental(_)
-            | EditPredictionProvider::Zed
-            | EditPredictionProvider::Mercury) => {
+            provider @ (EditPredictionProvider::Zed | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
                 let language = self.language.clone();
                 let project = self.project.clone();
                 let provider_name: &'static str = match provider {
-                    EditPredictionProvider::Experimental(name) => name,
                     EditPredictionProvider::Zed => "zed",
                     _ => "unknown",
                 };
@@ -428,6 +425,11 @@ impl Render for EditPredictionButton {
                     None
                 };
 
+                let zed_cloud_needs_sign_in =
+                    matches!(provider, EditPredictionProvider::Zed) && user.is_none();
+                let provider_unavailable =
+                    missing_token || mercury_has_error || zed_cloud_needs_sign_in;
+
                 let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
                     .when_some(indicator_color, |this, color| {
@@ -435,19 +437,15 @@ impl Render for EditPredictionButton {
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
                     })
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
-                        let user = user.clone();
-
                         element.tooltip(move |_window, cx| {
-                            let description = if enabled {
-                                if show_editor_predictions {
-                                    tooltip_meta
-                                } else if user.is_none() {
-                                    "Sign In Or Configure a Provider"
-                                } else {
-                                    "Hidden For This File"
-                                }
-                            } else {
+                            let description = if !enabled {
                                 "Disabled For This File"
+                            } else if zed_cloud_needs_sign_in {
+                                "Sign In Or Configure a Provider"
+                            } else if provider_unavailable || show_editor_predictions {
+                                tooltip_meta
+                            } else {
+                                "Enable to Use"
                             };
 
                             Tooltip::with_meta(
@@ -485,7 +483,7 @@ impl Render for EditPredictionButton {
                             .ok()
                         })
                     })
-                    .anchor(Corner::BottomRight)
+                    .anchor(Anchor::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
 
                 let is_refreshing = self
@@ -596,30 +594,20 @@ impl EditPredictionButton {
                     continue;
                 };
                 let is_current = provider == current_provider;
+                let is_disabled_zed_provider =
+                    provider == EditPredictionProvider::Zed && is_zed_provider_disabled;
                 let fs = self.fs.clone();
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(
-                            IconPosition::Start,
-                            is_current
-                                && (provider == EditPredictionProvider::Zed
-                                    && !is_zed_provider_disabled),
-                        )
-                        .disabled(
-                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
-                        )
-                        .when(
-                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
-                            |item| {
-                                item.documentation_aside(DocumentationSide::Left, move |_cx| {
-                                    Label::new(
-                                        "Edit predictions are disabled for this organization.",
-                                    )
+                        .toggleable(IconPosition::Start, is_current && !is_disabled_zed_provider)
+                        .disabled(is_disabled_zed_provider)
+                        .when(is_disabled_zed_provider, |item| {
+                            item.documentation_aside(DocumentationSide::Left, move |_cx| {
+                                Label::new("Edit predictions are disabled for this organization.")
                                     .into_any_element()
-                                })
-                            },
-                        )
+                            })
+                        })
                         .handler(move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         }),
@@ -1365,6 +1353,13 @@ impl StatusItemView for EditPredictionButton {
             self.editor_enabled = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // This button is already gated on having a non-disabled edit
+        // prediction provider, which the user manages through provider/AI
+        // settings.
+        None
     }
 }
 

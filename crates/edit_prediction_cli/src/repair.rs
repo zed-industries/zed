@@ -134,6 +134,18 @@ fn build_score_feedback(example: &Example) -> Option<String> {
         );
     }
 
+    if score.discarded_chars.unwrap_or(0) > 80 && score.exact_lines_fp > 5 {
+        issues.push(
+            "Automated analysis detected that this prediction might be too large or speculative. \
+            Please review it and think if we should keep it or generate a more focused prediction. \
+            Examples of more focused predictions: \
+            - Predicting a function outline but not its body. \
+            - Predicting only the first logical step and not speculating about further steps.
+            In general, the smaller the prediction you make, the higher the chance it will be correct."
+                .to_string(),
+        );
+    }
+
     if issues.is_empty() {
         return None;
     }
@@ -376,6 +388,7 @@ pub async fn run_repair(
                 open_ai::RequestMessage::Assistant {
                     content: Some(open_ai::MessageContent::Plain(teacher_response.clone())),
                     tool_calls: vec![],
+                    reasoning_content: None,
                 },
                 // Turn 3: Repair critique and instructions
                 open_ai::RequestMessage::User {
@@ -525,6 +538,7 @@ mod tests {
     use crate::{PredictionProvider, TeacherBackend};
     use edit_prediction::example_spec::ExampleSpec;
     use std::{path::Path, sync::Arc};
+    use zeta_prompt::ZetaFormat;
 
     fn example_with_previous_prediction() -> Example {
         Example {
@@ -557,7 +571,10 @@ mod tests {
                     editable_region_offset: Some(4),
                 }),
                 error: None,
-                provider: PredictionProvider::Teacher(TeacherBackend::Sonnet45),
+                provider: PredictionProvider::Teacher(
+                    TeacherBackend::Sonnet45,
+                    ZetaFormat::default(),
+                ),
                 cumulative_logprob: None,
                 avg_logprob: None,
             }],

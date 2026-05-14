@@ -467,7 +467,9 @@ pub mod buffer_search {
             /// Dismisses the search bar.
             Dismiss,
             /// Focuses back on the editor.
-            FocusEditor
+            FocusEditor,
+            /// Sets the search query from the selection or word under cursor.
+            UseSelectionForFind,
         ]
     );
 }
