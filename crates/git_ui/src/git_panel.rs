@@ -75,9 +75,9 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, PopoverMenu,
-    RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor, Tooltip,
-    WithScrollbar, prelude::*,
+    ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, KeyBinding,
+    PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab,
+    TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
@@ -5453,6 +5453,22 @@ impl GitPanel {
                         }),
                 )
                 .into_any_element()
+        } else if worktree_count == 0 {
+            let focus_handle = self.focus_handle.clone();
+            ProjectEmptyState::new(
+                "Git Panel",
+                focus_handle.clone(),
+                KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
+            )
+            .on_open_project(|_, window, cx| {
+                telemetry::event!("Git Panel Add Project Clicked");
+                window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
+            })
+            .on_clone_repo(|_, window, cx| {
+                telemetry::event!("Git Panel Clone Repo Clicked");
+                window.dispatch_action(git::Clone.boxed_clone(), cx);
+            })
+            .into_any_element()
         } else {
             Empty.into_any_element()
         }
