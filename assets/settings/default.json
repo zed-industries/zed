@@ -1610,6 +1610,8 @@
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
+    // Whether to show the stage and restore buttons on diff hunks.
+    "show_stage_restore_buttons": true,
     // Directory where git worktrees are created, relative to the repository
     // working directory.
     //
