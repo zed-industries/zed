@@ -1581,11 +1581,21 @@ impl Window {
                 async_channel::unbounded::<accesskit::ActionRequest>();
 
             platform_window.a11y_init(crate::A11yCallbacks {
-                activation: Box::new(move || Some(initial_tree.clone())),
+                activation: Box::new(move || {
+                    log::info!("Accessibility activated: screen reader connected");
+                    Some(initial_tree.clone())
+                }),
                 action: Box::new(move |request| {
+                    log::debug!(
+                        "Accessibility action requested: {:?} on node {:?}",
+                        request.action,
+                        request.target_node
+                    );
                     action_sender.send_blocking(request).log_err();
                 }),
-                deactivation: Box::new(|| {}),
+                deactivation: Box::new(|| {
+                    log::info!("Accessibility deactivated: screen reader disconnected");
+                }),
             });
 
             let mut async_cx = cx.to_async();
@@ -2708,6 +2718,10 @@ impl Window {
 
         if self.a11y.active {
             let tree_update = self.a11y.end_frame();
+            log::debug!(
+                "Sending a11y tree update: {} nodes",
+                tree_update.nodes.len()
+            );
             self.platform_window.a11y_tree_update(tree_update);
         }
     }
