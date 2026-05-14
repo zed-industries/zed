@@ -4056,21 +4056,24 @@ impl AgentPanel {
             .max_w_full()
             .overflow_x_hidden()
             .child(content)
-            .when(!self.is_title_editor_focused(window, cx), |this| {
-                this.child(gradient_overlay).child(
-                    h_flex()
-                        .visible_on_hover("title_editor")
-                        .absolute()
-                        .right_0()
-                        .h_full()
-                        .bg(cx.theme().colors().tab_bar_background)
-                        .child(
-                            IconButton::new("edit_tile", IconName::Pencil)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Edit Thread Title")),
-                        ),
-                )
-            })
+            .when(
+                self.has_open_project(cx) && !self.is_title_editor_focused(window, cx),
+                |this| {
+                    this.child(gradient_overlay).child(
+                        h_flex()
+                            .visible_on_hover("title_editor")
+                            .absolute()
+                            .right_0()
+                            .h_full()
+                            .bg(cx.theme().colors().tab_bar_background)
+                            .child(
+                                IconButton::new("edit_tile", IconName::Pencil)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Edit Thread Title")),
+                            ),
+                    )
+                },
+            )
             .into_any()
     }
 
