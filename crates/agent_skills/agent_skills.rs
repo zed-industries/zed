@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use const_format::concatcp;
 use fs::Fs;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,18 @@ pub const AGENTS_DIR_NAME: &str = ".agents";
 
 /// Second segment of the skills directory path: `skills`.
 pub const SKILLS_DIR_NAME: &str = "skills";
+
+/// User-facing display form of the global skills directory path — i.e.
+/// what a human should see in messages and prompts, with the platform's
+/// native path separator and home-directory shorthand.
+///
+/// Windows doesn't recognize `~` as the home directory, so the env-var
+/// form is used there instead.
+#[cfg(target_os = "windows")]
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str =
+    concatcp!("%USERPROFILE%\\", AGENTS_DIR_NAME, "\\", SKILLS_DIR_NAME);
+#[cfg(not(target_os = "windows"))]
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = concatcp!("~/", AGENTS_DIR_NAME, "/", SKILLS_DIR_NAME);
 
 /// Opaque identifier for the project scope a skill was loaded from.
 ///
@@ -273,13 +286,81 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
         .context("Invalid YAML frontmatter"))
 }
 
+/// Maximum length for a valid skill name. Mirrors the upper bound enforced
+/// by [`validate_name`].
+pub const MAX_SKILL_NAME_LEN: usize = 64;
+
+/// Convert an arbitrary human-readable string into a valid skill name, or
+/// return `None` if no valid name can be produced (e.g. the input contains
+/// no ASCII alphanumeric characters at all).
+///
+/// The transformation:
+///
+/// 1. Replaces each `&` with the word `and` (with separators on either
+///    side), so titles like "rock & roll" or "AT&T" round-trip something
+///    meaningful (`rock-and-roll`, `at-and-t`) rather than dropping the
+///    `&` and silently mashing the neighbours together.
+/// 2. ASCII-lowercases every ASCII letter.
+/// 3. Replaces each space with `-`. Existing `-` characters are kept.
+/// 4. **Drops** every other non-alphanumeric character entirely (NOT
+///    replaced with a dash). So `foo!bar` slugifies to `foobar`, not
+///    `foo-bar` — only word boundaries the user actually wrote (spaces)
+///    become dashes.
+/// 5. Collapses runs of `-` into a single `-`.
+/// 6. Trims leading and trailing `-`.
+/// 7. Truncates to [`MAX_SKILL_NAME_LEN`] bytes (then re-trims trailing `-`
+///    in case the truncation landed on one).
+///
+/// The result, if `Some`, always satisfies [`validate_name`].
+pub fn slugify_skill_name(input: &str) -> Option<String> {
+    // Substitute `&` with `-and-` BEFORE the per-character pass; the
+    // existing dash-collapsing and edge-trimming logic then handles the
+    // boundary cases (`foo & bar`, `&foo`, `foo&`, `&&`, etc.) for free.
+    let input = input.replace('&', "-and-");
+    let mut slug = String::with_capacity(input.len());
+    let mut last_was_dash = true; // suppress a leading `-`
+    for ch in input.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else if ch == ' ' || ch == '-' {
+            Some('-')
+        } else {
+            // Drop the character entirely — and importantly, do NOT touch
+            // `last_was_dash`. That way `foo!bar` stays one run of
+            // alphanumerics (`foobar`) rather than getting a fake
+            // separator inserted (`foo-bar`).
+            None
+        };
+        let Some(c) = mapped else { continue };
+        if c == '-' {
+            if last_was_dash {
+                continue;
+            }
+            last_was_dash = true;
+        } else {
+            last_was_dash = false;
+        }
+        slug.push(c);
+    }
+    if slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.len() > MAX_SKILL_NAME_LEN {
+        slug.truncate(MAX_SKILL_NAME_LEN);
+        while slug.ends_with('-') {
+            slug.pop();
+        }
+    }
+    if slug.is_empty() { None } else { Some(slug) }
+}
+
 fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() {
         anyhow::bail!("Skill name cannot be empty");
     }
 
-    if name.len() > 64 {
-        anyhow::bail!("Skill name must be at most 64 characters");
+    if name.len() > MAX_SKILL_NAME_LEN {
+        anyhow::bail!("Skill name must be at most {MAX_SKILL_NAME_LEN} characters");
     }
 
     if !name
@@ -822,6 +903,236 @@ Content.
                 .to_string()
                 .contains("lowercase letters, numbers, and hyphens")
         );
+    }
+
+    #[test]
+    fn test_slugify_basic() {
+        assert_eq!(
+            slugify_skill_name("My Cool Skill").as_deref(),
+            Some("my-cool-skill")
+        );
+    }
+
+    #[test]
+    fn test_slugify_strips_invalid_chars() {
+        // Punctuation is dropped; spaces between words still produce dashes.
+        // `Hello,` → `hello`, then `␣` → `-`, then `World!` → `world`, etc.
+        assert_eq!(
+            slugify_skill_name("Hello, World! (v2)").as_deref(),
+            Some("hello-world-v2")
+        );
+    }
+
+    #[test]
+    fn test_slugify_drops_punctuation_in_middle_no_spaces() {
+        // Punctuation between alphanumerics is dropped entirely — it does
+        // NOT become a dash. Only user-written spaces become dashes.
+        assert_eq!(slugify_skill_name("foo!bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("foo?bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("foo%bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("100%sure").as_deref(), Some("100sure"));
+        assert_eq!(
+            slugify_skill_name("what's that").as_deref(),
+            Some("whats-that")
+        );
+        // `&` is special-cased to become `and` — see
+        // `test_slugify_ampersand_becomes_and` for the full coverage.
+        assert_eq!(
+            slugify_skill_name("don't&won't").as_deref(),
+            Some("dont-and-wont")
+        );
+    }
+
+    #[test]
+    fn test_slugify_ampersand_becomes_and() {
+        // No spaces around `&`.
+        assert_eq!(
+            slugify_skill_name("foo&bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        assert_eq!(
+            slugify_skill_name("rock&roll").as_deref(),
+            Some("rock-and-roll")
+        );
+        // Spaces around `&`: collapses to a single dash on each side.
+        assert_eq!(
+            slugify_skill_name("foo & bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        // Asymmetric spacing.
+        assert_eq!(
+            slugify_skill_name("foo& bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        assert_eq!(
+            slugify_skill_name("foo &bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        // Leading/trailing `&`: the substituted spaces become leading/
+        // trailing dashes which then get trimmed.
+        assert_eq!(slugify_skill_name("&foo").as_deref(), Some("and-foo"));
+        assert_eq!(slugify_skill_name("foo&").as_deref(), Some("foo-and"));
+        // `&` alone slugifies to the word `and`, not to `None`.
+        assert_eq!(slugify_skill_name("&").as_deref(), Some("and"));
+        assert_eq!(slugify_skill_name(" & ").as_deref(), Some("and"));
+        // Multiple `&`s with various spacing all collapse properly.
+        assert_eq!(slugify_skill_name("&&").as_deref(), Some("and-and"));
+        assert_eq!(
+            slugify_skill_name("foo & & bar").as_deref(),
+            Some("foo-and-and-bar")
+        );
+        // Mixed with other punctuation (other punctuation is still dropped).
+        assert_eq!(slugify_skill_name("AT&T").as_deref(), Some("at-and-t"));
+        assert_eq!(slugify_skill_name("Q&A!").as_deref(), Some("q-and-a"));
+    }
+
+    #[test]
+    fn test_slugify_punctuation_surrounded_by_spaces() {
+        // `foo ! bar` → `foo-bar`: the two spaces would each produce a
+        // dash, but consecutive dashes are collapsed.
+        assert_eq!(slugify_skill_name("foo ! bar").as_deref(), Some("foo-bar"));
+        assert_eq!(slugify_skill_name("foo ? bar").as_deref(), Some("foo-bar"));
+        assert_eq!(
+            slugify_skill_name("100 % sure").as_deref(),
+            Some("100-sure")
+        );
+        assert_eq!(
+            slugify_skill_name("foo @ bar @ baz").as_deref(),
+            Some("foo-bar-baz")
+        );
+    }
+
+    #[test]
+    fn test_slugify_punctuation_adjacent_to_space() {
+        // `foo! bar` and `foo !bar` both produce `foo-bar` — the
+        // punctuation contributes nothing, the single space contributes
+        // the dash.
+        assert_eq!(slugify_skill_name("foo! bar").as_deref(), Some("foo-bar"));
+        assert_eq!(slugify_skill_name("foo !bar").as_deref(), Some("foo-bar"));
+        assert_eq!(slugify_skill_name("foo? bar").as_deref(), Some("foo-bar"));
+    }
+
+    #[test]
+    fn test_slugify_leading_and_trailing_punctuation() {
+        // Punctuation at the edges is dropped; there's no leading/trailing
+        // dash to trim because the punctuation never became a dash in the
+        // first place.
+        assert_eq!(slugify_skill_name("!foo").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("foo!").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("!!!foo!!!").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("?foo?").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("...foo...").as_deref(), Some("foo"));
+    }
+
+    #[test]
+    fn test_slugify_only_punctuation_returns_none() {
+        assert_eq!(slugify_skill_name("!!!"), None);
+        assert_eq!(slugify_skill_name("?@$"), None);
+        assert_eq!(slugify_skill_name("()[]{}"), None);
+        assert_eq!(slugify_skill_name(".,;:"), None);
+    }
+
+    #[test]
+    fn test_slugify_mixed_punctuation_spaces_and_dashes() {
+        // A messy realistic input: combination of punctuation, spaces,
+        // existing dashes, and casing.
+        assert_eq!(
+            slugify_skill_name("  -- Hello, World!! -- ").as_deref(),
+            Some("hello-world")
+        );
+        assert_eq!(
+            slugify_skill_name("C++ vs. Rust?").as_deref(),
+            Some("c-vs-rust")
+        );
+        assert_eq!(
+            slugify_skill_name("v1.2.3-beta").as_deref(),
+            Some("v123-beta")
+        );
+    }
+
+    #[test]
+    fn test_slugify_underscores_are_dropped() {
+        // Underscores aren't a valid skill-name character and aren't
+        // separators — only spaces become dashes — so underscores get
+        // dropped entirely.
+        assert_eq!(slugify_skill_name("foo_bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("FOO_BAR").as_deref(), Some("foobar"));
+        assert_eq!(
+            slugify_skill_name("snake_case style").as_deref(),
+            Some("snakecase-style")
+        );
+    }
+
+    #[test]
+    fn test_slugify_collapses_consecutive_dashes() {
+        assert_eq!(
+            slugify_skill_name("foo   ---  bar").as_deref(),
+            Some("foo-bar")
+        );
+    }
+
+    #[test]
+    fn test_slugify_trims_leading_and_trailing_dashes() {
+        assert_eq!(slugify_skill_name("---foo---").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("  foo  ").as_deref(), Some("foo"));
+    }
+
+    #[test]
+    fn test_slugify_lowercases() {
+        assert_eq!(slugify_skill_name("FOO BAR").as_deref(), Some("foo-bar"));
+        assert_eq!(
+            slugify_skill_name("MyCoolSkill").as_deref(),
+            Some("mycoolskill")
+        );
+    }
+
+    #[test]
+    fn test_slugify_strips_non_ascii_letters() {
+        // Non-ASCII chars are replaced with `-`, then collapsed.
+        assert_eq!(slugify_skill_name("abc\u{00e9}").as_deref(), Some("abc"));
+        assert_eq!(slugify_skill_name("\u{4e2d}\u{6587}"), None);
+    }
+
+    #[test]
+    fn test_slugify_returns_none_for_empty_or_unmappable() {
+        assert_eq!(slugify_skill_name(""), None);
+        assert_eq!(slugify_skill_name("   "), None);
+        assert_eq!(slugify_skill_name("!!!"), None);
+        assert_eq!(slugify_skill_name("---"), None);
+    }
+
+    #[test]
+    fn test_slugify_truncates_long_inputs() {
+        let input = "a".repeat(200);
+        let slug = slugify_skill_name(&input).expect("should slugify");
+        assert_eq!(slug.len(), MAX_SKILL_NAME_LEN);
+        assert!(slug.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn test_slugify_truncation_does_not_leave_trailing_dash() {
+        // The 64th byte lands on a `-`, which we must strip post-truncation.
+        let mut input = "a".repeat(63);
+        input.push_str(" extra");
+        let slug = slugify_skill_name(&input).expect("should slugify");
+        assert!(!slug.ends_with('-'));
+        assert!(slug.len() <= MAX_SKILL_NAME_LEN);
+    }
+
+    #[test]
+    fn test_slugify_output_passes_validate_name() {
+        for input in [
+            "My Cool Skill",
+            "Hello, World!",
+            "---foo---",
+            "123 abc",
+            "a".repeat(200).as_str(),
+        ] {
+            let slug = slugify_skill_name(input).expect("should slugify");
+            validate_name(&slug).unwrap_or_else(|err| {
+                panic!("slug {slug:?} from {input:?} failed validation: {err}")
+            });
+        }
     }
 
     #[test]
