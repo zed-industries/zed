@@ -391,15 +391,24 @@ pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
     .add_with(("file", TS_QUERY_LS_FILE))
 }
 
-pub(crate) fn run_ts_query_ls() -> Step<Run> {
+pub(crate) enum RunContext {
+    ZedRepository,
+    Extension,
+}
+
+pub(crate) fn run_ts_query_ls(context: RunContext) -> Step<Run> {
     named::bash(formatdoc!(
         r#"tar -xf "$GITHUB_WORKSPACE/{TS_QUERY_LS_FILE}" -C "$GITHUB_WORKSPACE"
-        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {{
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check {directory} || {{
             echo "Found unformatted queries, please format them with ts_query_ls."
             echo "For easy use, install the Tree-sitter query extension:"
             echo "zed://extension/tree-sitter-query"
             false
-        }}"#
+        }}"#,
+        directory = match context {
+            RunContext::Extension => "languages",
+            RunContext::ZedRepository => ".",
+        }
     ))
 }
 
@@ -425,7 +434,7 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
             .add_step(fetch_ts_query_ls())
-            .add_step(run_ts_query_ls()),
+            .add_step(run_ts_query_ls(RunContext::ZedRepository)),
     )
 }
 
