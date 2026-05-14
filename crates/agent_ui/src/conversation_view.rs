@@ -44,13 +44,13 @@ use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
-use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
+use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
 use rope::Point;
 use settings::{
     NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -507,6 +507,9 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    /// When settings change, use this to see if the theme has changed (which
+    /// causes mermaid diagrams to re-render).
+    last_theme_id: Option<String>,
     draft_prompt_persist_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -702,6 +705,7 @@ impl ConversationView {
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
+            cx.observe_global_in::<SettingsStore>(window, Self::invalidate_mermaid_caches),
             cx.observe_global_in::<AgentUiFontSize>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentBufferFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(
@@ -754,6 +758,7 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
@@ -2162,6 +2167,7 @@ impl ConversationView {
                                 self.render_markdown(
                                     desc.clone(),
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    cx,
                                 )
                             }))
                         }
@@ -2477,11 +2483,19 @@ impl ConversationView {
         }
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            crate::conversation_view::thread_view::open_link(text, &workspace, window, cx);
-        })
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
+        render_agent_markdown(
+            markdown,
+            style,
+            &self.workspace,
+            &self.project.downgrade(),
+            cx,
+        )
     }
 
     fn notify_with_sound(
@@ -2791,6 +2805,29 @@ impl ConversationView {
         }
     }
 
+    fn invalidate_mermaid_caches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let current_theme_id = cx.theme().id.clone();
+        if self.last_theme_id.as_ref() == Some(&current_theme_id) {
+            return;
+        }
+        self.last_theme_id = Some(current_theme_id);
+
+        if let Some(connected) = self.as_connected() {
+            let threads: Vec<_> = connected
+                .conversation
+                .read(cx)
+                .threads
+                .values()
+                .cloned()
+                .collect();
+            for thread in threads {
+                thread.update(cx, |thread, cx| {
+                    thread.invalidate_mermaid_caches(cx);
+                });
+            }
+        }
+    }
+
     pub(crate) fn insert_dragged_files(
         &self,
         paths: Vec<project::ProjectPath>,
@@ -2982,6 +3019,31 @@ impl Render for ConversationView {
                 }
             })
     }
+}
+
+fn render_agent_markdown(
+    markdown: Entity<Markdown>,
+    style: MarkdownStyle,
+    workspace: &WeakEntity<Workspace>,
+    project: &WeakEntity<Project>,
+    cx: &App,
+) -> MarkdownElement {
+    let workspace = workspace.clone();
+    let worktree_roots: Vec<PathBuf> = project
+        .upgrade()
+        .map(|project| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect()
+        })
+        .unwrap_or_default();
+    MarkdownElement::new(markdown, style)
+        .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
+        .on_url_click(move |text, window, cx| {
+            thread_view::open_link(text, &workspace, window, cx);
+        })
 }
 
 fn plan_label_markdown_style(

@@ -151,6 +151,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "async-channel 2.5.0",
  "async-io",
@@ -188,6 +189,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
  "reqwest_client",
@@ -334,6 +336,21 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "util",
+]
+
+[[package]]
+name = "agent_skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "futures 0.3.32",
+ "gpui",
+ "paths",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
  "util",
 ]
 
@@ -3220,6 +3237,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
+ "git_graph",
  "git_hosting_providers",
  "git_ui",
  "gpui",
@@ -3647,7 +3665,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rpc",
- "semver",
  "serde",
  "serde_json",
  "settings",
@@ -6323,6 +6340,7 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "gpui",
+ "language",
  "menu",
  "open_path_prompt",
  "picker",
@@ -7351,6 +7369,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "task",
  "theme",
  "theme_settings",
  "time",
@@ -9694,6 +9713,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
+ "log",
  "open_ai",
  "schemars 1.0.4",
  "semver",
@@ -13623,6 +13643,7 @@ dependencies = [
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
+ "agent_skills",
  "anyhow",
  "assets",
  "chrono",
@@ -16025,6 +16046,19 @@ name = "serde_yaml"
 version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.11.4",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
 dependencies = [
  "indexmap 2.11.4",
  "itoa",
@@ -22373,7 +22407,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

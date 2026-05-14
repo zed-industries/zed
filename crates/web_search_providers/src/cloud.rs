@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
-use client::{Client, NeedsLlmTokenRefresh, UserStore, global_llm_token};
+use anyhow::Result;
+use client::{Client, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
 use cloud_llm_client::{WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Task};
-use http_client::{HttpClient, Method};
+use http_client::Method;
 use web_search::{WebSearchProvider, WebSearchProviderId};
 
 pub struct CloudWebSearchProvider {
@@ -69,50 +69,27 @@ async fn perform_web_search(
     organization_id: Option<OrganizationId>,
     body: WebSearchBody,
 ) -> Result<WebSearchResponse> {
-    const MAX_RETRIES: usize = 3;
-
-    let http_client = &client.http_client();
-    let mut retries_remaining = MAX_RETRIES;
-    let mut token = client
-        .acquire_llm_token(&llm_api_token, organization_id.clone())
+    let url = client.http_client().build_zed_llm_url("/web_search", &[])?;
+    let body = serde_json::to_string(&body)?;
+    let mut response = client
+        .authenticated_llm_request(&llm_api_token, organization_id, |token| {
+            Ok(http_client::Request::builder()
+                .method(Method::POST)
+                .uri(url.as_ref())
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(body.clone().into())?)
+        })
         .await?;
 
-    loop {
-        if retries_remaining == 0 {
-            return Err(anyhow::anyhow!(
-                "error performing web search, max retries exceeded"
-            ));
-        }
-
-        let request = http_client::Request::builder()
-            .method(Method::POST)
-            .uri(http_client.build_zed_llm_url("/web_search", &[])?.as_ref())
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {token}"))
-            .body(serde_json::to_string(&body)?.into())?;
-        let mut response = http_client
-            .send(request)
-            .await
-            .context("failed to send web search request")?;
-
-        if response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-            return Ok(serde_json::from_str(&body)?);
-        } else if response.needs_llm_token_refresh() {
-            token = client
-                .refresh_llm_token(&llm_api_token, organization_id.clone())
-                .await?;
-            retries_remaining -= 1;
-        } else {
-            // For now we will only retry if the LLM token is expired,
-            // not if the request failed for any other reason.
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-            anyhow::bail!(
-                "error performing web search.\nStatus: {:?}\nBody: {body}",
-                response.status(),
-            );
-        }
+    if response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        Ok(serde_json::from_str(&body)?)
+    } else {
+        let status = response.status();
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        anyhow::bail!("error performing web search.\nStatus: {status:?}\nBody: {body}");
     }
 }

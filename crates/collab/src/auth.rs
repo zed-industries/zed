@@ -1,3 +1,4 @@
+use crate::entities::User;
 use crate::{AppState, Error, db::UserId, rpc::Principal};
 use anyhow::Context as _;
 use axum::{
@@ -65,15 +66,16 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
             .await
             .context("failed to parse response body")?;
 
-        let user_id = UserId(response_body.user.id);
+        let user = User {
+            id: UserId(response_body.user.id),
+            github_login: response_body.user.github_login,
+            avatar_url: response_body.user.avatar_url,
+            name: response_body.user.name,
+            admin: response_body.user.is_staff,
+            connected_once: response_body.user.has_connected_to_collab_once,
+        };
 
-        let user = state
-            .db
-            .get_user_by_id(user_id)
-            .await?
-            .with_context(|| format!("user {user_id} not found"))?;
-
-        req.extensions_mut().insert(Principal::User(user.into()));
+        req.extensions_mut().insert(Principal::User(user));
         return Ok::<_, Error>(next.run(req).await);
     }
 

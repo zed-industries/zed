@@ -3,14 +3,13 @@ use crate::{
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
-    SystemPromptTemplate, Templates, TerminalTool, ToolPermissionDecision, UpdatePlanTool,
-    WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
+    UpdatePlanTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use feature_flags::{
-    ExperimentalSystemPromptFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag,
-    RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
 };
 
 use agent_client_protocol::schema as acp;
@@ -1750,11 +1749,13 @@ impl Thread {
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
         let usage = self.latest_request_token_usage()?;
         let model = self.model.clone()?;
+        let input_tokens = total_input_tokens(usage);
+
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count(),
             max_output_tokens: model.max_output_tokens(),
             used_tokens: usage.total_tokens(),
-            input_tokens: usage.input_tokens,
+            input_tokens,
             output_tokens: usage.output_tokens,
         })
     }
@@ -1773,7 +1774,7 @@ impl Thread {
                 if &user_msg.id == target_id {
                     let prev_id = previous_user_message_id?;
                     let usage = self.request_token_usage.get(prev_id)?;
-                    return Some(usage.input_tokens);
+                    return Some(total_input_tokens(*usage));
                 }
                 previous_user_message_id = Some(&user_msg.id);
             }
@@ -3062,14 +3063,13 @@ impl Thread {
             self.messages.len()
         );
 
-        let use_experimental_prompt = cx.has_flag::<ExperimentalSystemPromptFeatureFlag>();
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
         }
-        .render_with_prompt_variant(&self.templates, use_experimental_prompt)
+        .render(&self.templates)
         .context("failed to build system prompt")
         .expect("Invalid template");
         let mut messages = vec![LanguageModelRequestMessage {
@@ -3222,6 +3222,13 @@ impl Thread {
             }),
         }
     }
+}
+
+fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
+    usage
+        .input_tokens
+        .saturating_add(usage.cache_creation_input_tokens)
+        .saturating_add(usage.cache_read_input_tokens)
 }
 
 struct RunningTurn {

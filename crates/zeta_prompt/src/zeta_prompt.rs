@@ -840,7 +840,7 @@ pub fn format_prompt_with_budget_for_format(
     return Some(prompt);
 }
 
-fn format_active_buffer_diagnostics_with_budget(
+pub fn format_active_buffer_diagnostics_with_budget(
     diagnostics: &[ActiveBufferDiagnostic],
     cursor_buffer_row: Option<u32>,
     budget: usize,
