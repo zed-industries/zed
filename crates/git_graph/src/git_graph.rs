@@ -894,8 +894,7 @@ pub fn init(cx: &mut App) {
                                     };
                                     let selected_repo_id = repo.read(cx).id;
 
-                                    let git_store =
-                                        workspace.project().read(cx).git_store(cx);
+                                    let git_store = workspace.project().read(cx).git_store(cx);
                                     open_or_reuse_graph(
                                         workspace,
                                         selected_repo_id,
@@ -921,8 +920,7 @@ pub fn init(cx: &mut App) {
                                     };
                                     let selected_repo_id = repo.read(cx).id;
 
-                                    let git_store =
-                                        workspace.project().read(cx).git_store(cx);
+                                    let git_store = workspace.project().read(cx).git_store(cx);
                                     open_or_reuse_graph(
                                         workspace,
                                         selected_repo_id,
@@ -2076,7 +2074,7 @@ impl GitGraph {
         let project = workspace.read(cx).project().clone();
 
         let task_inventory = project.read_with(cx, |project, cx| {
-            project.task_store().read(cx).task_inventory().cloned()
+            project.task_store(cx).read(cx).task_inventory().cloned()
         });
 
         let Some(task_inventory) = task_inventory else {
@@ -5780,7 +5778,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx).clone(),
                 workspace_weak,
                 None,
                 window,
@@ -5848,7 +5846,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx).clone(),
                 workspace_weak,
                 None,
                 window,
@@ -6099,7 +6097,7 @@ mod tests {
         });
         let task_inventory = project.read_with(cx, |project, cx| {
             project
-                .task_store()
+                .task_store(cx)
                 .read(cx)
                 .task_inventory()
                 .cloned()

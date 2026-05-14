@@ -44,7 +44,7 @@ impl Editor {
             let Some(tasks) = editor
                 .update(cx, |_, cx| {
                     let project = project.upgrade()?;
-                    Some(project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                    Some(project.read(cx).lsp_store(cx).update(cx, |lsp_store, cx| {
                         buffers_to_query
                             .into_iter()
                             .map(|buffer| {

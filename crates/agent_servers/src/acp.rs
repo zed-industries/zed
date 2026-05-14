@@ -2498,7 +2498,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let project = project::Project::example([temp_dir.path()], &mut cx.to_async()).await;
         let agent_server_store =
-            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+            project.read_with(cx, |project, cx| project.agent_server_store(cx).downgrade());
         let command = AgentServerCommand {
             path: "/bin/sh".into(),
             args: vec![

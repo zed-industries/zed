@@ -5533,7 +5533,7 @@ impl LspStore {
         }
     }
 
-    pub fn apply_code_action(
+    pub(crate) fn apply_code_action(
         &self,
         buffer_handle: Entity<Buffer>,
         mut action: CodeAction,
@@ -5648,7 +5648,7 @@ impl LspStore {
         }
     }
 
-    pub fn apply_code_action_kind(
+    pub(crate) fn apply_code_action_kind(
         &mut self,
         buffers: HashSet<Entity<Buffer>>,
         kind: CodeActionKind,
@@ -6545,6 +6545,9 @@ impl LspStore {
         }
     }
 
+    // TODO!(project-host): Route external callers through a Project facade that verifies the
+    // buffer belongs to the calling Project before resolving completions, then make this
+    // method pub(crate) so callers cannot bypass the project-owned buffer check.
     pub fn resolve_completions(
         &self,
         buffer: Entity<Buffer>,

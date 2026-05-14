@@ -1296,7 +1296,9 @@ impl AcpThread {
             }
         });
 
-        let git_store = project.read(cx).git_store().clone();
+        // todo!: This should filter by repository entities that the project is tracking
+        // we could probably make the project be the entity subscribed too in this case
+        let git_store = project.read(cx).git_store(cx).clone();
         let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
             if matches!(
                 event,
@@ -2635,7 +2637,7 @@ impl AcpThread {
             return Task::ready(Ok(()));
         };
 
-        let git_store = self.project.read(cx).git_store().clone();
+        let git_store = self.project.read(cx).git_store(cx).clone();
 
         let Some((user_message_id, checkpoint)) =
             self.last_user_message().and_then(|(_, message)| {

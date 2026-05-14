@@ -485,7 +485,7 @@ impl Editor {
         self.pull_diagnostics_task = cx.spawn(async move |_, cx| {
             cx.background_executor().timer(debounce).await;
             if let Ok(task) = project.update(cx, |project, cx| {
-                project.lsp_store().update(cx, |lsp_store, cx| {
+                project.lsp_store(cx).update(cx, |lsp_store, cx| {
                     lsp_store.pull_diagnostics_for_buffer(buffer, cx)
                 })
             }) {
@@ -493,7 +493,7 @@ impl Editor {
             }
             project
                 .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
+                    project.lsp_store(cx).update(cx, |lsp_store, cx| {
                         lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
                     })
                 })

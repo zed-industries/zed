@@ -2173,7 +2173,7 @@ impl Editor {
             }
         } else if let Some(name) = &action.name {
             let project = self.project().context("no project")?;
-            let snippet_store = project.read(cx).snippets().read(cx);
+            let snippet_store = project.read(cx).snippets(cx).read(cx);
             let snippet = snippet_store
                 .snippets_for(action.language.clone(), cx)
                 .into_iter()

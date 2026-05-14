@@ -420,7 +420,7 @@ impl Editor {
     ) -> Task<Vec<task::DebugScenario>> {
         maybe!({
             let project = self.project()?;
-            let dap_store = project.read(cx).dap_store();
+            let dap_store = project.read(cx).dap_store(cx);
             let mut scenarios = vec![];
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);

@@ -179,6 +179,7 @@ pub struct Host {
     pub collab_client: Arc<Client>,
     pub remote_client: Option<Entity<RemoteClient>>,
     pub environment: Entity<ProjectEnvironment>,
+    // todo! Are there host local snippetd?
     pub snippets: Entity<SnippetProvider>,
 
     // Host-level stores.

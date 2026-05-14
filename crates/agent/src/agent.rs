@@ -826,7 +826,7 @@ impl NativeAgent {
         // refresh when a worktree's trust state changes, so newly trusted
         // worktrees pick up their skills without restarting.
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
-        let worktree_store = project.read(cx).worktree_store();
+        let worktree_store = project.read(cx).worktree_store(cx);
         let project_skills_task = if skills_enabled {
             let project_skills_futures: Vec<
                 futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,

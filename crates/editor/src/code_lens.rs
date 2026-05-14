@@ -431,7 +431,7 @@ impl Editor {
             return;
         };
 
-        let lsp_store = project.read(cx).lsp_store();
+        let lsp_store = project.read(cx).lsp_store(cx);
 
         let mut pending_resolves = Vec::new();
         for (buffer_snapshot, visible_range, _) in self.visible_buffer_ranges(cx) {

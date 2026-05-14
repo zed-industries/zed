@@ -1693,7 +1693,7 @@ async fn test_remote_search_commits_streams_proto_chunks(
             .expect("remote project should have an active repository");
         let repository_id = repository.read(cx).snapshot().id;
         let remote_client = project
-            .remote_client()
+            .remote_client(cx)
             .expect("project should have a remote client");
         (remote_client, repository_id)
     });

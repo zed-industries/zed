@@ -7907,14 +7907,17 @@ impl Project {
         self.git_store(cx).read(cx).git_config(path, args, cx)
     }
 
+    // todo! this should have multi tenet tests
     pub fn buffer_store(&self, cx: &App) -> Entity<BufferStore> {
         self.host.read(cx).buffer_store.clone()
     }
 
+    // todo! this should have multi tenet tests
     pub fn git_store(&self, cx: &App) -> Entity<GitStore> {
         self.host.read(cx).git_store.clone()
     }
 
+    // todo! this should have multi tenet tests
     pub fn agent_server_store(&self, cx: &App) -> Entity<AgentServerStore> {
         self.host.read(cx).agent_server_store.clone()
     }
