@@ -18,6 +18,29 @@ fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent
     LanguageModelToolResultContent::from(e.to_string())
 }
 
+/// Prefixes each line of `text` with its line number in `cat -n` format:
+/// the line number is right-aligned in a 6-character field, followed by a
+/// single tab, followed by the line's original content (including its
+/// trailing newline if present). Numbering starts at `start_line`.
+///
+/// This format matches what the model expects in the edit tool, where the
+/// line number prefix is `line number + tab` and everything after the tab is
+/// the actual file content to match.
+fn format_with_line_numbers(text: &str, start_line: u32) -> String {
+    use std::fmt::Write as _;
+
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::with_capacity(text.len() + text.len() / 4);
+    for (offset, line) in text.split_inclusive('\n').enumerate() {
+        let line_number = start_line.saturating_add(offset as u32);
+        let _ = write!(output, "{:>6}\t{}", line_number, line);
+    }
+    output
+}
+
 /// Read a file under the global skills directory directly via the filesystem,
 /// bypassing project/worktree resolution. Used for skill resources that live
 /// outside any worktree.
@@ -40,7 +63,7 @@ async fn read_global_skill_file(
             .line(start_line.map(|line| line.saturating_sub(1))),
     ]));
 
-    let result_text = if start_line.is_some() || end_line.is_some() {
+    let (raw_text, first_line_number) = if start_line.is_some() || end_line.is_some() {
         // Mirror the line-range semantics of the buffer-backed path: 1-indexed,
         // start clamped to >= 1, end exclusive of the next line, and always
         // returning at least one line. `split_inclusive` keeps each line's
@@ -55,10 +78,12 @@ async fn read_global_skill_file(
         let lines: Vec<&str> = content.split_inclusive('\n').collect();
         let start_idx = (start as usize).saturating_sub(1).min(lines.len());
         let end_idx = (end as usize).min(lines.len()).max(start_idx);
-        lines[start_idx..end_idx].concat()
+        (lines[start_idx..end_idx].concat(), start)
     } else {
-        content
+        (content, 1)
     };
+
+    let result_text = format_with_line_numbers(&raw_text, first_line_number);
 
     let markdown = MarkdownCodeBlock {
         tag: requested_path,
@@ -341,7 +366,7 @@ impl AgentTool for ReadFileTool {
 
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
-                let result = buffer.read_with(cx, |buffer, _cx| {
+                let (raw_text, first_line_number) = buffer.read_with(cx, |buffer, _cx| {
                     // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
                     let start = input.start_line.unwrap_or(1).max(1);
                     let start_row = start - 1;
@@ -354,16 +379,19 @@ impl AgentTool for ReadFileTool {
                     if end_row <= start_row {
                         end_row = start_row + 1; // read at least one lines
                     }
-                    let start = buffer.anchor_before(Point::new(start_row, 0));
-                    let end = buffer.anchor_before(Point::new(end_row, 0));
-                    buffer.text_for_range(start..end).collect::<String>()
+                    let start_anchor = buffer.anchor_before(Point::new(start_row, 0));
+                    let end_anchor = buffer.anchor_before(Point::new(end_row, 0));
+                    (
+                        buffer.text_for_range(start_anchor..end_anchor).collect::<String>(),
+                        start,
+                    )
                 });
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
-                Ok(result.into())
+                Ok(format_with_line_numbers(&raw_text, first_line_number).into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let buffer_content = outline::get_buffer_content_or_outline(
@@ -391,7 +419,7 @@ impl AgentTool for ReadFileTool {
                     }
                     .into())
                 } else {
-                    Ok(buffer_content.text.into())
+                    Ok(format_with_line_numbers(&buffer_content.text, 1).into())
                 }
             };
 
@@ -526,7 +554,10 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content".into());
+        assert_eq!(
+            result.unwrap(),
+            "     1\tThis is a small file content".into()
+        );
     }
 
     #[gpui::test]
@@ -648,7 +679,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "root content".into());
+        assert_eq!(result.unwrap(), "     1\troot content".into());
     }
 
     #[gpui::test]
@@ -681,7 +712,10 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
+        assert_eq!(
+            result.unwrap(),
+            "     2\tLine 2\n     3\tLine 3\n     4\tLine 4\n".into()
+        );
     }
 
     #[gpui::test]
@@ -715,7 +749,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
+        assert_eq!(result.unwrap(), "     1\tLine 1\n     2\tLine 2\n".into());
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -732,7 +766,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\n".into());
+        assert_eq!(result.unwrap(), "     1\tLine 1\n".into());
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -749,7 +783,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3\n".into());
+        assert_eq!(result.unwrap(), "     3\tLine 3\n".into());
     }
 
     fn error_text(content: LanguageModelToolResultContent) -> String {
@@ -983,7 +1017,7 @@ mod test {
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
-        assert_eq!(result.unwrap(), "Normal file content".into());
+        assert_eq!(result.unwrap(), "     1\tNormal file content".into());
 
         // Path traversal attempts with .. should fail
         let result = cx
@@ -1153,7 +1187,7 @@ mod test {
 
         assert_eq!(
             result,
-            "fn main() { println!(\"Hello from worktree1\"); }".into()
+            "     1\tfn main() { println!(\"Hello from worktree1\"); }".into()
         );
 
         // Test reading private file in worktree1 should fail
@@ -1219,7 +1253,7 @@ mod test {
 
         assert_eq!(
             result,
-            "export function greet() { return 'Hello from worktree2'; }".into()
+            "     1\texport function greet() { return 'Hello from worktree2'; }".into()
         );
 
         // Test reading private file in worktree2 should fail
@@ -1529,7 +1563,10 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = content else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "# Spec\n\nReference body.");
+        assert_eq!(
+            text.as_ref(),
+            "     1\t# Spec\n     2\t\n     3\tReference body."
+        );
     }
 
     #[gpui::test]
@@ -1576,7 +1613,7 @@ mod test {
         };
         // Mirrors the buffer-backed path: lines 2-3 inclusive, WITH trailing
         // newline of the last returned line.
-        assert_eq!(text.as_ref(), "line two\nline three\n");
+        assert_eq!(text.as_ref(), "     2\tline two\n     3\tline three\n");
     }
 
     #[gpui::test]
@@ -1621,7 +1658,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "Line 1\nLine 2\n");
+        assert_eq!(text.as_ref(), "     1\tLine 1\n     2\tLine 2\n");
     }
 
     #[gpui::test]
@@ -1666,7 +1703,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "Line 1\n");
+        assert_eq!(text.as_ref(), "     1\tLine 1\n");
     }
 
     #[gpui::test]
@@ -1711,7 +1748,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "Line 3\n");
+        assert_eq!(text.as_ref(), "     3\tLine 3\n");
     }
 
     #[gpui::test]
@@ -1756,7 +1793,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "line one\r\nline two\r\n");
+        assert_eq!(text.as_ref(), "     1\tline one\r\n     2\tline two\r\n");
     }
 
     #[gpui::test]
