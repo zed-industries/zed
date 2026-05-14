@@ -48,6 +48,7 @@ use db::kvp::GlobalKeyValueStore;
 use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
 use gpui::{App, AsyncApp, Entity, TaskExt as _};
+use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
 use crate::{BuiltInPrompt, PromptId, PromptStore};
@@ -58,6 +59,60 @@ use strum::IntoEnumIterator as _;
 /// migrated. Used to short-circuit the migration on every subsequent
 /// launch.
 pub const MIGRATION_DONE_KEY: &str = "rules_to_skills_migration_done";
+
+/// Global KVP key for the JSON-serialized [`MigrationResult`] produced by
+/// the most recent migration run — the lists of source-Rule titles that
+/// were migrated to each destination. The title-bar banner and its
+/// explainer modal read this to decide what (if anything) to tell the
+/// user about what changed.
+pub const MIGRATION_RESULT_KEY: &str = "rules_to_skills_migration_result";
+
+/// A persistent record of what the rules-to-skills migration actually
+/// migrated. Persisted in [`GlobalKeyValueStore`] under
+/// [`MIGRATION_RESULT_KEY`] and read back by the announcement UI so the
+/// modal can list specific rule names instead of vaguely gesturing.
+///
+/// All three lists hold the *original* user-facing Rule titles, not the
+/// derived skill slug or any other transformed identifier — those are
+/// what users would recognize.
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationResult {
+    /// Non-Default Rules that were turned into global Skills under
+    /// `~/.agents/skills/`.
+    #[serde(default)]
+    pub skill_names: Vec<String>,
+    /// Default Rules that were appended to the global AGENTS.md.
+    #[serde(default)]
+    pub agents_md_names: Vec<String>,
+    /// Customized built-in prompts whose edited bodies were appended to
+    /// the top of the global AGENTS.md.
+    #[serde(default)]
+    pub customized_builtins: Vec<String>,
+}
+
+impl MigrationResult {
+    /// `true` if the migration didn't actually move any Rule anywhere —
+    /// i.e. the user had no Rules of any kind to migrate. The
+    /// announcement banner/modal uses this to switch between the
+    /// "Introducing: Skills" generic intro and the "Skills have replaced
+    /// Rules" migration summary.
+    pub fn is_empty(&self) -> bool {
+        self.skill_names.is_empty()
+            && self.agents_md_names.is_empty()
+            && self.customized_builtins.is_empty()
+    }
+}
+
+/// Read the most recently persisted [`MigrationResult`], if any. Returns
+/// `None` when the migration hasn't run on this machine yet or the
+/// persisted blob couldn't be parsed.
+pub fn migration_result() -> Option<MigrationResult> {
+    let json = GlobalKeyValueStore::global()
+        .read_kvp(MIGRATION_RESULT_KEY)
+        .log_err()
+        .flatten()?;
+    serde_json::from_str(&json).log_err()
+}
 
 /// Placeholder description written into the YAML frontmatter of migrated
 /// skills. Migrated skills are model-disabled, so the model never sees
@@ -144,10 +199,13 @@ pub fn migrate_rules_to_skills_if_needed(fs: Arc<dyn Fs>, cx: &mut App) {
             (default, non_default)
         });
 
-        migrate_non_default_rules_to_skills(fs.as_ref(), &prompt_store, cx, non_default_rules)
-            .await;
+        let mut result = MigrationResult::default();
 
-        migrate_default_rules_to_agents_md(
+        result.skill_names =
+            migrate_non_default_rules_to_skills(fs.as_ref(), &prompt_store, cx, non_default_rules)
+                .await;
+
+        let (agents_md_names, customized_builtins) = migrate_default_rules_to_agents_md(
             fs.as_ref(),
             paths::agents_file(),
             &prompt_store,
@@ -155,7 +213,15 @@ pub fn migrate_rules_to_skills_if_needed(fs: Arc<dyn Fs>, cx: &mut App) {
             default_rules,
         )
         .await;
+        result.agents_md_names = agents_md_names;
+        result.customized_builtins = customized_builtins;
 
+        // Persist the result BEFORE the done flag: if we crash between
+        // these two writes the next launch will see `done == false` and
+        // re-run, picking up the same (deterministic) result — worst
+        // case is the AGENTS.md append happens twice, which is a
+        // pre-existing limitation of the AGENTS.md migration.
+        write_migration_result(&result).await;
         mark_migration_done().await;
         anyhow::Ok(())
     })
@@ -172,16 +238,20 @@ fn is_customized_builtin_body(builtin: BuiltInPrompt, body: &str) -> bool {
 }
 
 /// Convert every non-Default user rule into a global Agent Skill on disk.
+/// Returns the titles of rules that were successfully migrated (i.e. the
+/// ones the user will recognize when the announcement modal lists
+/// "these Rules have been migrated to Skills").
 async fn migrate_non_default_rules_to_skills(
     fs: &dyn Fs,
     prompt_store: &Entity<PromptStore>,
     cx: &mut AsyncApp,
     rules: Vec<(PromptId, String)>,
-) {
+) -> Vec<String> {
     if rules.is_empty() {
-        return;
+        return Vec::new();
     }
     let skills_dir = global_skills_dir();
+    let mut migrated = Vec::with_capacity(rules.len());
     for (id, title) in rules {
         let body = match load_rule_body(prompt_store, cx, id, &title).await {
             Some(body) => body,
@@ -194,10 +264,14 @@ async fn migrate_non_default_rules_to_skills(
             );
             continue;
         };
-        if let Err(err) = write_migrated_skill(fs, &skills_dir, &slug, &body).await {
-            log::warn!("Failed to write skill for rule {title:?}: {err:#}");
+        match write_migrated_skill(fs, &skills_dir, &slug, &body).await {
+            Ok(()) => migrated.push(title),
+            Err(err) => {
+                log::warn!("Failed to write skill for rule {title:?}: {err:#}");
+            }
         }
     }
+    migrated
 }
 
 /// Append all auto-included Rules to the global `AGENTS.md`, creating it
@@ -210,14 +284,19 @@ async fn migrate_non_default_rules_to_skills(
 ///    built-ins are skipped so we don't write Zed's shipped default text
 ///    into the user's personal AGENTS.md).
 /// 2. Each user Default Rule, in the order given.
+///
+/// Returns `(default_user_rule_titles, customized_builtin_titles)` of
+/// what actually got appended, for the announcement modal to surface.
 async fn migrate_default_rules_to_agents_md(
     fs: &dyn Fs,
     agents_md_path: &Path,
     prompt_store: &Entity<PromptStore>,
     cx: &mut AsyncApp,
     default_user_rules: Vec<(PromptId, String)>,
-) {
+) -> (Vec<String>, Vec<String>) {
     let mut entries: Vec<(String, String)> = Vec::new();
+    let mut customized_builtin_titles: Vec<String> = Vec::new();
+    let mut default_user_titles: Vec<String> = Vec::new();
 
     // Customized built-ins come first.
     for builtin in BuiltInPrompt::iter() {
@@ -229,6 +308,7 @@ async fn migrate_default_rules_to_agents_md(
         if !is_customized_builtin_body(builtin, &body) {
             continue;
         }
+        customized_builtin_titles.push(title.clone());
         entries.push((title, body));
     }
 
@@ -237,15 +317,20 @@ async fn migrate_default_rules_to_agents_md(
         let Some(body) = load_rule_body(prompt_store, cx, id, &title).await else {
             continue;
         };
+        default_user_titles.push(title.clone());
         entries.push((title, body));
     }
 
     if entries.is_empty() {
-        return;
+        return (default_user_titles, customized_builtin_titles);
     }
     if let Err(err) = append_default_rules_to_agents_md(fs, agents_md_path, &entries).await {
         log::warn!("Failed to append default rules to AGENTS.md: {err:#}");
+        // Treat a write failure as "nothing was actually migrated" so the
+        // announcement modal doesn't lie about what's in AGENTS.md.
+        return (Vec::new(), Vec::new());
     }
+    (default_user_titles, customized_builtin_titles)
 }
 
 async fn load_rule_body(
@@ -315,6 +400,20 @@ fn format_default_rules_section(rules: &[(String, String)]) -> String {
 async fn mark_migration_done() {
     GlobalKeyValueStore::global()
         .write_kvp(MIGRATION_DONE_KEY.into(), "1".into())
+        .await
+        .log_err();
+}
+
+async fn write_migration_result(result: &MigrationResult) {
+    let json = match serde_json::to_string(result) {
+        Ok(json) => json,
+        Err(err) => {
+            log::warn!("Failed to serialize rules-to-skills migration result: {err:#}");
+            return;
+        }
+    };
+    GlobalKeyValueStore::global()
+        .write_kvp(MIGRATION_RESULT_KEY.into(), json)
         .await
         .log_err();
 }
