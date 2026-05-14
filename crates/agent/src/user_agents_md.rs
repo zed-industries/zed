@@ -7,8 +7,8 @@
 //!
 //! Empty or whitespace-only files are treated as "no user `AGENTS.md`".
 //! Read errors are also treated as "no user `AGENTS.md`" for the purpose of
-//! the system prompt, but the error itself is exposed via [`UserAgentsMd::Error`]
-//! and forwarded to the notifier.
+//! the system prompt, but the error itself is exposed via
+//! [`UserAgentsMdState::Error`] and forwarded to the notifier.
 //!
 //! The file is read in full, mirroring how project rules / repo `AGENTS.md`
 //! files are loaded by the native agent today.
@@ -20,12 +20,9 @@ use futures::StreamExt as _;
 use gpui::{App, BorrowAppContext, Global, SharedString, Task};
 use settings::watch_config_file;
 
-/// In-memory snapshot of the user-global `AGENTS.md` file.
-///
-/// Stored as a `Global` so that the system prompt builder can read it
-/// synchronously without having to plumb extra state through every callsite.
+/// In-memory state of the user-global `AGENTS.md` file.
 #[derive(Debug, Default, Clone)]
-pub enum UserAgentsMd {
+pub enum UserAgentsMdState {
     /// The file is missing, empty, or whitespace-only.
     #[default]
     Empty,
@@ -35,13 +32,7 @@ pub enum UserAgentsMd {
     Error(SharedString),
 }
 
-impl Global for UserAgentsMd {}
-
-impl UserAgentsMd {
-    pub fn global(cx: &App) -> Option<&Self> {
-        cx.try_global::<UserAgentsMd>()
-    }
-
+impl UserAgentsMdState {
     /// The trimmed `AGENTS.md` content, if the file was loaded successfully.
     pub fn content(&self) -> Option<&SharedString> {
         match self {
@@ -59,6 +50,40 @@ impl UserAgentsMd {
     }
 }
 
+/// Global wrapper that owns the current [`UserAgentsMdState`] plus the watcher
+/// task responsible for keeping it up to date.
+///
+/// Holding the [`Task`] in a `_watcher` field (matching the
+/// `_settings_files_watcher` pattern in `SettingsStore`) ties the watcher's
+/// lifetime to the data it produces: replacing or removing the global cancels
+/// the watcher.
+pub struct UserAgentsMd {
+    state: UserAgentsMdState,
+    _watcher: Task<()>,
+}
+
+impl Global for UserAgentsMd {}
+
+impl UserAgentsMd {
+    pub fn global(cx: &App) -> Option<&Self> {
+        cx.try_global::<UserAgentsMd>()
+    }
+
+    pub fn state(&self) -> &UserAgentsMdState {
+        &self.state
+    }
+
+    /// Convenience accessor for the trimmed `AGENTS.md` content.
+    pub fn content(&self) -> Option<&SharedString> {
+        self.state.content()
+    }
+
+    /// Convenience accessor for the most recent read error.
+    pub fn error(&self) -> Option<&SharedString> {
+        self.state.error()
+    }
+}
+
 /// Initialize the user-global `AGENTS.md` watcher.
 ///
 /// Starts a background task that watches [`paths::agents_file`] for changes
@@ -67,22 +92,24 @@ impl UserAgentsMd {
 /// so callers can show or dismiss notifications matching the
 /// settings/keymap-error UI.
 ///
-/// Calling this more than once replaces the previous watcher. The watcher
-/// task is stored in the global so it lives for the lifetime of the app.
-pub fn init(fs: Arc<dyn Fs>, cx: &mut App, on_change: impl Fn(&UserAgentsMd, &mut App) + 'static) {
-    cx.set_global(UserAgentsMd::default());
-    let task = spawn_watcher(fs, cx, on_change);
-    cx.set_global(UserAgentsMdWatcher(task));
+/// Calling this more than once replaces the previous global, which drops the
+/// previous watcher task and cancels it.
+pub fn init(
+    fs: Arc<dyn Fs>,
+    cx: &mut App,
+    on_change: impl Fn(&UserAgentsMdState, &mut App) + 'static,
+) {
+    let watcher = spawn_watcher(fs, cx, on_change);
+    cx.set_global(UserAgentsMd {
+        state: UserAgentsMdState::default(),
+        _watcher: watcher,
+    });
 }
-
-struct UserAgentsMdWatcher(#[allow(dead_code)] Task<()>);
-
-impl Global for UserAgentsMdWatcher {}
 
 fn spawn_watcher(
     fs: Arc<dyn Fs>,
     cx: &mut App,
-    on_change: impl Fn(&UserAgentsMd, &mut App) + 'static,
+    on_change: impl Fn(&UserAgentsMdState, &mut App) + 'static,
 ) -> Task<()> {
     let path = paths::agents_file().clone();
     let (mut rx, watcher_task) = watch_config_file(cx.background_executor(), fs.clone(), path);
@@ -101,16 +128,16 @@ fn spawn_watcher(
         while let Some(raw) = rx.next().await {
             let trimmed = raw.trim();
             let new_state = if !trimmed.is_empty() {
-                UserAgentsMd::Loaded(SharedString::from(trimmed.to_string()))
+                UserAgentsMdState::Loaded(SharedString::from(trimmed.to_string()))
             } else if let Some(error) = probe_read_error(fs.as_ref(), paths::agents_file()).await {
-                UserAgentsMd::Error(error)
+                UserAgentsMdState::Error(error)
             } else {
-                UserAgentsMd::Empty
+                UserAgentsMdState::Empty
             };
 
             cx.update(|cx| {
-                cx.update_global::<UserAgentsMd, _>(|state, _| {
-                    *state = new_state.clone();
+                cx.update_global::<UserAgentsMd, _>(|md, _| {
+                    md.state = new_state.clone();
                 });
                 on_change(&new_state, cx);
             });
@@ -140,7 +167,9 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    async fn init_test(cx: &mut TestAppContext) -> (Arc<FakeFs>, Rc<RefCell<Vec<UserAgentsMd>>>) {
+    async fn init_test(
+        cx: &mut TestAppContext,
+    ) -> (Arc<FakeFs>, Rc<RefCell<Vec<UserAgentsMdState>>>) {
         cx.executor().allow_parking();
         let fs = FakeFs::new(cx.executor());
         // FakeFs requires the parent directory to exist before insert_file.
@@ -150,7 +179,7 @@ mod tests {
             .to_path_buf();
         fs.create_dir(&config_dir).await.unwrap();
 
-        let history: Rc<RefCell<Vec<UserAgentsMd>>> = Rc::new(RefCell::new(vec![]));
+        let history: Rc<RefCell<Vec<UserAgentsMdState>>> = Rc::new(RefCell::new(vec![]));
         let history_clone = history.clone();
         cx.update(|cx| {
             init(fs.clone(), cx, move |state, _cx| {
@@ -170,19 +199,19 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(
                 UserAgentsMd::global(cx)
-                    .and_then(|s| s.content().cloned())
+                    .and_then(|md| md.content().cloned())
                     .as_deref(),
                 Some("be concise"),
             );
             assert!(
                 UserAgentsMd::global(cx)
-                    .and_then(|s| s.error().cloned())
+                    .and_then(|md| md.error().cloned())
                     .is_none()
             );
         });
         assert!(matches!(
             history.borrow().last(),
-            Some(UserAgentsMd::Loaded(_))
+            Some(UserAgentsMdState::Loaded(_))
         ));
     }
 
@@ -196,11 +225,14 @@ mod tests {
         cx.update(|cx| {
             assert!(
                 UserAgentsMd::global(cx)
-                    .and_then(|s| s.content().cloned())
+                    .and_then(|md| md.content().cloned())
                     .is_none()
             );
         });
-        assert!(matches!(history.borrow().last(), Some(UserAgentsMd::Empty)));
+        assert!(matches!(
+            history.borrow().last(),
+            Some(UserAgentsMdState::Empty)
+        ));
     }
 
     #[gpui::test]
@@ -212,7 +244,7 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(
                 UserAgentsMd::global(cx)
-                    .and_then(|s| s.content().cloned())
+                    .and_then(|md| md.content().cloned())
                     .as_deref(),
                 Some("first"),
             );
@@ -223,7 +255,7 @@ mod tests {
         cx.update(|cx| {
             assert_eq!(
                 UserAgentsMd::global(cx)
-                    .and_then(|s| s.content().cloned())
+                    .and_then(|md| md.content().cloned())
                     .as_deref(),
                 Some("second"),
             );

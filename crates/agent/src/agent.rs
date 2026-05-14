@@ -23,7 +23,7 @@ pub use thread::*;
 pub use thread_store::*;
 pub use tool_permissions::*;
 pub use tools::*;
-pub use user_agents_md::{UserAgentsMd, init as init_user_agents_md};
+pub use user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
