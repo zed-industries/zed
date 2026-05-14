@@ -289,7 +289,6 @@ unsafe fn build_classes() {
                     sel!(characterIndexForPoint:),
                     character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
                 );
-
             }
             decl.register()
         };
