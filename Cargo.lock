@@ -3610,7 +3610,6 @@ dependencies = [
  "settings",
  "sha2",
  "slotmap",
- "smol",
  "tempfile",
  "url",
  "util",
