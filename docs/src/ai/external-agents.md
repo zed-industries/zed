@@ -122,26 +122,6 @@ However, the SDK doesn't yet expose everything needed to fully support all of th
 
 > Some [agent panel](./agent-panel.md) features are not yet available with Claude Agent: editing past messages, resuming threads from history, and checkpointing.
 
-#### Claude Code Notifications
-
-Claude Code can ring the terminal bell when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
-
-```json
-{
-  "preferredNotifChannel": "terminal_bell"
-}
-```
-
-You can also set this from within Claude Code by running `/config`, selecting `Local Notifications`, and choosing `Terminal Bell`.
-
-> If you run Claude Code inside tmux, bell notifications may not reach the outer terminal unless passthrough is enabled. Add this to `~/.tmux.conf`:
->
-> ```
-> set -g allow-passthrough on
-> ```
-
-For more, see the [Claude Code documentation](https://code.claude.com/docs/en/terminal-config).
-
 #### CLAUDE.md
 
 Claude Agent in Zed will automatically use any `CLAUDE.md` file found in your project root, project subdirectories, or root `.claude` directory.
@@ -198,17 +178,6 @@ Zed will always use this managed version of Codex even if you have it installed 
 Codex supports the same workflows as Zed's first-party agent. Add context by @-mentioning files or symbols.
 
 > Some agent panel features are not yet available with Codex: editing past messages, resuming threads from history, and checkpointing.
-
-#### Codex Terminal Titles
-
-Codex can update the terminal title as it works, which Zed uses to show useful context for Codex terminal threads in the sidebar — such as the project, current status, branch, model, or task progress.
-
-To configure this from within Codex, run `/title` and use the picker to choose which fields appear and in what order. Codex saves the selection to `tui.terminal_title` in `~/.codex/config.toml`. You can also edit it directly:
-
-```toml
-[tui]
-terminal_title = ["spinner", "project-name", "run-state", "thread-title"]
-```
 
 ## Add More Agents {#add-more-agents}
 

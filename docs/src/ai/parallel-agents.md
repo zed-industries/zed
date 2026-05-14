@@ -15,7 +15,7 @@ Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 
 The sidebar shows your threads grouped by project. Each project gets its own section with a header. Threads appear below with their title, status indicator, and which agent is running them. Threads running in linked Git worktrees appear under the same project as their main worktree. See [Worktree Isolation](#worktree-isolation).
 
-Terminal threads also appear as entries in the sidebar alongside agent threads, identified by a terminal icon. Click one to switch to it. See [Terminal Threads](./agent-panel.md#terminal-threads) for details.
+Terminal threads also appear as entries in the sidebar alongside agent threads, identified by a terminal icon. Click one to switch to it. See [terminal threads](./agent-panel.md#terminal-threads) for details.
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
