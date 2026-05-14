@@ -1045,6 +1045,7 @@ pub struct Editor {
     enable_lsp_data: bool,
     needs_initial_data_update: bool,
     enable_runnables: bool,
+    enable_code_lens: bool,
     enable_mouse_wheel_zoom: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
@@ -1845,6 +1846,7 @@ impl Editor {
         clone.enable_lsp_data = self.enable_lsp_data;
         clone.needs_initial_data_update = self.enable_lsp_data;
         clone.enable_runnables = self.enable_runnables;
+        clone.enable_code_lens = self.enable_code_lens;
         clone
     }
 
@@ -2300,6 +2302,7 @@ impl Editor {
             enable_lsp_data: full_mode,
             needs_initial_data_update: full_mode,
             enable_runnables: full_mode,
+            enable_code_lens: full_mode,
             enable_mouse_wheel_zoom: full_mode,
             show_git_diff_gutter: None,
             show_code_actions: None,
@@ -2613,7 +2616,7 @@ impl Editor {
             editor.colors = Some(LspColorData::new(cx));
             editor.use_document_folding_ranges = true;
             editor.inlay_hints = Some(LspInlayHintData::new(inlay_hint_settings));
-            if EditorSettings::get_global(cx).code_lens.inline() {
+            if editor.enable_code_lens && EditorSettings::get_global(cx).code_lens.inline() {
                 editor.code_lens = Some(CodeLensState::default());
             }
 
@@ -12478,7 +12481,8 @@ impl Editor {
                 self.refresh_document_colors(None, window, cx);
             }
 
-            let code_lens_inline = EditorSettings::get_global(cx).code_lens.inline();
+            let code_lens_inline =
+                self.enable_code_lens && EditorSettings::get_global(cx).code_lens.inline();
             let was_inline = self.code_lens.is_some();
             if code_lens_inline != was_inline {
                 self.toggle_code_lens(code_lens_inline, window, cx);
@@ -13553,6 +13557,11 @@ impl Editor {
 
     fn disable_runnables(&mut self) {
         self.enable_runnables = false;
+    }
+
+    pub fn disable_code_lens(&mut self, cx: &mut Context<Self>) {
+        self.enable_code_lens = false;
+        self.clear_code_lenses(cx);
     }
 
     pub fn disable_mouse_wheel_zoom(&mut self) {
