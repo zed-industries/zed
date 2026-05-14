@@ -109,14 +109,14 @@ fn render_migration_summary(mut modal: AlertModal, result: &MigrationResult) -> 
 
     if !result.skill_names.is_empty() {
         modal = modal.child(Label::new(format!(
-            "The following Rules have been migrated to Skills in {GLOBAL_SKILLS_DIR_DISPLAY}:"
+            "These Rules have been migrated to Skills in {GLOBAL_SKILLS_DIR_DISPLAY}:"
         )));
         modal = add_bulleted_names(modal, &result.skill_names);
     }
 
     if !result.agents_md_names.is_empty() {
         modal = modal.child(Label::new(format!(
-            "The following Default Rules have been appended to {GLOBAL_AGENTS_FILE_DISPLAY}:"
+            "These Default Rules have been added to {GLOBAL_AGENTS_FILE_DISPLAY}:"
         )));
         modal = add_bulleted_names(modal, &result.agents_md_names);
     }
