@@ -2818,7 +2818,6 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        crate::devtools::prepaint_window_overlay(self);
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
@@ -2840,8 +2839,6 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
-
-        crate::devtools::paint_window_overlay(self, cx);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {

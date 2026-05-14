@@ -1,11 +1,12 @@
 use super::{
     AnimationEventKind, DirtyPathEvent, FrameEvent, GPUI_DEVTOOLS, GpuiDevTools, NotifySourceKey,
-    NotifySourceStats, RenderSourceKey, RenderSourceStats, SOURCE_WINDOW, close_window, event_age,
+    NotifySourceStats, RenderSourceKey, RenderSourceStats, SOURCE_WINDOW, close_source_window,
+    event_age, window_open,
 };
+use crate::prelude::*;
 use crate::{
-    App, BorderStyle, Bounds, DispatchPhase, EntityId, Hitbox, HitboxBehavior, Hsla, MouseButton,
-    MouseDownEvent, Pixels, Point, SharedString, TextAlign, TextRun, Window, WindowId, fill, font,
-    hsla, outline, point, px, rgba, size,
+    AnyElement, App, Context, EntityId, Pixels, Subscription, TitlebarOptions, Window,
+    WindowBounds, WindowId, WindowKind, WindowOptions, div, hsla, point, px, rgba, size,
 };
 use collections::{FxHashMap, FxHashSet};
 use scheduler::Instant;
@@ -15,33 +16,194 @@ const FRAME_RATE_WINDOW: Duration = Duration::from_secs(1);
 const ANIMATION_EXPIRY: Duration = Duration::from_secs(1);
 const TOP_SOURCE_COUNT: usize = 3;
 const HUD_MAX_LINE_CHARS: usize = 96;
+const WINDOW_WIDTH: Pixels = px(760.);
+const WINDOW_HEIGHT: Pixels = px(360.);
 
-pub(super) fn prepaint_window_overlay(window: &mut Window) {
-    let window_id = window.handle.window_id();
-    let snapshot = {
-        let devtools = GPUI_DEVTOOLS.read();
-        snapshot_overlay(&devtools, window_id)
-    };
-    let prepared_overlay = prepare_overlay(window, snapshot);
-    GPUI_DEVTOOLS
-        .write()
-        .window_state(window_id)
-        .prepared_overlay = Some(prepared_overlay);
+pub(super) fn open(source_window_id: WindowId, cx: &mut App) {
+    if let Some(existing_window) = existing_devtools_window(source_window_id, cx) {
+        if let Err(error) = existing_window.update(cx, |_, window, _| window.activate_window()) {
+            log::debug!("failed to activate existing GPUI profiler window: {error:?}");
+        }
+        return;
+    }
+
+    let result = cx.open_window(
+        WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some("GPUI Profiler".into()),
+                appears_transparent: false,
+                traffic_light_position: Some(point(px(12.), px(12.))),
+            }),
+            window_bounds: Some(WindowBounds::centered(
+                size(WINDOW_WIDTH, WINDOW_HEIGHT),
+                cx,
+            )),
+            kind: WindowKind::Normal,
+            is_resizable: true,
+            is_minimizable: true,
+            window_min_size: Some(size(px(520.), px(260.))),
+            ..Default::default()
+        },
+        |window, cx| {
+            let devtools_window_id = window.handle.window_id();
+            window.on_window_should_close(cx, move |_, _| {
+                close_source_window(source_window_id);
+                true
+            });
+            cx.new(|cx| GpuiDevtoolsWindow::new(source_window_id, devtools_window_id, cx))
+        },
+    );
+
+    if let Err(error) = result.and_then(|window| {
+        window.update(cx, |_, window, _| {
+            window.activate_window();
+        })
+    }) {
+        log::error!("failed to open GPUI profiler window: {error:?}");
+    }
 }
 
-pub(super) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
-    let window_id = window.handle.window_id();
-    let prepared_overlay = GPUI_DEVTOOLS
-        .read()
-        .windows
-        .get(&window_id)
-        .and_then(|window_state| window_state.prepared_overlay.clone());
-    let Some(prepared_overlay) = prepared_overlay else {
-        return;
-    };
+fn existing_devtools_window(
+    source_window_id: WindowId,
+    cx: &App,
+) -> Option<crate::WindowHandle<GpuiDevtoolsWindow>> {
+    for window in cx.windows() {
+        let Some(window) = window.downcast::<GpuiDevtoolsWindow>() else {
+            continue;
+        };
 
-    paint_overlay(window, cx, &prepared_overlay);
-    register_input_handlers(window, &prepared_overlay);
+        if window
+            .read(cx)
+            .is_ok_and(|devtools| devtools.source_window_id == source_window_id)
+        {
+            return Some(window);
+        }
+    }
+    None
+}
+
+struct GpuiDevtoolsWindow {
+    source_window_id: WindowId,
+    _source_window_closed: Subscription,
+}
+
+impl GpuiDevtoolsWindow {
+    fn new(
+        source_window_id: WindowId,
+        devtools_window_id: WindowId,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let source_window_closed = cx.on_window_closed(move |cx, closed_window_id| {
+            if closed_window_id != source_window_id {
+                return;
+            }
+
+            let result = cx.update_window_id(devtools_window_id, |_, window, _| {
+                window.remove_window();
+            });
+            if let Err(error) = result {
+                log::debug!("failed to close GPUI profiler window after source closed: {error:?}");
+            }
+        });
+
+        Self {
+            source_window_id,
+            _source_window_closed: source_window_closed,
+        }
+    }
+
+    fn apply_action(
+        &mut self,
+        action: DevtoolsActionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            DevtoolsActionKind::Pause => GPUI_DEVTOOLS.write().pause(Instant::now()),
+            DevtoolsActionKind::Resume => GPUI_DEVTOOLS.write().resume(),
+            DevtoolsActionKind::Clear => GPUI_DEVTOOLS.write().clear_counters(),
+            DevtoolsActionKind::Close => {
+                close_source_window(self.source_window_id);
+                window.remove_window();
+            }
+        }
+        cx.notify();
+    }
+
+    fn render_row(&self, row: DevtoolsRow, cx: &mut Context<Self>) -> AnyElement {
+        let text_color = match row.kind {
+            DevtoolsRowKind::Header => hsla(0.58, 0.44, 0.94, 1.),
+            DevtoolsRowKind::Toolbar => hsla(0.12, 0.62, 0.76, 1.),
+            DevtoolsRowKind::Data => hsla(0.58, 0.38, 0.92, 0.96),
+        };
+        let background = match row.kind {
+            DevtoolsRowKind::Header | DevtoolsRowKind::Toolbar => rgba(0x273244aa),
+            DevtoolsRowKind::Data => rgba(0x00000000),
+        };
+
+        div()
+            .w_full()
+            .min_h(px(22.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .bg(background)
+            .text_color(text_color)
+            .children(row.actions.into_iter().map(|action| {
+                div()
+                    .id(action.label)
+                    .cursor_pointer()
+                    .rounded_xs()
+                    .border_1()
+                    .border_color(hsla(0.58, 0.68, 0.68, 0.52))
+                    .bg(if action.active {
+                        rgba(0x0ea5e94a)
+                    } else {
+                        rgba(0x1f29374a)
+                    })
+                    .px_2()
+                    .child(action.label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.apply_action(action.kind, window, cx);
+                    }))
+            }))
+            .child(div().min_w_0().overflow_hidden().child(row.text))
+            .into_any_element()
+    }
+}
+
+impl Render for GpuiDevtoolsWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !window_open(self.source_window_id) {
+            window.remove_window();
+            return div().into_any_element();
+        }
+
+        window.request_animation_frame();
+        let snapshot = snapshot_window(self.source_window_id);
+        div()
+            .id("gpui-profiler-window")
+            .size_full()
+            .overflow_hidden()
+            .bg(rgba(0x111827ff))
+            .text_color(hsla(0.58, 0.38, 0.92, 0.96))
+            .font_family(".SystemUIFont")
+            .text_xs()
+            .line_height(px(16.))
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .children(
+                snapshot
+                    .rows
+                    .into_iter()
+                    .map(|row| self.render_row(row, cx)),
+            )
+            .into_any_element()
+    }
 }
 
 #[derive(Default)]
@@ -224,53 +386,40 @@ enum ActiveAnimationSource<'a> {
 }
 
 #[derive(Clone, Debug)]
-struct OverlaySnapshot {
-    rows: Vec<OverlayRow>,
+struct DevtoolsSnapshot {
+    rows: Vec<DevtoolsRow>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct PreparedOverlay {
-    snapshot: OverlaySnapshot,
-    hud_bounds: Bounds<Pixels>,
-    row_hitboxes: Vec<OverlayRowHitbox>,
-}
-
-#[derive(Clone, Debug)]
-struct OverlayRowHitbox {
-    hitbox: Hitbox,
-    action: OverlayAction,
-}
-
-#[derive(Clone, Debug)]
-struct OverlayRow {
+struct DevtoolsRow {
     text: String,
-    kind: OverlayRowKind,
-    actions: Vec<OverlayAction>,
+    kind: DevtoolsRowKind,
+    actions: Vec<DevtoolsAction>,
 }
 
-impl OverlayRow {
+impl DevtoolsRow {
     fn header(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            kind: OverlayRowKind::Header,
+            kind: DevtoolsRowKind::Header,
             actions: Vec::new(),
         }
     }
 
     fn toolbar(devtools: &GpuiDevTools) -> Self {
         let pause_action = if devtools.paused_at.is_some() {
-            OverlayAction::toolbar("resume", true, OverlayActionKind::Resume)
+            DevtoolsAction::toolbar("resume", true, DevtoolsActionKind::Resume)
         } else {
-            OverlayAction::toolbar("pause", false, OverlayActionKind::Pause)
+            DevtoolsAction::toolbar("pause", false, DevtoolsActionKind::Pause)
         };
 
         Self {
             text: String::new(),
-            kind: OverlayRowKind::Toolbar,
+            kind: DevtoolsRowKind::Toolbar,
             actions: vec![
                 pause_action,
-                OverlayAction::toolbar("clear", false, OverlayActionKind::Clear),
-                OverlayAction::toolbar("close", false, OverlayActionKind::Close),
+                DevtoolsAction::toolbar("clear", false, DevtoolsActionKind::Clear),
+                DevtoolsAction::toolbar("close", false, DevtoolsActionKind::Close),
             ],
         }
     }
@@ -278,61 +427,58 @@ impl OverlayRow {
     fn plain(text: impl Into<String>) -> Self {
         Self {
             text: truncate_chars(&text.into(), HUD_MAX_LINE_CHARS),
-            kind: OverlayRowKind::Data,
+            kind: DevtoolsRowKind::Data,
             actions: Vec::new(),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum OverlayRowKind {
+enum DevtoolsRowKind {
     Header,
     Toolbar,
     Data,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct OverlayAction {
+struct DevtoolsAction {
     label: &'static str,
     active: bool,
-    kind: OverlayActionKind,
+    kind: DevtoolsActionKind,
 }
 
-impl OverlayAction {
-    fn toolbar(label: &'static str, active: bool, kind: OverlayActionKind) -> Self {
+impl DevtoolsAction {
+    fn toolbar(label: &'static str, active: bool, kind: DevtoolsActionKind) -> Self {
         Self {
             label,
             active,
             kind,
         }
     }
-
-    fn width(self) -> Pixels {
-        px((self.label.len() as f32 * 6.5 + 18.).clamp(52., 104.))
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum OverlayActionKind {
+enum DevtoolsActionKind {
     Pause,
     Resume,
     Clear,
     Close,
 }
 
-fn snapshot_overlay(devtools: &GpuiDevTools, window_id: WindowId) -> OverlaySnapshot {
+fn snapshot_window(window_id: WindowId) -> DevtoolsSnapshot {
+    let devtools = GPUI_DEVTOOLS.read();
     let now = devtools.paused_at.unwrap_or_else(Instant::now);
     let mut rows = Vec::new();
-    rows.push(OverlayRow::header(if devtools.paused_at.is_some() {
+    rows.push(DevtoolsRow::header(if devtools.paused_at.is_some() {
         "GPUI profiler paused"
     } else {
         "GPUI profiler"
     }));
-    rows.push(OverlayRow::toolbar(devtools));
+    rows.push(DevtoolsRow::toolbar(&devtools));
 
     let (frame_count, draw_count, dirty_frame_count, last_frame) =
-        frame_summary(devtools, window_id, now);
-    rows.push(OverlayRow::plain(format!(
+        frame_summary(&devtools, window_id, now);
+    rows.push(DevtoolsRow::plain(format!(
         "draw/s {:>3} dirty/s {:>3} frame/s {:>3}",
         draw_count, dirty_frame_count, frame_count
     )));
@@ -341,7 +487,7 @@ fn snapshot_overlay(devtools: &GpuiDevTools, window_id: WindowId) -> OverlaySnap
             .draw_duration
             .map(format_duration_ms)
             .unwrap_or_else(|| "--".to_string());
-        rows.push(OverlayRow::plain(format!(
+        rows.push(DevtoolsRow::plain(format!(
             "last {} draw {}ms present {}ms views {} updates {} ops {} quads {}",
             frame.reason,
             draw_duration,
@@ -352,16 +498,18 @@ fn snapshot_overlay(devtools: &GpuiDevTools, window_id: WindowId) -> OverlaySnap
             frame.scene_stats.quad_count
         )));
     } else {
-        rows.push(OverlayRow::plain("last frame --"));
+        rows.push(DevtoolsRow::plain("last frame --"));
     }
 
-    let render_summary = render_summary(devtools, window_id, now, TOP_SOURCE_COUNT);
-    rows.push(OverlayRow::plain(format!(
+    let render_summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
+    rows.push(DevtoolsRow::plain(format!(
         "renders/s {} reuse/s {}",
         render_summary.render_count, render_summary.reuse_count
     )));
     if render_summary.top_sources.is_empty() {
-        rows.push(OverlayRow::plain("render: no recent uncached view renders"));
+        rows.push(DevtoolsRow::plain(
+            "render: no recent uncached view renders",
+        ));
     } else {
         for (index, (source, stats)) in render_summary.top_sources.into_iter().enumerate() {
             let mut labels = stats.cache_miss_reasons.labels();
@@ -385,7 +533,7 @@ fn snapshot_overlay(devtools: &GpuiDevTools, window_id: WindowId) -> OverlaySnap
                     )
                 })
                 .unwrap_or_default();
-            rows.push(OverlayRow::plain(format!(
+            rows.push(DevtoolsRow::plain(format!(
                 "render #{:<2} {:<24} {:<12} x{:<3} avg {:>6}ms sum {:>6}ms reuse {:>3}{}{}",
                 index + 1,
                 view_label(source.entity_type, source.entity_id),
@@ -400,12 +548,12 @@ fn snapshot_overlay(devtools: &GpuiDevTools, window_id: WindowId) -> OverlaySnap
         }
     }
 
-    let notify_sources = top_notify_sources(devtools, now, TOP_SOURCE_COUNT);
+    let notify_sources = top_notify_sources(&devtools, now, TOP_SOURCE_COUNT);
     if notify_sources.is_empty() {
-        rows.push(OverlayRow::plain("notify: no recent notifications"));
+        rows.push(DevtoolsRow::plain("notify: no recent notifications"));
     } else {
         for (index, (source, stats)) in notify_sources.into_iter().enumerate() {
-            rows.push(OverlayRow::plain(format!(
+            rows.push(DevtoolsRow::plain(format!(
                 "notify #{:<2} {:<24} x{:<3} {}:{}:{} live {}/{} total {}",
                 index + 1,
                 view_label(source.entity_type, stats.entity_id),
@@ -424,8 +572,8 @@ fn snapshot_overlay(devtools: &GpuiDevTools, window_id: WindowId) -> OverlaySnap
         }
     }
 
-    let dirty_path_summary = recent_dirty_path_summary(devtools, window_id, now);
-    rows.push(OverlayRow::plain(format!(
+    let dirty_path_summary = recent_dirty_path_summary(&devtools, window_id, now);
+    rows.push(DevtoolsRow::plain(format!(
         "dirty paths/s {} {}active animations {}",
         dirty_path_summary.count,
         dirty_path_summary
@@ -433,10 +581,10 @@ fn snapshot_overlay(devtools: &GpuiDevTools, window_id: WindowId) -> OverlaySnap
             .as_ref()
             .map(|label| format!("last {label} "))
             .unwrap_or_default(),
-        active_animation_count(devtools, window_id, now)
+        active_animation_count(&devtools, window_id, now)
     )));
 
-    OverlaySnapshot { rows }
+    DevtoolsSnapshot { rows }
 }
 
 fn frame_summary(
@@ -519,218 +667,6 @@ fn dirty_path_label(event: &DirtyPathEvent) -> String {
         event.invalidated_entity_id.as_u64(),
         path
     )
-}
-
-fn prepare_overlay(window: &mut Window, snapshot: OverlaySnapshot) -> PreparedOverlay {
-    let hud_bounds = hud_bounds(snapshot.rows.len(), window.viewport_size());
-    let mut row_hitboxes = Vec::new();
-    for (row_index, row) in snapshot.rows.iter().enumerate() {
-        for (action_index, action) in row.actions.iter().copied().enumerate() {
-            let hitbox = window.insert_hitbox(
-                hud_button_bounds(hud_bounds, row_index, &row.actions, action_index),
-                HitboxBehavior::BlockMouse,
-            );
-            row_hitboxes.push(OverlayRowHitbox { hitbox, action });
-        }
-    }
-
-    PreparedOverlay {
-        snapshot,
-        hud_bounds,
-        row_hitboxes,
-    }
-}
-
-fn paint_overlay(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverlay) {
-    if prepared_overlay.snapshot.rows.is_empty() {
-        return;
-    }
-
-    let padding = hud_padding();
-    let line_height = hud_line_height();
-    let bounds = prepared_overlay.hud_bounds;
-
-    window.paint_quad(fill(bounds, rgba(0x111827dd)));
-    window.paint_quad(outline(
-        bounds,
-        hsla(0.58, 0.68, 0.68, 0.72),
-        BorderStyle::default(),
-    ));
-
-    for (line_index, row) in prepared_overlay.snapshot.rows.iter().enumerate() {
-        let row_bounds = hud_row_bounds(bounds, line_index);
-        match row.kind {
-            OverlayRowKind::Header | OverlayRowKind::Toolbar => {
-                window.paint_quad(fill(row_bounds, rgba(0x273244aa)));
-            }
-            OverlayRowKind::Data => {}
-        }
-    }
-
-    for row_hitbox in &prepared_overlay.row_hitboxes {
-        let fill_color = if row_hitbox.hitbox.is_hovered(window) {
-            rgba(0x38bdf84a)
-        } else if row_hitbox.action.active {
-            rgba(0x0ea5e94a)
-        } else {
-            rgba(0x1f29374a)
-        };
-        window.paint_quad(fill(row_hitbox.hitbox.bounds, fill_color));
-        window.paint_quad(outline(
-            row_hitbox.hitbox.bounds,
-            hsla(0.58, 0.68, 0.68, 0.52),
-            BorderStyle::default(),
-        ));
-        paint_text_line_with_color(
-            window,
-            cx,
-            point(
-                row_hitbox.hitbox.origin.x + px(5.),
-                row_hitbox.hitbox.origin.y + px(1.),
-            ),
-            row_hitbox.action.label,
-            line_height,
-            hsla(0.58, 0.38, 0.98, 0.98),
-        );
-    }
-
-    for (line_index, row) in prepared_overlay.snapshot.rows.iter().enumerate() {
-        let text_color = match row.kind {
-            OverlayRowKind::Header => hsla(0.58, 0.44, 0.94, 1.),
-            OverlayRowKind::Toolbar => hsla(0.12, 0.62, 0.76, 1.),
-            OverlayRowKind::Data => hsla(0.58, 0.38, 0.92, 0.96),
-        };
-        let origin = point(
-            bounds.origin.x + padding + hud_action_text_offset(&row.actions),
-            bounds.origin.y + padding + line_height * (line_index as f32),
-        );
-        paint_text_line_with_color(window, cx, origin, &row.text, line_height, text_color);
-    }
-}
-
-fn register_input_handlers(window: &mut Window, prepared_overlay: &PreparedOverlay) {
-    for row_hitbox in prepared_overlay.row_hitboxes.iter().cloned() {
-        let hitbox = row_hitbox.hitbox;
-        let action = row_hitbox.action;
-        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble
-                && event.button == MouseButton::Left
-                && hitbox.is_hovered(window)
-            {
-                apply_overlay_action(action.kind, window);
-                window.prevent_default();
-                window.refresh();
-                cx.stop_propagation();
-            }
-        });
-    }
-}
-
-fn apply_overlay_action(action: OverlayActionKind, window: &mut Window) {
-    match action {
-        OverlayActionKind::Pause => GPUI_DEVTOOLS.write().pause(Instant::now()),
-        OverlayActionKind::Resume => GPUI_DEVTOOLS.write().resume(),
-        OverlayActionKind::Clear => GPUI_DEVTOOLS.write().clear_counters(),
-        OverlayActionKind::Close => close_window(window),
-    }
-}
-
-fn hud_bounds(row_count: usize, viewport_size: crate::Size<Pixels>) -> Bounds<Pixels> {
-    let margin = px(12.);
-    let padding = hud_padding();
-    let hud_width = px(560.);
-    let line_height = hud_line_height();
-    let hud_height = padding * 2. + line_height * (row_count as f32);
-    let hud_size = size(hud_width, hud_height);
-    let origin = point(
-        (viewport_size.width - hud_width - margin).max(margin),
-        margin,
-    );
-    Bounds::new(origin, hud_size)
-}
-
-fn hud_button_bounds(
-    hud_bounds: Bounds<Pixels>,
-    row_index: usize,
-    actions: &[OverlayAction],
-    action_index: usize,
-) -> Bounds<Pixels> {
-    let padding = hud_padding();
-    let line_height = hud_line_height();
-    let action_offset = (0..action_index).fold(px(0.), |offset, i| {
-        offset + actions[i].width() + hud_button_gap()
-    });
-    let button_width = actions
-        .get(action_index)
-        .map(|action| action.width())
-        .unwrap_or(px(0.));
-    Bounds::new(
-        point(
-            hud_bounds.origin.x + padding - px(2.) + action_offset,
-            hud_bounds.origin.y + padding + line_height * (row_index as f32) - px(1.),
-        ),
-        size(button_width, line_height),
-    )
-}
-
-fn hud_row_bounds(hud_bounds: Bounds<Pixels>, row_index: usize) -> Bounds<Pixels> {
-    let padding = hud_padding();
-    let line_height = hud_line_height();
-    Bounds::new(
-        point(
-            hud_bounds.origin.x + padding - px(2.),
-            hud_bounds.origin.y + padding + line_height * (row_index as f32) - px(1.),
-        ),
-        size(hud_bounds.size.width - padding * 2. + px(4.), line_height),
-    )
-}
-
-fn hud_action_text_offset(actions: &[OverlayAction]) -> Pixels {
-    if actions.is_empty() {
-        px(0.)
-    } else {
-        actions.iter().fold(px(0.), |offset, action| {
-            offset + action.width() + hud_button_gap()
-        }) + px(3.)
-    }
-}
-
-fn hud_padding() -> Pixels {
-    px(8.)
-}
-
-fn hud_line_height() -> Pixels {
-    px(14.)
-}
-
-fn hud_button_gap() -> Pixels {
-    px(4.)
-}
-
-fn paint_text_line_with_color(
-    window: &mut Window,
-    cx: &mut App,
-    origin: Point<Pixels>,
-    line: &str,
-    line_height: Pixels,
-    color: Hsla,
-) {
-    let font_size = px(11.);
-    let text_run = TextRun {
-        len: line.len(),
-        font: font(".SystemUIFont"),
-        color,
-        ..TextRun::default()
-    };
-    let shaped_line = window.text_system().shape_line(
-        SharedString::from(line.to_string()),
-        font_size,
-        &[text_run],
-        None,
-    );
-    if let Err(error) = shaped_line.paint(origin, line_height, TextAlign::Left, None, window, cx) {
-        log::debug!("failed to paint GPUI profiler HUD text: {error:?}");
-    }
 }
 
 fn format_duration_ms(duration: Duration) -> String {

@@ -859,8 +859,8 @@ fn register_actions(
 ) {
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
-        .register_action(|_, _: &OpenGpuiDevtools, window, _| {
-            gpui::devtools::open(window);
+        .register_action(|_, _: &OpenGpuiDevtools, window, cx| {
+            gpui::devtools::open(window, cx);
         })
         .register_action(
             |workspace: &mut Workspace,

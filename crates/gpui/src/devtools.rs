@@ -1,6 +1,6 @@
 //! Runtime GPUI invalidation and rendering diagnostics.
 
-mod overlay;
+mod window;
 
 use crate::{App, Bounds, ElementId, EntityId, Pixels, SceneStats, Window, WindowId};
 use collections::{FxHashMap, FxHashSet};
@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 
-const NOTIFICATION_CAPACITY: usize = 4096;
+const NOTIFICATION_CAPACITY: usize = 16384;
 const FRAME_CAPACITY: usize = 2048;
 const VIEW_RENDER_CAPACITY: usize = 8192;
 const DIRTY_PATH_CAPACITY: usize = 4096;
@@ -27,10 +27,10 @@ static GPUI_DEVTOOLS_ENABLED: AtomicBool = AtomicBool::new(false);
 static GPUI_DEVTOOLS: LazyLock<RwLock<GpuiDevTools>> =
     LazyLock::new(|| RwLock::new(GpuiDevTools::new()));
 
-/// Opens the GPUI devtools overlay for the given window.
-pub fn open(window: &mut Window) {
+/// Opens the GPUI devtools window for the given source window.
+pub fn open(source_window: &mut Window, cx: &mut App) {
     let was_enabled = GPUI_DEVTOOLS_ENABLED.swap(true, SeqCst);
-    let window_id = window.handle.window_id();
+    let window_id = source_window.handle.window_id();
     {
         let mut devtools = GPUI_DEVTOOLS.write();
         devtools.open_window(window_id);
@@ -39,7 +39,7 @@ pub fn open(window: &mut Window) {
             devtools.clear_counters();
         }
     }
-    window.refresh();
+    window::open(window_id, cx);
 }
 
 pub(crate) fn enabled() -> bool {
@@ -54,7 +54,12 @@ pub(crate) fn forget_window(window_id: WindowId) {
     let any_window_open = {
         let mut devtools = GPUI_DEVTOOLS.write();
         devtools.forget_window(window_id);
-        devtools.has_open_windows()
+        let any_window_open = devtools.has_open_windows();
+        if !any_window_open {
+            devtools.clear_counters();
+            devtools.resume();
+        }
+        any_window_open
     };
     GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
 }
@@ -190,24 +195,7 @@ pub(crate) fn record_animation(event: AnimationEvent) {
     GPUI_DEVTOOLS.write().animations.push(event);
 }
 
-pub(crate) fn prepaint_window_overlay(window: &mut Window) {
-    if !enabled() || !window_open(window.handle.window_id()) {
-        return;
-    }
-
-    overlay::prepaint_window_overlay(window);
-}
-
-pub(crate) fn paint_window_overlay(window: &mut Window, cx: &mut App) {
-    if !enabled() || !window_open(window.handle.window_id()) {
-        return;
-    }
-
-    overlay::paint_window_overlay(window, cx);
-}
-
-fn close_window(window: &mut Window) {
-    let window_id = window.handle.window_id();
+fn close_source_window(window_id: WindowId) {
     let any_window_open = {
         let mut devtools = GPUI_DEVTOOLS.write();
         devtools.close_window(window_id);
@@ -219,7 +207,6 @@ fn close_window(window: &mut Window) {
         any_window_open
     };
     GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
-    window.refresh();
 }
 
 fn window_open(window_id: WindowId) -> bool {
@@ -541,9 +528,6 @@ impl GpuiDevTools {
 
     fn close_window(&mut self, window_id: WindowId) {
         self.open_windows.remove(&window_id);
-        if let Some(window_state) = self.windows.get_mut(&window_id) {
-            window_state.prepared_overlay = None;
-        }
     }
 
     fn has_open_windows(&self) -> bool {
@@ -599,7 +583,6 @@ struct WindowDevToolsState {
     recent_frames: RingBuffer<FrameEvent>,
     view_bounds: FxHashMap<EntityId, Bounds<Pixels>>,
     latest_dirty_cause_by_entity: FxHashMap<EntityId, NotifyCause>,
-    prepared_overlay: Option<overlay::PreparedOverlay>,
 }
 
 impl WindowDevToolsState {
@@ -608,7 +591,6 @@ impl WindowDevToolsState {
             recent_frames: RingBuffer::new(WINDOW_FRAME_CAPACITY),
             view_bounds: FxHashMap::default(),
             latest_dirty_cause_by_entity: FxHashMap::default(),
-            prepared_overlay: None,
         }
     }
 }
