@@ -443,4 +443,3 @@ impl HttpClient for FakeHttpClient {
         self
     }
 }
-
