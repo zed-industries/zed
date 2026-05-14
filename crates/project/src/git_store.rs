@@ -4543,6 +4543,13 @@ impl MergeDetails {
 }
 
 impl Repository {
+    pub fn error(&self) -> Option<String> {
+        match self.repository_state.peek() {
+            Some(Err(e)) => Some(e.clone()),
+            _ => None,
+        }
+    }
+
     pub fn is_trusted(&self) -> bool {
         match self.repository_state.peek() {
             Some(Ok(RepositoryState::Local(state))) => state.backend.is_trusted(),
