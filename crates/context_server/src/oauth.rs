@@ -20,7 +20,9 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use base64::Engine as _;
 use futures::AsyncReadExt as _;
+use futures::FutureExt as _;
 use futures::channel::mpsc;
+use futures::future::BoxFuture;
 use http_client::{AsyncBody, HttpClient, Request};
 use parking_lot::Mutex as SyncMutex;
 use rand::Rng as _;
@@ -1010,27 +1012,24 @@ impl OAuthCallback {
 /// contains `code` and `state` query parameters, responds with a minimal
 /// HTML page telling the user they can close the tab, and shuts down.
 ///
-/// The callback server shuts down when the returned oneshot receiver is dropped
-/// (e.g. because the authentication task was cancelled), or after a timeout.
-pub async fn start_callback_server() -> Result<(
-    String,
-    futures::channel::oneshot::Receiver<Result<OAuthCallback>>,
-)> {
+/// The callback server shuts down when the returned future is dropped (e.g.
+/// because the authentication task was cancelled), or after a timeout.
+pub fn start_callback_server() -> Result<(String, BoxFuture<'static, Result<OAuthCallback>>)> {
     let (redirect_uri, rx) = http_client::start_oauth_callback_server()?;
-    let (tx, mapped_rx) = futures::channel::oneshot::channel();
-    smol::spawn(async move {
-        let result = match rx.await {
+    let future = async move {
+        match rx.await {
             Ok(Ok(params)) => Ok(OAuthCallback {
                 code: params.code,
                 state: params.state,
             }),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err(anyhow!("OAuth callback channel was cancelled")),
-        };
-        let _ = tx.send(result);
-    })
-    .detach();
-    Ok((redirect_uri, mapped_rx))
+            Err(_) => Err(anyhow!(
+                "OAuth callback server was shut down before receiving a response"
+            )),
+        }
+    }
+    .boxed();
+    Ok((redirect_uri, future))
 }
 
 // -- JSON fetch helper -------------------------------------------------------
