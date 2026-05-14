@@ -19,7 +19,7 @@ pub(crate) struct ComplianceArgs {
 }
 
 const IGNORE_LIST: &[&str] = &[
-    "75fa566511e3ae7d03cfd76008512080291bd81d", // GitHub nuked this PR out of orbit
+    "0ed077852ca4b04fbdc5d3781a85a491da5f011b", // Zed Zippy version bump that raced with another PR in the queue
 ];
 
 #[derive(Subcommand)]
