@@ -1,13 +1,3 @@
-Fundamental algorithm, that should get us 90% to confidence:
-- Review the worktree, buffer, and lsp store refactors for problems
-- Go through the stores, and audit their fields for 2 things:
-  - Any state that is suspiciously project-like (GitStore.active_repository), should be moved to the project
-  - Stores should have multi-tenant tests (some do, and some do not rn)
-- Also, need to tidy up the PR. Delete the walls and walls of comments that Claude makes.
-Once those two are done, the compiler should guide our changes through the rest of the codebase
-
-------
-
 # Shipping multi-tenant `Host` plan
 
 Sections:

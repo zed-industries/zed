@@ -2761,26 +2761,23 @@ impl Editor {
 
             // Phase 2 multi-tenant: `observe_new` fires for every
             // `Session` entity created on the host (including sibling
-            // Projects'). The callback runs while the session is still
-            // being constructed, so read the `SessionId` straight off
-            // the `&mut Session` parameter (the entity itself can't be
-            // borrowed yet). Gate the per-session subscription on this
+            // Projects'). Gate the per-session subscription on this
             // editor's Project owning that session, otherwise we'd
             // refresh inline values in response to debug events from
             // unrelated workspaces.
             let project_for_observe = project.downgrade();
             editor
                 ._subscriptions
-                .push(cx.observe_new::<project::debugger::session::Session>(
-                    move |session, _, cx| {
-                        let session_id = session.session_id();
+                .push(
+                    cx.observe_new::<project::debugger::session::Session>(move |_, _, cx| {
+                        let session_entity = cx.entity();
+                        let session_id = session_entity.read(cx).session_id();
                         let Some(project) = project_for_observe.upgrade() else {
                             return;
                         };
                         if !project.read(cx).owns_dap_session(session_id) {
                             return;
                         }
-                        let session_entity = cx.entity();
                         weak_editor
                             .update(cx, |editor, cx| {
                                 editor._subscriptions.push(
@@ -2788,8 +2785,8 @@ impl Editor {
                                 );
                             })
                             .ok();
-                    },
-                ));
+                    }),
+                );
 
             // Subscribe only to sessions this Project owns; the host
             // store may also hold sibling Projects' sessions.

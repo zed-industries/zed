@@ -494,10 +494,10 @@ pub enum GitStoreEvent {
     /// sent snapshot.
     RepositorySnapshotForDownstream(RepositorySnapshot),
     /// A repository was removed locally; listener forwards `proto::RemoveRepository`.
-    RepositorySnapshotRemoved(RepositoryId),
+    RepositorySnapshotRemovedForDownstream(RepositoryId),
     /// `GitStoreState::Remote` received a `proto::UpdateRepository` from upstream
     /// and the listener should forward it to its downstream peer.
-    RepositoryUpdated(proto::UpdateRepository),
+    ForwardRepositoryUpdate(proto::UpdateRepository),
     /// `GitStoreState::Remote` received a `proto::RemoveRepository` from upstream
     /// and the listener should forward it to its downstream peer.
     ForwardRepositoryRemove(proto::RemoveRepository),
@@ -1422,7 +1422,9 @@ impl GitStore {
                 for repo_id in repos_without_worktree {
                     self.repositories.remove(&repo_id);
                     self.worktree_ids.remove(&repo_id);
-                    cx.emit(GitStoreEvent::RepositorySnapshotRemoved(repo_id));
+                    cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(
+                        repo_id,
+                    ));
                 }
 
                 if is_active_repo_removed {
@@ -1593,7 +1595,7 @@ impl GitStore {
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
             }
             self.repositories.remove(&id);
-            cx.emit(GitStoreEvent::RepositorySnapshotRemoved(id));
+            cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(id));
         }
     }
 
@@ -2018,7 +2020,7 @@ impl GitStore {
                 id
             });
 
-            cx.emit(GitStoreEvent::RepositoryUpdated(update));
+            cx.emit(GitStoreEvent::ForwardRepositoryUpdate(update));
             Ok(())
         })
     }
