@@ -316,6 +316,15 @@ pub fn debug_scenarios_file() -> &'static PathBuf {
     DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
 }
 
+/// Returns the path to the user-global `AGENTS.md` file.
+///
+/// This file holds personal agent instructions that apply to every project the
+/// user opens, and is loaded into the native Zed agent's system prompt.
+pub fn agents_file() -> &'static PathBuf {
+    static AGENTS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    AGENTS_FILE.get_or_init(|| config_dir().join("AGENTS.md"))
+}
+
 /// Returns the path to the extensions directory.
 ///
 /// This is where installed extensions are stored.
