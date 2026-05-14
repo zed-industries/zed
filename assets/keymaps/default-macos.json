@@ -1041,6 +1041,13 @@
     },
   },
   {
+    "context": "GitPanel",
+    "bindings": {
+      "cmd-1": "git_panel::ActivateChangesTab",
+      "cmd-2": "git_panel::ActivateHistoryTab",
+    },
+  },
+  {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
     "use_key_equivalents": true,
     "bindings": {

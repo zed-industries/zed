@@ -610,6 +610,47 @@ mod test {
         );
     }
 
+    // When a worktree is named "foo" and contains a subdirectory also named "foo",
+    // read_file({"path": "foo/test.txt"}) should return the file at the worktree
+    // root (as the tool schema promises), not the one inside the foo/ subdirectory.
+    #[gpui::test]
+    async fn test_read_file_worktree_root_not_shadowed_by_subdir(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/foo"),
+            json!({
+                "test.txt": "root content",
+                "foo": {
+                    "test.txt": "subdir content"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/foo").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        // The tool schema says the first component must be the worktree root name,
+        // so "foo/test.txt" means test.txt at the root of the "foo" worktree.
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "foo/test.txt".into(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+        assert_eq!(result.unwrap(), "root content".into());
+    }
+
     #[gpui::test]
     async fn test_read_file_with_line_range(cx: &mut TestAppContext) {
         init_test(cx);
