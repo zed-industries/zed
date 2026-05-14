@@ -889,13 +889,22 @@ webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev 
 split-debuginfo = "unpacked"
 incremental = true
 codegen-units = 16
+debug = "limited"
 
 # mirror configuration for crates compiled for the build platform
 # (without this cargo will compile ~400 crates twice)
 [profile.dev.build-override]
 codegen-units = 16
 split-debuginfo = "unpacked"
-debug = true
+debug = "limited"
+
+# "debug" is a reserved profile name.
+[profile.dbg]
+inherits = "dev"
+debug = "full"
+
+[profile.dbg.build-override]
+debug = "full"
 
 [profile.dev.package]
 # proc-macros start

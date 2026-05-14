@@ -396,6 +396,7 @@ pub fn request_prediction_with_zeta(
             &edited_buffer_snapshot,
             edits.into(),
             cursor_position,
+            Some(edited_buffer_snapshot.anchor_range_inside(editable_range_in_buffer.clone())),
             inputs,
             model_version,
             request_duration,

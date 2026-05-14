@@ -21,7 +21,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-pub use anthropic::completion::{AnthropicEventMapper, into_anthropic};
+pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
 const PROVIDER_ID: LanguageModelProviderId = ANTHROPIC_PROVIDER_ID;
@@ -495,6 +495,7 @@ impl LanguageModel for AnthropicModel {
             self.model.default_temperature,
             self.model.max_output_tokens,
             self.model.mode.clone(),
+            AnthropicPromptCacheMode::Automatic,
         );
         if !self.model.supports_speed {
             request.speed = None;
