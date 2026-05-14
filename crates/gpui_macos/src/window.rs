@@ -1755,6 +1755,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+        dbg!("a11y_init called");
         let mut lock = self.0.lock();
         let a11y_active = lock.a11y_active.clone();
 
@@ -1773,9 +1774,11 @@ impl PlatformWindow for MacWindow {
         };
 
         lock.accesskit_adapter = Some(adapter);
+        dbg!("a11y_init complete - SubclassingAdapter created");
     }
 
     fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        dbg!("a11y_tree_update called", tree_update.nodes.len());
         let events = {
             let mut lock = self.0.lock();
             lock.accesskit_adapter
@@ -1783,6 +1786,7 @@ impl PlatformWindow for MacWindow {
                 .and_then(|adapter| adapter.update_if_active(|| tree_update))
         };
         if let Some(events) = events {
+            dbg!("raising a11y events");
             events.raise();
         }
     }
@@ -1792,7 +1796,9 @@ impl PlatformWindow for MacWindow {
     }
 
     fn is_a11y_active(&self) -> bool {
-        self.0.lock().a11y_active.load(Ordering::SeqCst)
+        let active = self.0.lock().a11y_active.load(Ordering::SeqCst);
+        dbg!("is_a11y_active", active);
+        active
     }
 }
 
