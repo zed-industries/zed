@@ -187,10 +187,12 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(ChatGptModel::Gpt54))
+        Some(self.create_language_model(ChatGptModel::Gpt55))
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        // No GPT-5.5 Mini exists yet; per the OpenAI Codex docs, gpt-5.4-mini
+        // is the recommended fast/cheap default alongside gpt-5.5.
         Some(self.create_language_model(ChatGptModel::Gpt54Mini))
     }
 
@@ -255,114 +257,85 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 // The ChatGPT Subscription provider routes requests to chatgpt.com/backend-api/codex,
 // which only supports a subset of OpenAI models. This list is maintained separately
 // from the standard OpenAI API model list (open_ai::Model).
-
+//
+// TODO: The Codex CLI fetches this list dynamically from
+// `GET <codex_base_url>/models?client_version=...` (see
+// codex-rs/codex-api/src/endpoint/models.rs in openai/codex) and falls back to
+// a bundled models.json. Beyond going stale, the static approach also can't
+// model per-account access (e.g. free accounts cannot use gpt-5.4 or
+// gpt-5.3-codex even though paid accounts can), so the backend still rejects
+// some requests. The bundled list at
+// codex-rs/models-manager/models.json (openai/codex) is the closest
+// approximation; the entries below mirror that file's picker-visible models.
 #[derive(Clone, Debug, PartialEq)]
 enum ChatGptModel {
-    Gpt5,
-    Gpt5Codex,
-    Gpt5CodexMini,
-    Gpt51,
-    Gpt51Codex,
-    Gpt51CodexMax,
-    Gpt51CodexMini,
-    Gpt52,
-    Gpt52Codex,
-    Gpt53Codex,
-    Gpt53CodexSpark,
+    Gpt55,
     Gpt54,
     Gpt54Mini,
+    Gpt53Codex,
+    Gpt52,
 }
 
 impl ChatGptModel {
     fn all() -> Vec<Self> {
         vec![
+            Self::Gpt55,
             Self::Gpt54,
             Self::Gpt54Mini,
             Self::Gpt53Codex,
-            Self::Gpt53CodexSpark,
-            Self::Gpt52Codex,
             Self::Gpt52,
-            Self::Gpt51CodexMax,
-            Self::Gpt51Codex,
-            Self::Gpt51CodexMini,
-            Self::Gpt51,
-            Self::Gpt5Codex,
-            Self::Gpt5CodexMini,
-            Self::Gpt5,
         ]
     }
 
     fn id(&self) -> &str {
         match self {
-            Self::Gpt5 => "gpt-5",
-            Self::Gpt5Codex => "gpt-5-codex",
-            Self::Gpt5CodexMini => "gpt-5-codex-mini",
-            Self::Gpt51 => "gpt-5.1",
-            Self::Gpt51Codex => "gpt-5.1-codex",
-            Self::Gpt51CodexMax => "gpt-5.1-codex-max",
-            Self::Gpt51CodexMini => "gpt-5.1-codex-mini",
-            Self::Gpt52 => "gpt-5.2",
-            Self::Gpt52Codex => "gpt-5.2-codex",
-            Self::Gpt53Codex => "gpt-5.3-codex",
-            Self::Gpt53CodexSpark => "gpt-5.3-codex-spark",
+            Self::Gpt55 => "gpt-5.5",
             Self::Gpt54 => "gpt-5.4",
             Self::Gpt54Mini => "gpt-5.4-mini",
+            Self::Gpt53Codex => "gpt-5.3-codex",
+            Self::Gpt52 => "gpt-5.2",
         }
     }
 
     fn display_name(&self) -> &str {
         match self {
-            Self::Gpt5 => "GPT-5",
-            Self::Gpt5Codex => "GPT-5 Codex",
-            Self::Gpt5CodexMini => "GPT-5 Codex Mini",
-            Self::Gpt51 => "GPT-5.1",
-            Self::Gpt51Codex => "GPT-5.1 Codex",
-            Self::Gpt51CodexMax => "GPT-5.1 Codex Max",
-            Self::Gpt51CodexMini => "GPT-5.1 Codex Mini",
-            Self::Gpt52 => "GPT-5.2",
-            Self::Gpt52Codex => "GPT-5.2 Codex",
-            Self::Gpt53Codex => "GPT-5.3 Codex",
-            Self::Gpt53CodexSpark => "GPT-5.3 Codex Spark",
+            Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
             Self::Gpt54Mini => "GPT-5.4 Mini",
+            Self::Gpt53Codex => "GPT-5.3 Codex",
+            Self::Gpt52 => "GPT-5.2",
         }
     }
 
     fn max_token_count(&self) -> u64 {
-        match self {
-            Self::Gpt53CodexSpark => 128_000,
-            Self::Gpt54 | Self::Gpt54Mini => 1_050_000,
-            _ => 400_000,
-        }
+        // All Codex-supported models share the backend's 272K input cap, even
+        // when the raw model exposes a larger context window via the public
+        // API (e.g. gpt-5.4 has max_context_window 1M, but the Codex backend
+        // caps it at 272K). Source: openai/codex models-manager/models.json.
+        272_000
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        match self {
-            Self::Gpt53CodexSpark => Some(8_192),
-            _ => Some(128_000),
-        }
+        Some(128_000)
     }
 
     fn supports_images(&self) -> bool {
-        !matches!(self, Self::Gpt53CodexSpark)
+        true
     }
 
     fn reasoning_effort(&self) -> Option<ReasoningEffort> {
-        match self {
-            Self::Gpt54 | Self::Gpt54Mini => None,
-            _ => Some(ReasoningEffort::Medium),
-        }
+        // Codex bundled models all default to Medium reasoning effort.
+        Some(ReasoningEffort::Medium)
     }
 
     fn supports_none_reasoning_effort(&self) -> bool {
-        matches!(self, Self::Gpt54 | Self::Gpt54Mini)
+        // The Codex backend's supported_reasoning_levels for every model in
+        // this list is low/medium/high/xhigh -- sending `none` is rejected.
+        false
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
-        match self {
-            Self::Gpt54 | Self::Gpt54Mini => true,
-            _ => false,
-        }
+        true
     }
 
     fn supports_prompt_cache_key(&self) -> bool {
