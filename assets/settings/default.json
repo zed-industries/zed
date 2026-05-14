@@ -724,6 +724,9 @@
   // If your search query contains any uppercase letters, the search becomes case-sensitive;
   // if it contains only lowercase letters, the search becomes case-insensitive.
   "use_smartcase_search": false,
+  // When enabled, SelectLargerSyntaxNode first expands through camelCase/subword
+  // boundaries before jumping to syntax nodes (e.g., cursor → `Case` → `camelCaseVar` → syntax node).
+  "use_expand_selection_by_subwords": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.

@@ -12903,6 +12903,40 @@ impl Editor {
             .map(|selection| {
                 let old_range = selection.start..selection.end;
 
+                // camelHump expansion: cursor → subword → word before syntax nodes
+                let (word_range, word_kind) = buffer.surrounding_word(old_range.start, None);
+                if word_kind == Some(CharKind::Word)
+                    && EditorSettings::get_global(cx).use_expand_selection_by_subwords
+                {
+                    let subword_range = movement::surrounding_subword(&buffer, old_range.start);
+
+                    if old_range.is_empty() && !subword_range.is_empty() && subword_range != word_range {
+                        selected_larger_node = true;
+                        return Selection {
+                            id: selection.id,
+                            start: subword_range.start,
+                            end: subword_range.end,
+                            goal: SelectionGoal::None,
+                            reversed: selection.reversed,
+                        };
+                    }
+
+                    if !old_range.is_empty()
+                        && old_range != word_range
+                        && word_range.start <= old_range.start
+                        && word_range.end >= old_range.end
+                    {
+                        selected_larger_node = true;
+                        return Selection {
+                            id: selection.id,
+                            start: word_range.start,
+                            end: word_range.end,
+                            goal: SelectionGoal::None,
+                            reversed: selection.reversed,
+                        };
+                    }
+                }
+
                 if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
                     // manually select word at selection
                     if ["string_content", "inline"].contains(&node.kind()) {

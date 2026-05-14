@@ -123,6 +123,11 @@ pub struct EditorSettingsContent {
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
     pub use_smartcase_search: Option<bool>,
+    /// When enabled, `SelectLargerSyntaxNode` first expands through camelCase/subword
+    /// boundaries before jumping to syntax nodes (e.g., cursor → `Case` → `camelCaseVar` → syntax node).
+    ///
+    /// Default: false
+    pub use_expand_selection_by_subwords: Option<bool>,
     /// Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
     ///
     /// Default: alt

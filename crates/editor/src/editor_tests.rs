@@ -11595,6 +11595,101 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_select_larger_syntax_node_camel_hump(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.use_expand_selection_by_subwords = Some(true);
+            });
+        });
+    });
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = indoc! {r#"
+        fn foo(camelCaseVar: bool, snake_case_var: bool) {
+            let _ = camelCaseVar;
+        }
+    "#};
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Cursor inside a camelCase identifier: should expand subword first, then full word, then syntax node.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            // Place cursor inside "Case" portion of "camelCaseVar" (line 1, inside the parameter)
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 13)..DisplayPoint::new(DisplayRow(0), 13)
+            ]);
+        });
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        // Cursor inside "Case" → subword "Case" selected; start moved so cursor is at start
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn foo(camel«ˇCase»Var: bool, snake_case_var: bool) {
+                    let _ = camelCaseVar;
+                }
+            "#},
+            cx,
+        );
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        // Subword "Case" → full word "camelCaseVar"; start moved so cursor is at start
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn foo(«ˇcamelCaseVar»: bool, snake_case_var: bool) {
+                    let _ = camelCaseVar;
+                }
+            "#},
+            cx,
+        );
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        // Full word → enclosing syntax node (parameter with type); start unchanged so cursor at end
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn foo(«camelCaseVar: boolˇ», snake_case_var: bool) {
+                    let _ = camelCaseVar;
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Cursor inside "camelCaseVar" on the second line → first expand selects a subword (not the full word).
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                // Column 14 is inside "camel" of "camelCaseVar" (4-space indent + "let _ = camel")
+                DisplayPoint::new(DisplayRow(1), 14)..DisplayPoint::new(DisplayRow(1), 14)
+            ]);
+        });
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        // Expect subword "camel" selected (not the full "camelCaseVar").
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                fn foo(camelCaseVar: bool, snake_case_var: bool) {
+                    let _ = «ˇcamel»CaseVar;
+                }
+            "#},
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
