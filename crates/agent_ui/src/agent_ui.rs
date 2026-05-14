@@ -58,7 +58,7 @@ use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use workspace::Workspace;
@@ -113,6 +113,31 @@ pub(crate) fn resolve_agent_image(
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentThreadSource {
+    AgentPanel,
+    GitPanel,
+    Sidebar,
+}
+
+impl AgentThreadSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentPanel => "agent_panel",
+            Self::GitPanel => "git_panel",
+            Self::Sidebar => "sidebar",
+        }
+    }
+}
+
+pub(crate) fn agent_sidebar_side(cx: &App) -> &'static str {
+    match AgentSettings::get_global(cx).sidebar_side() {
+        SidebarSide::Left => "left",
+        SidebarSide::Right => "right",
+    }
+}
+
 actions!(
     agent,
     [
