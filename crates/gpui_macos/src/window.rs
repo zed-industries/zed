@@ -290,18 +290,6 @@ unsafe fn build_classes() {
                     character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
                 );
 
-                decl.add_method(
-                    sel!(accessibilityChildren),
-                    accessibility_children as extern "C" fn(&Object, Sel) -> id,
-                );
-                decl.add_method(
-                    sel!(accessibilityFocusedUIElement),
-                    accessibility_focused_ui_element as extern "C" fn(&Object, Sel) -> id,
-                );
-                decl.add_method(
-                    sel!(accessibilityHitTest:),
-                    accessibility_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
-                );
             }
             decl.register()
         };
@@ -518,8 +506,7 @@ struct MacWindowState {
     activated_least_once: bool,
     closed: Arc<AtomicBool>,
     a11y_active: Arc<AtomicBool>,
-    accesskit_adapter: Option<accesskit_macos::Adapter>,
-    a11y_activation_handler: Option<A11yActivationHandler>,
+    accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
 }
@@ -851,7 +838,6 @@ impl MacWindow {
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
                 a11y_active: Arc::new(AtomicBool::new(false)),
-                a11y_activation_handler: None,
                 sheet_parent: None,
             })));
 
@@ -1771,24 +1757,22 @@ impl PlatformWindow for MacWindow {
     fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
         let mut lock = self.0.lock();
         let a11y_active = lock.a11y_active.clone();
-        let is_focused = unsafe { lock.native_window.isKeyWindow() == YES };
-
-        let action_handler = A11yActionHandler(callbacks.action);
-        let adapter = unsafe {
-            accesskit_macos::Adapter::new(
-                lock.native_view.as_ptr() as *mut c_void,
-                is_focused,
-                action_handler,
-            )
-        };
 
         let activation_handler = A11yActivationHandler {
             callback: callbacks.activation,
             a11y_active,
         };
+        let action_handler = A11yActionHandler(callbacks.action);
+
+        let adapter = unsafe {
+            accesskit_macos::SubclassingAdapter::for_window(
+                lock.native_window as *mut c_void,
+                activation_handler,
+                action_handler,
+            )
+        };
 
         lock.accesskit_adapter = Some(adapter);
-        lock.a11y_activation_handler = Some(activation_handler);
     }
 
     fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
@@ -2794,60 +2778,6 @@ extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint
     .flatten()
     .map(|index| index as u64)
     .unwrap_or(NSNotFound as u64)
-}
-
-// Based on the three NSAccessibility methods that accesskit_macos::SubclassingAdapter
-// adds dynamically. We add them directly since we own the GPUIView class.
-// https://github.com/AccessKit/accesskit/blob/accesskit_macos-v0.26.0/platforms/macos/src/subclass.rs#L89-L109
-extern "C" fn accessibility_children(this: &Object, _: Sel) -> id {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
-    let state = &mut *lock;
-    if let (Some(adapter), Some(handler)) = (
-        state.accesskit_adapter.as_mut(),
-        state.a11y_activation_handler.as_mut(),
-    ) {
-        adapter.view_children(handler) as id
-    } else {
-        drop(lock);
-        unsafe { msg_send![super(this, class!(NSView)), accessibilityChildren] }
-    }
-}
-
-extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
-    let state = &mut *lock;
-    if let (Some(adapter), Some(handler)) = (
-        state.accesskit_adapter.as_mut(),
-        state.a11y_activation_handler.as_mut(),
-    ) {
-        adapter.focus(handler) as id
-    } else {
-        drop(lock);
-        unsafe { msg_send![super(this, class!(NSView)), accessibilityFocusedUIElement] }
-    }
-}
-
-extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
-    let state = &mut *lock;
-    if let (Some(adapter), Some(handler)) = (
-        state.accesskit_adapter.as_mut(),
-        state.a11y_activation_handler.as_mut(),
-    ) {
-        adapter.hit_test(
-            accesskit_macos::NSPoint {
-                x: point.x,
-                y: point.y,
-            },
-            handler,
-        ) as id
-    } else {
-        drop(lock);
-        unsafe { msg_send![super(this, class!(NSView)), accessibilityHitTest: point] }
-    }
 }
 
 fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels> {
