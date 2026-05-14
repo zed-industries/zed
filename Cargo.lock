@@ -18220,7 +18220,6 @@ dependencies = [
  "notifications",
  "platform_title_bar",
  "project",
- "prompt_store",
  "recent_projects",
  "release_channel",
  "remote",
