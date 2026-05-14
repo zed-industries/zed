@@ -5188,6 +5188,49 @@ impl ThreadView {
             .into_any_element()
     }
 
+    pub(crate) fn user_prompt_previews(&self, cx: &App) -> Vec<(usize, SharedString)> {
+        const MAX_PREVIEW_CHARS: usize = 80;
+
+        let entries = self.thread.read(cx).entries();
+        let mut previews = Vec::new();
+
+        for (ix, entry) in entries.iter().enumerate() {
+            if let AgentThreadEntry::UserMessage(message) = entry {
+                let source = message.content.to_markdown(cx);
+                let first_line = source
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty());
+                let Some(line) = first_line else {
+                    continue;
+                };
+
+                let preview: SharedString = if line.chars().count() > MAX_PREVIEW_CHARS {
+                    let truncated: String = line.chars().take(MAX_PREVIEW_CHARS).collect();
+                    format!("{truncated}…").into()
+                } else {
+                    line.to_string().into()
+                };
+                previews.push((ix, preview));
+            }
+        }
+
+        previews
+    }
+
+    pub(crate) fn scroll_to_user_prompt(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        let entries_len = self.thread.read(cx).entries().len();
+        if entry_ix >= entries_len {
+            return;
+        }
+
+        self.list_state.scroll_to(ListOffset {
+            item_ix: entry_ix,
+            offset_in_item: px(0.0),
+        });
+        cx.notify();
+    }
+
     pub(crate) fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
         let entries = self.thread.read(cx).entries();
         if entries.is_empty() {

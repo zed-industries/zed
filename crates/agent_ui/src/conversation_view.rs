@@ -3097,6 +3097,33 @@ pub(crate) mod tests {
     use super::*;
 
     #[gpui::test]
+    async fn test_user_prompt_previews_and_scroll(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+
+        send_message(&conversation_view, "First prompt", cx);
+        send_message(&conversation_view, "Second prompt\nwith multiple lines", cx);
+        send_message(&conversation_view, "", cx);
+
+        let thread_view = conversation_view
+            .read_with(cx, |conversation_view, _| conversation_view.root_thread_view())
+            .expect("active thread view");
+
+        let previews =
+            thread_view.update(cx, |thread_view, cx| thread_view.user_prompt_previews(cx));
+
+        assert_eq!(previews.len(), 2);
+        assert_eq!(previews[0].1.as_ref(), "First prompt");
+        assert_eq!(previews[1].1.as_ref(), "Second prompt");
+
+        thread_view.update(cx, |thread_view, cx| {
+            thread_view.scroll_to_user_prompt(previews[0].0, cx);
+            thread_view.scroll_to_user_prompt(9999, cx);
+        });
+    }
+
+    #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -5112,6 +5139,20 @@ pub(crate) mod tests {
     ) -> Entity<MessageEditor> {
         let thread = active_thread(conversation_view, cx);
         cx.read(|cx| thread.read(cx).message_editor.clone())
+    }
+
+    fn send_message(
+        conversation_view: &Entity<ConversationView>,
+        text: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        message_editor(conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text(text, window, cx);
+        });
+        active_thread(conversation_view, cx).update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+        cx.run_until_parked();
     }
 
     #[gpui::test]
