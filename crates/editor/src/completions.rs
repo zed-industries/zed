@@ -343,6 +343,16 @@ impl Editor {
             Some(CompletionsMenuSource::SnippetsOnly)
         );
 
+        let trigger_character = trigger
+            .as_ref()
+            .filter(|trigger| {
+                buffer
+                    .read(cx)
+                    .completion_triggers()
+                    .contains(trigger.as_str())
+            })
+            .cloned();
+
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
             if filter_completions {
                 menu.filter(
@@ -354,10 +364,10 @@ impl Editor {
                     cx,
                 );
             }
-            // When `is_incomplete` is false, no need to re-query completions when the current query
-            // is a suffix of the initial query.
+            // When `is_incomplete` is false and no trigger character was typed, no need to re-query
+            // completions when the current query is a suffix of the initial query.
             let was_complete = !menu.is_incomplete;
-            if was_complete && !was_snippets_only {
+            if was_complete && !was_snippets_only && trigger_character.is_none() {
                 // If the new query is a suffix of the old query (typing more characters) and
                 // the previous result was complete, the existing completions can be filtered.
                 //
@@ -434,15 +444,6 @@ impl Editor {
         let provider_responses = if let Some(provider) = &provider
             && load_provider_completions
         {
-            let trigger_character = trigger
-                .as_ref()
-                .filter(|trigger| {
-                    buffer
-                        .read(cx)
-                        .completion_triggers()
-                        .contains(trigger.as_str())
-                })
-                .cloned();
             let completion_context = CompletionContext {
                 trigger_kind: match &trigger_character {
                     Some(_) => CompletionTriggerKind::TRIGGER_CHARACTER,

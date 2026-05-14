@@ -22377,6 +22377,180 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     });
 }
 
+#[gpui::test]
+async fn test_lsp_completion_filter_uses_text_edit_range(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new(
+        Language::new(
+            LanguageConfig {
+                name: "Test".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["test".into()],
+                    ..Default::default()
+                },
+                completion_query_characters: [' ', '-'].into_iter().collect(),
+                ..Default::default()
+            },
+            None,
+        ),
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
+            ..Default::default()
+        });
+    });
+
+    cx.set_state("foo bˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    handle_completion_request(
+        "foo <b|>",
+        vec!["bar"],
+        false,
+        counter.clone(),
+        &mut cx,
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["bar"]);
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_completion_trigger_requeries_complete_menu(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new(
+        Language::new(
+            LanguageConfig {
+                name: "Test".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["test".into()],
+                    ..Default::default()
+                },
+                completion_query_characters: ['.'].into_iter().collect(),
+                ..Default::default()
+            },
+            None,
+        ),
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
+            ..Default::default()
+        });
+    });
+
+    let mut request_count = 0;
+    let mut requests =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, params, _| {
+            request_count += 1;
+            let request_count = request_count;
+            async move {
+                let context = params.context.expect("completion context should be set");
+                match request_count {
+                    1 => {
+                        assert_eq!(context.trigger_kind, lsp::CompletionTriggerKind::INVOKED);
+                        assert_eq!(context.trigger_character, None);
+                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                            is_incomplete: false,
+                            item_defaults: None,
+                            items: vec![lsp::CompletionItem {
+                                label: "foo".to_string(),
+                                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(0, 3),
+                                    ),
+                                    new_text: "foo".to_string(),
+                                })),
+                                ..Default::default()
+                            }],
+                        })))
+                    }
+                    2 => {
+                        assert_eq!(
+                            context.trigger_kind,
+                            lsp::CompletionTriggerKind::TRIGGER_CHARACTER
+                        );
+                        assert_eq!(context.trigger_character, Some(".".to_string()));
+                        assert_eq!(
+                            params.text_document_position.position,
+                            lsp::Position::new(0, 4)
+                        );
+                        Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                            is_incomplete: false,
+                            item_defaults: None,
+                            items: vec![lsp::CompletionItem {
+                                label: "bar".to_string(),
+                                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 4),
+                                        lsp::Position::new(0, 4),
+                                    ),
+                                    new_text: "bar".to_string(),
+                                })),
+                                ..Default::default()
+                            }],
+                        })))
+                    }
+                    _ => panic!("unexpected completion request"),
+                }
+            }
+        });
+
+    cx.set_state("fooˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+    requests.next().await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.simulate_keystroke(".");
+    requests.next().await;
+    cx.condition(|editor, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow().as_ref() {
+            completion_menu_entries(menu) == vec!["bar".to_string()]
+        } else {
+            false
+        }
+    })
+    .await;
+}
+
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     let entries = menu.entries.borrow();
     entries.iter().map(|mat| mat.string.clone()).collect()
