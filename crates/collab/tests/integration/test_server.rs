@@ -599,7 +599,6 @@ impl TestServer {
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
                 zed_client_checksum_seed: None,
-                seed_path: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,
