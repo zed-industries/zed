@@ -701,7 +701,6 @@ pub struct GitPanel {
 
     _settings_subscription: Subscription,
     git_access: GitAccess,
-    repository_open_error: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -836,7 +835,6 @@ impl GitPanel {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::ActiveRepositoryChanged(_) => {
-                        this.repository_open_error = false;
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -853,8 +851,7 @@ impl GitPanel {
                             .map(|repo| repo.read(cx).id == *id)
                             .unwrap_or(false);
                         if is_active {
-                            this.repository_open_error = true;
-                            cx.notify();
+                            this.schedule_update(window, cx);
                         }
                         this.workspace
                             .update(cx, |workspace, cx| {
@@ -917,7 +914,6 @@ impl GitPanel {
                 _repo_subscriptions: Vec::new(),
                 _settings_subscription,
                 git_access: GitAccess::Yes,
-                repository_open_error: false,
             };
 
             this.schedule_update(window, cx);
@@ -5492,14 +5488,20 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match (self.git_access, &self.active_repository) {
-            (GitAccess::No, Some(repository)) => {
-                if self.repository_open_error {
-                    self.render_open_error_ui(cx)
-                } else {
-                    self.render_unsafe_repo_ui(repository, cx)
-                }
+        if let Some(repository) = &self.active_repository {
+            if repository.read(cx).error().is_some() {
+                return v_flex()
+                    .gap_1p5()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(self.render_open_error_ui(cx))
+                    .into_any_element();
             }
+        }
+
+        let content = match (self.git_access, &self.active_repository) {
+            (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
             (_, None) => self.render_uninitialized_ui(cx),
             (_, Some(_)) => self.render_no_changes_ui(cx),
         };
@@ -5510,6 +5512,7 @@ impl GitPanel {
             .items_center()
             .justify_center()
             .child(content)
+            .into_any_element()
     }
 
     fn render_no_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
@@ -5540,7 +5543,7 @@ impl GitPanel {
             .gap_1()
             .child(Label::new("Could not open repository.").color(Color::Muted))
             .child(
-                Label::new("Check the error notification or Zed log for details.")
+                Label::new("Check the Zed log for details.")
                     .color(Color::Muted)
                     .size(LabelSize::Small),
             )
