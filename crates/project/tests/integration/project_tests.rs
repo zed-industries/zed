@@ -7279,6 +7279,329 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rename_fallback_to_second_server(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let rename_capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+
+    let settings_json = json!({
+        "languages": {
+            "Vue.js": {
+                "language_servers": ["vue-language-server", "vtsls"]
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json.to_string(),
+            },
+            "App.vue": "const appTitle = ref(1)",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(vue_lang());
+
+    let mut vue_servers = language_registry.register_fake_lsp(
+        "Vue.js",
+        FakeLspAdapter {
+            name: "vue-language-server",
+            capabilities: rename_capabilities.clone(),
+            ..Default::default()
+        },
+    );
+    let mut ts_servers = language_registry.register_fake_lsp(
+        "Vue.js",
+        FakeLspAdapter {
+            name: "vtsls",
+            capabilities: rename_capabilities.clone(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/project/App.vue"), cx)
+        })
+        .await
+        .unwrap();
+
+    let vue_server = vue_servers.next().await.unwrap();
+    let ts_server = ts_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // vue-language-server can't rename TS symbols in <script> (returns None -> InvalidPosition).
+    // Set handlers BEFORE initiating the request so both are ready when requests arrive.
+    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(None)
+    });
+    ts_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+        |params, _| async move {
+            assert_eq!(params.position, lsp::Position::new(0, 7));
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                lsp::Position::new(0, 6),
+                lsp::Position::new(0, 14),
+            ))))
+        },
+    );
+
+    let response = project
+        .update(cx, |project, cx| {
+            project.prepare_rename(buffer.clone(), 7, cx)
+        })
+        .await
+        .unwrap();
+    let PrepareRenameResponse::Success(range) = response else {
+        panic!("Expected Success, got {:?}", response);
+    };
+    let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
+    assert_eq!(range, 6..14); // "appTitle"
+
+    // perform_rename should go to vtsls (the server that prepared successfully).
+    ts_server.set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
+        assert_eq!(params.new_name, "pageTitle");
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: Some(
+                [(
+                    lsp::Uri::from_file_path(path!("/project/App.vue")).unwrap(),
+                    vec![lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 14)),
+                        "pageTitle".to_string(),
+                    )],
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..Default::default()
+        }))
+    });
+
+    let response = project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 7, "pageTitle".to_string(), cx)
+        })
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(response.len(), 1);
+    assert_eq!(
+        buffer.update(cx, |buffer, _| buffer.text()),
+        "const pageTitle = ref(1)"
+    );
+}
+
+#[gpui::test]
+async fn test_rename_no_fallback_when_first_server_succeeds(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let rename_capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+
+    let settings_json = json!({
+        "languages": {
+            "Vue.js": {
+                "language_servers": ["vue-language-server", "vtsls"]
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json.to_string(),
+            },
+            "App.vue": "const appTitle = ref(1)",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(vue_lang());
+
+    let mut vue_servers = language_registry.register_fake_lsp(
+        "Vue.js",
+        FakeLspAdapter {
+            name: "vue-language-server",
+            capabilities: rename_capabilities.clone(),
+            ..Default::default()
+        },
+    );
+    let mut ts_servers = language_registry.register_fake_lsp(
+        "Vue.js",
+        FakeLspAdapter {
+            name: "vtsls",
+            capabilities: rename_capabilities.clone(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/project/App.vue"), cx)
+        })
+        .await
+        .unwrap();
+
+    let vue_server = vue_servers.next().await.unwrap();
+    let _ts_server = ts_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // vue-language-server succeeds (e.g., renaming a template component).
+    // vtsls should never be queried.
+    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+            lsp::Position::new(0, 6),
+            lsp::Position::new(0, 14),
+        ))))
+    });
+
+    let response = project
+        .update(cx, |project, cx| {
+            project.prepare_rename(buffer.clone(), 7, cx)
+        })
+        .await
+        .unwrap();
+    let PrepareRenameResponse::Success(range) = response else {
+        panic!("Expected Success, got {:?}", response);
+    };
+    let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
+    assert_eq!(range, 6..14);
+
+    // perform_rename should go to vue-language-server.
+    vue_server.set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
+        assert_eq!(params.new_name, "pageTitle");
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: Some(
+                [(
+                    lsp::Uri::from_file_path(path!("/project/App.vue")).unwrap(),
+                    vec![lsp::TextEdit::new(
+                        lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 14)),
+                        "pageTitle".to_string(),
+                    )],
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..Default::default()
+        }))
+    });
+
+    let response = project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 7, "pageTitle".to_string(), cx)
+        })
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(response.len(), 1);
+    assert_eq!(
+        buffer.update(cx, |buffer, _| buffer.text()),
+        "const pageTitle = ref(1)"
+    );
+}
+
+#[gpui::test]
+async fn test_rename_fallback_all_servers_fail(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let rename_capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+
+    let settings_json = json!({
+        "languages": {
+            "Vue.js": {
+                "language_servers": ["vue-language-server", "vtsls"]
+            }
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".zed": {
+                "settings.json": settings_json.to_string(),
+            },
+            "App.vue": "const appTitle = ref(1)",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(vue_lang());
+
+    let mut vue_servers = language_registry.register_fake_lsp(
+        "Vue.js",
+        FakeLspAdapter {
+            name: "vue-language-server",
+            capabilities: rename_capabilities.clone(),
+            ..Default::default()
+        },
+    );
+    let mut ts_servers = language_registry.register_fake_lsp(
+        "Vue.js",
+        FakeLspAdapter {
+            name: "vtsls",
+            capabilities: rename_capabilities.clone(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/project/App.vue"), cx)
+        })
+        .await
+        .unwrap();
+
+    let vue_server = vue_servers.next().await.unwrap();
+    let ts_server = ts_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // Both servers return None (InvalidPosition).
+    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(None)
+    });
+    ts_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(None)
+    });
+
+    let response = project
+        .update(cx, |project, cx| {
+            project.prepare_rename(buffer.clone(), 7, cx)
+        })
+        .await
+        .unwrap();
+    assert_matches!(response, PrepareRenameResponse::InvalidPosition);
+}
+
+#[gpui::test]
 async fn test_search(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -12503,6 +12826,20 @@ fn js_lang() -> Arc<Language> {
             name: "JavaScript".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    ))
+}
+
+fn vue_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Vue.js".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["vue".to_string()],
                 ..Default::default()
             },
             ..Default::default()
