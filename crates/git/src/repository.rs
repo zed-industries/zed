@@ -3517,14 +3517,6 @@ impl GitBinary {
             command.env("GIT_INDEX_FILE", index_file_path);
         }
         command.envs(&self.envs);
-        log::debug!(
-            "git: {}",
-            std::iter::once(command.get_program())
-                .chain(command.get_args())
-                .map(|a| a.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
         command
     }
 }
