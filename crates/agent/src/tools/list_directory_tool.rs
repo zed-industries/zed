@@ -1,16 +1,19 @@
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_global_skill_path, resolve_project_path,
 };
-use crate::{AgentTool, ToolCallEventStream};
-use agent_client_protocol::ToolKind;
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
+use fs::Fs;
+use futures::StreamExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::fmt::Write;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -48,6 +51,54 @@ pub struct ListDirectoryTool {
 impl ListDirectoryTool {
     pub fn new(project: Entity<Project>) -> Self {
         Self { project }
+    }
+
+    /// List the contents of a directory under the global skills tree directly
+    /// via the filesystem. Used for skill resources that live outside any
+    /// worktree.
+    async fn list_global_skill_directory(
+        canonical_path: &Path,
+        fs: &dyn Fs,
+        input_path: &str,
+    ) -> Result<String, String> {
+        let mut entries = fs
+            .read_dir(canonical_path)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut folders = Vec::new();
+        let mut files = Vec::new();
+        while let Some(entry) = entries.next().await {
+            let Ok(entry_path) = entry else {
+                continue;
+            };
+            let display = entry_path.to_string_lossy().into_owned();
+            // Use a metadata call rather than `is_dir` so we can short-circuit
+            // on missing entries (e.g. dangling symlinks).
+            let Ok(Some(metadata)) = fs.metadata(&entry_path).await else {
+                continue;
+            };
+            if metadata.is_dir {
+                folders.push(display);
+            } else {
+                files.push(display);
+            }
+        }
+
+        folders.sort();
+        files.sort();
+
+        let mut output = String::new();
+        if !folders.is_empty() {
+            writeln!(output, "# Folders:\n{}", folders.join("\n")).unwrap();
+        }
+        if !files.is_empty() {
+            writeln!(output, "\n# Files:\n{}", files.join("\n")).unwrap();
+        }
+        if output.is_empty() {
+            writeln!(output, "{input_path} is empty.").unwrap();
+        }
+        Ok(output)
     }
 
     fn build_directory_output(
@@ -127,8 +178,8 @@ impl AgentTool for ListDirectoryTool {
 
     const NAME: &'static str = "list_directory";
 
-    fn kind() -> ToolKind {
-        ToolKind::Read
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Read
     }
 
     fn initial_title(
@@ -146,35 +197,54 @@ impl AgentTool for ListDirectoryTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
-        // Sometimes models will return these even though we tell it to give a path and not a glob.
-        // When this happens, just list the root worktree directories.
-        if matches!(input.path.as_str(), "." | "" | "./" | "*") {
-            let output = self
-                .project
-                .read(cx)
-                .worktrees(cx)
-                .filter_map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    let root_entry = worktree.root_entry()?;
-                    if root_entry.is_dir() {
-                        Some(root_entry.path.display(worktree.path_style()))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            return Task::ready(Ok(output));
-        }
-
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            // Sometimes models will return these even though we tell it to give a path and not a glob.
+            // When this happens, just list the root worktree directories.
+            if matches!(input.path.as_str(), "." | "" | "./" | "*") {
+                let output = project.read_with(cx, |project, cx| {
+                    project
+                        .worktrees(cx)
+                        .filter_map(|worktree| {
+                            let worktree = worktree.read(cx);
+                            let root_entry = worktree.root_entry()?;
+                            if root_entry.is_dir() {
+                                Some(root_entry.path.display(worktree.path_style()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+
+                return Ok(output);
+            }
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+
+            // Fast path: a global skill resource lives outside any worktree, so
+            // standard project-path resolution would refuse it. If the path
+            // resolves under the global skills tree, list it directly.
+            if let Some(skill_path) =
+                resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
+            {
+                return Self::list_global_skill_directory(
+                    &skill_path,
+                    fs.as_ref(),
+                    &input.path,
+                )
+                .await;
+            }
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let (project_path, symlink_canonical_target) =
@@ -187,7 +257,7 @@ impl AgentTool for ListDirectoryTool {
                             canonical_target,
                         } => (project_path, Some(canonical_target)),
                     })
-                })?;
+                }).map_err(|e| e.to_string())?;
 
             // Check settings exclusions synchronously
             project.read_with(cx, |project, cx| {
@@ -236,7 +306,7 @@ impl AgentTool for ListDirectoryTool {
                 }
 
                 anyhow::Ok(())
-            })?;
+            }).map_err(|e| e.to_string())?;
 
             if let Some(canonical_target) = &symlink_canonical_target {
                 let authorize = cx.update(|cx| {
@@ -248,13 +318,13 @@ impl AgentTool for ListDirectoryTool {
                         cx,
                     )
                 });
-                authorize.await?;
+                authorize.await.map_err(|e| e.to_string())?;
             }
 
             let list_path = input.path;
             cx.update(|cx| {
                 Self::build_directory_output(&project, &project_path, &list_path, cx)
-            })
+            }).map_err(|e| e.to_string())
         })
     }
 }
@@ -262,8 +332,6 @@ impl AgentTool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
-    use fs::Fs as _;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use project::{FakeFs, Project};
@@ -323,7 +391,13 @@ mod tests {
             path: "project".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -344,7 +418,13 @@ mod tests {
             path: "project/src".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -365,7 +445,13 @@ mod tests {
             path: "project/tests".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(!output.contains("# Folders:"));
@@ -393,7 +479,13 @@ mod tests {
             path: "project/empty_dir".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert_eq!(output, "project/empty_dir is empty.\n");
@@ -420,23 +512,30 @@ mod tests {
             path: "project/nonexistent".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
-        assert!(output.unwrap_err().to_string().contains("Path not found"));
+        assert!(output.unwrap_err().contains("Path not found"));
 
         // Test trying to list a file instead of directory
         let input = ListDirectoryToolInput {
             path: "project/file.txt".into(),
         };
         let output = cx
-            .update(|cx| tool.run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
-        assert!(
-            output
-                .unwrap_err()
-                .to_string()
-                .contains("is not a directory")
-        );
+        assert!(output.unwrap_err().contains("is not a directory"));
     }
 
     #[gpui::test]
@@ -498,7 +597,13 @@ mod tests {
             path: "project".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
 
@@ -525,13 +630,16 @@ mod tests {
             path: "project/.secretdir".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
         assert!(
-            output
-                .unwrap_err()
-                .to_string()
-                .contains("file_scan_exclusions"),
+            output.unwrap_err().contains("file_scan_exclusions"),
             "Error should mention file_scan_exclusions"
         );
 
@@ -540,7 +648,13 @@ mod tests {
             path: "project/visible_dir".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
 
@@ -645,7 +759,13 @@ mod tests {
             path: "worktree1/src".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("main.rs"), "Should list main.rs");
@@ -663,7 +783,13 @@ mod tests {
             path: "worktree1/tests".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("test.rs"), "Should list test.rs");
@@ -677,7 +803,13 @@ mod tests {
             path: "worktree2/lib".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("public.js"), "Should list public.js");
@@ -695,7 +827,13 @@ mod tests {
             path: "worktree2/docs".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await
             .unwrap();
         assert!(output.contains("README.md"), "Should list README.md");
@@ -709,14 +847,15 @@ mod tests {
             path: "worktree1/src/secret.rs".into(),
         };
         let output = cx
-            .update(|cx| tool.clone().run(input, ToolCallEventStream::test().0, cx))
+            .update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
             .await;
-        assert!(
-            output
-                .unwrap_err()
-                .to_string()
-                .contains("Cannot list directory"),
-        );
+        assert!(output.unwrap_err().contains("Cannot list directory"),);
     }
 
     #[gpui::test]
@@ -756,9 +895,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ListDirectoryToolInput {
+                ToolInput::resolved(ListDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -772,7 +911,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -817,9 +959,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ListDirectoryToolInput {
+                ToolInput::resolved(ListDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -884,9 +1026,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ListDirectoryToolInput {
+                    ToolInput::resolved(ListDirectoryToolInput {
                         path: "project/link_to_external".into(),
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -897,19 +1039,17 @@ mod tests {
             result.is_err(),
             "Expected list_directory to fail on private path"
         );
-        let error = result.unwrap_err().to_string();
+        let error = result.unwrap_err();
         assert!(
             error.contains("private"),
             "Expected private path validation error, got: {error}"
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested when validation fails before listing",
         );
@@ -937,9 +1077,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ListDirectoryToolInput {
+                    ToolInput::resolved(ListDirectoryToolInput {
                         path: "project/src".into(),
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -951,13 +1091,11 @@ mod tests {
             "Normal path should succeed without authorization"
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested for normal paths",
         );
@@ -994,9 +1132,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ListDirectoryToolInput {
+                    ToolInput::resolved(ListDirectoryToolInput {
                         path: "project/link_dir".into(),
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -1008,15 +1146,102 @@ mod tests {
             "Intra-project symlink should succeed without authorization: {result:?}",
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested for intra-project symlinks",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_global_skill_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            skill_dir.join("SKILL.md"),
+            b"---\nname: my-skill\ndescription: x\n---\nbody".to_vec(),
+        )
+        .await;
+        fs.insert_file(skill_dir.join("rubric.md"), b"# rubric".to_vec())
+            .await;
+        fs.create_dir(&skill_dir.join("scripts")).await.unwrap();
+        fs.insert_file(skill_dir.join("scripts/run.py"), b"print('hi')".to_vec())
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let tool = Arc::new(ListDirectoryTool::new(project));
+
+        let input = ListDirectoryToolInput {
+            path: skill_dir.to_string_lossy().into_owned(),
+        };
+        let output = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Output should include both the file siblings of SKILL.md and the
+        // nested resource directory — listed by their absolute paths.
+        assert!(
+            output.contains("# Folders:"),
+            "expected folders section: {output}"
+        );
+        assert!(
+            output.contains("scripts"),
+            "expected nested directory: {output}"
+        );
+        assert!(
+            output.contains("SKILL.md"),
+            "expected SKILL.md to appear: {output}"
+        );
+        assert!(
+            output.contains("rubric.md"),
+            "expected rubric.md to appear: {output}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_outside_skills_dir_still_rejected(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+        fs.create_dir(path!("/etc").as_ref()).await.unwrap();
+        fs.insert_file(path!("/etc/secret"), b"top secret".to_vec())
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let tool = Arc::new(ListDirectoryTool::new(project));
+
+        let input = ListDirectoryToolInput {
+            path: path!("/etc").to_string(),
+        };
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "path outside skills dir should be rejected"
         );
     }
 }

@@ -16,4 +16,8 @@ if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
 
     which typos >/dev/null 2>&1 || exit 0
     typos --config typos.toml
+
+    which buf >/dev/null 2>&1 || exit 0
+    buf lint crates/proto/proto
+    buf format --diff --exit-code crates/proto/proto
 fi

@@ -1,13 +1,14 @@
 use editor::{
-    Anchor, Editor, ExcerptId, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
+    Anchor, Editor, HighlightKey, MultiBufferSnapshot, SelectionEffects, ToPoint,
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
-    Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
+    Action, App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
+use language::{BufferId, Point, ToOffset};
 use menu::{SelectNext, SelectPrevious};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
@@ -37,6 +38,8 @@ actions!(
         ToggleTextHighlights,
         /// Toggles showing semantic token highlights.
         ToggleSemanticTokens,
+        /// Toggles showing syntax token highlights.
+        ToggleSyntaxTokens,
     ]
 );
 
@@ -61,9 +64,14 @@ pub fn init(cx: &mut App) {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HighlightCategory {
     Text(HighlightKey),
+    SyntaxToken {
+        capture_name: SharedString,
+        theme_key: Option<SharedString>,
+    },
     SemanticToken {
         token_type: Option<SharedString>,
         token_modifiers: Option<SharedString>,
+        theme_key: Option<SharedString>,
     },
 }
 
@@ -71,34 +79,46 @@ impl HighlightCategory {
     fn label(&self) -> SharedString {
         match self {
             HighlightCategory::Text(key) => format!("text: {key:?}").into(),
+            HighlightCategory::SyntaxToken {
+                capture_name,
+                theme_key: Some(theme_key),
+            } => format!("syntax: {capture_name} \u{2192} {theme_key}").into(),
+            HighlightCategory::SyntaxToken {
+                capture_name,
+                theme_key: None,
+            } => format!("syntax: {capture_name}").into(),
             HighlightCategory::SemanticToken {
-                token_type: Some(token_type),
-                token_modifiers: Some(modifiers),
-            } => format!("semantic token: {token_type} [{modifiers}]").into(),
-            HighlightCategory::SemanticToken {
-                token_type: Some(token_type),
-                token_modifiers: None,
-            } => format!("semantic token: {token_type}").into(),
-            HighlightCategory::SemanticToken {
-                token_type: None,
-                token_modifiers: Some(modifiers),
-            } => format!("semantic token [{modifiers}]").into(),
-            HighlightCategory::SemanticToken {
-                token_type: None,
-                token_modifiers: None,
-            } => "semantic token".into(),
+                token_type,
+                token_modifiers,
+                theme_key,
+            } => {
+                let label = match (token_type, token_modifiers) {
+                    (Some(token_type), Some(modifiers)) => {
+                        format!("semantic token: {token_type} [{modifiers}]")
+                    }
+                    (Some(token_type), None) => format!("semantic token: {token_type}"),
+                    (None, Some(modifiers)) => format!("semantic token [{modifiers}]"),
+                    (None, None) => "semantic token".to_string(),
+                };
+
+                if let Some(theme_key) = theme_key {
+                    format!("{label} \u{2192} {theme_key}").into()
+                } else {
+                    label.into()
+                }
+            }
         }
     }
 }
 
 #[derive(Debug, Clone)]
 struct HighlightEntry {
-    excerpt_id: ExcerptId,
     range: Range<Anchor>,
+    buffer_id: BufferId,
+    buffer_point_range: Range<Point>,
     range_display: SharedString,
     style: HighlightStyle,
     category: HighlightCategory,
-    sort_key: (ExcerptId, u32, u32, u32, u32),
 }
 
 /// An item in the display list: either a separator between excerpts or a highlight entry.
@@ -124,6 +144,7 @@ pub struct HighlightsTreeView {
     display_items: Vec<DisplayItem>,
     is_singleton: bool,
     show_text_highlights: bool,
+    show_syntax_tokens: bool,
     show_semantic_tokens: bool,
     skip_next_scroll: bool,
 }
@@ -157,6 +178,7 @@ impl HighlightsTreeView {
             display_items: Vec::new(),
             is_singleton: true,
             show_text_highlights: true,
+            show_syntax_tokens: true,
             show_semantic_tokens: true,
             skip_next_scroll: false,
         };
@@ -187,20 +209,32 @@ impl HighlightsTreeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(editor) = active_item
-            .filter(|item| item.item_id() != cx.entity_id())
-            .and_then(|item| item.downcast::<Editor>())
-        else {
-            self.clear(cx);
-            return;
+        let active_editor = match active_item {
+            Some(active_item) => {
+                if active_item.item_id() == cx.entity_id() {
+                    return;
+                } else {
+                    match active_item.downcast::<Editor>() {
+                        Some(active_editor) => active_editor,
+                        None => {
+                            self.clear(cx);
+                            return;
+                        }
+                    }
+                }
+            }
+            None => {
+                self.clear(cx);
+                return;
+            }
         };
 
         let is_different_editor = self
             .editor
             .as_ref()
-            .is_none_or(|state| state.editor != editor);
+            .is_none_or(|state| state.editor != active_editor);
         if is_different_editor {
-            self.set_editor(editor, window, cx);
+            self.set_editor(active_editor, window, cx);
         }
     }
 
@@ -280,23 +314,22 @@ impl HighlightsTreeView {
 
         let mut entries = Vec::new();
 
+        let semantic_theme = cx.theme().syntax().clone();
         display_map.update(cx, |display_map, cx| {
             for (key, text_highlights) in display_map.all_text_highlights() {
                 for range in &text_highlights.1 {
-                    let excerpt_id = range.start.excerpt_id;
-                    let (range_display, sort_key) = format_anchor_range(
-                        range,
-                        excerpt_id,
-                        &multi_buffer_snapshot,
-                        is_singleton,
-                    );
+                    let Some((range_display, buffer_id, buffer_point_range)) =
+                        format_anchor_range(range, &multi_buffer_snapshot)
+                    else {
+                        continue;
+                    };
                     entries.push(HighlightEntry {
-                        excerpt_id,
                         range: range.clone(),
+                        buffer_id,
                         range_display,
                         style: text_highlights.0,
                         category: HighlightCategory::Text(*key),
-                        sort_key,
+                        buffer_point_range,
                     });
                 }
             }
@@ -309,13 +342,11 @@ impl HighlightsTreeView {
                         .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
                     for token in tokens.iter() {
                         let range = token.range.start..token.range.end;
-                        let excerpt_id = range.start.excerpt_id;
-                        let (range_display, sort_key) = format_anchor_range(
-                            &range,
-                            excerpt_id,
-                            &multi_buffer_snapshot,
-                            is_singleton,
-                        );
+                        let Some((range_display, entry_buffer_id, buffer_point_range)) =
+                            format_anchor_range(&range, &multi_buffer_snapshot)
+                        else {
+                            continue;
+                        };
                         let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
                             token.server_id,
                             language_name.as_ref(),
@@ -323,9 +354,37 @@ impl HighlightsTreeView {
                         ) else {
                             continue;
                         };
+
+                        let theme_key =
+                            stylizer
+                                .rules_for_token(token.token_type)
+                                .and_then(|rules| {
+                                    rules
+                                        .iter()
+                                        .filter(|rule| {
+                                            rule.token_modifiers.iter().all(|modifier| {
+                                                stylizer
+                                                    .has_modifier(token.token_modifiers, modifier)
+                                            })
+                                        })
+                                        .fold(None, |theme_key, rule| {
+                                            rule.style
+                                                .iter()
+                                                .find(|style_name| {
+                                                    semantic_theme
+                                                        .style_for_name(style_name)
+                                                        .is_some()
+                                                })
+                                                .map(|style_name| {
+                                                    SharedString::from(style_name.clone())
+                                                })
+                                                .or(theme_key)
+                                        })
+                                });
+
                         entries.push(HighlightEntry {
-                            excerpt_id,
                             range,
+                            buffer_id: entry_buffer_id,
                             range_display,
                             style: interner[token.style],
                             category: HighlightCategory::SemanticToken {
@@ -333,20 +392,97 @@ impl HighlightsTreeView {
                                 token_modifiers: stylizer
                                     .token_modifiers(token.token_modifiers)
                                     .map(SharedString::from),
+                                theme_key,
                             },
-                            sort_key,
+                            buffer_point_range,
                         });
                     }
                 }
             });
         });
 
+        let syntax_theme = cx.theme().syntax().clone();
+        for excerpt_range in multi_buffer_snapshot.excerpts() {
+            let Some(buffer_snapshot) =
+                multi_buffer_snapshot.buffer_for_id(excerpt_range.context.start.buffer_id)
+            else {
+                continue;
+            };
+
+            let start_offset = excerpt_range.context.start.to_offset(buffer_snapshot);
+            let end_offset = excerpt_range.context.end.to_offset(buffer_snapshot);
+            let range = start_offset..end_offset;
+
+            let captures = buffer_snapshot.captures(range, |grammar| {
+                grammar.highlights_config.as_ref().map(|c| &c.query)
+            });
+            let grammars: Vec<_> = captures.grammars().to_vec();
+            let highlight_maps: Vec<_> = grammars.iter().map(|g| g.highlight_map()).collect();
+
+            for capture in captures {
+                let Some(highlight_id) = highlight_maps[capture.grammar_index].get(capture.index)
+                else {
+                    continue;
+                };
+                let Some(style) = syntax_theme.get(highlight_id).cloned() else {
+                    continue;
+                };
+
+                let theme_key = syntax_theme
+                    .get_capture_name(highlight_id)
+                    .map(|theme_key| SharedString::from(theme_key.to_string()));
+
+                let capture_name = grammars[capture.grammar_index]
+                    .highlights_config
+                    .as_ref()
+                    .and_then(|config| config.query.capture_names().get(capture.index as usize))
+                    .map(|capture_name| SharedString::from((*capture_name).to_string()))
+                    .unwrap_or_else(|| SharedString::from("unknown"));
+
+                let start_anchor = buffer_snapshot.anchor_before(capture.node.start_byte());
+                let end_anchor = buffer_snapshot.anchor_after(capture.node.end_byte());
+
+                let start = multi_buffer_snapshot.anchor_in_excerpt(start_anchor);
+                let end = multi_buffer_snapshot.anchor_in_excerpt(end_anchor);
+
+                let (start, end) = match (start, end) {
+                    (Some(s), Some(e)) => (s, e),
+                    _ => continue,
+                };
+
+                let range = start..end;
+                let Some((range_display, buffer_id, buffer_point_range)) =
+                    format_anchor_range(&range, &multi_buffer_snapshot)
+                else {
+                    continue;
+                };
+
+                entries.push(HighlightEntry {
+                    range,
+                    buffer_id,
+                    range_display,
+                    style,
+                    category: HighlightCategory::SyntaxToken {
+                        capture_name,
+                        theme_key,
+                    },
+                    buffer_point_range,
+                });
+            }
+        }
+
         entries.sort_by(|a, b| {
-            a.sort_key
-                .cmp(&b.sort_key)
+            a.buffer_id
+                .cmp(&b.buffer_id)
+                .then_with(|| a.buffer_point_range.start.cmp(&b.buffer_point_range.start))
+                .then_with(|| a.buffer_point_range.end.cmp(&b.buffer_point_range.end))
                 .then_with(|| a.category.cmp(&b.category))
         });
-        entries.dedup_by(|a, b| a.sort_key == b.sort_key && a.category == b.category);
+        entries.dedup_by(|a, b| {
+            a.buffer_id == b.buffer_id
+                && a.buffer_point_range == b.buffer_point_range
+                && a.category == b.category
+        });
 
         self.cached_entries = entries;
         self.rebuild_display_items(&multi_buffer_snapshot, cx);
@@ -362,7 +498,7 @@ impl HighlightsTreeView {
     fn rebuild_display_items(&mut self, snapshot: &MultiBufferSnapshot, cx: &App) {
         self.display_items.clear();
 
-        let mut last_excerpt_id: Option<ExcerptId> = None;
+        let mut last_range_end: Option<Anchor> = None;
 
         for (entry_ix, entry) in self.cached_entries.iter().enumerate() {
             if !self.should_show_entry(entry) {
@@ -370,11 +506,14 @@ impl HighlightsTreeView {
             }
 
             if !self.is_singleton {
-                let excerpt_changed =
-                    last_excerpt_id.is_none_or(|last_id| last_id != entry.excerpt_id);
+                let excerpt_changed = last_range_end.is_none_or(|anchor| {
+                    snapshot
+                        .excerpt_containing(anchor..entry.range.start)
+                        .is_none()
+                });
                 if excerpt_changed {
-                    last_excerpt_id = Some(entry.excerpt_id);
-                    let label = excerpt_label_for(entry.excerpt_id, snapshot, cx);
+                    last_range_end = Some(entry.range.end);
+                    let label = excerpt_label_for(entry, snapshot, cx);
                     self.display_items
                         .push(DisplayItem::ExcerptSeparator { label });
                 }
@@ -387,15 +526,12 @@ impl HighlightsTreeView {
     fn should_show_entry(&self, entry: &HighlightEntry) -> bool {
         match entry.category {
             HighlightCategory::Text(_) => self.show_text_highlights,
+            HighlightCategory::SyntaxToken { .. } => self.show_syntax_tokens,
             HighlightCategory::SemanticToken { .. } => self.show_semantic_tokens,
         }
     }
 
     fn scroll_to_cursor_position(&mut self, cursor: &Anchor, snapshot: &MultiBufferSnapshot) {
-        let cursor_point = cursor.to_point(snapshot);
-        let cursor_key = (cursor_point.row, cursor_point.column);
-        let cursor_excerpt = cursor.excerpt_id;
-
         let best = self
             .display_items
             .iter()
@@ -408,17 +544,18 @@ impl HighlightsTreeView {
                 _ => None,
             })
             .filter(|(_, _, entry)| {
-                let (excerpt_id, start_row, start_col, end_row, end_col) = entry.sort_key;
-                if !self.is_singleton && excerpt_id != cursor_excerpt {
-                    return false;
-                }
-                let start = (start_row, start_col);
-                let end = (end_row, end_col);
-                cursor_key >= start && cursor_key <= end
+                entry.range.start.cmp(&cursor, snapshot).is_le()
+                    && cursor.cmp(&entry.range.end, snapshot).is_lt()
             })
             .min_by_key(|(_, _, entry)| {
-                let (_, start_row, start_col, end_row, end_col) = entry.sort_key;
-                (end_row - start_row, end_col.saturating_sub(start_col))
+                (
+                    entry.buffer_point_range.end.row - entry.buffer_point_range.start.row,
+                    entry
+                        .buffer_point_range
+                        .end
+                        .column
+                        .saturating_sub(entry.buffer_point_range.start.column),
+                )
             })
             .map(|(display_ix, entry_ix, _)| (display_ix, entry_ix));
 
@@ -695,14 +832,14 @@ impl Render for HighlightsTreeView {
                                     this.child(Label::new("All highlights are filtered out"))
                                         .child(
                                             Label::new(
-                                                "Enable text or semantic highlights in the toolbar",
+                                                "Enable text, syntax, or semantic highlights in the toolbar",
                                             )
                                             .size(LabelSize::Small),
                                         )
                                 } else {
                                     this.child(Label::new("No highlights found")).child(
                                         Label::new(
-                                            "The editor has no text or semantic token highlights",
+                                            "The editor has no text, syntax, or semantic token highlights",
                                         )
                                         .size(LabelSize::Small),
                                     )
@@ -762,6 +899,7 @@ impl Item for HighlightsTreeView {
         Task::ready(Some(cx.new(|cx| {
             let mut clone = Self::new(self.workspace_handle.clone(), None, window, cx);
             clone.show_text_highlights = self.show_text_highlights;
+            clone.show_syntax_tokens = self.show_syntax_tokens;
             clone.show_semantic_tokens = self.show_semantic_tokens;
             clone.skip_next_scroll = false;
             if let Some(editor) = &self.editor {
@@ -810,14 +948,18 @@ impl HighlightsTreeToolbarItemView {
     }
 
     fn render_settings_button(&self, cx: &Context<Self>) -> PopoverMenu<ContextMenu> {
-        let (show_text, show_semantic) = self
+        let (show_text, show_syntax, show_semantic) = self
             .tree_view
             .as_ref()
             .map(|view| {
                 let v = view.read(cx);
-                (v.show_text_highlights, v.show_semantic_tokens)
+                (
+                    v.show_text_highlights,
+                    v.show_syntax_tokens,
+                    v.show_semantic_tokens,
+                )
             })
-            .unwrap_or((true, true));
+            .unwrap_or((true, true, true));
 
         let tree_view = self.tree_view.as_ref().map(|v| v.downgrade());
 
@@ -829,10 +971,11 @@ impl HighlightsTreeToolbarItemView {
                     .toggle_state(self.toggle_settings_handle.is_deployed()),
                 Tooltip::text("Highlights Settings"),
             )
-            .anchor(Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .with_handle(self.toggle_settings_handle.clone())
             .menu(move |window, cx| {
                 let tree_view_for_text = tree_view.clone();
+                let tree_view_for_syntax = tree_view.clone();
                 let tree_view_for_semantic = tree_view.clone();
 
                 let menu = ContextMenu::build(window, cx, move |menu, _, _| {
@@ -847,6 +990,30 @@ impl HighlightsTreeToolbarItemView {
                                 if let Some(view) = tree_view.as_ref() {
                                     view.update(cx, |view, cx| {
                                         view.show_text_highlights = !view.show_text_highlights;
+                                        let snapshot = view.editor.as_ref().map(|s| {
+                                            s.editor.read(cx).buffer().read(cx).snapshot(cx)
+                                        });
+                                        if let Some(snapshot) = snapshot {
+                                            view.rebuild_display_items(&snapshot, cx);
+                                        }
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            }
+                        },
+                    )
+                    .toggleable_entry(
+                        "Syntax Tokens",
+                        show_syntax,
+                        IconPosition::Start,
+                        Some(ToggleSyntaxTokens.boxed_clone()),
+                        {
+                            let tree_view = tree_view_for_syntax.clone();
+                            move |_, cx| {
+                                if let Some(view) = tree_view.as_ref() {
+                                    view.update(cx, |view, cx| {
+                                        view.show_syntax_tokens = !view.show_syntax_tokens;
                                         let snapshot = view.editor.as_ref().map(|s| {
                                             s.editor.read(cx).buffer().read(cx).snapshot(cx)
                                         });
@@ -922,12 +1089,13 @@ impl ToolbarItemView for HighlightsTreeToolbarItemView {
 }
 
 fn excerpt_label_for(
-    excerpt_id: ExcerptId,
+    entry: &HighlightEntry,
     snapshot: &MultiBufferSnapshot,
     cx: &App,
 ) -> SharedString {
-    let buffer = snapshot.buffer_for_excerpt(excerpt_id);
-    let path_label = buffer
+    let path_label = snapshot
+        .anchor_to_buffer_anchor(entry.range.start)
+        .and_then(|(anchor, _)| snapshot.buffer_for_id(anchor.buffer_id))
         .and_then(|buf| buf.file())
         .map(|file| {
             let full_path = file.full_path(cx);
@@ -939,50 +1107,21 @@ fn excerpt_label_for(
 
 fn format_anchor_range(
     range: &Range<Anchor>,
-    excerpt_id: ExcerptId,
     snapshot: &MultiBufferSnapshot,
-    is_singleton: bool,
-) -> (SharedString, (ExcerptId, u32, u32, u32, u32)) {
-    if is_singleton {
-        let start = range.start.to_point(snapshot);
-        let end = range.end.to_point(snapshot);
-        let display = SharedString::from(format!(
-            "[{}:{} - {}:{}]",
-            start.row + 1,
-            start.column + 1,
-            end.row + 1,
-            end.column + 1,
-        ));
-        let sort_key = (excerpt_id, start.row, start.column, end.row, end.column);
-        (display, sort_key)
-    } else {
-        let buffer = snapshot.buffer_for_excerpt(excerpt_id);
-        if let Some(buffer) = buffer {
-            let start = language::ToPoint::to_point(&range.start.text_anchor, buffer);
-            let end = language::ToPoint::to_point(&range.end.text_anchor, buffer);
-            let display = SharedString::from(format!(
-                "[{}:{} - {}:{}]",
-                start.row + 1,
-                start.column + 1,
-                end.row + 1,
-                end.column + 1,
-            ));
-            let sort_key = (excerpt_id, start.row, start.column, end.row, end.column);
-            (display, sort_key)
-        } else {
-            let start = range.start.to_point(snapshot);
-            let end = range.end.to_point(snapshot);
-            let display = SharedString::from(format!(
-                "[{}:{} - {}:{}]",
-                start.row + 1,
-                start.column + 1,
-                end.row + 1,
-                end.column + 1,
-            ));
-            let sort_key = (excerpt_id, start.row, start.column, end.row, end.column);
-            (display, sort_key)
-        }
-    }
+) -> Option<(SharedString, BufferId, Range<Point>)> {
+    let start = range.start.to_point(snapshot);
+    let end = range.end.to_point(snapshot);
+    let ((start_buffer, start), (_, end)) = snapshot
+        .point_to_buffer_point(start)
+        .zip(snapshot.point_to_buffer_point(end))?;
+    let display = SharedString::from(format!(
+        "[{}:{} - {}:{}]",
+        start.row + 1,
+        start.column + 1,
+        end.row + 1,
+        end.column + 1,
+    ));
+    Some((display, start_buffer.remote_id(), start..end))
 }
 
 fn render_style_preview(style: HighlightStyle, selected: bool, cx: &App) -> Div {

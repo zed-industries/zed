@@ -5,6 +5,8 @@ cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
     float grayscale_enhanced_contrast;
     float subpixel_enhanced_contrast;
+    uint is_bgr;
+    uint3 global_pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -384,6 +386,20 @@ float4 gradient_color(Background background,
                     break;
                 }
             }
+
+            // Dither to reduce banding in gradients (especially dark/alpha).
+            // Triangular-distributed noise breaks up 8-bit quantization steps.
+            // ±2/255 for RGB (enough for dark-on-dark compositing),
+            // ±3/255 for alpha (needs more because alpha × dark color = tiny steps).
+            {
+                float2 seed = position * 0.6180339887; // golden ratio spread
+                float r1 = frac(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
+                float r2 = frac(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
+                float tri = r1 + r2 - 1.0; // triangular PDF, range [-1, +1]
+                color.rgb += tri * 2.0 / 255.0;
+                color.a   += tri * 3.0 / 255.0;
+            }
+
             break;
         }
         case 2: {
@@ -406,11 +422,11 @@ float4 gradient_color(Background background,
             // checkerboard
             float size = background.gradient_angle_or_pattern_height;
             float2 relative_position = position - bounds.origin;
-            
+
             float x_index = floor(relative_position.x / size);
             float y_index = floor(relative_position.y / size);
             float should_be_colored = (x_index + y_index) % 2.0;
-            
+
             color = solid_color;
             color.a *= saturate(should_be_colored);
             break;
@@ -1143,6 +1159,9 @@ MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID,
 
 SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentInput input) {
     float3 sample = t_sprite.Sample(s_sprite, input.tile_position).rgb;
+    if (is_bgr) {
+        sample = sample.bgr;
+    }
     float3 alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, subpixel_enhanced_contrast, gamma_ratios);
 
     SubpixelSpriteFragmentOutput output;

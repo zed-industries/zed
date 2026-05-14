@@ -8,23 +8,23 @@ use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window, actions,
-    canvas, div, img, opaque_grey, point, px, size,
+    FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
+    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled,
+    Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
-use persistence::IMAGE_VIEWER;
+use persistence::ImageViewerDb;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
 use util::paths::PathExt;
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{BreadcrumbText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
+    item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
 };
 
 pub use crate::image_info::*;
@@ -50,7 +50,7 @@ const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 20.0;
 const ZOOM_STEP: f32 = 1.1;
 const SCROLL_LINE_MULTIPLIER: f32 = 20.0;
-const BASE_SQUARE_SIZE: f32 = 48.0;
+const BASE_SQUARE_SIZE: f32 = 32.0;
 
 pub struct ImageView {
     image_item: Entity<ImageItem>,
@@ -260,6 +260,11 @@ impl ImageView {
             cx.notify();
         }
     }
+
+    fn handle_pinch(&mut self, event: &PinchEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let zoom_factor = 1.0 + event.delta;
+        self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
+    }
 }
 
 struct ImageContentElement {
@@ -378,53 +383,17 @@ impl Element for ImageContentElement {
                     .w(scaled_width)
                     .h(scaled_height)
                     .child(
-                        canvas(
-                            |_, _, _| {},
-                            move |bounds, _, window, _cx| {
-                                let bounds_x: f32 = bounds.origin.x.into();
-                                let bounds_y: f32 = bounds.origin.y.into();
-                                let bounds_width: f32 = bounds.size.width.into();
-                                let bounds_height: f32 = bounds.size.height.into();
-                                let square_size = BASE_SQUARE_SIZE * zoom_level;
-                                let cols = (bounds_width / square_size).ceil() as i32 + 1;
-                                let rows = (bounds_height / square_size).ceil() as i32 + 1;
-                                for row in 0..rows {
-                                    for col in 0..cols {
-                                        if (row + col) % 2 == 0 {
-                                            continue;
-                                        }
-                                        let x = bounds_x + col as f32 * square_size;
-                                        let y = bounds_y + row as f32 * square_size;
-                                        let w = square_size.min(bounds_x + bounds_width - x);
-                                        let h = square_size.min(bounds_y + bounds_height - y);
-                                        if w > 0.0 && h > 0.0 {
-                                            let rect = Bounds::new(
-                                                point(px(x), px(y)),
-                                                size(px(w), px(h)),
-                                            );
-                                            window.paint_quad(gpui::fill(
-                                                rect,
-                                                opaque_grey(0.6, 1.0),
-                                            ));
-                                        }
-                                    }
-                                }
-                                let border_rect = Bounds::new(
-                                    point(px(bounds_x), px(bounds_y)),
-                                    size(px(bounds_width), px(bounds_height)),
-                                );
-                                window.paint_quad(gpui::outline(
-                                    border_rect,
-                                    border_color,
-                                    gpui::BorderStyle::default(),
-                                ));
-                            },
-                        )
-                        .size_full()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .bg(gpui::rgb(0xCCCCCD)),
+                        div()
+                            .size_full()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .child(div().size_full().bg(checkerboard(
+                                cx.theme().colors().panel_background,
+                                BASE_SQUARE_SIZE * zoom_level,
+                            )))
+                            .border_1()
+                            .border_color(border_color),
                     )
                     .child({
                         img(image)
@@ -558,15 +527,17 @@ impl Item for ImageView {
         }
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
-        let settings = ThemeSettings::get_global(cx);
+        let font = ThemeSettings::get_global(cx).buffer_font.clone();
 
-        Some(vec![BreadcrumbText {
-            text,
-            highlights: None,
-            font: Some(settings.buffer_font.clone()),
-        }])
+        Some((
+            vec![HighlightedText {
+                text: text.into(),
+                highlights: vec![],
+            }],
+            Some(font),
+        ))
     }
 
     fn can_split(&self) -> bool {
@@ -626,8 +597,9 @@ impl SerializableItem for ImageView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
+        let db = ImageViewerDb::global(cx);
         window.spawn(cx, async move |cx| {
-            let image_path = IMAGE_VIEWER
+            let image_path = db
                 .get_image_path(item_id, workspace_id)?
                 .context("No image path found")?;
 
@@ -660,13 +632,8 @@ impl SerializableItem for ImageView {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
-        delete_unloaded_items(
-            alive_items,
-            workspace_id,
-            "image_viewers",
-            &IMAGE_VIEWER,
-            cx,
-        )
+        let db = ImageViewerDb::global(cx);
+        delete_unloaded_items(alive_items, workspace_id, "image_viewers", &db, cx)
     }
 
     fn serialize(
@@ -680,12 +647,11 @@ impl SerializableItem for ImageView {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).abs_path(cx)?;
 
+        let db = ImageViewerDb::global(cx);
         Some(cx.background_spawn({
             async move {
                 log::debug!("Saving image at path {image_path:?}");
-                IMAGE_VIEWER
-                    .save_image_path(item_id, workspace_id, image_path)
-                    .await
+                db.save_image_path(item_id, workspace_id, image_path).await
             }
         }))
     }
@@ -715,8 +681,8 @@ impl Render for ImageView {
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
-            .child(
-                div()
+            .child({
+                let container = div()
                     .id("image-container")
                     .size_full()
                     .overflow_hidden()
@@ -726,13 +692,16 @@ impl Render for ImageView {
                         gpui::CursorStyle::OpenHand
                     })
                     .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_pinch(cx.listener(Self::handle_pinch))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
                     .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
                     .on_mouse_move(cx.listener(Self::handle_mouse_move))
-                    .child(ImageContentElement::new(cx.entity())),
-            )
+                    .child(ImageContentElement::new(cx.entity()));
+
+                container
+            })
     }
 }
 
@@ -914,7 +883,7 @@ mod persistence {
         )];
     }
 
-    db::static_connection!(IMAGE_VIEWER, ImageViewerDb, [WorkspaceDb]);
+    db::static_connection!(ImageViewerDb, [WorkspaceDb]);
 
     impl ImageViewerDb {
         query! {

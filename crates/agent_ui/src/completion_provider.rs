@@ -4,15 +4,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::acp::AcpThreadHistory;
-use acp_thread::{AgentSessionInfo, MentionUri};
+use crate::DEFAULT_THREAD_TITLE;
+use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
+use acp_thread::MentionUri;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
-use editor::{
-    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
-};
+use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
-use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, BackgroundExecutor, Entity, Focusable, SharedString, Task, WeakEntity, Window};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use multi_buffer::ToOffset as _;
@@ -24,9 +24,9 @@ use project::{
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
-use settings::{Settings, TerminalDockPosition};
+use settings::Settings;
 use terminal::terminal_settings::TerminalSettings;
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{Anchor, ToOffset as _, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
@@ -35,10 +35,107 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::truncate_and_remove_front;
 use workspace::Workspace;
-use workspace::dock::DockPosition;
 
 use crate::AgentPanel;
 use crate::mention_set::MentionSet;
+
+#[derive(Clone)]
+pub(crate) enum AgentContextSelection {
+    Editor(Vec<(Entity<Buffer>, Range<text::Anchor>)>),
+    Terminal(Vec<String>),
+}
+
+#[derive(Clone)]
+pub(crate) enum AgentContextSource {
+    Editor(WeakEntity<Editor>),
+    TerminalView(WeakEntity<TerminalView>),
+    TerminalPanel,
+}
+
+impl AgentContextSource {
+    pub(crate) fn read_selection(
+        &self,
+        workspace: &Workspace,
+        include_current_line: bool,
+        cx: &mut App,
+    ) -> Option<AgentContextSelection> {
+        match self {
+            Self::Editor(handle) => {
+                let editor = handle.upgrade()?;
+                let ranges = editor_selection_ranges(&editor, include_current_line, cx);
+                (!ranges.is_empty()).then_some(AgentContextSelection::Editor(ranges))
+            }
+            Self::TerminalView(handle) => {
+                let terminal_view = handle.upgrade()?;
+                terminal_view_selection(&terminal_view, cx)
+                    .map(|text| AgentContextSelection::Terminal(vec![text]))
+            }
+            Self::TerminalPanel => {
+                let panel = workspace.panel::<TerminalPanel>(cx)?;
+                let selections = panel.read(cx).terminal_selections(cx);
+                (!selections.is_empty()).then_some(AgentContextSelection::Terminal(selections))
+            }
+        }
+    }
+
+    pub(crate) fn from_focused(workspace: &Workspace, window: &Window, cx: &App) -> Option<Self> {
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && agent_panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return None;
+        }
+
+        if let Some(active_item) = workspace.active_item(cx) {
+            if let Some(editor) = active_item.act_as::<Editor>(cx) {
+                if editor.focus_handle(cx).is_focused(window) {
+                    return Some(Self::Editor(editor.downgrade()));
+                }
+            } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx)
+                && terminal_view.focus_handle(cx).is_focused(window)
+            {
+                return Some(Self::TerminalView(terminal_view.downgrade()));
+            }
+        }
+
+        if let Some(panel) = workspace.panel::<TerminalPanel>(cx)
+            && panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return Some(Self::TerminalPanel);
+        }
+
+        None
+    }
+
+    pub(crate) fn from_active(workspace: &Workspace, cx: &App) -> Option<Self> {
+        if let Some(active_item) = workspace.active_item(cx) {
+            if let Some(editor) = active_item.act_as::<Editor>(cx) {
+                return Some(Self::Editor(editor.downgrade()));
+            } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx) {
+                return Some(Self::TerminalView(terminal_view.downgrade()));
+            }
+        }
+        if terminal_panel_dock_is_open(workspace, cx) {
+            return Some(Self::TerminalPanel);
+        }
+        None
+    }
+
+    pub(crate) fn exists(&self, workspace: &Workspace, cx: &App) -> bool {
+        match self {
+            Self::Editor(handle) => handle.upgrade().is_some(),
+            Self::TerminalView(handle) => handle.upgrade().is_some(),
+            Self::TerminalPanel => terminal_panel_dock_is_open(workspace, cx),
+        }
+    }
+}
+
+fn terminal_panel_dock_is_open(workspace: &Workspace, cx: &App) -> bool {
+    if workspace.panel::<TerminalPanel>(cx).is_none() {
+        return false;
+    }
+    let position = TerminalSettings::get_global(cx).dock.into();
+    workspace.dock_at_position(position).read(cx).is_open()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PromptContextEntry {
@@ -63,6 +160,7 @@ pub(crate) enum PromptContextType {
     Thread,
     Rules,
     Diagnostics,
+    BranchDiff,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +199,7 @@ impl TryFrom<&str> for PromptContextType {
             "thread" => Ok(Self::Thread),
             "rule" => Ok(Self::Rules),
             "diagnostics" => Ok(Self::Diagnostics),
+            "diff" => Ok(Self::BranchDiff),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -115,6 +214,7 @@ impl PromptContextType {
             Self::Thread => "thread",
             Self::Rules => "rule",
             Self::Diagnostics => "diagnostics",
+            Self::BranchDiff => "branch diff",
         }
     }
 
@@ -126,6 +226,7 @@ impl PromptContextType {
             Self::Thread => "Threads",
             Self::Rules => "Rules",
             Self::Diagnostics => "Diagnostics",
+            Self::BranchDiff => "Branch Diff",
         }
     }
 
@@ -137,6 +238,7 @@ impl PromptContextType {
             Self::Thread => IconName::Thread,
             Self::Rules => IconName::Reader,
             Self::Diagnostics => IconName::Warning,
+            Self::BranchDiff => IconName::GitBranch,
         }
     }
 }
@@ -144,11 +246,17 @@ impl PromptContextType {
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(AgentSessionInfo),
-    RecentThread(AgentSessionInfo),
+    Thread(SessionMatch),
+    RecentThread(SessionMatch),
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
+    BranchDiff(BranchDiffMatch),
+}
+
+#[derive(Debug, Clone)]
+pub struct BranchDiffMatch {
+    pub base_ref: SharedString,
 }
 
 impl Match {
@@ -161,8 +269,15 @@ impl Match {
             Match::Symbol(_) => 1.,
             Match::Rules(_) => 1.,
             Match::Fetch(_) => 1.,
+            Match::BranchDiff(_) => 1.,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionMatch {
+    session_id: acp::SessionId,
+    title: SharedString,
 }
 
 pub struct EntryMatch {
@@ -170,12 +285,10 @@ pub struct EntryMatch {
     entry: PromptContextEntry,
 }
 
-fn session_title(session: &AgentSessionInfo) -> SharedString {
-    session
-        .title
-        .clone()
+fn session_title(title: Option<SharedString>) -> SharedString {
+    title
         .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| SharedString::new_static("New Thread"))
+        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE))
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +302,11 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
+    /// Origin label for this command (e.g. `"global"` or a worktree
+    /// root name for skills). When present, it's displayed in the
+    /// autocomplete popup after the command name so users can
+    /// disambiguate same-named commands from different scopes.
+    pub source: Option<SharedString>,
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -200,13 +318,18 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
+
+    /// Called once each time the user opens slash-command autocomplete
+    /// in the editor this delegate serves. Implementations may use it
+    /// to lazily kick off work that produces commands (for example,
+    /// scanning the global skills directory). The default is a no-op.
+    fn slash_autocomplete_invoked(&self, _cx: &mut App) {}
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -216,7 +339,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -225,7 +347,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            history,
             prompt_store,
         }
     }
@@ -254,19 +375,19 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 // inserted
                 confirm: Some(Arc::new(|_, _, _| true)),
             }),
-            PromptContextEntry::Action(action) => Self::completion_for_action(
-                action,
-                source_range,
-                editor,
-                mention_set,
-                workspace,
-                cx,
-            ),
+            PromptContextEntry::Action(action) => {
+                let selection = workspace.update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                });
+                Self::completion_for_action(action, source_range, editor, mention_set, selection)
+            }
         }
     }
 
     fn completion_for_thread(
-        thread_entry: AgentSessionInfo,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         source_range: Range<Anchor>,
         recent: bool,
         source: Arc<T>,
@@ -275,9 +396,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let title = session_title(&thread_entry);
+        let title = session_title(title);
         let uri = MentionUri::Thread {
-            id: thread_entry.session_id,
+            id: session_id,
             name: title.to_string(),
         };
 
@@ -528,136 +649,27 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        workspace: &Entity<Workspace>,
-        cx: &mut App,
+        selection: Option<AgentContextSelection>,
     ) -> Option<Completion> {
         let (new_text, on_action) = match action {
-            PromptContextAction::AddSelections => {
-                // Collect non-empty editor selections
-                let editor_selections: Vec<_> = selection_ranges(workspace, cx)
-                    .into_iter()
-                    .filter(|(buffer, range)| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        range.start.to_offset(&snapshot) != range.end.to_offset(&snapshot)
-                    })
-                    .collect();
-
-                // Collect terminal selections from all terminal views if the terminal panel is visible
-                let terminal_selections: Vec<String> =
-                    terminal_selections_if_panel_open(workspace, cx);
-
-                const EDITOR_PLACEHOLDER: &str = "selection ";
-                const TERMINAL_PLACEHOLDER: &str = "terminal ";
-
-                let selections = editor_selections
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, (buffer, range))| {
-                        (
-                            buffer,
-                            range,
-                            (EDITOR_PLACEHOLDER.len() * ix)
-                                ..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                let mut new_text: String = EDITOR_PLACEHOLDER.repeat(selections.len());
-
-                // Add terminal placeholders for each terminal selection
-                let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
-                    .into_iter()
-                    .map(|text| {
-                        let start = new_text.len();
-                        new_text.push_str(TERMINAL_PLACEHOLDER);
-                        (text, start..(new_text.len() - 1))
-                    })
-                    .collect();
-
-                let callback = Arc::new({
-                    let source_range = source_range.clone();
-                    move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
-                        let editor = editor.clone();
-                        let selections = selections.clone();
-                        let mention_set = mention_set.clone();
-                        let source_range = source_range.clone();
-                        let terminal_ranges = terminal_ranges.clone();
-                        window.defer(cx, move |window, cx| {
-                            if let Some(editor) = editor.upgrade() {
-                                // Insert editor selections
-                                if !selections.is_empty() {
-                                    mention_set
-                                        .update(cx, |store, cx| {
-                                            store.confirm_mention_for_selection(
-                                                source_range.clone(),
-                                                selections,
-                                                editor.clone(),
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .ok();
-                                }
-
-                                // Insert terminal selections
-                                for (terminal_text, terminal_range) in terminal_ranges {
-                                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-                                    let Some(start) =
-                                        snapshot.as_singleton_anchor(source_range.start)
-                                    else {
-                                        return;
-                                    };
-                                    let offset = start.to_offset(&snapshot);
-
-                                    let line_count = terminal_text.lines().count() as u32;
-                                    let mention_uri = MentionUri::TerminalSelection { line_count };
-                                    let range = snapshot.anchor_after(offset + terminal_range.start)
-                                        ..snapshot.anchor_after(offset + terminal_range.end);
-
-                                    let crease = crate::mention_set::crease_for_mention(
-                                        mention_uri.name().into(),
-                                        mention_uri.icon_path(cx),
-                                        range,
-                                        editor.downgrade(),
-                                    );
-
-                                    let crease_id = editor.update(cx, |editor, cx| {
-                                        let crease_ids =
-                                            editor.insert_creases(vec![crease.clone()], cx);
-                                        editor.fold_creases(vec![crease], false, window, cx);
-                                        crease_ids.first().copied().unwrap()
-                                    });
-
-                                    mention_set
-                                        .update(cx, |mention_set, _| {
-                                            mention_set.insert_mention(
-                                                crease_id,
-                                                mention_uri.clone(),
-                                                gpui::Task::ready(Ok(
-                                                    crate::mention_set::Mention::Text {
-                                                        content: terminal_text,
-                                                        tracked_buffers: vec![],
-                                                    },
-                                                ))
-                                                .shared(),
-                                            );
-                                        })
-                                        .ok();
-                                }
-                            }
-                        });
-                        false
-                    }
-                });
-
-                (
-                    new_text,
-                    callback
-                        as Arc<
-                            dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync,
-                        >,
-                )
-            }
+            PromptContextAction::AddSelections => match selection? {
+                AgentContextSelection::Editor(editor_selections) => {
+                    completion_text_for_editor_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        editor_selections,
+                    )
+                }
+                AgentContextSelection::Terminal(terminal_selections) => {
+                    completion_text_for_terminal_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        terminal_selections,
+                    )
+                }
+            },
         };
 
         Some(Completion {
@@ -774,7 +786,55 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         }
     }
 
+    fn build_branch_diff_completion(
+        base_ref: SharedString,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let uri = MentionUri::GitDiff {
+            base_ref: base_ref.to_string(),
+        };
+        let crease_text: SharedString = format!("Branch Diff (vs {})", base_ref).into();
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(crease_text.to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+        }
+    }
+
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
+        // Notify the delegate that slash autocomplete is being
+        // invoked, so it can lazily kick off any work that produces
+        // additional commands. Whatever it produces won't be visible
+        // in the current autocomplete pass (we read `available_commands`
+        // synchronously below), but will appear on the next invocation.
+        self.source.slash_autocomplete_invoked(cx);
+
         let commands = self.source.available_commands(cx);
         if commands.is_empty() {
             return Task::ready(Vec::new());
@@ -803,6 +863,27 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 .map(|mat| commands[mat.candidate_id].clone())
                 .collect()
         })
+    }
+
+    fn fetch_branch_diff_match(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Task<Option<BranchDiffMatch>>> {
+        let project = workspace.read(cx).project().clone();
+        let repo = project.read(cx).active_repository(cx)?;
+
+        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(true));
+
+        Some(cx.spawn(async move |_cx| {
+            let base_ref = default_branch_receiver
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()?;
+
+            Some(BranchDiffMatch { base_ref })
+        }))
     }
 
     fn search_mentions(
@@ -839,8 +920,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(history) = self.history.upgrade() {
-                    let sessions = history.read(cx).sessions().to_vec();
+                let sessions = collect_session_matches(cx);
+                if !sessions.is_empty() {
                     let search_task =
                         filter_sessions_by_query(query, cancellation_flag, sessions, cx);
                     cx.spawn(async move |_cx| {
@@ -877,6 +958,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
 
+            Some(PromptContextType::BranchDiff) => Task::ready(Vec::new()),
+
             None if query.is_empty() => {
                 let recent_task = self.recent_context_picker_entries(&workspace, cx);
                 let entries = self
@@ -890,9 +973,25 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     })
                     .collect::<Vec<_>>();
 
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
                 cx.spawn(async move |_cx| {
                     let mut matches = recent_task.await;
                     matches.extend(entries);
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        if let Some(branch_diff_match) = branch_diff_task.await {
+                            matches.push(Match::BranchDiff(branch_diff_match));
+                        }
+                    }
+
                     matches
                 })
             }
@@ -909,7 +1008,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .map(|(ix, entry)| StringMatchCandidate::new(ix, entry.keyword()))
                     .collect::<Vec<_>>();
 
-                cx.background_spawn(async move {
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
+                cx.spawn(async move |cx| {
                     let mut matches = search_files_task
                         .await
                         .into_iter()
@@ -933,6 +1041,26 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             mat: Some(mat),
                         })
                     }));
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        let branch_diff_keyword = PromptContextType::BranchDiff.keyword();
+                        let branch_diff_matches = fuzzy::match_strings(
+                            &[StringMatchCandidate::new(0, branch_diff_keyword)],
+                            &query,
+                            false,
+                            true,
+                            1,
+                            &Arc::new(AtomicBool::default()),
+                            cx.background_executor().clone(),
+                        )
+                        .await;
+
+                        if !branch_diff_matches.is_empty() {
+                            if let Some(branch_diff_match) = branch_diff_task.await {
+                                matches.push(Match::BranchDiff(branch_diff_match));
+                            }
+                        }
+                    }
 
                     matches.sort_by(|a, b| {
                         b.score()
@@ -962,11 +1090,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
+            && let Some(title) = thread.read(cx).title()
         {
-            let thread = thread.read(cx);
             mentions.insert(MentionUri::Thread {
-                id: thread.session_id().clone(),
-                name: thread.title().into(),
+                id: thread.read(cx).session_id().clone(),
+                name: title.to_string(),
             });
         }
 
@@ -1010,26 +1138,21 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(history) = self.history.upgrade() {
-            const RECENT_COUNT: usize = 2;
-            recent.extend(
-                history
-                    .read(cx)
-                    .sessions()
-                    .into_iter()
-                    .filter(|session| {
-                        let uri = MentionUri::Thread {
-                            id: session.session_id.clone(),
-                            name: session_title(session).to_string(),
-                        };
-                        !mentions.contains(&uri)
-                    })
-                    .take(RECENT_COUNT)
-                    .cloned()
-                    .map(Match::RecentThread),
-            );
-            return Task::ready(recent);
-        }
+        let sessions = collect_session_matches(cx);
+        const RECENT_COUNT: usize = 2;
+        recent.extend(
+            sessions
+                .into_iter()
+                .filter(|session| {
+                    let uri = MentionUri::Thread {
+                        id: session.session_id.clone(),
+                        name: session.title.to_string(),
+                    };
+                    !mentions.contains(&uri)
+                })
+                .take(RECENT_COUNT)
+                .map(Match::RecentThread),
+        );
 
         Task::ready(recent)
     }
@@ -1048,19 +1171,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Thread));
         }
 
-        let has_editor_selection = workspace
-            .read(cx)
-            .active_item(cx)
-            .and_then(|item| item.downcast::<Editor>())
-            .is_some_and(|editor| {
-                editor.update(cx, |editor, cx| {
-                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
-                })
-            });
-
-        let has_terminal_selection = !terminal_selections_if_panel_open(workspace, cx).is_empty();
-
-        if has_editor_selection || has_terminal_selection {
+        let has_active_selection = workspace.update(cx, |workspace, cx| {
+            AgentContextSource::from_active(workspace, cx)
+                .and_then(|source| source.read_selection(workspace, false, cx))
+                .is_some()
+        });
+        if has_active_selection {
             entries.push(PromptContextEntry::Action(
                 PromptContextAction::AddSelections,
             ));
@@ -1096,7 +1212,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
@@ -1132,24 +1247,61 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                 command, argument, ..
             }) => {
                 let search_task = self.search_slash_commands(command.unwrap_or_default(), cx);
+                // Resolve the muted-text highlight up front: the
+                // completion build happens on a background thread where
+                // `cx.theme()` isn't available.
+                let source_highlight_id = cx
+                    .theme()
+                    .syntax()
+                    .highlight_id("variable")
+                    .map(HighlightId::new);
                 cx.background_spawn(async move {
                     let completions = search_task
                         .await
                         .into_iter()
                         .map(|command| {
-                            let new_text = if let Some(argument) = argument.as_ref() {
-                                format!("/{} {}", command.name, argument)
-                            } else {
-                                format!("/{} ", command.name)
+                            // Qualify the inserted text with the skill's
+                            // scope prefix as `/<prefix>:<name>` when the
+                            // command carries one. The prefix is empty
+                            // for global skills (so the inserted text
+                            // is `/:<name>`) and the worktree root name
+                            // for project-locals (so the inserted text
+                            // is `/<worktree>:<name>`). The `:`
+                            // separator namespaces skill scopes away
+                            // from MCP server prefixes
+                            // (`/<server>.<name>`), and the empty
+                            // prefix means a worktree literally named
+                            // `global` no longer collides with the
+                            // global source. MCP commands have no
+                            // source meta and keep the bare `/<name>`
+                            // form.
+                            //
+                            // Composed in a single `format!` to avoid
+                            // building an intermediate `qualified_name`
+                            // string just to splice it into the final
+                            // text.
+                            let new_text = match (command.source.as_ref(), argument.as_ref()) {
+                                (Some(source), Some(argument)) => {
+                                    format!("/{}:{} {}", source, command.name, argument)
+                                }
+                                (Some(source), None) => {
+                                    format!("/{}:{} ", source, command.name)
+                                }
+                                (None, Some(argument)) => {
+                                    format!("/{} {}", command.name, argument)
+                                }
+                                (None, None) => format!("/{} ", command.name),
                             };
 
                             let is_missing_argument =
                                 command.requires_argument && argument.is_none();
 
+                            let label = build_slash_command_label(&command, source_highlight_id);
+
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
-                                label: CodeLabel::plain(command.name.to_string(), None),
+                                label,
                                 documentation: Some(CompletionDocumentation::MultiLinePlainText(
                                     command.description.into(),
                                 )),
@@ -1297,7 +1449,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     )
                                 }
                                 Match::Thread(thread) => Some(Self::completion_for_thread(
-                                    thread,
+                                    thread.session_id,
+                                    Some(thread.title),
                                     source_range.clone(),
                                     false,
                                     source.clone(),
@@ -1307,7 +1460,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     cx,
                                 )),
                                 Match::RecentThread(thread) => Some(Self::completion_for_thread(
-                                    thread,
+                                    thread.session_id,
+                                    Some(thread.title),
                                     source_range.clone(),
                                     true,
                                     source.clone(),
@@ -1343,6 +1497,17 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         &workspace,
                                         cx,
                                     )
+                                }
+                                Match::BranchDiff(branch_diff) => {
+                                    Some(Self::build_branch_diff_completion(
+                                        branch_diff.base_ref,
+                                        source_range.clone(),
+                                        source.clone(),
+                                        editor.clone(),
+                                        mention_set.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    ))
                                 }
                             })
                             .collect::<Vec<_>>()
@@ -1539,26 +1704,33 @@ impl MentionCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        let last_mention_start = line.rfind('@')?;
-
-        // No whitespace immediately after '@'
-        if line[last_mention_start + 1..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_whitespace())
-        {
-            return None;
-        }
-
-        //  Must be a word boundary before '@'
-        if last_mention_start > 0
-            && line[..last_mention_start]
+        // Find the rightmost '@' that has a word boundary before it and no whitespace immediately after
+        let mut last_mention_start = None;
+        for (idx, _) in line.rmatch_indices('@') {
+            // No whitespace immediately after '@'
+            if line[idx + 1..]
                 .chars()
-                .last()
-                .is_some_and(|c| !c.is_whitespace())
-        {
-            return None;
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            // Must be a word boundary before '@'
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace())
+            {
+                continue;
+            }
+
+            last_mention_start = Some(idx);
+            break;
         }
+
+        let last_mention_start = last_mention_start?;
 
         let rest_of_line = &line[last_mention_start + 1..];
 
@@ -1874,12 +2046,34 @@ pub(crate) fn search_symbols(
     })
 }
 
+fn collect_session_matches(cx: &App) -> Vec<SessionMatch> {
+    let Some(store) = ThreadMetadataStore::try_global(cx) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<&ThreadMetadata> = store
+        .read(cx)
+        .entries()
+        .filter(|t| !t.archived && t.agent_id == *agent::ZED_AGENT_ID)
+        .collect();
+    entries.sort_by_key(|t| Reverse(t.updated_at));
+    entries
+        .into_iter()
+        .map(|metadata| {
+            let info = acp_thread::AgentSessionInfo::from(metadata);
+            SessionMatch {
+                session_id: info.session_id,
+                title: session_title(info.title),
+            }
+        })
+        .collect()
+}
+
 fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    sessions: Vec<AgentSessionInfo>,
+    sessions: Vec<SessionMatch>,
     cx: &mut App,
-) -> Task<Vec<AgentSessionInfo>> {
+) -> Task<Vec<SessionMatch>> {
     if query.is_empty() {
         return Task::ready(sessions);
     }
@@ -1892,10 +2086,13 @@ fn filter_sessions_by_query(
 async fn filter_sessions(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    sessions: Vec<AgentSessionInfo>,
+    sessions: Vec<SessionMatch>,
     executor: BackgroundExecutor,
-) -> Vec<AgentSessionInfo> {
-    let titles = sessions.iter().map(session_title).collect::<Vec<_>>();
+) -> Vec<SessionMatch> {
+    let titles = sessions
+        .iter()
+        .map(|session| session.title.clone())
+        .collect::<Vec<_>>();
     let candidates = titles
         .iter()
         .enumerate()
@@ -1974,6 +2171,42 @@ pub fn extract_file_name_and_directory(
     )
 }
 
+/// Build the autocomplete-popup label for a slash command, appending
+/// the command's origin (a worktree root name for project-local
+/// skills) after the name when one is present and non-empty. The
+/// suffix is styled with the muted `variable` highlight and excluded
+/// from the fuzzy filter range so typing the source doesn't match
+/// the entry.
+///
+/// Global skills carry an empty source (the literal scope prefix is
+/// empty so the popup inserts `/:<name>`), and render with no
+/// subtext — the source column is reserved for project-local skills
+/// where the worktree name disambiguates same-named entries.
+fn build_slash_command_label(
+    command: &AvailableCommand,
+    source_highlight_id: Option<HighlightId>,
+) -> CodeLabel {
+    let source = command.source.as_ref().filter(|source| !source.is_empty());
+    let Some(source) = source else {
+        return CodeLabel::plain(command.name.to_string(), None);
+    };
+    let mut builder = CodeLabelBuilder::default();
+    builder.push_str(&command.name, None);
+    // Two spaces gives a touch of breathing room between the name and
+    // the muted source label.
+    builder.push_str("  ", None);
+    builder.push_str(source, source_highlight_id);
+    // The filter range defaults to the entire label after `build()`,
+    // which would let the source text participate in fuzzy filtering.
+    // Slash commands are matched up-front in `search_slash_commands`
+    // against the command name, and the editor doesn't re-filter
+    // (`filter_completions()` is false), so this is mostly defensive
+    // — but it keeps the displayed filter consistent with what we
+    // actually matched against.
+    builder.respan_filter_range(Some(&command.name));
+    builder.build()
+}
+
 fn build_code_label_for_path(
     file: &str,
     directory: Option<&str>,
@@ -1985,7 +2218,7 @@ fn build_code_label_for_path(
         .theme()
         .syntax()
         .highlight_id("variable")
-        .map(HighlightId);
+        .map(HighlightId::new);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);
@@ -2006,61 +2239,217 @@ fn build_code_label_for_path(
     label.build()
 }
 
-/// Returns terminal selections from all terminal views if the terminal panel is open.
-fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
-    let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-        return Vec::new();
-    };
-
-    // Check if the dock containing this panel is open
-    let position = match TerminalSettings::get_global(cx).dock {
-        TerminalDockPosition::Left => DockPosition::Left,
-        TerminalDockPosition::Bottom => DockPosition::Bottom,
-        TerminalDockPosition::Right => DockPosition::Right,
-    };
-    let dock_is_open = workspace
+fn terminal_view_selection(terminal_view: &Entity<TerminalView>, cx: &App) -> Option<String> {
+    terminal_view
         .read(cx)
-        .dock_at_position(position)
+        .terminal()
         .read(cx)
-        .is_open();
-    if !dock_is_open {
-        return Vec::new();
-    }
-
-    panel.read(cx).terminal_selections(cx)
+        .last_content
+        .selection_text
+        .clone()
+        .filter(|text| !text.is_empty())
 }
 
-fn selection_ranges(
-    workspace: &Entity<Workspace>,
+fn editor_selection_ranges(
+    editor: &Entity<Editor>,
+    include_current_line: bool,
     cx: &mut App,
 ) -> Vec<(Entity<Buffer>, Range<text::Anchor>)> {
-    let Some(editor) = workspace
-        .read(cx)
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))
-    else {
-        return Vec::new();
-    };
-
     editor.update(cx, |editor, cx| {
         let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
 
-        let buffer = editor.buffer().clone().read(cx);
-        let snapshot = buffer.snapshot(cx);
+        let multi_buffer = editor.buffer().read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
 
-        selections
-            .into_iter()
-            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
-            .flat_map(|range| {
-                let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
-                let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;
-                if start_buffer != end_buffer {
-                    return None;
+        let non_empty_rows: collections::HashSet<u32> = selections
+            .iter()
+            .filter(|s| !s.is_empty())
+            .flat_map(|s| s.start.row..=s.end.row)
+            .collect();
+
+        let mut seen_current_line_rows = collections::HashSet::default();
+        let mut results = Vec::new();
+
+        for s in selections {
+            if s.is_empty() {
+                if !include_current_line
+                    || non_empty_rows.contains(&s.start.row)
+                    || !seen_current_line_rows.insert(s.start.row)
+                {
+                    continue;
                 }
-                Some((start_buffer, start..end))
-            })
-            .collect::<Vec<_>>()
+                let Some((buffer, anchor)) = multi_buffer.text_anchor_for_position(s.start, cx)
+                else {
+                    continue;
+                };
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                let row = anchor.to_point(&buffer_snapshot).row;
+                let line_start = text::Point::new(row, 0);
+                let line_end = text::Point::new(row, buffer_snapshot.line_len(row));
+                let start = buffer_snapshot.anchor_after(line_start);
+                let end = buffer_snapshot.anchor_before(line_end);
+                if start.to_offset(&buffer_snapshot) == end.to_offset(&buffer_snapshot) {
+                    continue;
+                }
+                results.push((buffer, start..end));
+            } else {
+                let mb_start = multi_buffer_snapshot.anchor_after(s.start);
+                let mb_end = multi_buffer_snapshot.anchor_before(s.end);
+                let Some((start_buffer, start)) =
+                    multi_buffer.text_anchor_for_position(mb_start, cx)
+                else {
+                    continue;
+                };
+                let Some((end_buffer, end)) = multi_buffer.text_anchor_for_position(mb_end, cx)
+                else {
+                    continue;
+                };
+                if start_buffer != end_buffer {
+                    continue;
+                }
+                let buffer_snapshot = start_buffer.read(cx).snapshot();
+                if start.to_offset(&buffer_snapshot) == end.to_offset(&buffer_snapshot) {
+                    continue;
+                }
+                results.push((start_buffer, start..end));
+            }
+        }
+
+        results
     })
+}
+
+type ConfirmCallback = Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>;
+
+fn completion_text_for_editor_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+) -> (String, ConfirmCallback) {
+    const EDITOR_PLACEHOLDER: &str = "selection ";
+
+    let selections = editor_selections
+        .into_iter()
+        .enumerate()
+        .map(|(ix, (buffer, range))| {
+            (
+                buffer,
+                range,
+                (EDITOR_PLACEHOLDER.len() * ix)..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let new_text = EDITOR_PLACEHOLDER.repeat(selections.len());
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let selections = selections.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            window.defer(cx, move |window, cx| {
+                if let Some(editor) = editor.upgrade()
+                    && !selections.is_empty()
+                {
+                    mention_set
+                        .update(cx, |store, cx| {
+                            store.confirm_mention_for_selection(
+                                source_range.clone(),
+                                selections,
+                                editor.clone(),
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
+                }
+            });
+            false
+        }
+    });
+
+    (new_text, callback)
+}
+
+fn completion_text_for_terminal_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    terminal_selections: Vec<String>,
+) -> (String, ConfirmCallback) {
+    const TERMINAL_PLACEHOLDER: &str = "terminal ";
+
+    let mut new_text = String::new();
+    let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
+        .into_iter()
+        .map(|text| {
+            let start = new_text.len();
+            new_text.push_str(TERMINAL_PLACEHOLDER);
+            (text, start..(new_text.len() - 1))
+        })
+        .collect();
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            let terminal_ranges = terminal_ranges.clone();
+            window.defer(cx, move |window, cx| {
+                let Some(editor) = editor.upgrade() else {
+                    return;
+                };
+                for (terminal_text, terminal_range) in terminal_ranges {
+                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
+                        return;
+                    };
+                    let offset = start.to_offset(&snapshot);
+
+                    let line_count = terminal_text.lines().count() as u32;
+                    let mention_uri = MentionUri::TerminalSelection { line_count };
+                    let range = snapshot.anchor_after(offset + terminal_range.start)
+                        ..snapshot.anchor_after(offset + terminal_range.end);
+
+                    let crease = crate::mention_set::crease_for_mention(
+                        mention_uri.name().into(),
+                        mention_uri.icon_path(cx),
+                        None,
+                        range,
+                        editor.downgrade(),
+                    );
+
+                    let Some(crease_id) = editor.update(cx, |editor, cx| {
+                        let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+                        editor.fold_creases(vec![crease], false, window, cx);
+                        crease_ids.first().copied()
+                    }) else {
+                        log::error!("insert_creases returned no ids for terminal selection");
+                        continue;
+                    };
+
+                    mention_set
+                        .update(cx, |mention_set, _| {
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                Task::ready(Ok(crate::mention_set::Mention::Text {
+                                    content: terminal_text,
+                                    tracked_buffers: vec![],
+                                }))
+                                .shared(),
+                            );
+                        })
+                        .ok();
+                }
+            });
+            false
+        }
+    });
+
+    (new_text, callback)
 }
 
 #[cfg(test)]
@@ -2323,14 +2712,60 @@ mod tests {
             None,
             "Should not parse with a space after @ at the start of the line"
         );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://www.npmjs.com/package/@matterport/sdk",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..52,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://www.npmjs.com/package/@matterport/sdk".to_string()),
+            }),
+            "Should handle URLs with @ in the path"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@org/@repo/file",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..42,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@org/@repo/file".to_string()),
+            }),
+            "Should handle URLs with multiple @ characters"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..28,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@".to_string()),
+            }),
+            "Should parse URL ending with @ (even if URL is incomplete)"
+        );
     }
 
     #[gpui::test]
     async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
-        let mut alpha = AgentSessionInfo::new("session-alpha");
-        alpha.title = Some("Alpha Session".into());
-        let mut beta = AgentSessionInfo::new("session-beta");
-        beta.title = Some("Beta Session".into());
+        let alpha = SessionMatch {
+            session_id: acp::SessionId::new("session-alpha"),
+            title: "Alpha Session".into(),
+        };
+        let beta = SessionMatch {
+            session_id: acp::SessionId::new("session-beta"),
+            title: "Beta Session".into(),
+        };
 
         let sessions = vec![alpha.clone(), beta];
 
@@ -2358,7 +2793,7 @@ mod tests {
 
         let app_state = cx.update(|cx| {
             let state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             state
         });
@@ -2425,5 +2860,72 @@ mod tests {
             rel_path("dir1/a.txt"),
             "dir1/a.txt should be second"
         );
+    }
+
+    #[gpui::test]
+    async fn test_source_read_selection_editor_whole_line(cx: &mut TestAppContext) {
+        use editor::Editor;
+        use project::Project;
+        use serde_json::json;
+        use text::ToOffset as _;
+        use util::path;
+        use workspace::{AppState, MultiWorkspace};
+
+        crate::conversation_view::tests::init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "a.txt": "" }))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let buffer = cx.new(|cx| language::Buffer::local("abc\ndef\nghi", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(1, 1)..text::Point::new(1, 1)]);
+            });
+        });
+
+        let source = AgentContextSource::Editor(editor.downgrade());
+
+        workspace.update(cx, |workspace, cx| {
+            let selection = source
+                .read_selection(workspace, true, cx)
+                .expect("editor source with cursor on a line should yield a selection");
+            assert!(
+                matches!(selection, AgentContextSelection::Editor(_)),
+                "expected Editor variant"
+            );
+            if let AgentContextSelection::Editor(ranges) = selection {
+                assert_eq!(
+                    ranges.len(),
+                    1,
+                    "expected exactly one range for whole-line fallback"
+                );
+                let (range_buffer, range) = &ranges[0];
+                let snapshot = range_buffer.read(cx).snapshot();
+                let start_offset = range.start.to_offset(&snapshot);
+                let end_offset = range.end.to_offset(&snapshot);
+                assert_eq!(
+                    &snapshot.text()[start_offset..end_offset],
+                    "def",
+                    "whole-line fallback should capture the current row"
+                );
+            }
+
+            // With include_current_line = false and no non-empty selection, the
+            // fallback is suppressed and read_selection should return None.
+            assert!(source.read_selection(workspace, false, cx).is_none());
+        });
     }
 }

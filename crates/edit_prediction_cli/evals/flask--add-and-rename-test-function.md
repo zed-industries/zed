@@ -78,3 +78,21 @@ def test_static_url_path():
 +    assert rv.status_code == 404
 +    rv.close()
 ```
+
+```diff
+--- a/tests/test_basic.py
++++ b/tests/test_basic.py
+@@ -1376,8 +1376,13 @@
+-def test_static_file_not_found():
+-    pass
++def test_static_file_not_found(app, client):
++    rv = client.get("/static/nonexistent.html")
++    assert rv.status_code == 404
++    assert rv.data.strip() == b"<h1>Not Found</h1>"
++    with app.test_request_context():
++        pytest.raises(BuildError, flask.url_for, "static", filename="nonexistent.html")
++    rv.close()
+
+
+ def test_static_url_path():
+```

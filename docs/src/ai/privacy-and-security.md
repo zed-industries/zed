@@ -1,38 +1,33 @@
 ---
-title: AI Privacy and Security - Zed
-description: Zed's approach to AI privacy: opt-in data sharing by default, zero-data retention with providers, and full open-source transparency.
+title: Privacy Overview - Zed
+description: "Zed's approach to privacy: opt-in data sharing, zero-data retention with AI providers, and an open-source codebase you can inspect."
 ---
 
-# Privacy and Security
+# Privacy Overview
 
-## Philosophy
+Zed collects minimal data necessary to serve and improve the product. Features that could share data are either opt-in or can be disabled.
 
-Zed aims to collect only the minimum data necessary to serve and improve our product.
+- **Telemetry:** Zed collects only the data necessary to understand usage and fix issues. Client-side telemetry can be disabled in settings. See [Telemetry](../telemetry.md).
 
-Data sharing is opt-in by default. Privacy is not a setting to toggle—it's the baseline.
+- **AI:** Zed doesn't store your prompts or code context. Data sharing for AI improvement is opt-in, and each share is a one-time action; it doesn't grant permission for future collection. You can use Zed's AI features without sharing any data with Zed. See [AI Improvement](./ai-improvement.md).
 
-As an open-source product, we believe in maximal transparency, and invite you to examine our codebase. If you find issues, we encourage you to share them with us.
+- **Open source:** Zed's codebase is public. You can inspect exactly what data is collected and how it's handled. If you find issues, [report them](https://github.com/zed-industries/zed/issues).
 
-Zed, including AI features, works without sharing data with us and without authentication.
+On Zed Business, administrators can enforce these settings org-wide so members can't opt in to data sharing individually. See [Privacy for Business](../business/privacy.md).
 
-## Documentation
+## Related documentation
 
-- [Tool Permissions](./tool-permissions.md): Configure granular rules to control which agent actions are auto-approved, blocked, or require confirmation.
+- [Tool Permissions](./tool-permissions.md): Configure which agent actions are auto-approved, blocked, or require confirmation.
+- [Worktree Trust](../worktree-trust.md): How Zed opens files and directories in restricted mode.
+- [Telemetry](../telemetry.md): What telemetry Zed collects and how to control it.
+- [AI Improvement](./ai-improvement.md): How data sharing for AI improvement works and how to opt in.
+- [Privacy for Business](../business/privacy.md): How Zed Business enforces privacy settings across an organization.
+- [Authentication](../authentication.md): When and why authentication is needed.
+- [SOC2](../soc2.md): Zed's security certification status.
 
-- [Worktree trust](../worktree-trust.md): How Zed opens files and directories in restricted mode.
+## Legal
 
-- [Telemetry](../telemetry.md): How Zed collects general telemetry data.
-
-- [AI Improvement](./ai-improvement.md): Zed's opt-in-only approach to data collection for AI improvement, whether our Agentic offering or Edit Predictions.
-
-- [Accounts](../authentication.md): When and why you'd need to authenticate into Zed, how to do so, and what scope we need from you.
-
-- [Collab](https://zed.dev/faq#data-and-privacy): How Zed's live collaboration works, and how data flows to provide the experience (we don't store your code).
-
-## Legal Links
-
-- [Terms of Service](https://zed.dev/terms-of-service)
-- [Terms of Use](https://zed.dev/terms)
+- [Terms of Service](https://zed.dev/terms)
 - [Privacy Policy](https://zed.dev/privacy-policy)
-- [Zed's Contributor License and Feedback Agreement](https://zed.dev/cla)
+- [Contributor License and Feedback Agreement](https://zed.dev/cla)
 - [Subprocessors](https://zed.dev/subprocessors)

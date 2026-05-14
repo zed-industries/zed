@@ -4,20 +4,32 @@ use ui::{prelude::*, render_modifiers};
 #[derive(IntoElement)]
 pub struct HoldForDefault {
     is_default: bool,
+    more_content: bool,
 }
 
 impl HoldForDefault {
     pub fn new(is_default: bool) -> Self {
-        Self { is_default }
+        Self {
+            is_default,
+            more_content: true,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn more_content(mut self, more_content: bool) -> Self {
+        self.more_content = more_content;
+        self
     }
 }
 
 impl RenderOnce for HoldForDefault {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
-            .pt_1()
-            .border_t_1()
-            .border_color(cx.theme().colors().border_variant)
+            .when(self.more_content, |this| {
+                this.pt_1()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+            })
             .gap_0p5()
             .text_sm()
             .text_color(Color::Muted.color(cx))

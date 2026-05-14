@@ -17,6 +17,7 @@ When reporting issues or seeking help, it's useful to know your Zed version and 
 
 - {#action zed::About}: Find your Zed version number
 - {#action zed::CopySystemSpecsIntoClipboard}: Populate your clipboard with Zed version number, operating system version, and hardware specs
+- {#action zed::CopyInstalledExtensionsIntoClipboard}: Populate your clipboard with a list of your installed extensions and versions
 
 ## Zed Log
 
@@ -45,10 +46,13 @@ Xcode Instruments (which comes bundled with your [Xcode](https://apps.apple.com/
 
 1. With Zed running, open Instruments
 1. Select `Time Profiler` as the profiling template
+   ![Instruments template picker with Time Profiler selected](https://images.zed.dev/docs/troubleshooting/instruments-template-picker.webp)
 1. In the `Time Profiler` configuration, set the target to the running Zed process
 1. Start recording
-1. If the performance issue occurs when performing a specific action in Zed, perform that action now
+   ![Time Profiler configuration showing the target dropdown and record button](https://images.zed.dev/docs/troubleshooting/instruments-target-and-record.webp)
+1. Perform the action in Zed that causes performance issues
 1. Stop recording
+   ![A completed Time Profiler recording in Instruments](https://images.zed.dev/docs/troubleshooting/instruments-recording.webp)
 1. Save the trace file
 1. Compress the trace file into a zip archive
 1. File a [GitHub issue](https://github.com/zed-industries/zed/issues/new/choose) with the trace zip attached
@@ -83,3 +87,22 @@ If your issue persists after regenerating the database, please [file an issue](h
 ## Language Server Issues
 
 If you're experiencing language-server related issues, such as stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLanguageServer} from the command palette will often resolve the issue.
+
+## Agent Error Messages
+
+### "Max tokens reached"
+
+You see this error when the agent's response exceeds the model's maximum token limit. This happens when:
+
+- The agent generates an extremely long response
+- The conversation context plus the response exceeds the model's capacity
+- Tool outputs are large and consume the available token budget
+
+**To resolve this:**
+
+1. Start a new thread to reduce context size
+2. Use a model with a larger token limit in AI settings
+3. Break your request into smaller, focused tasks
+4. Clear tool outputs or previous messages using the thread controls
+
+The token limit varies by model—check your model provider's documentation for specific limits.

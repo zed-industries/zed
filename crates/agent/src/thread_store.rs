@@ -1,43 +1,17 @@
 use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
+use futures::{FutureExt, future::Shared};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};
-use project::Project;
-use std::rc::Rc;
+use util::path_list::PathList;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
 
 impl Global for GlobalThreadStore {}
 
-// TODO: Remove once ACP thread loading is fully handled elsewhere.
-pub fn load_agent_thread(
-    session_id: acp::SessionId,
-    thread_store: Entity<ThreadStore>,
-    project: Entity<Project>,
-    cx: &mut App,
-) -> Task<Result<Entity<crate::Thread>>> {
-    use agent_servers::{AgentServer, AgentServerDelegate};
-
-    let server = Rc::new(crate::NativeAgentServer::new(
-        project.read(cx).fs().clone(),
-        thread_store,
-    ));
-    let delegate = AgentServerDelegate::new(
-        project.read(cx).agent_server_store().clone(),
-        project.clone(),
-        None,
-        None,
-    );
-    let connection = server.connect(None, delegate, cx);
-    cx.spawn(async move |cx| {
-        let (agent, _) = connection.await?;
-        let agent = agent.downcast::<crate::NativeAgentConnection>().unwrap();
-        cx.update(|cx| agent.load_thread(session_id, cx)).await
-    })
-}
-
 pub struct ThreadStore {
     threads: Vec<DbThreadMetadata>,
+    reload_task: Shared<Task<()>>,
 }
 
 impl ThreadStore {
@@ -50,12 +24,23 @@ impl ThreadStore {
         cx.global::<GlobalThreadStore>().0.clone()
     }
 
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalThreadStore>().map(|g| g.0.clone())
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let this = Self {
+        let reload_task = Self::spawn_reload(cx);
+        Self {
             threads: Vec::new(),
-        };
-        this.reload(cx);
-        this
+            reload_task,
+        }
+    }
+
+    /// Resolves when the most recently initiated reload has completed.
+    /// Callers that need to read `entries()` and can't tolerate the initial
+    /// empty state must await this before reading.
+    pub fn reload_task(&self) -> Shared<Task<()>> {
+        self.reload_task.clone()
     }
 
     pub fn thread_from_session_id(&self, session_id: &acp::SessionId) -> Option<&DbThreadMetadata> {
@@ -78,12 +63,13 @@ impl ThreadStore {
         &mut self,
         id: acp::SessionId,
         thread: crate::DbThread,
+        folder_paths: PathList,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(id, thread).await?;
+            database.save_thread(id, thread, folder_paths).await?;
             this.update(cx, |this, cx| this.reload(cx))
         })
     }
@@ -110,22 +96,32 @@ impl ThreadStore {
         })
     }
 
-    pub fn reload(&self, cx: &mut Context<Self>) {
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.reload_task = Self::spawn_reload(cx);
+    }
+
+    fn spawn_reload(cx: &mut Context<Self>) -> Shared<Task<()>> {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
-            let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let threads = database
-                .list_threads()
-                .await?
-                .into_iter()
-                .filter(|thread| thread.parent_session_id.is_none())
-                .collect::<Vec<_>>();
+            let Ok(database) = database_connection.await.map_err(|err| anyhow!(err)) else {
+                return;
+            };
+            let Ok(all_threads) = database.list_threads().await else {
+                return;
+            };
             this.update(cx, |this, cx| {
-                this.threads = threads;
+                this.threads.clear();
+                for thread in all_threads {
+                    if thread.parent_session_id.is_some() {
+                        continue;
+                    }
+                    this.threads.push(thread);
+                }
                 cx.notify();
             })
+            .ok();
         })
-        .detach_and_log_err(cx);
+        .shared()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -134,6 +130,10 @@ impl ThreadStore {
 
     pub fn entries(&self) -> impl Iterator<Item = DbThreadMetadata> + '_ {
         self.threads.iter().cloned()
+    }
+
+    pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
+        self.threads.iter().map(|t| t.id.clone())
     }
 }
 
@@ -162,7 +162,11 @@ mod tests {
             profile: None,
             imported: false,
             subagent_context: None,
-            git_worktree_info: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         }
     }
 
@@ -184,12 +188,12 @@ mod tests {
         );
 
         let save_older = thread_store.update(cx, |store, cx| {
-            store.save_thread(older_id.clone(), older_thread, cx)
+            store.save_thread(older_id.clone(), older_thread, PathList::default(), cx)
         });
         save_older.await.unwrap();
 
         let save_newer = thread_store.update(cx, |store, cx| {
-            store.save_thread(newer_id.clone(), newer_thread, cx)
+            store.save_thread(newer_id.clone(), newer_thread, PathList::default(), cx)
         });
         save_newer.await.unwrap();
 
@@ -212,8 +216,9 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
 
-        let save_task =
-            thread_store.update(cx, |store, cx| store.save_thread(thread_id, thread, cx));
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(thread_id, thread, PathList::default(), cx)
+        });
         save_task.await.unwrap();
 
         cx.run_until_parked();
@@ -244,11 +249,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), first_thread, cx)
+            store.save_thread(first_id.clone(), first_thread, PathList::default(), cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), second_thread, cx)
+            store.save_thread(second_id.clone(), second_thread, PathList::default(), cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -281,11 +286,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), first_thread, cx)
+            store.save_thread(first_id.clone(), first_thread, PathList::default(), cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), second_thread, cx)
+            store.save_thread(second_id.clone(), second_thread, PathList::default(), cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -295,7 +300,7 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         );
         let update_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), updated_first, cx)
+            store.save_thread(first_id.clone(), updated_first, PathList::default(), cx)
         });
         update_task.await.unwrap();
         cx.run_until_parked();

@@ -5,7 +5,6 @@
 //! - Deterministic task scheduling via TestDispatcher
 //! - Controllable time via `advance_clock`
 
-#[cfg(feature = "screen-capture")]
 use crate::ScreenCaptureSource;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
@@ -201,6 +200,14 @@ impl Platform for VisualTestPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         self.platform.set_cursor_style(style)
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        self.platform.hide_cursor_until_mouse_moves();
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.platform.is_cursor_visible()
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

@@ -1,4 +1,5 @@
 use gpui::ElementId;
+use gpui::TaskExt;
 use gpui::{AnyElement, Entity};
 use picker::Picker;
 use repl::{
@@ -38,13 +39,16 @@ impl QuickActionBar {
 
         let editor = self.active_editor()?;
 
-        let is_local_project = editor
+        let is_valid_project = editor
             .read(cx)
             .workspace()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .map(|workspace| {
+                let project = workspace.read(cx).project().read(cx);
+                !project.is_via_collab()
+            })
             .unwrap_or(false);
 
-        if !is_local_project {
+        if !is_valid_project {
             return None;
         }
 

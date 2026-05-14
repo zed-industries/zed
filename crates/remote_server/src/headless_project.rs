@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
+use collections::HashMap;
 use collections::HashSet;
 use language::File;
 use lsp::LanguageServerId;
@@ -7,7 +8,7 @@ use lsp::LanguageServerId;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
@@ -31,6 +32,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
+use smol::process::Child;
 
 use settings::initial_server_settings_content;
 use std::{
@@ -67,6 +69,7 @@ pub struct HeadlessProject {
     // Used mostly to keep alive the toolchain store for RPC handlers.
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
+    pub kernels: HashMap<String, Child>,
 }
 
 pub struct HeadlessAppState {
@@ -126,7 +129,6 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 environment.clone(),
                 manifest_tree.clone(),
-                fs.clone(),
                 cx,
             )
         });
@@ -189,6 +191,7 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
+                git_store.clone(),
                 cx,
             );
             task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
@@ -319,6 +322,9 @@ impl HeadlessProject {
             HeadlessExtensionStore::handle_install_extension,
         );
 
+        session.add_request_handler(cx.weak_entity(), Self::handle_spawn_kernel);
+        session.add_request_handler(cx.weak_entity(), Self::handle_kill_kernel);
+
         BufferStore::init(&session);
         WorktreeStore::init(&session);
         SettingsObserver::init(&session);
@@ -351,6 +357,7 @@ impl HeadlessProject {
             environment,
             profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
+            kernels: Default::default(),
         }
     }
 
@@ -516,6 +523,9 @@ impl HeadlessProject {
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_string_lossy().into_owned(),
+                root_repo_common_dir: worktree
+                    .root_repo_common_dir()
+                    .map(|p| p.to_string_lossy().into_owned()),
             }
         });
 
@@ -895,6 +905,140 @@ impl HeadlessProject {
         })
     }
 
+    async fn handle_spawn_kernel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SpawnKernel>,
+        cx: AsyncApp,
+    ) -> Result<proto::SpawnKernelResponse> {
+        let fs = this.update(&mut cx.clone(), |this, _| this.fs.clone());
+
+        let mut ports = Vec::new();
+        for _ in 0..5 {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let port = listener.local_addr()?.port();
+            ports.push(port);
+        }
+
+        let connection_info = serde_json::json!({
+            "shell_port": ports[0],
+            "iopub_port": ports[1],
+            "stdin_port": ports[2],
+            "control_port": ports[3],
+            "hb_port": ports[4],
+            "ip": "127.0.0.1",
+            "key": uuid::Uuid::new_v4().to_string(),
+            "transport": "tcp",
+            "signature_scheme": "hmac-sha256",
+            "kernel_name": envelope.payload.kernel_name,
+        });
+
+        let connection_file_content = serde_json::to_string_pretty(&connection_info)?;
+        let kernel_id = uuid::Uuid::new_v4().to_string();
+
+        let connection_file_path = std::env::temp_dir().join(format!("kernel-{}.json", kernel_id));
+        fs.save(
+            &connection_file_path,
+            &connection_file_content.as_str().into(),
+            language::LineEnding::Unix,
+        )
+        .await?;
+
+        let working_directory = if envelope.payload.working_directory.is_empty() {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        } else {
+            Some(envelope.payload.working_directory)
+        };
+
+        // Spawn kernel (Assuming python for now, or we'd need to parse kernelspec logic here or pass the command)
+
+        // Spawn kernel
+        let spawn_kernel = |binary: &str, args: &[String]| {
+            let mut command = smol::process::Command::new(binary);
+
+            if !args.is_empty() {
+                for arg in args {
+                    if arg == "{connection_file}" {
+                        command.arg(&connection_file_path);
+                    } else {
+                        command.arg(arg);
+                    }
+                }
+            } else {
+                command
+                    .arg("-m")
+                    .arg("ipykernel_launcher")
+                    .arg("-f")
+                    .arg(&connection_file_path);
+            }
+
+            // This ensures subprocesses spawned from the kernel use the correct Python environment
+            let python_bin_dir = std::path::Path::new(binary).parent();
+            if let Some(bin_dir) = python_bin_dir {
+                if let Some(path_var) = std::env::var_os("PATH") {
+                    let mut paths = std::env::split_paths(&path_var).collect::<Vec<_>>();
+                    paths.insert(0, bin_dir.to_path_buf());
+                    if let Ok(new_path) = std::env::join_paths(paths) {
+                        command.env("PATH", new_path);
+                    }
+                }
+
+                if let Some(venv_root) = bin_dir.parent() {
+                    command.env("VIRTUAL_ENV", venv_root.to_string_lossy().to_string());
+                }
+            }
+
+            if let Some(wd) = &working_directory {
+                command.current_dir(wd);
+            }
+            command.spawn()
+        };
+
+        // We need to manage the child process lifecycle
+        let child = if !envelope.payload.command.is_empty() {
+            spawn_kernel(&envelope.payload.command, &envelope.payload.args).context(format!(
+                "failed to spawn kernel process (command: {})",
+                envelope.payload.command
+            ))?
+        } else if let Some(venv_python) = working_directory
+            .as_ref()
+            .and_then(|wd| find_venv_python(wd))
+        {
+            let path_str = venv_python.to_string_lossy().to_string();
+            spawn_kernel(&path_str, &[]).context(format!(
+                "failed to spawn kernel process (venv: {})",
+                path_str
+            ))?
+        } else {
+            spawn_kernel("python3", &[])
+                .or_else(|_| spawn_kernel("python", &[]))
+                .context("failed to spawn kernel process (tried python3 and python)")?
+        };
+
+        this.update(&mut cx.clone(), |this, _cx| {
+            this.kernels.insert(kernel_id.clone(), child);
+        });
+
+        Ok(proto::SpawnKernelResponse {
+            kernel_id,
+            connection_file: connection_file_content,
+        })
+    }
+
+    async fn handle_kill_kernel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::KillKernel>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let kernel_id = envelope.payload.kernel_id;
+        let child = this.update(&mut cx, |this, _| this.kernels.remove(&kernel_id));
+        if let Some(mut child) = child {
+            child.kill().log_err();
+        }
+        Ok(proto::Ack {})
+    }
+
     async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
@@ -1189,4 +1333,24 @@ fn prompt_to_proto(
             proto::language_server_prompt_request::Critical {},
         ),
     }
+}
+
+fn find_venv_python(working_directory: &str) -> Option<std::path::PathBuf> {
+    let wd = std::path::Path::new(working_directory);
+    for dir_name in &[".venv", "venv", ".env", "env"] {
+        let venv_dir = wd.join(dir_name);
+        let has_pyvenv_cfg = venv_dir.join("pyvenv.cfg").is_file();
+        let has_activate = venv_dir.join("bin").join("activate").is_file();
+        if has_pyvenv_cfg || has_activate {
+            let python = venv_dir.join("bin").join("python");
+            if python.is_file() {
+                return Some(python);
+            }
+            let python3 = venv_dir.join("bin").join("python3");
+            if python3.is_file() {
+                return Some(python3);
+            }
+        }
+    }
+    None
 }

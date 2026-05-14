@@ -8,8 +8,9 @@ use dap::{
 use editor::Editor;
 use gpui::{
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
-    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TaskExt,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use itertools::Itertools;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -1076,7 +1077,12 @@ impl VariableList {
         presentation_hint: Option<&VariablePresentationHint>,
         cx: &Context<Self>,
     ) -> VariableColor {
-        let syntax_color_for = |name| cx.theme().syntax().get(name).color;
+        let syntax_color_for = |name| {
+            cx.theme()
+                .syntax()
+                .style_for_name(name)
+                .and_then(|style| style.color)
+        };
         let name = if self.disabled {
             Some(Color::Disabled.color(cx))
         } else {
@@ -1574,7 +1580,7 @@ impl Render for VariableList {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)

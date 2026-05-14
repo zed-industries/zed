@@ -68,13 +68,26 @@ pub struct Github {
     base_url: Url,
 }
 
+fn normalize_author_email(email: &str) -> &str {
+    email.trim_start_matches('<').trim_end_matches('>')
+}
+
 fn build_cdn_avatar_url(email: &str) -> Result<Url> {
-    let email = email.trim_start_matches('<').trim_end_matches('>');
+    let email = normalize_author_email(email);
     Url::parse(&format!(
         "https://avatars.githubusercontent.com/u/e?email={}&s=128",
         encode(email)
     ))
     .context("failed to construct avatar URL")
+}
+
+fn build_cdn_avatar_url_for_author_email(email: &str) -> Result<Option<Url>> {
+    let email = normalize_author_email(email);
+    if email.ends_with("[bot]@users.noreply.github.com") {
+        return Ok(None);
+    }
+
+    build_cdn_avatar_url(email).map(Some)
 }
 
 impl Github {
@@ -267,8 +280,10 @@ impl GitHostingProvider for Github {
         author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
-        if let Some(email) = author_email {
-            return Ok(Some(build_cdn_avatar_url(&email)?));
+        if let Some(email) = author_email
+            && let Some(avatar_url) = build_cdn_avatar_url_for_author_email(&email)?
+        {
+            return Ok(Some(avatar_url));
         }
 
         let commit = commit.to_string();
@@ -627,6 +642,28 @@ mod tests {
         assert_eq!(
             url.as_str(),
             "https://avatars.githubusercontent.com/u/e?email=user%2Btag%40example.com&s=128"
+        );
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_for_author_email_skips_bot_noreply_emails() {
+        for email in [
+            "41898282+github-actions[bot]@users.noreply.github.com",
+            "<41898282+github-actions[bot]@users.noreply.github.com>",
+        ] {
+            assert_eq!(build_cdn_avatar_url_for_author_email(email).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_for_author_email_uses_user_noreply_emails() {
+        let url = build_cdn_avatar_url_for_author_email("12345+octocat@users.noreply.github.com")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://avatars.githubusercontent.com/u/e?email=12345%2Boctocat%40users.noreply.github.com&s=128"
         );
     }
 }

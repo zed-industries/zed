@@ -1,3 +1,4 @@
+#![cfg_attr(target_family = "wasm", no_main)]
 //! Renders a div with deep children hierarchy. This example is useful to exemplify that Zed can
 //! handle deep hierarchies (even though it cannot just yet!).
 use std::sync::LazyLock;
@@ -29,7 +30,7 @@ impl Render for Tree {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
         cx.open_window(
@@ -41,4 +42,16 @@ fn main() {
         )
         .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

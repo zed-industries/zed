@@ -1,4 +1,7 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::{
+    borrow::Cow,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -202,7 +205,7 @@ impl RenderOnce for CharacterGrid {
             "❮", "<=", "!=", "==", "--", "++", "=>", "->", "🏀", "🎊", "😍", "❤️", "👍", "👎",
         ];
 
-        let columns = 11;
+        let columns = 20;
         let rows = characters.len().div_ceil(columns);
 
         let grid_rows = (0..rows).map(|row_idx| {
@@ -236,6 +239,7 @@ impl RenderOnce for CharacterGrid {
 
 struct TextExample {
     next_id: usize,
+    font_family: SharedString,
 }
 
 impl TextExample {
@@ -243,7 +247,32 @@ impl TextExample {
         self.next_id += 1;
         self.next_id
     }
+
+    fn button(
+        text: &str,
+        cx: &mut Context<Self>,
+        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> impl IntoElement {
+        div()
+            .id(text.to_string())
+            .flex_none()
+            .child(text.to_string())
+            .bg(gpui::black())
+            .text_color(gpui::white())
+            .active(|this| this.opacity(0.8))
+            .px_3()
+            .py_1()
+            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+    }
 }
+
+const FONT_FAMILIES: [&str; 5] = [
+    ".ZedMono",
+    ".SystemUIFont",
+    "Menlo",
+    "Monaco",
+    "Courier New",
+];
 
 impl Render for TextExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -263,7 +292,26 @@ impl Render for TextExample {
         let step_up_6 = step_up_5 * type_scale;
 
         div()
+            .font_family(self.font_family.clone())
             .size_full()
+            .child(
+                div()
+                    .bg(gpui::white())
+                    .border_b_1()
+                    .border_color(gpui::black())
+                    .p_3()
+                    .flex()
+                    .child(Self::button(&self.font_family, cx, |this, cx| {
+                        let new_family = FONT_FAMILIES
+                            .iter()
+                            .position(|f| *f == this.font_family.as_str())
+                            .map(|idx| FONT_FAMILIES[(idx + 1) % FONT_FAMILIES.len()])
+                            .unwrap_or(FONT_FAMILIES[0]);
+
+                        this.font_family = SharedString::new(new_family);
+                        cx.notify();
+                    })),
+            )
             .child(
                 div()
                     .id("text-example")
@@ -298,12 +346,22 @@ impl Render for TextExample {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx: &mut App| {
         cx.set_menus(vec![Menu {
             name: "GPUI Typography".into(),
+            disabled: false,
             items: vec![],
         }]);
+
+        let fonts = [include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        )]
+        .iter()
+        .map(|b| Cow::Borrowed(&b[..]))
+        .collect();
+
+        _ = cx.text_system().add_fonts(fonts);
 
         cx.init_colors();
         cx.set_global(GlobalTextContext(Arc::new(TextContext::default())));
@@ -321,7 +379,12 @@ fn main() {
                     ))),
                     ..Default::default()
                 },
-                |_window, cx| cx.new(|_cx| TextExample { next_id: 0 }),
+                |_window, cx| {
+                    cx.new(|_cx| TextExample {
+                        next_id: 0,
+                        font_family: ".ZedMono".into(),
+                    })
+                },
             )
             .unwrap();
 
@@ -331,4 +394,16 @@ fn main() {
             })
             .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }
