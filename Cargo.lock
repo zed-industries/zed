@@ -19130,6 +19130,7 @@ dependencies = [
  "icons",
  "itertools 0.14.0",
  "menu",
+ "num-format",
  "schemars 1.0.4",
  "serde",
  "smallvec",
