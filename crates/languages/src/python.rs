@@ -1516,9 +1516,7 @@ impl ToolchainLister for PythonToolchainProvider {
                             );
                         }
                     } else {
-                        log::warn!(
-                            "Conda toolchain has no name; skipping terminal activation"
-                        );
+                        log::warn!("Conda toolchain has no name; skipping terminal activation");
                     }
                 }
                 Some(
