@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use edit_prediction_metrics::{
-    ActualPredictionCursor, PredictionReversalContext, PredictionScoringInput,
+    ActualPredictionCursor, Excerpt, PredictionReversalContext, PredictionScoringInput,
 };
 use gpui::AsyncApp;
 use std::fs::File;
@@ -60,6 +60,7 @@ pub async fn run_scoring(
     .with_context(|| format!("Expected patch did not apply for {}", example.spec.name))?;
 
     let cursor_path = example.spec.cursor_path.as_ref();
+    let context = context_excerpts(example, prompt_inputs);
 
     progress.set_substatus("computing metrics");
     let mut scores = vec![];
@@ -92,12 +93,43 @@ pub async fn run_scoring(
                 }),
                 cumulative_logprob: prediction.cumulative_logprob,
                 avg_logprob: prediction.avg_logprob,
+                context: Some(&context),
             },
         ));
     }
 
     example.score = scores;
     Ok(())
+}
+
+fn context_excerpts(
+    example: &Example,
+    prompt_inputs: &zeta_prompt::ZetaPromptInput,
+) -> Vec<Excerpt> {
+    let mut context = Vec::new();
+
+    if let Some(excerpt_start_row) = prompt_inputs.excerpt_start_row {
+        let row_count = prompt_inputs.cursor_excerpt.lines().count() as u32;
+        context.push(Excerpt {
+            path: example.spec.cursor_path.to_string_lossy().to_string(),
+            row_range: excerpt_start_row..excerpt_start_row.saturating_add(row_count),
+            content: prompt_inputs.cursor_excerpt.to_string(),
+        });
+    }
+
+    if let Some(related_files) = &prompt_inputs.related_files {
+        for related_file in related_files {
+            for excerpt in &related_file.excerpts {
+                context.push(Excerpt {
+                    path: related_file.path.to_string_lossy().to_string(),
+                    row_range: excerpt.row_range.clone(),
+                    content: excerpt.text.to_string(),
+                });
+            }
+        }
+    }
+
+    context
 }
 
 pub fn print_report(examples: &[Example], verbose: bool) {
@@ -141,6 +173,10 @@ pub fn print_report(examples: &[Example], verbose: bool) {
     let mut discarded_chars_total: usize = 0;
     let mut recall_rate_sum: f64 = 0.0;
     let mut recall_rate_count: usize = 0;
+    let mut editable_context_coverage_sum: f64 = 0.0;
+    let mut editable_context_coverage_count: usize = 0;
+    let mut changed_lines_reachable: usize = 0;
+    let mut total_changed_lines: usize = 0;
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
@@ -250,6 +286,12 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             if let Some(rr) = score.recall_rate {
                 recall_rate_sum += rr;
                 recall_rate_count += 1;
+            }
+            if let Some(coverage) = &score.editable_context_coverage {
+                editable_context_coverage_sum += coverage.score;
+                editable_context_coverage_count += 1;
+                changed_lines_reachable += coverage.changed_lines_reachable;
+                total_changed_lines += coverage.total_changed_lines;
             }
 
             // Accumulate token change metrics (only for predictions that produced a patch)
@@ -399,6 +441,17 @@ pub fn print_report(examples: &[Example], verbose: bool) {
                 "Recall rate: {:.1}% avg ({} evaluated)",
                 avg_recall_rate * 100.0,
                 recall_rate_count
+            );
+        }
+        if editable_context_coverage_count > 0 {
+            let avg_editable_context_coverage =
+                editable_context_coverage_sum / editable_context_coverage_count as f64;
+            println!(
+                "Editable context coverage: {:.1}% avg ({} evaluated, {} out of {} edits covered)",
+                avg_editable_context_coverage * 100.0,
+                editable_context_coverage_count,
+                changed_lines_reachable,
+                total_changed_lines
             );
         }
 

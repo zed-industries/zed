@@ -56,6 +56,12 @@ pub struct SummaryJson {
     pub total_correctly_deleted_chars: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_discarded_chars: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_coverage: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_changed_lines_reachable: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_total_changed_lines: Option<usize>,
 }
 
 pub fn compute_summary<'a>(
@@ -91,6 +97,10 @@ pub fn compute_summary<'a>(
     let mut discarded_chars_count: usize = 0;
     let mut recall_rate_sum: f64 = 0.0;
     let mut recall_rate_count: usize = 0;
+    let mut editable_context_coverage_sum: f64 = 0.0;
+    let mut editable_context_coverage_count: usize = 0;
+    let mut editable_context_changed_lines_reachable: usize = 0;
+    let mut editable_context_total_changed_lines: usize = 0;
 
     for prediction in predictions {
         let score = prediction.score;
@@ -148,6 +158,12 @@ pub fn compute_summary<'a>(
         if let Some(recall_rate) = score.recall_rate {
             recall_rate_sum += recall_rate;
             recall_rate_count += 1;
+        }
+        if let Some(coverage) = &score.editable_context_coverage {
+            editable_context_coverage_sum += coverage.score;
+            editable_context_coverage_count += 1;
+            editable_context_changed_lines_reachable += coverage.changed_lines_reachable;
+            editable_context_total_changed_lines += coverage.total_changed_lines;
         }
 
         if let Some(exact_match) = score.cursor_exact_match {
@@ -252,6 +268,22 @@ pub fn compute_summary<'a>(
         None
     };
 
+    let avg_editable_context_coverage = if editable_context_coverage_count > 0 {
+        Some(editable_context_coverage_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let editable_context_changed_lines_reachable = if editable_context_coverage_count > 0 {
+        Some(editable_context_changed_lines_reachable)
+    } else {
+        None
+    };
+    let editable_context_total_changed_lines = if editable_context_coverage_count > 0 {
+        Some(editable_context_total_changed_lines)
+    } else {
+        None
+    };
+
     SummaryJson {
         total_examples: total_scores,
         avg_delta_chr_f,
@@ -289,5 +321,8 @@ pub fn compute_summary<'a>(
         total_kept_chars,
         total_correctly_deleted_chars,
         total_discarded_chars,
+        avg_editable_context_coverage,
+        editable_context_changed_lines_reachable,
+        editable_context_total_changed_lines,
     }
 }

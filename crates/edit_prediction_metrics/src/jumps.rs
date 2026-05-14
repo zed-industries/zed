@@ -2,14 +2,14 @@ use std::ops::Range;
 
 use crate::patch::{Patch, PatchLine};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Excerpt {
     pub path: String,
     pub row_range: Range<u32>,
     pub content: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct EditableContextCoverage {
     pub changed_lines_reachable: usize,
     pub total_changed_lines: usize,
@@ -40,18 +40,18 @@ pub fn editable_context_coverage(
     let mut changed_lines_reachable = 0;
     let mut total_changed_lines = 0;
     for hunk in patch.hunks {
-        let mut old_row = hunk.old_start.saturating_sub(1) as u32;
+        let mut old_row = hunk.old_start.saturating_sub(1).max(0) as u32;
         for line in hunk.lines {
             match line {
                 PatchLine::Addition(_) => {
                     total_changed_lines += 1;
-                    if context_contains_insertion_point(&context, &hunk.filename, old_row) {
+                    if context_contains_insertion_point(context, &hunk.filename, old_row) {
                         changed_lines_reachable += 1;
                     }
                 }
                 PatchLine::Deletion(_) => {
                     total_changed_lines += 1;
-                    if context_contains_line(&context, &hunk.filename, old_row) {
+                    if context_contains_line(context, &hunk.filename, old_row) {
                         changed_lines_reachable += 1;
                     }
                     old_row = old_row.saturating_add(1);
@@ -101,7 +101,7 @@ mod tests {
             -let value = 1;
         "};
 
-        let score = editable_context_coverage(patch, &vec![excerpt("src/main.rs", 1..2)]);
+        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 1..2)]);
 
         assert_eq!(score.changed_lines_reachable, 1);
         assert_eq!(score.total_changed_lines, 1);
@@ -119,7 +119,7 @@ mod tests {
 
         let score = editable_context_coverage(
             patch,
-            &vec![excerpt("src/main.rs", 0..1), excerpt("src/main.rs", 3..4)],
+            &[excerpt("src/main.rs", 0..1), excerpt("src/main.rs", 3..4)],
         );
 
         assert_eq!(score.changed_lines_reachable, 1);
@@ -139,7 +139,7 @@ mod tests {
              }
         "};
 
-        let score = editable_context_coverage(patch, &vec![excerpt("src/main.rs", 1..2)]);
+        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 1..2)]);
 
         assert_eq!(score.changed_lines_reachable, 2);
         assert_eq!(score.total_changed_lines, 2);
@@ -157,7 +157,7 @@ mod tests {
              }
         "};
 
-        let score = editable_context_coverage(patch, &vec![excerpt("src/main.rs", 0..1)]);
+        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 0..1)]);
 
         assert_eq!(score.changed_lines_reachable, 1);
         assert_eq!(score.total_changed_lines, 1);
@@ -177,7 +177,7 @@ mod tests {
             +let last = 5;
         "};
 
-        let score = editable_context_coverage(patch, &vec![excerpt("src/main.rs", 0..1)]);
+        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 0..1)]);
 
         assert_eq!(score.changed_lines_reachable, 2);
         assert_eq!(score.total_changed_lines, 4);
@@ -189,7 +189,7 @@ mod tests {
         let score = editable_context_coverage(
             indoc! {"
             "},
-            &Vec::new(),
+            &[],
         );
 
         assert_eq!(score.changed_lines_reachable, 0);
