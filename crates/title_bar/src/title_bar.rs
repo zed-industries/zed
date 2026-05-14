@@ -455,31 +455,16 @@ impl TitleBar {
             titlebar
         });
 
-        // Two banner variants share the same dismissal key (`source`)
-        // so a user who dismisses one never sees the other unexpectedly
-        // pop up after, say, importing some Rules later. The label and
-        // subtitle differ depending on whether the rules-to-skills
-        // migration found anything to migrate on this machine.
-        //
-        // Timing note: on the very first launch after enabling the
-        // skills feature flag, the title bar can be constructed before
-        // the async migration finishes writing its result to the KVP.
-        // In that window a user with Rules transiently sees the
-        // "Introducing: Skills" variant; the explainer modal still
-        // reads the result live and shows accurate content.
-        let banner_label: SharedString =
-            if prompt_store::rules_to_skills_migration::migration_result()
-                .is_some_and(|result| !result.is_empty())
-            {
-                "Skills Have Replaced Rules".into()
-            } else {
-                "Skills".into()
-            };
+        // The banner label stays static ("Introducing: Skills") regardless
+        // of whether the user had Rules to migrate; the explainer modal
+        // is where the migration-specific summary surfaces. Keeping the
+        // label static avoids the rebuild-on-migration-completion plumbing
+        // we'd otherwise need to dodge the title-bar-vs-migration race.
         let banner = Some(cx.new(|cx| {
             OnboardingBanner::new(
                 "Skills Migration Announcement",
                 IconName::Sparkle,
-                banner_label,
+                "Skills",
                 Some("Introducing:".into()),
                 zed_actions::agent::OpenRulesToSkillsMigrationInfo.boxed_clone(),
                 cx,

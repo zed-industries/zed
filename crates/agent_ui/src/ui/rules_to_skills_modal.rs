@@ -109,14 +109,14 @@ fn render_migration_summary(mut modal: AlertModal, result: &MigrationResult) -> 
 
     if !result.skill_names.is_empty() {
         modal = modal.child(Label::new(format!(
-            "These Rules became Skills in {GLOBAL_SKILLS_DIR_DISPLAY}:"
+            "The following Rules have been migrated to Skills in {GLOBAL_SKILLS_DIR_DISPLAY}:"
         )));
         modal = add_bulleted_names(modal, &result.skill_names);
     }
 
     if !result.agents_md_names.is_empty() {
         modal = modal.child(Label::new(format!(
-            "These Default Rules were appended to {GLOBAL_AGENTS_FILE_DISPLAY}:"
+            "The following Default Rules have been appended to {GLOBAL_AGENTS_FILE_DISPLAY}:"
         )));
         modal = add_bulleted_names(modal, &result.agents_md_names);
     }
@@ -159,13 +159,13 @@ fn customized_builtins_sentence(names: &[String]) -> String {
     );
     if names.len() == 1 {
         format!(
-            "Your customization of the {name} built-in prompt was added to the top of \
+            "Your customization of the {name} built-in prompt has been added to the top of \
              {GLOBAL_AGENTS_FILE_DISPLAY}.",
             name = names[0],
         )
     } else {
         format!(
-            "Your customizations of these built-in prompts were added to the top of \
+            "Your customizations of these built-in prompts have been added to the top of \
              {GLOBAL_AGENTS_FILE_DISPLAY}: {joined}.",
             joined = names.join(", "),
         )
@@ -180,7 +180,7 @@ mod tests {
     fn customized_builtins_sentence_uses_singular_wording_for_one_item() {
         let sentence = customized_builtins_sentence(&["Commit message".to_string()]);
         assert!(sentence.contains("Your customization of the Commit message"));
-        assert!(sentence.contains("built-in prompt was added"));
+        assert!(sentence.contains("built-in prompt has been added"));
         assert!(sentence.contains(GLOBAL_AGENTS_FILE_DISPLAY));
     }
 
