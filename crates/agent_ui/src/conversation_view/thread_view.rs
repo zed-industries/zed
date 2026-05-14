@@ -5710,7 +5710,7 @@ impl ThreadView {
             .when(is_open, |this| {
                 this.child(
                     div()
-                        .when(is_constrained, |this| this.relative())
+                        .relative()
                         .child(
                             div()
                                 .id(("thinking-content", chunk_ix))
@@ -5727,6 +5727,22 @@ impl ThreadView {
                                     chunk,
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
                                     cx,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .id(("thinking-toggle-strip", chunk_ix))
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w(rems(1.))
+                                .h_full()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                .on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| {
+                                        this.toggle_thinking_block_expansion(key, cx);
+                                    },
                                 )),
                         )
                         .when(is_constrained, |this| {
