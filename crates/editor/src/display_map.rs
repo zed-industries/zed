@@ -94,7 +94,7 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
 };
 use language::{
@@ -113,6 +113,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
+use theme::StatusColors;
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -686,6 +687,10 @@ impl DisplayMap {
             use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
         }
+    }
+
+    pub fn crease_snapshot(&self) -> CreaseSnapshot {
+        self.crease_map.snapshot()
     }
 
     #[instrument(skip_all)]
@@ -1810,72 +1815,89 @@ impl DisplaySnapshot {
                 edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
-        .flat_map(|chunk| {
-            let syntax_highlight_style = chunk
-                .syntax_highlight_id
-                .and_then(|id| editor_style.syntax.get(id).cloned());
+        .flat_map({
+            // track the current underline style so that we can apply it to
+            // inlay hints within the diagnostic's span
+            let mut current_diagnostic_underline: Option<UnderlineStyle> = None;
 
-            let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
-                HighlightStyle {
-                    // For color inlays, blend the color with the editor background
-                    // if the color has transparency (alpha < 1.0)
-                    color: chunk_highlight.color.map(|color| {
-                        if chunk.is_inlay && !color.is_opaque() {
-                            editor_style.background.blend(color)
-                        } else {
-                            color
-                        }
-                    }),
-                    underline: chunk_highlight
-                        .underline
-                        .filter(|_| editor_style.show_underlines),
-                    ..chunk_highlight
-                }
-            });
+            move |chunk| {
+                let syntax_highlight_style = chunk
+                    .syntax_highlight_id
+                    .and_then(|id| editor_style.syntax.get(id).cloned());
 
-            let diagnostic_highlight = chunk
-                .diagnostic_severity
-                .filter(|severity| {
-                    self.diagnostics_max_severity
-                        .into_lsp()
-                        .is_some_and(|max_severity| severity <= &max_severity)
-                })
-                .map(|severity| HighlightStyle {
-                    fade_out: chunk
-                        .is_unnecessary
-                        .then_some(editor_style.unnecessary_code_fade),
-                    underline: (chunk.underline
-                        && editor_style.show_underlines
-                        && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
-                        .then(|| {
-                            let diagnostic_color =
-                                super::diagnostic_style(severity, &editor_style.status);
-                            UnderlineStyle {
-                                color: Some(diagnostic_color),
-                                thickness: 1.0.into(),
-                                wavy: true,
+                let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
+                    HighlightStyle {
+                        // For color inlays, blend the color with the editor background
+                        // if the color has transparency (alpha < 1.0)
+                        color: chunk_highlight.color.map(|color| {
+                            if chunk.is_inlay && !color.is_opaque() {
+                                editor_style.background.blend(color)
+                            } else {
+                                color
                             }
                         }),
-                    ..Default::default()
+                        underline: chunk_highlight
+                            .underline
+                            .filter(|_| editor_style.show_underlines),
+                        ..chunk_highlight
+                    }
                 });
 
-            let style = [
-                syntax_highlight_style,
-                chunk_highlight,
-                diagnostic_highlight,
-            ]
-            .into_iter()
-            .flatten()
-            .reduce(|acc, highlight| acc.highlight(highlight));
+                let diagnostic_highlight = if chunk.is_inlay {
+                    current_diagnostic_underline.map(|underline| HighlightStyle {
+                        underline: Some(underline),
+                        ..Default::default()
+                    })
+                } else {
+                    let highlight = chunk
+                        .diagnostic_severity
+                        .filter(|severity| {
+                            self.diagnostics_max_severity
+                                .into_lsp()
+                                .is_some_and(|max_severity| severity <= &max_severity)
+                        })
+                        .map(|severity| HighlightStyle {
+                            fade_out: chunk
+                                .is_unnecessary
+                                .then_some(editor_style.unnecessary_code_fade),
+                            underline: (chunk.underline
+                                && editor_style.show_underlines
+                                && !(chunk.is_unnecessary
+                                    && severity > lsp::DiagnosticSeverity::WARNING))
+                                .then(|| {
+                                    let diagnostic_color =
+                                        diagnostic_style(severity, &editor_style.status);
+                                    UnderlineStyle {
+                                        color: Some(diagnostic_color),
+                                        thickness: 1.0.into(),
+                                        wavy: true,
+                                    }
+                                }),
+                            ..Default::default()
+                        });
 
-            HighlightedChunk {
-                text: chunk.text,
-                style,
-                is_tab: chunk.is_tab,
-                is_inlay: chunk.is_inlay,
-                replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+                    current_diagnostic_underline = highlight.as_ref().and_then(|h| h.underline);
+                    highlight
+                };
+
+                let style = [
+                    syntax_highlight_style,
+                    chunk_highlight,
+                    diagnostic_highlight,
+                ]
+                .into_iter()
+                .flatten()
+                .reduce(|acc, highlight| acc.highlight(highlight));
+
+                HighlightedChunk {
+                    text: chunk.text,
+                    style,
+                    is_tab: chunk.is_tab,
+                    is_inlay: chunk.is_inlay,
+                    replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+                }
+                .highlight_invisibles(editor_style)
             }
-            .highlight_invisibles(editor_style)
         })
     }
 
@@ -2411,6 +2433,16 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+}
+
+fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+    match severity {
+        lsp::DiagnosticSeverity::ERROR => colors.error,
+        lsp::DiagnosticSeverity::WARNING => colors.warning,
+        lsp::DiagnosticSeverity::INFORMATION => colors.info,
+        lsp::DiagnosticSeverity::HINT => colors.hint,
+        _ => colors.ignored,
     }
 }
 

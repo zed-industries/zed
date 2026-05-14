@@ -195,6 +195,19 @@ pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
     strip_path_suffix(base, suffix).is_some()
 }
 
+/// Case-insensitive ASCII comparison of a path component to a literal
+/// folder name. macOS and Windows use case-insensitive filesystems by
+/// default, so a path like `.ZED/settings.json` resolves to the same
+/// inode as the lowercase form. A case-sensitive `==` check would miss
+/// those and let a malicious settings author bypass classifiers with
+/// unusual casing. Callers should restrict `name` to ASCII; for ASCII
+/// inputs `eq_ignore_ascii_case` is safe and stable across platforms.
+pub fn component_matches_ignore_ascii_case(component: &OsStr, name: &str) -> bool {
+    component
+        .to_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case(name))
+}
+
 pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
     if let Some(remainder) = base
         .as_os_str()
@@ -413,6 +426,68 @@ impl PathStyle {
                     self.primary_separator()
                 }
             ))
+        }
+    }
+
+    pub fn join_path(
+        self,
+        left: impl AsRef<Path>,
+        right: impl AsRef<Path>,
+    ) -> anyhow::Result<PathBuf> {
+        let left = left
+            .as_ref()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+        let right = right.as_ref();
+        let right_string = right
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+        let joined = self
+            .join(left, right_string)
+            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
+        Ok(PathBuf::from(self.normalize(&joined)))
+    }
+
+    pub fn normalize(self, path_like: &str) -> String {
+        match self {
+            PathStyle::Windows => crate::normalize_path(Path::new(path_like))
+                .to_string_lossy()
+                .into_owned(),
+            PathStyle::Posix => {
+                let is_absolute = path_like.starts_with('/');
+                let remainder = if is_absolute {
+                    path_like.trim_start_matches('/')
+                } else {
+                    path_like
+                };
+
+                let mut components = Vec::new();
+                for component in remainder.split(self.separators_ch()) {
+                    match component {
+                        "" | "." => {}
+                        ".." => {
+                            if components
+                                .last()
+                                .is_some_and(|component| *component != "..")
+                            {
+                                components.pop();
+                            } else if !is_absolute {
+                                components.push(component);
+                            }
+                        }
+                        component => components.push(component),
+                    }
+                }
+
+                let normalized = components.join(self.primary_separator());
+                if is_absolute && normalized.is_empty() {
+                    "/".to_string()
+                } else if is_absolute {
+                    format!("/{normalized}")
+                } else {
+                    normalized
+                }
+            }
         }
     }
 
@@ -1565,6 +1640,34 @@ mod tests {
 
     use super::*;
     use util_macros::perf;
+
+    #[test]
+    fn test_join_path_uses_path_style_separator() {
+        let posix_path = PathStyle::Posix
+            .join_path(Path::new("/home/user/dev"), "worktrees")
+            .unwrap();
+        let windows_path = PathStyle::Windows
+            .join_path(Path::new("C:\\Users\\user\\dev"), "worktrees")
+            .unwrap();
+
+        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
+        assert_eq!(
+            windows_path.to_string_lossy(),
+            "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
+
+    #[test]
+    fn test_normalize_uses_path_style_separator() {
+        assert_eq!(
+            PathStyle::Posix.normalize("/home/user/dev/../worktrees/./zed"),
+            "/home/user/worktrees/zed"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
+            "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
 
     fn rel_path_entry(path: &'static str, is_file: bool) -> (&'static RelPath, bool) {
         (RelPath::unix(path).unwrap(), is_file)

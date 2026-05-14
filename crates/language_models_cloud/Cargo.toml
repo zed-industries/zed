@@ -20,6 +20,7 @@ google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
 http_client.workspace = true
 language_model.workspace = true
+log.workspace = true
 open_ai = { workspace = true, features = ["schemars"] }
 schemars.workspace = true
 semver.workspace = true

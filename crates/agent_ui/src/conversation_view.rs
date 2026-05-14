@@ -31,7 +31,7 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TextStyle,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TaskExt, TextStyle,
     WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
     list, point, pulsating_between,
 };
@@ -44,13 +44,13 @@ use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
-use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
+use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
 use rope::Point;
 use settings::{
     NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
@@ -80,8 +80,9 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
+use crate::completion_provider::AgentContextSelection;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
-use crate::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::message_editor::{InputAttempt, MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
@@ -99,6 +100,8 @@ use crate::{
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
+
+pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
 mod thread_view;
 pub use thread_view::*;
@@ -504,6 +507,10 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    /// When settings change, use this to see if the theme has changed (which
+    /// causes mermaid diagrams to re-render).
+    last_theme_id: Option<String>,
+    draft_prompt_persist_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -698,6 +705,7 @@ impl ConversationView {
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
+            cx.observe_global_in::<SettingsStore>(window, Self::invalidate_mermaid_caches),
             cx.observe_global_in::<AgentUiFontSize>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentBufferFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(
@@ -750,6 +758,8 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            last_theme_id: Some(cx.theme().id.clone()),
+            draft_prompt_persist_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -762,6 +772,9 @@ impl ConversationView {
 
         self.server_state = state;
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
+        if matches!(&self.server_state, ServerState::Connected(_)) {
+            cx.emit(RootThreadUpdated);
+        }
         cx.notify();
     }
 
@@ -784,7 +797,7 @@ impl ConversationView {
                     .and_then(|id| {
                         let store = ThreadMetadataStore::try_global(cx)?;
                         let entry = store.read(cx).entry_by_session(id)?;
-                        Some((Some(entry.folder_paths().clone()), entry.title.clone()))
+                        Some((Some(entry.folder_paths().clone()), entry.title()))
                     })
                     .unwrap_or((None, None));
                 (session_id, work_dirs, title)
@@ -1178,6 +1191,7 @@ impl ConversationView {
         let weak = cx.weak_entity();
         cx.new(|cx| {
             ThreadView::new(
+                self.thread_id,
                 thread,
                 conversation,
                 weak,
@@ -1387,7 +1401,7 @@ impl ConversationView {
     fn move_queued_message_to_main_editor(
         &mut self,
         index: usize,
-        inserted_text: Option<&str>,
+        attempt: Option<InputAttempt>,
         cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1396,7 +1410,7 @@ impl ConversationView {
             active.update(cx, |active, cx| {
                 active.move_queued_message_to_main_editor(
                     index,
-                    inserted_text,
+                    attempt,
                     cursor_offset,
                     window,
                     cx,
@@ -1506,18 +1520,6 @@ impl ConversationView {
                     return;
                 }
 
-                let used_tools = thread.read(cx).used_tools_since_last_user_message();
-                self.notify_with_sound(
-                    if used_tools {
-                        "Finished running tools"
-                    } else {
-                        "New message"
-                    },
-                    IconName::ZedAssistant,
-                    window,
-                    cx,
-                );
-
                 let should_send_queued = if let Some(active) = self.root_thread_view() {
                     active.update(cx, |active, cx| {
                         if active.skip_queue_processing_count > 0 {
@@ -1541,7 +1543,23 @@ impl ConversationView {
                 } else {
                     false
                 };
-                if should_send_queued {
+
+                // Skip notifying when a queued message is about to be auto-sent: the agent
+                // is not actually idle and a notification here would fire just before the
+                // next turn starts.
+                if !should_send_queued {
+                    let used_tools = thread.read(cx).used_tools_since_last_user_message();
+                    self.notify_with_sound(
+                        if used_tools {
+                            "Finished running tools"
+                        } else {
+                            "New message"
+                        },
+                        IconName::ZedAssistant,
+                        window,
+                        cx,
+                    );
+                } else {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
             }
@@ -1602,7 +1620,14 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                if let Some(title) = thread.read(cx).title()
+                let override_title = ThreadMetadataStore::try_global(cx).and_then(|store| {
+                    store
+                        .read(cx)
+                        .entry(self.thread_id)
+                        .and_then(|m| m.title_override.clone())
+                });
+                let title = override_title.or_else(|| thread.read(cx).title());
+                if let Some(title) = title
                     && let Some(active_thread) = self.thread_view(&session_id)
                 {
                     let title_editor = active_thread.read(cx).title_editor.clone();
@@ -1667,10 +1692,41 @@ impl ConversationView {
                 cx.notify();
             }
             AcpThreadEvent::PromptUpdated => {
+                if !is_subagent && thread.read(cx).is_draft_thread() {
+                    self.schedule_draft_prompt_persist(cx);
+                }
                 cx.notify();
             }
         }
         cx.notify();
+    }
+
+    fn schedule_draft_prompt_persist(&mut self, cx: &mut Context<Self>) {
+        let thread_id = self.thread_id;
+        self.draft_prompt_persist_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(DRAFT_PROMPT_PERSIST_DEBOUNCE)
+                .await;
+            let persist = this.update(cx, |this, cx| {
+                let thread = this.root_thread(cx)?;
+                let thread = thread.read(cx);
+                if !thread.is_draft_thread() {
+                    return None;
+                }
+                let snapshot: Vec<acp::ContentBlock> = thread
+                    .draft_prompt()
+                    .map(|p| p.to_vec())
+                    .unwrap_or_default();
+                Some(if snapshot.is_empty() {
+                    crate::draft_prompt_store::delete(thread_id, cx)
+                } else {
+                    crate::draft_prompt_store::write(thread_id, &snapshot, cx)
+                })
+            });
+            if let Ok(Some(persist)) = persist {
+                persist.await.log_err();
+            }
+        }));
     }
 
     fn authenticate(
@@ -2111,6 +2167,7 @@ impl ConversationView {
                                 self.render_markdown(
                                     desc.clone(),
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    cx,
                                 )
                             }))
                         }
@@ -2159,11 +2216,17 @@ impl ConversationView {
                 msg.into(),
                 Some(self.create_copy_button(msg.to_string()).into_any_element()),
             ),
-            LoadError::Exited { status } => (
-                "Failed to Launch",
-                format!("Server exited with status {status}").into(),
-                None,
-            ),
+            LoadError::Exited { status, stderr } => {
+                let mut message = format!("Server exited with status {status}");
+                if let Some(stderr) = stderr {
+                    message.push_str("\n");
+                    message.push_str(stderr);
+                };
+                let action_slot = stderr
+                    .is_some()
+                    .then(|| self.create_copy_button(message.clone()).into_any_element());
+                ("Failed to Launch", message.into(), action_slot)
+            }
             LoadError::Other(msg) => (
                 "Failed to Launch",
                 msg.into(),
@@ -2378,15 +2441,17 @@ impl ConversationView {
                 window,
                 move |this, _editor, event, window, cx| match event {
                     MessageEditorEvent::InputAttempted {
-                        text,
+                        attempt,
                         cursor_offset,
-                    } => this.move_queued_message_to_main_editor(
-                        index,
-                        Some(text.as_ref()),
-                        Some(*cursor_offset),
-                        window,
-                        cx,
-                    ),
+                    } => {
+                        this.move_queued_message_to_main_editor(
+                            index,
+                            Some(attempt.clone()),
+                            Some(*cursor_offset),
+                            window,
+                            cx,
+                        );
+                    }
                     MessageEditorEvent::LostFocus => {
                         this.save_queued_message_at_index(index, cx);
                     }
@@ -2418,11 +2483,19 @@ impl ConversationView {
         }
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            crate::conversation_view::thread_view::open_link(text, &workspace, window, cx);
-        })
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
+        render_agent_markdown(
+            markdown,
+            style,
+            &self.workspace,
+            &self.project.downgrade(),
+            cx,
+        )
     }
 
     fn notify_with_sound(
@@ -2509,7 +2582,7 @@ impl ConversationView {
             return;
         };
         let root_thread = root_thread.read(cx).thread.read(cx);
-        let root_session_id = root_thread.session_id().clone();
+        let root_thread_id = self.thread_id;
         let root_work_dirs = root_thread.work_dirs().cloned();
         let root_title = root_thread.title();
 
@@ -2523,7 +2596,7 @@ impl ConversationView {
                         icon,
                         caption.into(),
                         title,
-                        root_session_id,
+                        root_thread_id,
                         root_work_dirs,
                         root_title,
                         window,
@@ -2539,7 +2612,7 @@ impl ConversationView {
                         icon,
                         caption.clone(),
                         title.clone(),
-                        root_session_id.clone(),
+                        root_thread_id,
                         root_work_dirs.clone(),
                         root_title.clone(),
                         window,
@@ -2559,7 +2632,7 @@ impl ConversationView {
         icon: IconName,
         caption: SharedString,
         title: SharedString,
-        root_session_id: acp::SessionId,
+        root_thread_id: ThreadId,
         root_work_dirs: Option<PathList>,
         root_title: Option<SharedString>,
         window: &mut Window,
@@ -2581,7 +2654,7 @@ impl ConversationView {
         if let Some(screen_window) = cx
             .open_window(options, |_window, cx| {
                 cx.new(|_cx| {
-                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                    AgentNotification::new(title.clone(), Some(caption.clone()), icon, project_name)
                 })
             })
             .log_err()
@@ -2602,7 +2675,6 @@ impl ConversationView {
 
                             let workspace_handle = this.workspace.clone();
                             let agent = this.connection_key.clone();
-                            let root_session_id = root_session_id.clone();
                             let root_work_dirs = root_work_dirs.clone();
                             let root_title = root_title.clone();
 
@@ -2625,7 +2697,7 @@ impl ConversationView {
                                                     panel.update(cx, |panel, cx| {
                                                         panel.load_agent_thread(
                                                             agent.clone(),
-                                                            root_session_id.clone(),
+                                                            root_thread_id,
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
@@ -2699,10 +2771,10 @@ impl ConversationView {
                     &panel,
                     window,
                     move |this, _, event: &AgentPanelEvent, window, cx| match event {
-                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ThreadFocused => {
+                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ActiveViewFocused => {
                             dismiss_if_visible(this, window, cx);
                         }
-                        AgentPanelEvent::RetainedThreadChanged
+                        AgentPanelEvent::EntryChanged
                         | AgentPanelEvent::ThreadInteracted { .. } => {}
                     },
                 ));
@@ -2733,6 +2805,29 @@ impl ConversationView {
         }
     }
 
+    fn invalidate_mermaid_caches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let current_theme_id = cx.theme().id.clone();
+        if self.last_theme_id.as_ref() == Some(&current_theme_id) {
+            return;
+        }
+        self.last_theme_id = Some(current_theme_id);
+
+        if let Some(connected) = self.as_connected() {
+            let threads: Vec<_> = connected
+                .conversation
+                .read(cx)
+                .threads
+                .values()
+                .cloned()
+                .collect();
+            for thread in threads {
+                thread.update(cx, |thread, cx| {
+                    thread.invalidate_mermaid_caches(cx);
+                });
+            }
+        }
+    }
+
     pub(crate) fn insert_dragged_files(
         &self,
         paths: Vec<project::ProjectPath>,
@@ -2752,11 +2847,16 @@ impl ConversationView {
 
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
-    pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn insert_selection(
+        &self,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
-                    editor.insert_selections(window, cx);
+                    editor.insert_selections(selection, window, cx);
                 })
             });
         }
@@ -2921,6 +3021,31 @@ impl Render for ConversationView {
     }
 }
 
+fn render_agent_markdown(
+    markdown: Entity<Markdown>,
+    style: MarkdownStyle,
+    workspace: &WeakEntity<Workspace>,
+    project: &WeakEntity<Project>,
+    cx: &App,
+) -> MarkdownElement {
+    let workspace = workspace.clone();
+    let worktree_roots: Vec<PathBuf> = project
+        .upgrade()
+        .map(|project| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect()
+        })
+        .unwrap_or_default();
+    MarkdownElement::new(markdown, style)
+        .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
+        .on_url_click(move |text, window, cx| {
+            thread_view::open_link(text, &workspace, window, cx);
+        })
+}
+
 fn plan_label_markdown_style(
     status: &acp::PlanEntryStatus,
     window: &Window,
@@ -2952,8 +3077,9 @@ pub(crate) mod tests {
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
+    use editor::actions::Paste;
     use fs::FakeFs;
-    use gpui::{EventEmitter, TestAppContext, VisualTestContext};
+    use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext};
     use parking_lot::Mutex;
     use project::Project;
     use serde_json::json;
@@ -2965,6 +3091,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::completion_provider::AgentContextSource;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
@@ -3053,6 +3180,71 @@ pub(crate) mod tests {
             cx.windows()
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_when_queued_message_will_be_auto_sent(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("first", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let session_id = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .read(cx)
+                .session_id()
+                .clone()
+        });
+
+        active_thread(&conversation_view, cx).update_in(cx, |thread, _window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+
+        cx.deactivate_window();
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    "first response".into(),
+                )),
+                cx,
+            );
+            connection.end_turn(session_id, acp::StopReason::EndTurn);
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows()
+                .iter()
+                .filter(|window| window.downcast::<AgentNotification>().is_some())
+                .count(),
+            0,
+            "No notification should fire when a queued message will be auto-sent on Stopped"
         );
     }
 
@@ -3467,6 +3659,7 @@ pub(crate) mod tests {
                         session_id: Some(resume_session_id.clone()),
                         agent_id: ProjectAgentId::new("Flaky"),
                         title: Some(stored_title.clone()),
+                        title_override: None,
                         updated_at: Utc::now(),
                         created_at: Some(Utc::now()),
                         interacted_at: None,
@@ -5894,7 +6087,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
-            view.insert_selections(window, cx);
+            let workspace = workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -5957,7 +6157,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
-            view.insert_selections(window, cx);
+            let workspace = view.workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         message_editor.read_with(cx, |editor, cx| {
@@ -6984,24 +7191,6 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_title_editor_is_read_only_when_set_title_unsupported(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
-
-        let active = active_thread(&conversation_view, cx);
-        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
-
-        title_editor.read_with(cx, |editor, cx| {
-            assert!(
-                editor.read_only(cx),
-                "Title editor should be read-only when the connection does not support set_title"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_max_tokens_error_is_rendered(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -7090,6 +7279,7 @@ pub(crate) mod tests {
                             "Allow",
                             acp::PermissionOptionKind::AllowOnce,
                         )]),
+                        acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
                     )
                     .unwrap()
@@ -7397,6 +7587,107 @@ pub(crate) mod tests {
             text, "existing content\n\nqueued message",
             "Main editor should have existing content and queued message separated by two newlines"
         );
+    }
+
+    #[gpui::test]
+    async fn test_paste_text_into_queued_message_promotes_to_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            paste_into_queued_message(cx, ClipboardItem::new_string("PASTED".to_string())).await;
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0);
+
+        let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "queued PASTEDmessage");
+    }
+
+    #[gpui::test]
+    async fn test_paste_image_into_queued_message_promotes_to_main_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        use base64::Engine as _;
+        use std::io::Write as _;
+        let png_bytes = base64::prelude::BASE64_STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+            .unwrap();
+        let mut image_file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        image_file.write_all(&png_bytes).unwrap();
+
+        let (conversation_view, cx) = paste_into_queued_message(
+            cx,
+            ClipboardItem {
+                entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                    vec![image_file.path().to_path_buf()].into(),
+                ))],
+            },
+        )
+        .await;
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+        assert_eq!(queue_len, 0);
+
+        let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
+        let image_name = image_file.path().file_name().unwrap().to_string_lossy();
+        let expected_uri = acp_thread::MentionUri::PastedImage {
+            name: image_name.to_string(),
+        }
+        .to_uri()
+        .to_string();
+        assert_eq!(
+            text,
+            format!("queued [@{image_name}]({expected_uri}) message"),
+        );
+    }
+
+    async fn paste_into_queued_message(
+        cx: &mut TestAppContext,
+        clipboard: ClipboardItem,
+    ) -> (Entity<ConversationView>, &mut VisualTestContext) {
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        active_thread(&conversation_view, cx).update_in(cx, |thread, _window, cx| {
+            thread
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(acp::PromptCapabilities::new().image(true));
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued message".to_string(),
+                ))],
+                vec![],
+                cx,
+            );
+        });
+        conversation_view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        let queued_editor = active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
+            thread
+                .queued_message_editors
+                .first()
+                .cloned()
+                .expect("queued message editor not synced")
+        });
+
+        cx.write_to_clipboard(clipboard);
+
+        queued_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.editor().update(cx, |editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([MultiBufferOffset(7)..MultiBufferOffset(7)]);
+                });
+            });
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+
+        (conversation_view, cx)
     }
 
     #[gpui::test]

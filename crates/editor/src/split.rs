@@ -18,7 +18,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, Settings};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -583,8 +583,13 @@ impl SplittableEditor {
         };
         let project = workspace.read(cx).project().clone();
 
+        let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            let mut multibuffer = if is_rhs_singleton {
+                MultiBuffer::without_headers(Capability::ReadOnly)
+            } else {
+                MultiBuffer::new(Capability::ReadOnly)
+            };
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
@@ -1935,12 +1940,12 @@ impl SearchableItem for SplittableEditor {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
         self.focused_editor().update(cx, |editor, cx| {
-            editor.query_suggestion(ignore_settings, window, cx)
+            editor.query_suggestion(seed_query_override, window, cx)
         })
     }
 

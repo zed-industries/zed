@@ -192,6 +192,7 @@ impl VsCodeSettings {
                 ..GlobalLspSettingsContent::default()
             }),
             helix_mode: None,
+            hide_mouse: None,
             image_viewer: None,
             journal: None,
             language_models: None,
@@ -267,7 +268,6 @@ impl VsCodeSettings {
             go_to_definition_fallback: None,
             go_to_definition_scroll_strategy: None,
             gutter: self.gutter_content(),
-            hide_mouse: None,
             horizontal_scroll_margin: None,
             hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
@@ -315,6 +315,7 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
+            completion_menu_item_kind: None,
             diff_view_style: None,
             minimum_split_diff_width: None,
         }
