@@ -540,6 +540,21 @@ fn base_cell_style_text(width: Option<Length>, use_ui_font: bool, cx: &App) -> D
     base_cell_style(width).when(use_ui_font, |el| el.text_ui(cx))
 }
 
+fn render_cell(width: Option<Length>, disable_base_style: bool, use_ui_font: bool, cell: AnyElement, cx: &App) -> Div {
+    if disable_base_style {
+        div()
+            .when_some(width, |this, width| this.w(width))
+            .when(width.is_none(), |this| this.flex_1())
+            .overflow_hidden()
+            .child(cell)
+    } else {
+        base_cell_style_text(width, use_ui_font, cx)
+            .px_1()
+            .py_0p5()
+            .child(cell)
+    }
+}
+
 pub fn render_table_row(
     row_index: usize,
     items: TableRow<impl IntoElement>,
@@ -593,18 +608,7 @@ pub fn render_table_row(
             let use_ui_font = table_context.use_ui_font;
             div().flex().flex_row().flex_shrink_0().children(
                 items_vec.into_iter().zip(widths_vec).map(|(cell, width)| {
-                    if disable {
-                        div()
-                            .when_some(width, |this, width| this.w(width))
-                            .when(width.is_none(), |this| this.flex_1())
-                            .overflow_hidden()
-                            .child(cell)
-                    } else {
-                        base_cell_style_text(width, use_ui_font, cx)
-                            .px_1()
-                            .py_0p5()
-                            .child(cell)
-                    }
+                    render_cell(width, disable, use_ui_font, cell, cx)
                 }),
             )
         };
@@ -626,18 +630,7 @@ pub fn render_table_row(
                             .into_iter()
                             .zip(scrollable_widths)
                             .map(|(cell, width)| {
-                                if disable {
-                                    div()
-                                        .when_some(width, |this, width| this.w(width))
-                                        .when(width.is_none(), |this| this.flex_1())
-                                        .overflow_hidden()
-                                        .child(cell)
-                                } else {
-                                    base_cell_style_text(width, use_ui_font, cx)
-                                        .px_1()
-                                        .py_0p5()
-                                        .child(cell)
-                                }
+                                render_cell(width, disable, use_ui_font, cell, cx)
                             }),
                     ),
                 )
@@ -657,18 +650,7 @@ pub fn render_table_row(
                 .into_iter()
                 .zip(column_widths.into_vec())
                 .map(|(cell, width)| {
-                    if table_context.disable_base_cell_style {
-                        div()
-                            .when_some(width, |this, width| this.w(width))
-                            .when(width.is_none(), |this| this.flex_1())
-                            .overflow_hidden()
-                            .child(cell)
-                    } else {
-                        base_cell_style_text(width, table_context.use_ui_font, cx)
-                            .px_1()
-                            .py_0p5()
-                            .child(cell)
-                    }
+                    render_cell(width, table_context.disable_base_cell_style, table_context.use_ui_font, cell, cx)
                 }),
         );
     }
@@ -725,8 +707,6 @@ pub fn render_table_header(
         // Pinned header section
         let pinned_section = {
             let use_ui_font = table_context.use_ui_font;
-            let shared_id = shared_element_id.clone();
-            let ri = resize_info.clone();
             div().flex().flex_row().flex_shrink_0().children(
                 headers_vec.into_iter().enumerate().zip(widths_vec).map(
                     |((header_idx, h), width)| {
@@ -735,10 +715,10 @@ pub fn render_table_header(
                             .py_0p5()
                             .child(h)
                             .id(ElementId::NamedInteger(
-                                shared_id.clone(),
+                                shared_element_id.clone(),
                                 header_idx as u64,
                             ))
-                            .when_some(ri.as_ref().cloned(), |this, info| {
+                            .when_some(resize_info.as_ref().cloned(), |this, info| {
                                 if info.resize_behavior[header_idx].is_resizable() {
                                     this.on_click(move |event, window, cx| {
                                         if event.click_count() > 1 {
@@ -757,8 +737,6 @@ pub fn render_table_header(
         // Scrollable header section: same overflow_x_scroll + track_scroll approach as data rows
         let mut scrollable_section = {
             let use_ui_font = table_context.use_ui_font;
-            let shared_id = shared_element_id.clone();
-            let ri = resize_info.clone();
             let inner = div().flex().flex_row().children(
                 scrollable_headers
                     .into_iter()
@@ -771,10 +749,10 @@ pub fn render_table_header(
                             .py_0p5()
                             .child(h)
                             .id(ElementId::NamedInteger(
-                                shared_id.clone(),
+                                shared_element_id.clone(),
                                 header_idx as u64,
                             ))
-                            .when_some(ri.as_ref().cloned(), |this, info| {
+                            .when_some(resize_info.as_ref().cloned(), |this, info| {
                                 if info.resize_behavior[header_idx].is_resizable() {
                                     this.on_click(move |event, window, cx| {
                                         if event.click_count() > 1 {
@@ -890,8 +868,6 @@ impl TableRenderContext {
 fn render_resize_handles_resizable(
     columns_state: &Entity<ResizableColumnsState>,
     pinned_cols: usize,
-    pinned_width: Pixels,
-    total_scrollable_width: Pixels,
     h_scroll_handle: Option<&ScrollHandle>,
     window: &mut Window,
     cx: &mut App,
@@ -904,6 +880,16 @@ fn render_resize_handles_resizable(
     let rem_size = window.rem_size();
     let resize_behavior = Rc::new(resize_behavior);
     let n_cols = widths.cols();
+
+    let pinned_cols = pinned_cols.min(n_cols);
+    let pinned_width: Pixels = widths[..pinned_cols]
+        .iter()
+        .map(|w| w.to_pixels(rem_size))
+        .fold(px(0.), |acc, x| acc + x);
+    let total_scrollable_width: Pixels = widths[pinned_cols..]
+        .iter()
+        .map(|w| w.to_pixels(rem_size))
+        .fold(px(0.), |acc, x| acc + x);
 
     if pinned_cols > 0 {
         // Pinned column handles: an absolute overlay covering the pinned section width.
@@ -1126,27 +1112,6 @@ impl RenderOnce for Table {
             None
         };
 
-        // Compute pinned_width and total_scrollable_width for the resize handles overlay.
-        let (pinned_width, total_scrollable_width) = if pinned_cols > 0 {
-            if let ColumnWidthConfig::Resizable(entity) = &self.column_width_config {
-                let state = entity.read(cx);
-                let rem_size = window.rem_size();
-                let fw: Pixels = state.widths.as_slice()[..pinned_cols]
-                    .iter()
-                    .map(|w| w.to_pixels(rem_size))
-                    .fold(px(0.), |acc, x| acc + x);
-                let sw: Pixels = state.widths.as_slice()[pinned_cols..]
-                    .iter()
-                    .map(|w| w.to_pixels(rem_size))
-                    .fold(px(0.), |acc, x| acc + x);
-                (fw, sw)
-            } else {
-                (px(0.), px(0.))
-            }
-        } else {
-            (px(0.), px(0.))
-        };
-
         let (redistributable_entity, resizable_entity, resize_handles) =
             if let Some(_) = interaction_state.as_ref() {
                 match &self.column_width_config {
@@ -1165,8 +1130,6 @@ impl RenderOnce for Table {
                         Some(render_resize_handles_resizable(
                             entity,
                             pinned_cols,
-                            pinned_width,
-                            total_scrollable_width,
                             h_scroll_handle.as_ref(),
                             window,
                             cx,
