@@ -1102,6 +1102,13 @@
         // },
       },
     },
+    // When `true`, automatically approve every `session/request_permission`
+    // request raised by external ACP agents (e.g. Cursor, Claude Code,
+    // Gemini CLI) without showing a confirmation prompt. The `tool_permissions`
+    // rules above only apply to Zed's native agent — external agents own their
+    // own permission decisions. Use with care: this is the equivalent of
+    // running the external agent in a "yolo" / "always allow" mode.
+    "always_allow_external_agent_tools": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": false,
     // When enabled, show voting thumbs for feedback on agent edits.

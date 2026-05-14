@@ -157,6 +157,33 @@ You can use the "Test Your Rules" checker, available in each individual tool pag
 
 </div>
 
+## External ACP Agents
+
+`tool_permissions` applies only to Zed's **native** agent tools. External
+agents that talk to Zed over the [Agent Client Protocol](https://agentclientprotocol.com)
+(e.g. Cursor, Claude Code, Gemini CLI) own their own permission decisions and
+ask Zed to display the confirmation UI for every tool call. Because the agent
+controls when to ask, the per-tool patterns above cannot match against them.
+
+If you want a single switch that auto-approves every external-agent prompt:
+
+```json [settings]
+{
+  "agent": {
+    "always_allow_external_agent_tools": true
+  }
+}
+```
+
+When enabled, Zed responds to every `session/request_permission` request with
+the agent's `allow_always` option (or `allow_once` if no `allow_always` is
+offered) and never shows the prompt UI. This is equivalent to running the
+external agent in a "yolo" / "always allow" mode, so use it only with agents
+you fully trust.
+
+This setting has no effect on Zed's native agent — use `tool_permissions`
+above for that.
+
 ## Built-in Security Rules
 
 Zed includes a small set of hardcoded security rules that **cannot be overridden** by any setting.

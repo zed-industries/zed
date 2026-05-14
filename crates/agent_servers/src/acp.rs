@@ -3809,6 +3809,61 @@ mod tests {
             "session should be removed after final close"
         );
     }
+
+    fn permission_option(id: &str, kind: acp::PermissionOptionKind) -> acp::PermissionOption {
+        acp::PermissionOption::new(acp::PermissionOptionId::new(id), id.to_string(), kind)
+    }
+
+    #[test]
+    fn auto_approve_outcome_prefers_allow_always() {
+        let options = vec![
+            permission_option("once", acp::PermissionOptionKind::AllowOnce),
+            permission_option("always", acp::PermissionOptionKind::AllowAlways),
+            permission_option("reject", acp::PermissionOptionKind::RejectOnce),
+        ];
+        let outcome =
+            auto_approve_outcome(&options).expect("expected auto-approve outcome to be selected");
+        assert_eq!(outcome.option_id.0.as_ref(), "always");
+    }
+
+    #[test]
+    fn auto_approve_outcome_falls_back_to_allow_once() {
+        let options = vec![
+            permission_option("reject_always", acp::PermissionOptionKind::RejectAlways),
+            permission_option("once", acp::PermissionOptionKind::AllowOnce),
+            permission_option("reject", acp::PermissionOptionKind::RejectOnce),
+        ];
+        let outcome =
+            auto_approve_outcome(&options).expect("expected auto-approve outcome to be selected");
+        assert_eq!(outcome.option_id.0.as_ref(), "once");
+    }
+
+    #[test]
+    fn auto_approve_outcome_returns_none_when_only_reject_options() {
+        let options = vec![
+            permission_option("reject", acp::PermissionOptionKind::RejectOnce),
+            permission_option("reject_always", acp::PermissionOptionKind::RejectAlways),
+        ];
+        assert!(auto_approve_outcome(&options).is_none());
+    }
+
+    #[test]
+    fn auto_approve_outcome_returns_none_for_empty_options() {
+        let options: Vec<acp::PermissionOption> = vec![];
+        assert!(auto_approve_outcome(&options).is_none());
+    }
+
+    #[test]
+    fn auto_approve_outcome_picks_first_allow_always_when_multiple_present() {
+        let options = vec![
+            permission_option("once", acp::PermissionOptionKind::AllowOnce),
+            permission_option("always_a", acp::PermissionOptionKind::AllowAlways),
+            permission_option("always_b", acp::PermissionOptionKind::AllowAlways),
+        ];
+        let outcome =
+            auto_approve_outcome(&options).expect("expected auto-approve outcome to be selected");
+        assert_eq!(outcome.option_id.0.as_ref(), "always_a");
+    }
 }
 
 fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
@@ -4061,6 +4116,23 @@ fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
     responder.respond_with_error(err).log_err();
 }
 
+/// When `agent.always_allow_external_agent_tools` is enabled, picks an option
+/// to auto-approve from the set offered by the external agent. Prefers a
+/// remembered "allow always" choice, falling back to a one-shot allow when the
+/// agent only offers `allow_once`. Returns `None` if no allow-shaped option is
+/// available, in which case the normal confirmation UI is shown.
+fn auto_approve_outcome(
+    options: &[acp::PermissionOption],
+) -> Option<acp::SelectedPermissionOutcome> {
+    let pick = |kind: acp::PermissionOptionKind| {
+        options
+            .iter()
+            .find(|option| option.kind == kind)
+            .map(|option| acp::SelectedPermissionOutcome::new(option.option_id.clone()))
+    };
+    pick(acp::PermissionOptionKind::AllowAlways).or_else(|| pick(acp::PermissionOptionKind::AllowOnce))
+}
+
 fn handle_request_permission(
     args: acp::RequestPermissionRequest,
     responder: Responder<acp::RequestPermissionResponse>,
@@ -4071,6 +4143,28 @@ fn handle_request_permission(
         Ok(t) => t,
         Err(e) => return respond_err(responder, e),
     };
+
+    // Honor the global blanket-approve switch for external ACP agents. Read it
+    // synchronously here so the bypass doesn't race against later setting
+    // changes within the same prompt turn. `try_read_global` keeps us safe in
+    // the (unexpected) case where the settings store isn't installed yet.
+    let auto_approve = cx
+        .try_read_global::<settings::SettingsStore, _>(|_, cx| {
+            <agent_settings::AgentSettings as settings::Settings>::get_global(cx)
+                .always_allow_external_agent_tools
+        })
+        .unwrap_or(false);
+
+    if auto_approve
+        && let Some(outcome) = auto_approve_outcome(&args.options)
+    {
+        responder
+            .respond(acp::RequestPermissionResponse::new(
+                acp::RequestPermissionOutcome::Selected(outcome),
+            ))
+            .log_err();
+        return;
+    }
 
     cx.spawn(async move |cx| {
         let result: Result<_, acp::Error> = async {
