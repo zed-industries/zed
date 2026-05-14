@@ -267,7 +267,6 @@ impl AgentTool for EditFileTool {
         cx: &mut App,
     ) -> Result<()> {
         self.session_context.replay_output(output, event_stream, cx)
-
     }
 }
 
