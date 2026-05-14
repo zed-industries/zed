@@ -58,7 +58,7 @@ use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::pull_examples::{fetch_settled_examples_after, parse_settled_after_input};
-use crate::retrieve_context::run_context_retrieval;
+use crate::retrieve_context::{ContextRetrievalType, run_context_retrieval};
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
 use crate::split_dataset::SplitArgs;
@@ -96,7 +96,7 @@ struct EpArgs {
     output: Option<PathBuf>,
     #[arg(long, short, global = true)]
     in_place: bool,
-    #[arg(long, short, global = true)]
+    #[arg(long, global = true)]
     failfast: bool,
     /// How to handle failed examples in output: keep them or skip them.
     /// Failed examples are always logged to the run's failed directory.
@@ -119,6 +119,16 @@ pub enum FailedHandling {
     Skip,
     /// Skip writing files
     SkipNoFiles,
+}
+
+#[derive(Args, Debug, Clone)]
+struct ContextArgs {
+    /// Which context collector to run.
+    #[arg(long = "type", value_enum, default_value_t = ContextRetrievalType::Lsp)]
+    context_type: ContextRetrievalType,
+    /// Recompute context even if the example already has related files.
+    #[arg(long, short = 'f', default_value_t = false)]
+    force: bool,
 }
 
 const INPUTS_HELP: &str = r#"
@@ -193,7 +203,7 @@ enum Command {
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
-    Context,
+    Context(ContextArgs),
     /// Generate a prompt string for a specific model
     FormatPrompt(FormatPromptArgs),
     /// Runs edit prediction
@@ -235,7 +245,13 @@ impl Display for Command {
         match self {
             Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
-            Command::Context => write!(f, "context"),
+            Command::Context(args) => {
+                write!(f, "context --type={}", args.context_type)?;
+                if args.force {
+                    write!(f, " --force")?;
+                }
+                Ok(())
+            }
             Command::FormatPrompt(args) => {
                 write!(f, "format-prompt --provider={}", args.provider)
             }
@@ -1201,11 +1217,13 @@ fn main() {
                                             )
                                             .await?;
                                         }
-                                        Command::Context => {
+                                        Command::Context(args) => {
                                             run_context_retrieval(
                                                 example,
                                                 app_state.clone(),
                                                 &example_progress,
+                                                args.context_type,
+                                                args.force,
                                                 cx.clone(),
                                             )
                                             .await?;

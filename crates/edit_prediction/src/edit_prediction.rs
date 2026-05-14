@@ -2703,6 +2703,40 @@ impl EditPredictionStore {
     }
 
     #[cfg(feature = "cli-support")]
+    pub fn collect_editable_context(
+        &mut self,
+        project: Entity<Project>,
+        buffer: Entity<language::Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<RelatedFile>>> {
+        use edit_prediction_context::{EditHistoryContextEntry, collect_editable_context};
+
+        let buffers_by_id = project.read(cx).opened_buffers(cx).into_iter().fold(
+            HashMap::default(),
+            |mut buffers_by_id, buffer| {
+                buffers_by_id.insert(buffer.read(cx).remote_id(), buffer.clone());
+                buffers_by_id
+            },
+        );
+        let edit_history = self
+            .edit_history_for_project(&project, cx)
+            .into_iter()
+            .filter_map(|event| {
+                let buffer = buffers_by_id.get(&event.old_snapshot.remote_id())?.clone();
+                Some(EditHistoryContextEntry {
+                    buffer,
+                    edited_range: event.total_edit_range,
+                })
+            })
+            .collect();
+
+        cx.spawn(async move |_, cx| {
+            collect_editable_context(project, buffer, cursor_position, edit_history, cx).await
+        })
+    }
+
+    #[cfg(feature = "cli-support")]
     pub fn set_context_for_buffer(
         &mut self,
         project: &Entity<Project>,

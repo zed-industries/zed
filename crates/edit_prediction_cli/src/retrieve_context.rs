@@ -5,6 +5,7 @@ use crate::{
     progress::{ExampleProgress, InfoStyle, Step, StepProgress},
 };
 use anyhow::Context as _;
+use clap::ValueEnum;
 use collections::HashSet;
 use edit_prediction::{DebugEvent, EditPredictionStore};
 use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
@@ -14,16 +15,52 @@ use project::Project;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum ContextRetrievalType {
+    #[default]
+    Lsp,
+    Editable,
+    All,
+    None,
+}
+
+impl std::fmt::Display for ContextRetrievalType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContextRetrievalType::Lsp => write!(f, "lsp"),
+            ContextRetrievalType::Editable => write!(f, "editable"),
+            ContextRetrievalType::All => write!(f, "all"),
+            ContextRetrievalType::None => write!(f, "none"),
+        }
+    }
+}
+
+impl ContextRetrievalType {
+    fn includes_lsp(self) -> bool {
+        matches!(self, ContextRetrievalType::Lsp | ContextRetrievalType::All)
+    }
+
+    fn includes_editable(self) -> bool {
+        matches!(
+            self,
+            ContextRetrievalType::Editable | ContextRetrievalType::All
+        )
+    }
+}
+
 pub async fn run_context_retrieval(
     example: &mut Example,
     app_state: Arc<EpAppState>,
     example_progress: &ExampleProgress,
+    context_type: ContextRetrievalType,
+    force: bool,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    if example
-        .prompt_inputs
-        .as_ref()
-        .is_some_and(|inputs| inputs.related_files.is_some())
+    if (!force
+        && example
+            .prompt_inputs
+            .as_ref()
+            .is_some_and(|inputs| inputs.related_files.is_some()))
         || example.spec.repository_url.is_empty()
     {
         return Ok(());
@@ -36,32 +73,51 @@ pub async fn run_context_retrieval(
     let state = example.state.as_ref().unwrap();
     let project = state.project.clone();
 
-    let _lsp_handle = project.update(&mut cx, |project, cx| {
-        project.register_buffer_with_language_servers(&state.buffer, cx)
-    });
-    wait_for_language_servers_to_start(&project, &state.buffer, &step_progress, &mut cx).await?;
-
     let ep_store = cx
         .update(|cx| EditPredictionStore::try_global(cx))
         .context("EditPredictionStore not initialized")?;
 
-    let mut events = ep_store.update(&mut cx, |store, cx| {
-        store.register_buffer(&state.buffer, &project, cx);
-        store.refresh_context(&project, &state.buffer, state.cursor_position, cx);
-        store.debug_info(&project, cx)
-    });
+    let mut context_files = Vec::new();
 
-    while let Some(event) = events.next().await {
-        match event {
-            DebugEvent::ContextRetrievalFinished(_) => {
-                break;
+    if context_type.includes_lsp() {
+        let _lsp_handle = project.update(&mut cx, |project, cx| {
+            project.register_buffer_with_language_servers(&state.buffer, cx)
+        });
+        wait_for_language_servers_to_start(&project, &state.buffer, &step_progress, &mut cx)
+            .await?;
+
+        let mut events = ep_store.update(&mut cx, |store, cx| {
+            store.register_buffer(&state.buffer, &project, cx);
+            store.refresh_context(&project, &state.buffer, state.cursor_position, cx);
+            store.debug_info(&project, cx)
+        });
+
+        while let Some(event) = events.next().await {
+            match event {
+                DebugEvent::ContextRetrievalFinished(_) => {
+                    break;
+                }
+                _ => {}
             }
-            _ => {}
         }
+
+        context_files
+            .extend(ep_store.update(&mut cx, |store, cx| store.context_for_project(&project, cx)));
     }
 
-    let context_files =
-        ep_store.update(&mut cx, |store, cx| store.context_for_project(&project, cx));
+    if context_type.includes_editable() {
+        let editable_context = ep_store
+            .update(&mut cx, |store, cx| {
+                store.collect_editable_context(
+                    project.clone(),
+                    state.buffer.clone(),
+                    state.cursor_position,
+                    cx,
+                )
+            })
+            .await?;
+        merge_context_files(&mut context_files, editable_context);
+    }
 
     let excerpt_count: usize = context_files.iter().map(|f| f.excerpts.len()).sum();
     step_progress.set_info(format!("{} excerpts", excerpt_count), InfoStyle::Normal);
@@ -70,6 +126,28 @@ pub async fn run_context_retrieval(
         prompt_inputs.related_files = Some(context_files);
     }
     Ok(())
+}
+
+fn merge_context_files(
+    context_files: &mut Vec<zeta_prompt::RelatedFile>,
+    new_files: Vec<zeta_prompt::RelatedFile>,
+) {
+    for mut new_file in new_files {
+        if let Some(existing_file) = context_files
+            .iter_mut()
+            .find(|existing_file| existing_file.path == new_file.path)
+        {
+            existing_file.max_row = existing_file.max_row.max(new_file.max_row);
+            existing_file.excerpts.append(&mut new_file.excerpts);
+            existing_file
+                .excerpts
+                .sort_by_key(|excerpt| (excerpt.order, excerpt.row_range.start));
+            existing_file.in_open_source_repo =
+                existing_file.in_open_source_repo && new_file.in_open_source_repo;
+        } else {
+            context_files.push(new_file);
+        }
+    }
 }
 
 async fn wait_for_language_servers_to_start(
