@@ -2803,39 +2803,37 @@ extern "C" fn accessibility_children(this: &Object, _: Sel) -> id {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
-    let result = if let (Some(adapter), Some(handler)) = (
+    if let (Some(adapter), Some(handler)) = (
         state.accesskit_adapter.as_mut(),
         state.a11y_activation_handler.as_mut(),
     ) {
         adapter.view_children(handler) as id
     } else {
-        nil
-    };
-    dbg!("accessibility_children", result);
-    result
+        drop(lock);
+        unsafe { msg_send![super(this, class!(NSView)), accessibilityChildren] }
+    }
 }
 
 extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
-    let result = if let (Some(adapter), Some(handler)) = (
+    if let (Some(adapter), Some(handler)) = (
         state.accesskit_adapter.as_mut(),
         state.a11y_activation_handler.as_mut(),
     ) {
         adapter.focus(handler) as id
     } else {
-        nil
-    };
-    dbg!("accessibility_focused_ui_element", result);
-    result
+        drop(lock);
+        unsafe { msg_send![super(this, class!(NSView)), accessibilityFocusedUIElement] }
+    }
 }
 
 extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
-    let result = if let (Some(adapter), Some(handler)) = (
+    if let (Some(adapter), Some(handler)) = (
         state.accesskit_adapter.as_mut(),
         state.a11y_activation_handler.as_mut(),
     ) {
@@ -2847,10 +2845,9 @@ extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> i
             handler,
         ) as id
     } else {
-        nil
-    };
-    dbg!("accessibility_hit_test", result);
-    result
+        drop(lock);
+        unsafe { msg_send![super(this, class!(NSView)), accessibilityHitTest: point] }
+    }
 }
 
 fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels> {
