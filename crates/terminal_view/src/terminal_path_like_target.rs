@@ -1,7 +1,7 @@
 use super::{HoverTarget, HoveredWord, TerminalView};
 use anyhow::{Context as _, Result};
 use editor::Editor;
-use gpui::{App, AppContext, Context, Task, WeakEntity, Window};
+use gpui::{App, AppContext, Context, Task, TaskExt, WeakEntity, Window};
 use itertools::Itertools;
 use project::{Entry, Metadata};
 use std::path::PathBuf;

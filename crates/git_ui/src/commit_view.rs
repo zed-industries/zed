@@ -201,7 +201,21 @@ impl CommitView {
                                     .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
                             });
                             if let Some(ix) = ix {
-                                pane.activate_item(ix, true, true, window, cx);
+                                let existing = pane
+                                    .items()
+                                    .filter_map(|item| item.downcast::<CommitView>())
+                                    .find(|view| view.read(cx).commit.sha == commit_sha)
+                                    .unwrap();
+
+                                pane.remove_item(existing.item_id(), false, false, window, cx);
+                                pane.add_item(
+                                    Box::new(commit_view),
+                                    true,
+                                    true,
+                                    Some(ix),
+                                    window,
+                                    cx,
+                                );
                             } else {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }

@@ -34,6 +34,7 @@ test-support = [
 aho-corasick.workspace = true
 anyhow.workspace = true
 assets.workspace = true
+base64.workspace = true
 breadcrumbs.workspace = true
 client.workspace = true
 clock.workspace = true

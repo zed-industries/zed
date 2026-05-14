@@ -81,10 +81,7 @@ impl AgentTool for DeletePathTool {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let path = input.path;
 
             let decision = cx.update(|cx| {
@@ -103,7 +100,8 @@ impl AgentTool for DeletePathTool {
                     .map(|(_, target)| target)
             });
 
-            let settings_kind = sensitive_settings_kind(Path::new(&path), fs.as_ref()).await;
+            let settings_kind =
+                sensitive_settings_kind(Path::new(&path), &canonical_roots, fs.as_ref()).await;
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && settings_kind.is_some() {

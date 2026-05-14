@@ -1,19 +1,27 @@
-use std::path::{self, Path, PathBuf};
+use std::{
+    path::{self, Path, PathBuf},
+    sync::Arc,
+};
 
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
 use collections::HashMap;
 use git::{
     Oid,
-    repository::{CommitData, RepoPath, Worktree as GitWorktree},
+    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree as GitWorktree},
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
+use git_graph::GitGraph;
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
-use gpui::{AppContext as _, BackgroundExecutor, SharedString, TestAppContext, VisualTestContext};
+use gpui::{
+    AppContext as _, BackgroundExecutor, Entity, IntoElement as _, SharedString, TestAppContext,
+    VisualContext as _, VisualTestContext, point, px, size,
+};
 use project::{
     ProjectPath,
     git_store::{CommitDataState, Repository},
 };
+use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
 
 use util::{path, rel_path::rel_path};
@@ -152,6 +160,52 @@ fn branch_list_snapshot(
                 .collect(),
         )
     })
+}
+
+fn build_git_graph(
+    project: &Entity<project::Project>,
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Entity<GitGraph> {
+    let (repository_id, git_store) = project.read_with(cx, |project, cx| {
+        let repository = project
+            .active_repository(cx)
+            .expect("project should have an active repository");
+        (repository.read(cx).id, project.git_store().clone())
+    });
+    let workspace = workspace.downgrade();
+
+    cx.new_window_entity(|window, cx| {
+        GitGraph::new(repository_id, git_store, workspace, None, window, cx)
+    })
+}
+
+fn render_git_graph(graph: &Entity<GitGraph>, cx: &mut VisualTestContext) {
+    cx.draw(point(px(0.), px(0.)), size(px(1200.), px(800.)), |_, _| {
+        graph.clone().into_any_element()
+    });
+    cx.run_until_parked();
+}
+
+fn assert_initial_graph_commits_eq(
+    actual: &[Arc<InitialGraphCommitData>],
+    expected: &[Arc<InitialGraphCommitData>],
+) {
+    assert_eq!(actual.len(), expected.len(), "commit count should match");
+    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert_eq!(
+            actual.sha, expected.sha,
+            "sha should match at index {index}"
+        );
+        assert_eq!(
+            actual.parents, expected.parents,
+            "parents should match at index {index}"
+        );
+        assert_eq!(
+            actual.ref_names, expected.ref_names,
+            "ref names should match at index {index}"
+        );
+    }
 }
 
 fn assert_remote_cache_matches_local_cache(
@@ -693,6 +747,104 @@ async fn test_remote_git_commit_data_batches(
     assert_eq!(remote_batch_two.len(), 3);
 
     assert_remote_cache_matches_local_cache(&repo_a, &repo_b, cx_a, cx_b);
+}
+
+#[gpui::test]
+async fn test_remote_git_graph_data_and_search(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    cx_a.update(|cx| {
+        git_ui::init(cx);
+        git_graph::init(cx);
+    });
+    cx_b.update(|cx| {
+        git_ui::init(cx);
+        git_graph::init(cx);
+    });
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+    let search_query = "graph search match";
+    let mut rng = StdRng::seed_from_u64(7);
+    let commits = git_graph::generate_random_commit_dag(&mut rng, 12, true);
+
+    let dot_git = Path::new(path!("/project/.git"));
+    client_a.fs().set_graph_commits(dot_git, commits.clone());
+    client_a.fs().set_commit_data(
+        dot_git,
+        commits.iter().enumerate().map(|(index, commit)| {
+            (
+                CommitData {
+                    sha: commit.sha,
+                    parents: commit.parents.clone(),
+                    author_name: SharedString::from(format!("Author {index}")),
+                    author_email: SharedString::from(format!("author{index}@example.com")),
+                    commit_timestamp: 1_700_000_000 + index as i64,
+                    subject: SharedString::from(format!("Subject {index}")),
+                    message: SharedString::from(if index % 2 == 0 {
+                        format!("Subject {index}\n\n{search_query} {index}")
+                    } else {
+                        format!("Subject {index}\n\nPlain message {index}")
+                    }),
+                },
+                false,
+            )
+        }),
+    );
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    executor.run_until_parked();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let remote_graph = build_git_graph(&project_b, &workspace_b, cx_b);
+    render_git_graph(&remote_graph, cx_b);
+    let remote_initial_graph_data =
+        remote_graph.read_with(cx_b, |graph, _| graph.initial_commit_data_for_test());
+    remote_graph.update(cx_b, |graph, cx| {
+        graph.search_for_test(SharedString::from(search_query), cx);
+    });
+    cx_b.run_until_parked();
+    let remote_search_results =
+        remote_graph.read_with(cx_b, |graph, _| graph.search_matches_for_test());
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let local_graph = build_git_graph(&project_a, &workspace_a, cx_a);
+    render_git_graph(&local_graph, cx_a);
+    let local_initial_graph_data =
+        local_graph.read_with(cx_a, |graph, _| graph.initial_commit_data_for_test());
+    local_graph.update(cx_a, |graph, cx| {
+        graph.search_for_test(SharedString::from(search_query), cx);
+    });
+    cx_a.run_until_parked();
+    let local_search_results =
+        local_graph.read_with(cx_a, |graph, _| graph.search_matches_for_test());
+
+    assert_initial_graph_commits_eq(&local_initial_graph_data, &commits);
+    assert_initial_graph_commits_eq(&remote_initial_graph_data, &local_initial_graph_data);
+    assert!(!local_search_results.is_empty());
+    assert_eq!(remote_search_results, local_search_results);
 }
 
 #[gpui::test]

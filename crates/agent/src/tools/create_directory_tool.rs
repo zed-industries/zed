@@ -54,7 +54,7 @@ impl AgentTool for CreateDirectoryTool {
     const NAME: &'static str = "create_directory";
 
     fn kind() -> acp::ToolKind {
-        acp::ToolKind::Read
+        acp::ToolKind::Edit
     }
 
     fn initial_title(
@@ -77,10 +77,7 @@ impl AgentTool for CreateDirectoryTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
-            let input = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input = input.recv().await.map_err(|e| e.to_string())?;
             let decision = cx.update(|cx| {
                 decide_permission_for_path(Self::NAME, &input.path, AgentSettings::get_global(cx))
             });
@@ -99,7 +96,9 @@ impl AgentTool for CreateDirectoryTool {
                     .map(|(_, target)| target)
             });
 
-            let sensitive_kind = sensitive_settings_kind(Path::new(&input.path), fs.as_ref()).await;
+            let sensitive_kind =
+                sensitive_settings_kind(Path::new(&input.path), &canonical_roots, fs.as_ref())
+                    .await;
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some() {

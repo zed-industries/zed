@@ -12,7 +12,7 @@ use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, App, AsyncWindowContext, Entity, FocusHandle,
-    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
+    Focusable, IntoElement, ParentElement, Render, Subscription, TaskExt, WeakEntity, actions, div,
     ease_in_out, pulsating_between,
 };
 use indoc::indoc;
@@ -37,7 +37,7 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
+    HideStatusItem, StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
@@ -594,30 +594,20 @@ impl EditPredictionButton {
                     continue;
                 };
                 let is_current = provider == current_provider;
+                let is_disabled_zed_provider =
+                    provider == EditPredictionProvider::Zed && is_zed_provider_disabled;
                 let fs = self.fs.clone();
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(
-                            IconPosition::Start,
-                            is_current
-                                && (provider == EditPredictionProvider::Zed
-                                    && !is_zed_provider_disabled),
-                        )
-                        .disabled(
-                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
-                        )
-                        .when(
-                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
-                            |item| {
-                                item.documentation_aside(DocumentationSide::Left, move |_cx| {
-                                    Label::new(
-                                        "Edit predictions are disabled for this organization.",
-                                    )
+                        .toggleable(IconPosition::Start, is_current && !is_disabled_zed_provider)
+                        .disabled(is_disabled_zed_provider)
+                        .when(is_disabled_zed_provider, |item| {
+                            item.documentation_aside(DocumentationSide::Left, move |_cx| {
+                                Label::new("Edit predictions are disabled for this organization.")
                                     .into_any_element()
-                                })
-                            },
-                        )
+                            })
+                        })
                         .handler(move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         }),
@@ -1363,6 +1353,13 @@ impl StatusItemView for EditPredictionButton {
             self.editor_enabled = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        // This button is already gated on having a non-disabled edit
+        // prediction provider, which the user manages through provider/AI
+        // settings.
+        None
     }
 }
 

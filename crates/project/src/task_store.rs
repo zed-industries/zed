@@ -144,7 +144,7 @@ impl TaskStore {
             };
             store.task_context_for_location(captured_variables, location, cx)
         });
-        let task_context = context_task.await.unwrap_or_default();
+        let task_context = context_task.await?.unwrap_or_default();
         Ok(proto::TaskContext {
             project_env: task_context.project_env.into_iter().collect(),
             cwd: task_context
@@ -203,7 +203,7 @@ impl TaskStore {
         captured_variables: TaskVariables,
         location: Location,
         cx: &mut App,
-    ) -> Task<Option<TaskContext>> {
+    ) -> Task<anyhow::Result<Option<TaskContext>>> {
         match self {
             TaskStore::Functional(state) => match &state.mode {
                 StoreMode::Local { environment, .. } => local_task_context_for_location(
@@ -229,7 +229,7 @@ impl TaskStore {
                     cx,
                 ),
             },
-            TaskStore::Noop => Task::ready(None),
+            TaskStore::Noop => Task::ready(Ok(None)),
         }
     }
 
@@ -287,7 +287,7 @@ fn local_task_context_for_location(
     captured_variables: TaskVariables,
     location: Location,
     cx: &App,
-) -> Task<Option<TaskContext>> {
+) -> Task<anyhow::Result<Option<TaskContext>>> {
     let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
     let worktree_abs_path = worktree_id
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
@@ -314,16 +314,16 @@ fn local_task_context_for_location(
                     cx,
                 )
             })
-            .await
-            .log_err()?;
+            .await?;
+
         // Remove all custom entries starting with _, as they're not intended for use by the end user.
         task_variables.sweep();
 
-        Some(TaskContext {
+        Ok(Some(TaskContext {
             project_env: project_env.unwrap_or_default(),
             cwd: worktree_abs_path.map(|p| p.to_path_buf()),
             task_variables,
-        })
+        }))
     })
 }
 
@@ -336,7 +336,7 @@ fn remote_task_context_for_location(
     location: Location,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     cx: &mut App,
-) -> Task<Option<TaskContext>> {
+) -> Task<anyhow::Result<Option<TaskContext>>> {
     cx.spawn(async move |cx| {
         // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
         let mut remote_context = cx
@@ -373,8 +373,8 @@ fn remote_task_context_for_location(
                 .map(|(k, v)| (k.to_string(), v))
                 .collect(),
         });
-        let task_context = context_task.await.log_err()?;
-        Some(TaskContext {
+        let task_context = context_task.await?;
+        Ok(Some(TaskContext {
             cwd: task_context.cwd.map(PathBuf::from),
             task_variables: task_context
                 .task_variables
@@ -390,7 +390,7 @@ fn remote_task_context_for_location(
                 )
                 .collect(),
             project_env: task_context.project_env.into_iter().collect(),
-        })
+        }))
     })
 }
 
@@ -468,8 +468,7 @@ fn combine_task_variables(
                         cx,
                     )
                 })
-                .await
-                .context("building provider context")?,
+                .await?,
             );
         }
         Ok(captured_variables)

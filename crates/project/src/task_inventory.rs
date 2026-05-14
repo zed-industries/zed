@@ -30,6 +30,8 @@ use worktree::WorktreeId;
 
 use crate::{git_store::GitStore, task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
+pub const GIT_COMMAND_TASK_TAG: &str = "git-command";
+
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
     pub task_context: SharedTaskContext,
@@ -626,6 +628,30 @@ impl Inventory {
 
             (previously_spawned_tasks, new_resolved_tasks)
         })
+    }
+
+    /// Returns global task templates with the provided tag.
+    pub fn global_templates_with_tag(&self, tag: &str) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        self.global_templates_from_settings()
+            .filter(|(_, template)| template.tags.iter().any(|template_tag| template_tag == tag))
+            .collect()
+    }
+
+    /// Resolves global task templates with the provided tag against the provided task context.
+    pub fn resolve_global_tasks_with_tag(
+        &self,
+        tag: &str,
+        task_context: &TaskContext,
+    ) -> Vec<(TaskSourceKind, ResolvedTask)> {
+        self.global_templates_with_tag(tag)
+            .into_iter()
+            .filter_map(|(task_source_kind, task_template)| {
+                let id_base = task_source_kind.to_id_base();
+                task_template
+                    .resolve_task(&id_base, task_context)
+                    .map(|resolved_task| (task_source_kind, resolved_task))
+            })
+            .collect()
     }
 
     /// Returns all task templates (worktree and global) that have at least one

@@ -1037,9 +1037,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
         assert_eq!(
-            editor
-                .active_diagnostic_group()
-                .map(|diagnostics_group| diagnostics_group.active_message.as_str()),
+            editor.active_diagnostic_message(),
             Some(message),
             "Should have a diagnostics group activated"
         );
@@ -1069,7 +1067,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
     });
     cx.run_until_parked();
     cx.update_editor(|editor, _, _| {
-        assert_eq!(editor.active_diagnostic_group(), None);
+        assert_eq!(editor.active_diagnostic_message(), None);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abcˇ def: i32) -> u32 {
@@ -1078,7 +1076,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
 
     cx.update_editor(|editor, window, cx| {
         editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
-        assert_eq!(editor.active_diagnostic_group(), None);
+        assert_eq!(editor.active_diagnostic_message(), None);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abcˇ def: i32) -> u32 {

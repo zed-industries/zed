@@ -38,7 +38,7 @@ use futures::{AsyncBufReadExt as _, SinkExt, StreamExt, TryStreamExt};
 use futures::{FutureExt, future::Shared};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Task, WeakEntity,
+    Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use node_runtime::NodeRuntime;

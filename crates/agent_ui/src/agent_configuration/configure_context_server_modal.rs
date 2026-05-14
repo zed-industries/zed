@@ -5,7 +5,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    Subscription, Task, TaskExt, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity,
+    prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
