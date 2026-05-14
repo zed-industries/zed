@@ -83,7 +83,7 @@ Here are the steps:
 
 <img width="1964" height="auto" alt="Scroll to zoom in" src="https://github.com/user-attachments/assets/625c2bf4-a68d-40c4-becb-ade16bc9a8bc" />
 
-7. Click on a caller to to get statistics on _it_.
+7. Click on a caller to get statistics on _it_.
 
 <img width="1888" height="auto" alt="Click on any of the zones to get statistics" src="https://github.com/user-attachments/assets/7e578825-2b63-4b7f-88f7-0cb16b8a3387" />
 

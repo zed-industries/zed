@@ -1080,7 +1080,7 @@ pub type JustifyContent = AlignContent;
 
 /// Sets the layout used for the children of this node
 ///
-/// The default values depends on on which feature flags are enabled. The order of precedence is: Flex, Grid, Block, None.
+/// The default values depends on which feature flags are enabled. The order of precedence is: Flex, Grid, Block, None.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize, JsonSchema)]
 // Copy of taffy::style type of the same name, to derive JsonSchema.
 pub enum Display {
