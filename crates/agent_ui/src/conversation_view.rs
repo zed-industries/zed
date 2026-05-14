@@ -47,9 +47,7 @@ use prompt_store::{PromptId, PromptStore};
 use crate::message_editor::SessionCapabilities;
 use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
 use rope::Point;
-use settings::{
-    NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
-};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -870,10 +868,7 @@ impl ConversationView {
 
         let connect_result = connection_entry.read(cx).wait_for_connection();
 
-        let side = match AgentSettings::get_global(cx).sidebar_side() {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
+        let side = crate::agent_sidebar_side(cx);
         let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {

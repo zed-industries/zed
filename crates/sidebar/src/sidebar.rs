@@ -4800,7 +4800,7 @@ impl Sidebar {
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_terminal(Some(workspace), window, cx);
+                    panel.new_terminal(Some(workspace), "sidebar", window, cx);
                 });
             }
             workspace.focus_panel::<AgentPanel>(window, cx);

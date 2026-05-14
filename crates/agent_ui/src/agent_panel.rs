@@ -92,6 +92,7 @@ use workspace::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
+const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
 
 /// Maximum number of idle threads kept in the agent panel's retained list.
 /// Set as a GPUI global to override; otherwise defaults to 5.
@@ -1337,7 +1338,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if self.should_create_terminal_for_new_entry(cx) {
-            self.new_terminal(workspace, window, cx);
+            self.new_terminal(workspace, "agent_panel", window, cx);
         } else {
             self.activate_new_thread(true, "agent_panel", window, cx);
         }
@@ -1500,6 +1501,7 @@ impl AgentPanel {
     pub fn new_terminal(
         &mut self,
         workspace: Option<&Workspace>,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1507,7 +1509,14 @@ impl AgentPanel {
             return;
         }
         let working_directory = self.terminal_working_directory(workspace, cx);
-        self.spawn_terminal(TerminalId::new(), working_directory, true, window, cx);
+        self.spawn_terminal(
+            TerminalId::new(),
+            working_directory,
+            true,
+            source,
+            window,
+            cx,
+        );
     }
 
     fn terminal_working_directory(
@@ -1545,6 +1554,7 @@ impl AgentPanel {
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
         focus: bool,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1570,7 +1580,7 @@ impl AgentPanel {
                 let terminal_view = cx.new(|cx| {
                     TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
                 });
-                this.insert_terminal(terminal_id, terminal_view, focus, window, cx);
+                this.insert_terminal(terminal_id, terminal_view, focus, source, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1582,6 +1592,7 @@ impl AgentPanel {
         terminal_id: TerminalId,
         terminal_view: Entity<TerminalView>,
         focus: bool,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1632,6 +1643,7 @@ impl AgentPanel {
         self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal, cx);
         terminal.refresh_title(cx);
         self.terminals.insert(terminal_id, terminal);
+        self.emit_terminal_thread_started(source, cx);
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
         }
@@ -1681,6 +1693,16 @@ impl AgentPanel {
 
         cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
+    }
+
+    fn emit_terminal_thread_started(&self, source: &'static str, cx: &App) {
+        telemetry::event!(
+            "Agent Thread Started",
+            agent = TERMINAL_AGENT_TELEMETRY_ID,
+            source = source,
+            side = crate::agent_sidebar_side(cx),
+            thread_location = "current_worktree",
+        );
     }
 
     fn refresh_terminal_title(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
@@ -4352,6 +4374,7 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_terminal(
                                                                 Some(workspace),
+                                                                "agent_panel",
                                                                 window,
                                                                 cx,
                                                             );
@@ -5185,7 +5208,7 @@ impl AgentPanel {
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.set_custom_title(Some(title.into()), cx);
         });
-        self.insert_terminal(terminal_id, terminal_view, focus, window, cx);
+        self.insert_terminal(terminal_id, terminal_view, focus, "test", window, cx);
         Ok(terminal_id)
     }
 
@@ -6566,7 +6589,7 @@ mod tests {
             cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
         });
         panel.update_in(cx, |panel, window, cx| {
-            panel.new_terminal(None, window, cx);
+            panel.new_terminal(None, "test", window, cx);
         });
         cx.run_until_parked();
 
