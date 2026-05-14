@@ -700,7 +700,8 @@ fn send_toggle_log_message(
     if let LanguageServerKind::Remote { project } = &server_state.kind {
         project
             .update(cx, |project, cx| {
-                if let Some((client, project_id)) = project.lsp_store(cx).read(cx).upstream_client() {
+                if let Some((client, project_id)) = project.lsp_store(cx).read(cx).upstream_client()
+                {
                     client
                         .send(proto::ToggleLspLogs {
                             project_id,

@@ -27,11 +27,7 @@ async fn test_context_server_status(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(cx),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let server_1_id = ContextServerId(SERVER_1_ID.into());
@@ -100,11 +96,7 @@ async fn test_context_server_status_events(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(cx),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let server_1_id = ContextServerId(SERVER_1_ID.into());
@@ -154,11 +146,7 @@ async fn test_context_server_concurrent_starts(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(cx),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let server_id = ContextServerId(SERVER_1_ID.into());

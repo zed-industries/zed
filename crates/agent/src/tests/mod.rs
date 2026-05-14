@@ -4366,7 +4366,8 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         .await;
 
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, cx| project.context_server_store(cx));
+    let context_server_store =
+        project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let thread = cx.new(|cx| {
@@ -5511,7 +5512,8 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, cx| project.context_server_store(cx));
+    let context_server_store =
+        project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
@@ -5643,7 +5645,8 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, cx| project.context_server_store(cx));
+    let context_server_store =
+        project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
@@ -5807,7 +5810,8 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, cx| project.context_server_store(cx));
+    let context_server_store =
+        project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
@@ -6283,8 +6287,8 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let context_server_registry =
-        cx.new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
+    let context_server_registry = cx
+        .new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let templates = crate::Templates::new();
     let thread = cx.new(|cx| {
@@ -6609,8 +6613,8 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let context_server_registry =
-        cx.new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
+    let context_server_registry = cx
+        .new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let templates = crate::Templates::new();
     let thread = cx.new(|cx| {
@@ -6677,8 +6681,8 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    let context_server_registry =
-        cx.new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
+    let context_server_registry = cx
+        .new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     let templates = crate::Templates::new();
     let thread = cx.new(|cx| {

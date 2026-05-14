@@ -370,7 +370,8 @@ pub trait File: Send + Sync + Any {
     fn is_private(&self) -> bool;
 
     fn can_open(&self) -> bool {
-        !self.is_local()    }
+        !self.is_local()
+    }
 }
 
 /// The file's storage status - whether it's stored (`Present`), and if so when it was last

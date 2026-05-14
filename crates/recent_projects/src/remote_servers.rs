@@ -1080,9 +1080,7 @@ impl RemoteServerProjects {
                     this.retained_connections.push(client);
                     let Some(fs) = this
                         .workspace
-                        .read_with(cx, |workspace, cx| {
-                            workspace.project().read(cx).fs(cx)
-                        })
+                        .read_with(cx, |workspace, cx| workspace.project().read(cx).fs(cx))
                         .log_err()
                     else {
                         return;

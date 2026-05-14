@@ -486,13 +486,12 @@ impl StackFrameList {
                         .pane_for(&*opened_item)
                         .map(|pane| pane.entity_id())
                     {
-                        workspace
-                            .project()
-                            .read(cx)
-                            .breakpoint_store(cx)
-                            .update(cx, |store, _cx| {
+                        workspace.project().read(cx).breakpoint_store(cx).update(
+                            cx,
+                            |store, _cx| {
                                 store.set_active_debug_pane_id(pane_id);
-                            });
+                            },
+                        );
                     }
 
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store(cx);

@@ -3111,7 +3111,8 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     });
 
-    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(cx), cx));
+    let ep_store =
+        cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(cx), cx));
 
     let buffer = project
         .update(cx, |project, cx| {

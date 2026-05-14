@@ -4192,10 +4192,18 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_b.run_until_parked();
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -4213,10 +4221,18 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_b.run_until_parked();
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -4234,10 +4250,18 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_b.run_until_parked();
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -4255,10 +4279,18 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_b.run_until_parked();
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
-        editor.project().unwrap().read(cx).serialized_breakpoints(cx)
+        editor
+            .project()
+            .unwrap()
+            .read(cx)
+            .serialized_breakpoints(cx)
     });
 
     assert_eq!(0, breakpoints_a.len());
