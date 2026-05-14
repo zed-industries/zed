@@ -116,8 +116,7 @@ fn generate_fallback_array(fallbacks: &FontFallbacks, font: &mut FontKitFont) ->
                 0.0
             });
             let traits_values = [weight_value.as_CFTypeRef(), slant_value.as_CFTypeRef()];
-
-            let traits_dict = CFDictionaryCreate(
+            let traits = CFDictionaryCreate(
                 kCFAllocatorDefault,
                 &traits_keys as *const _ as _,
                 &traits_values as *const _ as _,
@@ -128,9 +127,8 @@ fn generate_fallback_array(fallbacks: &FontFallbacks, font: &mut FontKitFont) ->
             drop(weight_value);
             drop(slant_value);
 
-            // Build the top-level attributes dictionary with the family name and traits.
             let attr_keys = [kCTFontFamilyNameAttribute, kCTFontTraitsAttribute];
-            let attr_values = [name.as_CFTypeRef(), traits_dict as _];
+            let attr_values = [name.as_CFTypeRef(), traits as _];
             let attrs = CFDictionaryCreate(
                 kCFAllocatorDefault,
                 &attr_keys as *const _ as _,
@@ -139,7 +137,7 @@ fn generate_fallback_array(fallbacks: &FontFallbacks, font: &mut FontKitFont) ->
                 &kCFTypeDictionaryKeyCallBacks,
                 &kCFTypeDictionaryValueCallBacks,
             );
-            CFRelease(traits_dict as _);
+            CFRelease(traits as _);
 
             let fallback_desc = CTFontDescriptorCreateWithAttributes(attrs);
             CFRelease(attrs as _);
