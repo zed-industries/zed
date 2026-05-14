@@ -37,4 +37,3 @@ async-fs.workspace = true
 async-tar.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-tiny_http.workspace = true

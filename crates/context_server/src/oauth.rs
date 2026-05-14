@@ -992,7 +992,7 @@ impl OAuthCallback {
     /// Parse the query string from a callback URL like
     /// `http://127.0.0.1:<port>/callback?code=...&state=...`.
     pub fn parse_query(query: &str) -> Result<Self> {
-        let params = http_client::OAuthCallbackParams::parse_query(query)?;
+        let params = oauth_callback_server::OAuthCallbackParams::parse_query(query)?;
         Ok(Self {
             code: params.code,
             state: params.state,
@@ -1015,7 +1015,7 @@ impl OAuthCallback {
 /// The callback server shuts down when the returned future is dropped (e.g.
 /// because the authentication task was cancelled), or after a timeout.
 pub fn start_callback_server() -> Result<(String, BoxFuture<'static, Result<OAuthCallback>>)> {
-    let (redirect_uri, rx) = http_client::start_oauth_callback_server()?;
+    let (redirect_uri, rx) = oauth_callback_server::start_oauth_callback_server()?;
     let future = async move {
         match rx.await {
             Ok(Ok(params)) => Ok(OAuthCallback {

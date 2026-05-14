@@ -643,15 +643,16 @@ async fn do_oauth_flow(
     cx: &AsyncApp,
 ) -> Result<CodexCredentials> {
     // Start the callback server FIRST so the redirect URI is ready
-    let (redirect_uri, callback_rx) = http_client::start_oauth_callback_server_with_config(
-        http_client::OAuthCallbackServerConfig {
-            host: CODEX_CALLBACK_HOST,
-            preferred_port: CODEX_CALLBACK_PORT,
-            fallback_port: Some(CODEX_CALLBACK_FALLBACK_PORT),
-            path: CODEX_CALLBACK_PATH,
-        },
-    )
-    .context("Failed to start OAuth callback server")?;
+    let (redirect_uri, callback_rx) =
+        oauth_callback_server::start_oauth_callback_server_with_config(
+            oauth_callback_server::OAuthCallbackServerConfig {
+                host: CODEX_CALLBACK_HOST,
+                preferred_port: CODEX_CALLBACK_PORT,
+                fallback_port: Some(CODEX_CALLBACK_FALLBACK_PORT),
+                path: CODEX_CALLBACK_PATH,
+            },
+        )
+        .context("Failed to start OAuth callback server")?;
 
     // PKCE verifier: 32 random bytes → base64url (no padding)
     let mut verifier_bytes = [0u8; 32];
