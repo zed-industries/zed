@@ -44,6 +44,7 @@ pub(super) struct GpuiDevTools {
     pub(super) render_source_limit: usize,
     pub(super) performance: DevtoolsPerformance,
     pub(super) show_flashes: bool,
+    pub(super) show_flash_labels: bool,
     pub(super) show_heat: bool,
 }
 
@@ -75,6 +76,7 @@ impl GpuiDevTools {
             render_source_limit: super::TOP_SOURCE_COUNT,
             performance: DevtoolsPerformance::new(),
             show_flashes: true,
+            show_flash_labels: false,
             show_heat: true,
         }
     }

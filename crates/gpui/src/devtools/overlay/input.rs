@@ -122,6 +122,9 @@ fn apply_filter_action(action: SourceFilterAction, window: &mut Window) {
         SourceFilterAction::ToggleFlashes => {
             devtools.show_flashes = !devtools.show_flashes;
         }
+        SourceFilterAction::ToggleFlashLabels => {
+            devtools.show_flash_labels = !devtools.show_flash_labels;
+        }
         SourceFilterAction::ToggleHeat => {
             devtools.show_heat = !devtools.show_heat;
         }

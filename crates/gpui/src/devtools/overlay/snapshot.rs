@@ -3,6 +3,7 @@ use crate::{BorderStyle, Bounds, Pixels, WindowId};
 use scheduler::Instant;
 
 use super::super::event_age;
+use super::super::format::short_type_name;
 use super::super::{FLASH_DURATION, GPUI_DEVTOOLS, state::RenderHeatCause};
 
 #[derive(Clone, Debug)]
@@ -30,6 +31,7 @@ pub(super) struct ReuseOutlineOverlay {
 #[derive(Clone, Debug)]
 pub(super) struct FlashOverlay {
     pub(super) bounds: Bounds<Pixels>,
+    pub(super) label: Option<&'static str>,
     pub(super) opacity: f32,
 }
 
@@ -38,6 +40,7 @@ pub(super) fn update_and_snapshot_overlay(window_id: WindowId) -> OverlaySnapsho
     let mut devtools = GPUI_DEVTOOLS.write();
     let now = devtools.paused_at.unwrap_or_else(Instant::now);
     let show_flashes = devtools.show_flashes;
+    let show_flash_labels = devtools.show_flash_labels;
     let show_heat = devtools.show_heat;
     let hidden_render_sources = devtools.hidden_render_sources.clone();
     let (heats, reuse_outlines, flashes) = devtools
@@ -130,6 +133,8 @@ pub(super) fn update_and_snapshot_overlay(window_id: WindowId) -> OverlaySnapsho
                         let opacity = 1. - elapsed.as_secs_f32() / FLASH_DURATION.as_secs_f32();
                         Some(FlashOverlay {
                             bounds,
+                            label: show_flash_labels
+                                .then_some(short_type_name(flash.source.entity_type)),
                             opacity: opacity.clamp(0., 1.),
                         })
                     })

@@ -95,12 +95,17 @@ impl OverlayRow {
                     devtools.show_flashes,
                     SourceFilterAction::ToggleFlashes,
                 ),
+                OverlayAction::toolbar(
+                    "labels",
+                    devtools.show_flash_labels,
+                    SourceFilterAction::ToggleFlashLabels,
+                ),
                 OverlayAction::toolbar("heat", devtools.show_heat, SourceFilterAction::ToggleHeat),
                 OverlayAction::toolbar("reset filters", false, SourceFilterAction::ResetFilters),
                 OverlayAction::toolbar("close", false, SourceFilterAction::CloseDevTools),
             ],
-            // Split into [pause, clear] | [flashes, heat] | [reset filters, close].
-            action_group_breaks: vec![1, 3],
+            // Split into [pause, clear] | [flashes, labels, heat] | [reset filters, close].
+            action_group_breaks: vec![1, 4],
         }
     }
 
@@ -207,6 +212,11 @@ impl OverlayAction {
                 active: false,
                 action,
             },
+            SourceFilterAction::ToggleFlashLabels => Self {
+                label: "labels",
+                active: false,
+                action,
+            },
             SourceFilterAction::ToggleHeat => Self {
                 label: "heat",
                 active: false,
@@ -262,6 +272,7 @@ pub(super) enum SourceFilterAction {
     ResumeCollection,
     ClearCounters,
     ToggleFlashes,
+    ToggleFlashLabels,
     ToggleHeat,
     ResetFilters,
     SetNotifySourceLimit(usize),

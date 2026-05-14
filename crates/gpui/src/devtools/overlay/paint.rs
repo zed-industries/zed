@@ -7,8 +7,8 @@ use super::{
     rows::OverlayRowKind,
 };
 use crate::{
-    App, BorderStyle, Hsla, Pixels, Point, SharedString, TextAlign, TextRun, Window, fill, font,
-    hsla, outline, point, px, quad, rgba,
+    App, BorderStyle, Bounds, Hsla, Pixels, Point, SharedString, TextAlign, TextRun, Window, fill,
+    font, hsla, outline, point, px, quad, rgba, size,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -53,6 +53,9 @@ pub(super) fn paint_prepared_overlay(
             hsla(0.54, 0.96, 0.62, 0.78 * flash.opacity),
             BorderStyle::default(),
         ));
+        if let Some(label) = flash.label {
+            paint_flash_label(window, cx, flash.bounds, label, flash.opacity);
+        }
     }
 
     paint_hud(window, cx, prepared_overlay);
@@ -77,6 +80,36 @@ fn heat_style(rate: usize, opacity: f32) -> HeatStyle {
         border_alpha: border_alpha * opacity,
         border_width,
     }
+}
+
+fn paint_flash_label(
+    window: &mut Window,
+    cx: &mut App,
+    bounds: Bounds<Pixels>,
+    label: &'static str,
+    opacity: f32,
+) {
+    let line_height = px(14.);
+    let label_width = px((label.len() as f32 * 6.5 + 10.).clamp(48., 180.));
+    let label_origin = point(bounds.origin.x + px(3.), bounds.origin.y + px(3.));
+    let label_bounds = Bounds::new(label_origin, size(label_width, line_height + px(2.)));
+
+    window.paint_quad(quad(
+        label_bounds,
+        px(2.),
+        hsla(0.58, 0.66, 0.10, 0.84 * opacity),
+        px(1.),
+        hsla(0.54, 0.96, 0.62, 0.70 * opacity),
+        BorderStyle::default(),
+    ));
+    paint_text_line_with_color(
+        window,
+        cx,
+        point(label_origin.x + px(5.), label_origin.y + px(1.)),
+        label,
+        line_height,
+        hsla(0.54, 0.28, 0.96, 0.98 * opacity),
+    );
 }
 
 fn paint_hud(window: &mut Window, cx: &mut App, prepared_overlay: &PreparedOverlay) {
