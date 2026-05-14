@@ -229,7 +229,7 @@ struct WatcherRegistrationState {
 
 struct PathRegistrationState {
     count: u32,
-    actually_watched: bool,
+    has_os_watcher: bool,
 }
 
 struct WatcherState {
@@ -262,7 +262,7 @@ impl WatcherState {
             return None;
         }
 
-        let was_actually_watched = count.actually_watched;
+        let was_actually_watched = count.has_os_watcher;
         path_registrations.remove(&registration_state.path);
 
         was_actually_watched.then_some((registration_state.path, registration_state.mode))
@@ -327,7 +327,7 @@ impl GlobalWatcher {
             .and_modify(|registration| registration.count += 1)
             .or_insert(PathRegistrationState {
                 count: 1,
-                actually_watched: !path_already_covered,
+                has_os_watcher: !path_already_covered,
             });
 
         Ok(id)
