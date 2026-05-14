@@ -441,12 +441,15 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
+        // unlike the public OpenAI Responses API. Pass `None` so the field is
+        // omitted from the serialized request body entirely.
         let mut responses_request = into_open_ai_response(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
-            self.max_output_tokens(),
+            /*max_output_tokens*/ None,
             self.model.reasoning_effort(),
             self.model.supports_none_reasoning_effort(),
         );
