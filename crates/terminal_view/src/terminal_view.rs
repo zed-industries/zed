@@ -2787,6 +2787,105 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_short_standalone_terminal_stays_top_anchored_on_resize(cx: &mut TestAppContext) {
+        let (project, workspace) = init_test(cx).await;
+        let terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"$ ", cx);
+        });
+
+        let (terminal_view, cx) = cx.add_window_view(|window, cx| {
+            TerminalView::new(
+                terminal.clone(),
+                workspace.downgrade(),
+                None,
+                project.downgrade(),
+                window,
+                cx,
+            )
+        });
+
+        let draw_size = gpui::size(px(400.), px(201.));
+        cx.simulate_resize(draw_size);
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+
+        let terminal_origin_y = terminal.read_with(cx, |terminal, _| {
+            let content = terminal.last_content();
+            content.terminal_bounds.bounds.origin.y
+        });
+        assert_eq!(terminal_origin_y, px(0.));
+    }
+
+    #[gpui::test]
+    async fn test_full_standalone_terminal_stays_bottom_anchored_on_resize(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace) = init_test(cx).await;
+        let terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(
+                b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+                cx,
+            );
+        });
+
+        let (terminal_view, cx) = cx.add_window_view(|window, cx| {
+            TerminalView::new(
+                terminal.clone(),
+                workspace.downgrade(),
+                None,
+                project.downgrade(),
+                window,
+                cx,
+            )
+        });
+
+        let draw_size = gpui::size(px(400.), px(201.));
+        cx.simulate_resize(draw_size);
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(gpui::Point::default(), draw_size, |_, _| {
+            terminal_view.clone().into_any_element()
+        });
+
+        let terminal_bounds = terminal.read_with(cx, |terminal, _| {
+            terminal.last_content().terminal_bounds.bounds
+        });
+        assert!(terminal_bounds.origin.y > px(0.));
+        assert_eq!(terminal_bounds.bottom(), draw_size.height);
+    }
+
+    #[gpui::test]
     async fn test_tab_content_shows_terminal_title_when_custom_title_directly_set_empty(
         cx: &mut TestAppContext,
     ) {

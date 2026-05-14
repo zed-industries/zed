@@ -500,6 +500,23 @@ impl TerminalElement {
         (rects, batched_runs)
     }
 
+    fn should_anchor_standalone_to_bottom(content: &TerminalContent) -> bool {
+        if !content.scrolled_to_bottom {
+            return false;
+        }
+
+        let bottom_line = content.terminal_bounds.num_lines().saturating_sub(1) as i64;
+        let display_offset = content.display_offset as i64;
+        let cursor_line = i64::from(content.cursor.point.line.0) + display_offset;
+
+        cursor_line >= bottom_line
+            || content
+                .cells
+                .iter()
+                .filter(|cell| cell.cell.c != ' ')
+                .any(|cell| i64::from(cell.point.line.0) + display_offset >= bottom_line)
+    }
+
     /// Computes the cursor position based on the cursor point and terminal dimensions.
     fn cursor_position(cursor_point: DisplayCursor, size: TerminalBounds) -> Option<Point<Pixels>> {
         if cursor_point.line() < size.total_lines() as i32 {
@@ -994,6 +1011,10 @@ impl Element for TerminalElement {
                     origin.x += gutter;
 
                     if matches!(self.terminal_view.read(cx).mode, TerminalMode::Standalone) {
+                        let should_anchor_to_bottom = {
+                            let terminal = self.terminal.read(cx);
+                            Self::should_anchor_standalone_to_bottom(terminal.last_content())
+                        };
                         let scale_factor = window.scale_factor();
                         let line_height_pixels = px(line_height);
                         let line_height_device_px = (f32::from(line_height_pixels) * scale_factor)
@@ -1015,7 +1036,7 @@ impl Element for TerminalElement {
                         let padding = px(padding_device_px as f32 / scale_factor.max(1.0));
 
                         size.height = snapped_height;
-                        if self.terminal.read(cx).scrolled_to_bottom() {
+                        if should_anchor_to_bottom {
                             origin.y += padding;
                         }
                     }
