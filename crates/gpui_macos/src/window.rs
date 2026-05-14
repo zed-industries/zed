@@ -2800,6 +2800,7 @@ extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint
 // adds dynamically. We add them directly since we own the GPUIView class.
 // https://github.com/AccessKit/accesskit/blob/accesskit_macos-v0.26.0/platforms/macos/src/subclass.rs#L89-L109
 extern "C" fn accessibility_children(this: &Object, _: Sel) -> id {
+    dbg!("accessibility_children called");
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
@@ -2814,6 +2815,7 @@ extern "C" fn accessibility_children(this: &Object, _: Sel) -> id {
 }
 
 extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
+    dbg!("accessibility_focused_ui_element called");
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
@@ -2828,6 +2830,7 @@ extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
 }
 
 extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
+    dbg!("accessibility_hit_test called");
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     let state = &mut *lock;
