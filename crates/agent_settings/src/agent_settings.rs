@@ -168,6 +168,7 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
+    pub always_allow_external_agent_tools: bool,
 }
 
 impl AgentSettings {
@@ -672,6 +673,9 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            always_allow_external_agent_tools: agent
+                .always_allow_external_agent_tools
+                .unwrap_or(false),
         }
     }
 }
