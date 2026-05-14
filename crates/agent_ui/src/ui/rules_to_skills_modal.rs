@@ -6,8 +6,10 @@ use agent_skills::GLOBAL_SKILLS_DIR_DISPLAY;
 use gpui::{
     DismissEvent, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement, Render, Styled,
 };
+use paths::GLOBAL_AGENTS_FILE_DISPLAY;
 use ui::{
-    AlertModal, Button, ButtonCommon, ButtonStyle, Clickable, KeyBinding, h_flex, prelude::*,
+    AlertModal, Button, ButtonCommon, ButtonStyle, Clickable, KeyBinding, ListBulletItem, h_flex,
+    prelude::*,
 };
 use workspace::{ModalView, Workspace};
 
@@ -46,10 +48,16 @@ impl Render for RulesToSkillsModal {
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.dismiss(cx)))
             .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| this.dismiss(cx)))
             .title("Skills have replaced Rules")
-            .child(Label::new(format!(
+            .child(Label::new(
                 "Any Rules (not a .rules file, but rather Zed's old Rules \
-                 feature) you had previously have been migrated to Skills \
-                 in your {GLOBAL_SKILLS_DIR_DISPLAY} directory."
+                 feature) you had previously have been migrated:",
+            ))
+            .child(ListBulletItem::new(format!(
+                "Non-Default Rules became Skills in your {GLOBAL_SKILLS_DIR_DISPLAY} \
+                 directory."
+            )))
+            .child(ListBulletItem::new(format!(
+                "Default Rules were appended to your {GLOBAL_AGENTS_FILE_DISPLAY} file."
             )))
             .child(Label::new(
                 "To include a Skill in a prompt, type /skill-name (in addition \
