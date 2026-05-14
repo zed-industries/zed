@@ -3,7 +3,7 @@ use scheduler::Instant;
 use std::time::Duration;
 
 use super::super::{
-    FRAME_RATE_WINDOW, HUD_MAX_LINE_CHARS, TOP_SOURCE_COUNT, event_age,
+    FRAME_RATE_WINDOW, HUD_MAX_LINE_CHARS, TOP_SOURCE_COUNT_OPTIONS, event_age,
     format::{
         file_name, format_age, format_duration_ms, format_notify_cause, format_notify_source,
         format_render_source, notify_column_header, render_column_header, short_type_name,
@@ -217,6 +217,12 @@ impl OverlayAction {
                 active: false,
                 action,
             },
+            SourceFilterAction::SetNotifySourceLimit(_)
+            | SourceFilterAction::SetRenderSourceLimit(_) => Self {
+                label: "select",
+                active: false,
+                action,
+            },
             SourceFilterAction::CloseDevTools => Self {
                 label: "close",
                 active: false,
@@ -258,6 +264,8 @@ pub(super) enum SourceFilterAction {
     ToggleFlashes,
     ToggleHeat,
     ResetFilters,
+    SetNotifySourceLimit(usize),
+    SetRenderSourceLimit(usize),
     CloseDevTools,
     HideNotify(NotifySourceKey),
     ShowNotify(NotifySourceKey),
@@ -374,7 +382,13 @@ pub(super) fn hud_rows(
     if section_expanded(devtools, HudSection::Notify) {
         start_section(&mut rows, &mut any_section_rendered);
 
-        let notify_sources = top_notify_sources(devtools, now, TOP_SOURCE_COUNT);
+        rows.push(top_source_limit_row(
+            "notify top",
+            devtools.notify_source_limit,
+            SourceFilterAction::SetNotifySourceLimit,
+        ));
+
+        let notify_sources = top_notify_sources(devtools, now, devtools.notify_source_limit);
         if notify_sources.is_empty() {
             rows.push(OverlayRow::plain("no notify sources in the last 5s"));
         } else {
@@ -423,7 +437,13 @@ pub(super) fn hud_rows(
     if section_expanded(devtools, HudSection::Render) {
         start_section(&mut rows, &mut any_section_rendered);
 
-        let render_summary = render_summary(devtools, window_id, now);
+        rows.push(top_source_limit_row(
+            "render top",
+            devtools.render_source_limit,
+            SourceFilterAction::SetRenderSourceLimit,
+        ));
+
+        let render_summary = render_summary(devtools, window_id, now, devtools.render_source_limit);
         rows.push(OverlayRow::plain(format!(
             "renders/s {} reuse/s {}",
             render_summary.render_count, render_summary.reuse_count
@@ -498,11 +518,16 @@ pub(super) fn hud_rows(
             } else {
                 SourceFilterAction::PinRender(source)
             };
+            let view = format!(
+                "{}#{}",
+                short_type_name(source.entity_type),
+                source.entity_id.as_u64()
+            );
             rows.push(OverlayRow::actions(
                 format!(
                     "{:<8} {:<18} {:<24} {:>5}",
                     "render",
-                    short_type_name(source.entity_type),
+                    view,
                     source.phase.as_str(),
                     count
                 ),
@@ -521,6 +546,35 @@ fn section_expanded(devtools: &GpuiDevTools, section: HudSection) -> bool {
     !devtools.collapsed_sections.contains(&section)
 }
 
+fn top_source_limit_row(
+    label: &'static str,
+    active_limit: usize,
+    action: fn(usize) -> SourceFilterAction,
+) -> OverlayRow {
+    OverlayRow::actions(
+        label,
+        TOP_SOURCE_COUNT_OPTIONS
+            .into_iter()
+            .map(|limit| {
+                OverlayAction::toolbar(
+                    top_source_limit_label(limit),
+                    limit == active_limit,
+                    action(limit),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn top_source_limit_label(limit: usize) -> &'static str {
+    match limit {
+        5 => "5",
+        10 => "10",
+        25 => "25",
+        _ => "?",
+    }
+}
+
 fn format_performance_duration_ms(duration: Duration) -> String {
     let ms = duration.as_secs_f64() * 1000.;
     if ms < 0.1 {
@@ -529,5 +583,43 @@ fn format_performance_duration_ms(duration: Duration) -> String {
         format!("{ms:.2}")
     } else {
         format!("{ms:.1}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_limit_rows_expose_independent_options() {
+        let mut devtools = GpuiDevTools::new();
+        devtools.notify_source_limit = 10;
+        devtools.render_source_limit = 25;
+
+        let rows = hud_rows(&devtools, WindowId::from(1), Instant::now());
+        let notify_row = rows
+            .iter()
+            .find(|row| row.text == "notify top")
+            .expect("expected notify source limit row");
+        assert_eq!(
+            source_limit_options(notify_row),
+            vec![("5", false), ("10", true), ("25", false)]
+        );
+
+        let render_row = rows
+            .iter()
+            .find(|row| row.text == "render top")
+            .expect("expected render source limit row");
+        assert_eq!(
+            source_limit_options(render_row),
+            vec![("5", false), ("10", false), ("25", true)]
+        );
+    }
+
+    fn source_limit_options(row: &OverlayRow) -> Vec<(&'static str, bool)> {
+        row.actions
+            .iter()
+            .map(|action| (action.label, action.active))
+            .collect()
     }
 }

@@ -43,6 +43,7 @@ const FRAME_RATE_WINDOW: Duration = Duration::from_secs(1);
 const SOURCE_WINDOW: Duration = Duration::from_secs(5);
 const ANIMATION_EXPIRY: Duration = Duration::from_secs(1);
 const TOP_SOURCE_COUNT: usize = 5;
+const TOP_SOURCE_COUNT_OPTIONS: [usize; 3] = [5, 10, 25];
 const HUD_MAX_LINE_CHARS: usize = 110;
 
 static GPUI_DEVTOOLS_ENABLED: AtomicBool = AtomicBool::new(false);

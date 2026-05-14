@@ -1,5 +1,5 @@
 use super::{
-    ANIMATION_EXPIRY, FRAME_RATE_WINDOW, SOURCE_WINDOW, TOP_SOURCE_COUNT, event_age,
+    ANIMATION_EXPIRY, FRAME_RATE_WINDOW, SOURCE_WINDOW, event_age,
     events::{
         AnimationEventKind, CacheMissReasons, DirtyPathEvent, NotifyEvent, ViewRenderEvent,
         ViewRenderPhase,
@@ -262,10 +262,11 @@ pub(super) fn render_summary(
     devtools: &GpuiDevTools,
     window_id: WindowId,
     now: Instant,
+    limit: usize,
 ) -> RenderSummary {
     let mut summary = RenderSummary::default();
     let mut counts: FxHashMap<RenderSourceKey, RenderSourceStats> = FxHashMap::default();
-    let mut reuse_counts_by_type: FxHashMap<&'static str, usize> = FxHashMap::default();
+    let mut reuse_counts_by_entity = FxHashMap::default();
 
     for event in devtools.renders.iter() {
         let Some(age) = event_age(now, event.timestamp) else {
@@ -277,7 +278,7 @@ pub(super) fn render_summary(
 
         if event.phase.is_reuse() {
             summary.reuse_count += 1;
-            *reuse_counts_by_type.entry(event.entity_type).or_insert(0) += 1;
+            *reuse_counts_by_entity.entry(event.entity_id).or_insert(0) += 1;
         } else if event.phase.flashes() {
             let key = RenderSourceKey::from(event);
             if devtools.hidden_render_sources.contains(&key) {
@@ -306,8 +307,8 @@ pub(super) fn render_summary(
     }
 
     for (source, stats) in &mut counts {
-        stats.reuse_count = reuse_counts_by_type
-            .get(&source.entity_type)
+        stats.reuse_count = reuse_counts_by_entity
+            .get(&source.entity_id)
             .copied()
             .unwrap_or(0);
         stats.cause = devtools
@@ -328,10 +329,17 @@ pub(super) fn render_summary(
         let right_pinned = devtools.pinned_render_sources.contains(right_source);
         right_pinned
             .cmp(&left_pinned)
+            .then_with(|| right.duration.cmp(&left.duration))
             .then_with(|| right.count.cmp(&left.count))
             .then_with(|| {
                 short_type_name(left_source.entity_type)
                     .cmp(short_type_name(right_source.entity_type))
+            })
+            .then_with(|| {
+                left_source
+                    .entity_id
+                    .as_u64()
+                    .cmp(&right_source.entity_id.as_u64())
             })
             .then_with(|| left_source.phase.as_str().cmp(right_source.phase.as_str()))
     });
@@ -339,7 +347,7 @@ pub(super) fn render_summary(
         .iter()
         .filter(|(source, _)| devtools.pinned_render_sources.contains(source))
         .count();
-    counts.truncate(TOP_SOURCE_COUNT + visible_pinned_count);
+    counts.truncate(limit + visible_pinned_count);
     summary.top_sources = counts;
 
     summary
@@ -379,6 +387,12 @@ pub(super) fn hidden_render_sources(
                 short_type_name(left_source.entity_type)
                     .cmp(short_type_name(right_source.entity_type))
             })
+            .then_with(|| {
+                left_source
+                    .entity_id
+                    .as_u64()
+                    .cmp(&right_source.entity_id.as_u64())
+            })
             .then_with(|| left_source.phase.as_str().cmp(right_source.phase.as_str()))
     });
     counts
@@ -386,6 +400,7 @@ pub(super) fn hidden_render_sources(
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub(super) struct RenderSourceKey {
+    pub(super) entity_id: EntityId,
     pub(super) entity_type: &'static str,
     pub(super) phase: ViewRenderPhase,
 }
@@ -393,6 +408,7 @@ pub(super) struct RenderSourceKey {
 impl RenderSourceKey {
     pub(super) fn from(event: &ViewRenderEvent) -> Self {
         Self {
+            entity_id: event.entity_id,
             entity_type: event.entity_type,
             phase: event.phase,
         }
@@ -404,7 +420,6 @@ pub(super) struct RenderSourceStats {
     pub(super) count: usize,
     pub(super) reuse_count: usize,
     pub(super) duration: Duration,
-    pub(super) sample_entity_id: EntityId,
     pub(super) bounds: Option<Bounds<Pixels>>,
     pub(super) cache_miss_reasons: CacheMissReasons,
     pub(super) caching_disabled_by_inspector: bool,
@@ -418,7 +433,6 @@ impl RenderSourceStats {
             count: 0,
             reuse_count: 0,
             duration: Duration::default(),
-            sample_entity_id: event.entity_id,
             bounds: event.bounds,
             cache_miss_reasons: event.cache_miss_reasons,
             caching_disabled_by_inspector: event.caching_disabled_by_inspector,
@@ -432,7 +446,6 @@ impl RenderSourceStats {
             count: 0,
             reuse_count: 0,
             duration: Duration::default(),
-            sample_entity_id: EntityId::from(0),
             bounds: None,
             cache_miss_reasons: CacheMissReasons::empty(),
             caching_disabled_by_inspector: false,
@@ -441,12 +454,21 @@ impl RenderSourceStats {
         }
     }
 
+    pub(super) fn average_duration(self) -> Duration {
+        if self.count == 0 {
+            return Duration::default();
+        }
+
+        let average_nanos =
+            (self.duration.as_nanos() / self.count as u128).min(u64::MAX as u128) as u64;
+        Duration::from_nanos(average_nanos)
+    }
+
     fn record_event(&mut self, event: &ViewRenderEvent) {
         self.count += 1;
         if let Some(duration) = event.duration {
             self.duration += duration;
         }
-        self.sample_entity_id = event.entity_id;
         self.bounds = event.bounds;
         self.cache_miss_reasons = event.cache_miss_reasons;
         self.caching_disabled_by_inspector = event.caching_disabled_by_inspector;
@@ -556,7 +578,7 @@ fn dirty_path_label(event: &DirtyPathEvent) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::events::DirtyPathSegment;
+    use super::super::{TOP_SOURCE_COUNT, events::DirtyPathSegment};
     use super::*;
 
     #[test]
@@ -616,6 +638,27 @@ mod tests {
         });
 
         assert!(top_notify_sources(&devtools, now, TOP_SOURCE_COUNT).is_empty());
+    }
+
+    #[test]
+    fn top_notify_sources_respects_limit() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+
+        for index in 0..4 {
+            devtools.notifications.push(NotifyEvent {
+                entity_id: EntityId::from((index + 1) as u64),
+                entity_type: "Editor",
+                caller_file: "crates/editor/src/editor.rs",
+                caller_line: index as u32,
+                caller_column: 1,
+                registered_window_count: 1,
+                live_window_count: 1,
+                timestamp: now,
+            });
+        }
+
+        assert_eq!(top_notify_sources(&devtools, now, 2).len(), 2);
     }
 
     #[test]
@@ -694,16 +737,39 @@ mod tests {
             caching_disabled_by_inspector: false,
             timestamp: now,
         });
+        devtools.renders.push(ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(3),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: None,
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        });
         let hidden_source = RenderSourceKey {
+            entity_id: EntityId::from(1),
             entity_type: "Editor",
             phase: ViewRenderPhase::UncachedRender,
         };
         devtools.hidden_render_sources.insert(hidden_source);
 
-        let summary = render_summary(&devtools, window_id, now);
-        assert_eq!(summary.render_count, 1);
-        assert_eq!(summary.top_sources.len(), 1);
-        assert_eq!(summary.top_sources[0].0.entity_type, "Workspace");
+        let summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
+        assert_eq!(summary.render_count, 2);
+        assert_eq!(summary.top_sources.len(), 2);
+        assert!(
+            summary
+                .top_sources
+                .iter()
+                .any(|(source, _)| source.entity_id == EntityId::from(2))
+        );
+        assert!(
+            summary
+                .top_sources
+                .iter()
+                .any(|(source, _)| source.entity_id == EntityId::from(3))
+        );
         assert_eq!(
             hidden_render_sources(&devtools, window_id, now),
             vec![(hidden_source, 1)]
@@ -711,7 +777,58 @@ mod tests {
     }
 
     #[test]
-    fn render_summary_tracks_reuse_count_by_view_type() {
+    fn render_summary_keeps_same_type_views_separate() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+
+        devtools.renders.push(ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: Some(Duration::from_millis(1)),
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        });
+        devtools.renders.push(ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(1),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: Some(Duration::from_millis(1)),
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        });
+        devtools.renders.push(ViewRenderEvent {
+            window_id,
+            entity_id: EntityId::from(2),
+            entity_type: "Editor",
+            phase: ViewRenderPhase::UncachedRender,
+            duration: Some(Duration::from_millis(3)),
+            cache_miss_reasons: CacheMissReasons::empty(),
+            bounds: None,
+            caching_disabled_by_inspector: false,
+            timestamp: now,
+        });
+
+        let summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
+        assert_eq!(summary.render_count, 3);
+        assert_eq!(summary.top_sources.len(), 2);
+        assert_eq!(summary.top_sources[0].0.entity_id, EntityId::from(2));
+        assert_eq!(summary.top_sources[0].1.count, 1);
+        assert_eq!(summary.top_sources[0].1.duration, Duration::from_millis(3));
+        assert_eq!(summary.top_sources[1].0.entity_id, EntityId::from(1));
+        assert_eq!(summary.top_sources[1].1.count, 2);
+        assert_eq!(summary.top_sources[1].1.duration, Duration::from_millis(2));
+    }
+
+    #[test]
+    fn render_summary_tracks_reuse_count_by_exact_view() {
         let mut devtools = GpuiDevTools::new();
         let now = Instant::now();
         let window_id = WindowId::from(1);
@@ -727,7 +844,7 @@ mod tests {
             caching_disabled_by_inspector: false,
             timestamp: now,
         });
-        for entity_id in [2, 3] {
+        for entity_id in [1, 1, 2, 3] {
             devtools.renders.push(ViewRenderEvent {
                 window_id,
                 entity_id: EntityId::from(entity_id),
@@ -741,9 +858,38 @@ mod tests {
             });
         }
 
-        let summary = render_summary(&devtools, window_id, now);
+        let summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
+        assert_eq!(summary.render_count, 1);
+        assert_eq!(summary.reuse_count, 4);
         assert_eq!(summary.top_sources[0].1.count, 1);
         assert_eq!(summary.top_sources[0].1.reuse_count, 2);
+    }
+
+    #[test]
+    fn render_summary_respects_limit() {
+        let mut devtools = GpuiDevTools::new();
+        let now = Instant::now();
+        let window_id = WindowId::from(1);
+
+        for index in 0..4 {
+            devtools.renders.push(ViewRenderEvent {
+                window_id,
+                entity_id: EntityId::from((index + 1) as u64),
+                entity_type: "Editor",
+                phase: ViewRenderPhase::UncachedRender,
+                duration: Some(Duration::from_millis((index + 1) as u64)),
+                cache_miss_reasons: CacheMissReasons::empty(),
+                bounds: None,
+                caching_disabled_by_inspector: false,
+                timestamp: now,
+            });
+        }
+
+        let summary = render_summary(&devtools, window_id, now, 2);
+        assert_eq!(summary.render_count, 4);
+        assert_eq!(summary.top_sources.len(), 2);
+        assert_eq!(summary.top_sources[0].0.entity_id, EntityId::from(4));
+        assert_eq!(summary.top_sources[1].0.entity_id, EntityId::from(3));
     }
 
     #[test]
@@ -825,7 +971,7 @@ mod tests {
             .latest_cause_by_render_source
             .insert(render_source, NotifyCause::from_event(&notify));
 
-        let summary = render_summary(&devtools, window_id, now);
+        let summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
         let Some((_, stats)) = summary.top_sources.first() else {
             panic!("expected render source summary");
         };
@@ -868,7 +1014,7 @@ mod tests {
             .latest_cause_by_render_source
             .insert(render_source, NotifyCause::from_event(&notify));
 
-        let summary = render_summary(&devtools, window_id, now);
+        let summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
         let Some((_, stats)) = summary.top_sources.first() else {
             panic!("expected render source summary");
         };
@@ -893,7 +1039,7 @@ mod tests {
             timestamp: now + Duration::from_secs(1),
         });
 
-        let summary = render_summary(&devtools, window_id, now);
+        let summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
         assert_eq!(summary.render_count, 0);
         assert!(summary.top_sources.is_empty());
     }
@@ -943,7 +1089,7 @@ mod tests {
             });
         }
 
-        let summary = render_summary(&devtools, window_id, now);
+        let summary = render_summary(&devtools, window_id, now, TOP_SOURCE_COUNT);
         assert_eq!(summary.top_sources.len(), TOP_SOURCE_COUNT + 1);
         assert_eq!(summary.top_sources[0].0, pinned_source);
         assert_eq!(summary.top_sources[0].1.count, 0);

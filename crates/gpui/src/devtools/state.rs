@@ -40,6 +40,8 @@ pub(super) struct GpuiDevTools {
     paused_notify_source_total_counts: Option<FxHashMap<NotifySourceKey, usize>>,
     paused_notify_source_last_stats: Option<FxHashMap<NotifySourceKey, NotifySourceStats>>,
     paused_render_source_last_stats: Option<FxHashMap<RenderSourceKey, RenderSourceStats>>,
+    pub(super) notify_source_limit: usize,
+    pub(super) render_source_limit: usize,
     pub(super) performance: DevtoolsPerformance,
     pub(super) show_flashes: bool,
     pub(super) show_heat: bool,
@@ -69,6 +71,8 @@ impl GpuiDevTools {
             paused_notify_source_total_counts: None,
             paused_notify_source_last_stats: None,
             paused_render_source_last_stats: None,
+            notify_source_limit: super::TOP_SOURCE_COUNT,
+            render_source_limit: super::TOP_SOURCE_COUNT,
             performance: DevtoolsPerformance::new(),
             show_flashes: true,
             show_heat: true,
@@ -544,6 +548,7 @@ mod tests {
     #[test]
     fn render_heat_tracks_recent_rate_and_fades_after_activity_stops() {
         let source = RenderSourceKey {
+            entity_id: EntityId::from(1),
             entity_type: "Editor",
             phase: ViewRenderPhase::UncachedRender,
         };
@@ -580,6 +585,7 @@ mod tests {
     #[test]
     fn reuse_outline_fades_quickly_without_affecting_heat() {
         let source = RenderSourceKey {
+            entity_id: EntityId::from(1),
             entity_type: "Editor",
             phase: ViewRenderPhase::PrepaintReuse,
         };

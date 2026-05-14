@@ -5,7 +5,7 @@ use super::{
 use crate::{DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Window};
 use scheduler::Instant;
 
-use super::super::{GPUI_DEVTOOLS, state::HudDragState};
+use super::super::{GPUI_DEVTOOLS, TOP_SOURCE_COUNT_OPTIONS, state::HudDragState};
 
 pub(super) fn register_input_handlers(window: &mut Window, prepared_overlay: &PreparedOverlay) {
     register_drag_handlers(window, prepared_overlay);
@@ -128,6 +128,16 @@ fn apply_filter_action(action: SourceFilterAction, window: &mut Window) {
         SourceFilterAction::ResetFilters => {
             devtools.hidden_notify_sources.clear();
             devtools.hidden_render_sources.clear();
+        }
+        SourceFilterAction::SetNotifySourceLimit(limit) => {
+            if TOP_SOURCE_COUNT_OPTIONS.contains(&limit) {
+                devtools.notify_source_limit = limit;
+            }
+        }
+        SourceFilterAction::SetRenderSourceLimit(limit) => {
+            if TOP_SOURCE_COUNT_OPTIONS.contains(&limit) {
+                devtools.render_source_limit = limit;
+            }
         }
         SourceFilterAction::CloseDevTools => {}
         SourceFilterAction::HideNotify(source) => {

@@ -53,8 +53,8 @@ pub(super) fn format_notify_source(
 // Column widths must match `format_render_source`.
 pub(super) fn render_column_header() -> String {
     format!(
-        "{:<3} {:<28} {:<14} {:>4} {:>5} {:>7} {:>8} {:>5}",
-        "#", "view", "phase", "r/s", "reuse", "age", "cost", "miss",
+        "{:<3} {:<28} {:<14} {:>4} {:>5} {:>7} {:>7} {:>8} {:>5}",
+        "#", "view", "phase", "r/s", "reuse", "age", "avg", "sum", "miss",
     )
 }
 
@@ -74,7 +74,13 @@ pub(super) fn format_render_source(
         .checked_div(total)
         .map(|percent| format!("{percent}%"))
         .unwrap_or_else(|| "--".to_string());
-    let cost = if stats.duration.is_zero() {
+    let average = stats.average_duration();
+    let average_cost = if average.is_zero() {
+        "--".to_string()
+    } else {
+        format!("{}ms", format_duration_ms(average))
+    };
+    let total_cost = if stats.duration.is_zero() {
         "--".to_string()
     } else {
         format!("{}ms", format_duration_ms(stats.duration))
@@ -82,17 +88,18 @@ pub(super) fn format_render_source(
     let view = format!(
         "{}#{}",
         short_type_name(source.entity_type),
-        stats.sample_entity_id.as_u64()
+        source.entity_id.as_u64()
     );
     let mut label = format!(
-        "{:<3} {:<28} {:<14} {:>4} {:>5} {:>7} {:>8} {:>5}",
+        "{:<3} {:<28} {:<14} {:>4} {:>5} {:>7} {:>7} {:>8} {:>5}",
         index,
         view,
         source.phase.as_str(),
         stats.count,
         stats.reuse_count,
         age,
-        cost,
+        average_cost,
+        total_cost,
         miss,
     );
 
@@ -241,7 +248,11 @@ mod tests {
                 .map(|(i, _)| i)
                 .collect()
         };
-        assert_eq!(column_starts(&header).len(), column_starts(&label).len());
+        let label_without_chips = label.split(" [").next().unwrap_or(label.as_str());
+        assert_eq!(
+            column_starts(&header).len(),
+            column_starts(label_without_chips).len()
+        );
     }
 
     #[test]
@@ -262,9 +273,9 @@ mod tests {
             timestamp: now - Duration::from_millis(25),
         };
         let mut stats = RenderSourceStats::from_event(&event);
-        stats.count = 1;
-        stats.duration = Duration::from_micros(1_200);
-        stats.reuse_count = 4;
+        stats.count = 2;
+        stats.duration = Duration::from_micros(2_400);
+        stats.reuse_count = 6;
 
         let label = format_render_source(1, RenderSourceKey::from(&event), stats, now);
         assert!(
@@ -274,8 +285,22 @@ mod tests {
         assert!(label.contains("render"));
         assert!(label.contains("25ms"));
         assert!(label.contains("1.2ms"));
-        assert!(label.contains("20%"));
+        assert!(label.contains("2.4ms"));
+        assert!(label.contains("25%"));
         assert!(label.contains("[bounds][dirty][inspector]"));
+
+        let header = render_column_header();
+        let column_starts = |line: &str| -> Vec<usize> {
+            line.match_indices(|c: char| !c.is_whitespace())
+                .filter(|(i, _)| *i == 0 || line.as_bytes()[i - 1] == b' ')
+                .map(|(i, _)| i)
+                .collect()
+        };
+        let label_without_chips = label.split(" [").next().unwrap_or(label.as_str());
+        assert_eq!(
+            column_starts(&header).len(),
+            column_starts(label_without_chips).len()
+        );
     }
 
     #[test]
