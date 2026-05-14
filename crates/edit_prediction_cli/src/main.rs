@@ -1243,6 +1243,7 @@ fn main() {
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
+                                                false,
                                             )
                                             .await?;
                                         }
@@ -1253,6 +1254,7 @@ fn main() {
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
+                                                true,
                                             )
                                             .await?;
                                         }

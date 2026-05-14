@@ -23,8 +23,11 @@ pub async fn run_scoring(
     app_state: Arc<EpAppState>,
     example_progress: &ExampleProgress,
     cx: AsyncApp,
+    allow_missing_predictions: bool,
 ) -> anyhow::Result<()> {
-    run_prediction(example, args, app_state, example_progress, cx).await?;
+    if !(allow_missing_predictions && args.provider.is_none() && example.predictions.is_empty()) {
+        run_prediction(example, args, app_state, example_progress, cx).await?;
+    }
 
     let progress = example_progress.start(Step::Score);
 
@@ -64,6 +67,25 @@ pub async fn run_scoring(
 
     progress.set_substatus("computing metrics");
     let mut scores = vec![];
+    if allow_missing_predictions && example.predictions.is_empty() {
+        scores.push(edit_prediction_metrics::score_prediction(
+            PredictionScoringInput {
+                original_text,
+                expected_patches: &prepared_expected_patches,
+                actual_patch: None,
+                actual_cursor: None,
+                reversal_context: Some(PredictionReversalContext {
+                    edit_history: &prompt_inputs.events,
+                    excerpt_start_row: prompt_inputs.excerpt_start_row,
+                    cursor_path,
+                }),
+                cumulative_logprob: None,
+                avg_logprob: None,
+                context: Some(&context),
+            },
+        ));
+    }
+
     for prediction in &example.predictions {
         let actual_patch = prediction.actual_patch.clone().or_else(|| {
             parse_prediction_output(example, &prediction.actual_output, prediction.provider)
