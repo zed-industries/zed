@@ -7,8 +7,8 @@ use git::{
     status::{DiffTreeType, FileStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus},
 };
 use gpui::{
-    App, AsyncWindowContext, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity, Window,
+    App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter, SharedString, Subscription,
+    Task, WeakEntity, Window,
 };
 
 use language::Buffer;
@@ -40,6 +40,8 @@ pub struct BranchDiff {
     base_commit: Option<SharedString>,
     head_commit: Option<SharedString>,
     tree_diff: Option<TreeDiff>,
+    tree_diff_update_needed: bool,
+    tree_diff_base_task: Option<Task<()>>,
     _subscription: Subscription,
     update_needed: postage::watch::Sender<()>,
     _task: Task<()>,
@@ -47,6 +49,7 @@ pub struct BranchDiff {
 
 pub enum BranchDiffEvent {
     FileListChanged,
+    DiffBaseChanged,
 }
 
 impl EventEmitter<BranchDiffEvent> for BranchDiff {}
@@ -98,6 +101,8 @@ impl BranchDiff {
             repo,
             project,
             tree_diff: None,
+            tree_diff_update_needed: false,
+            tree_diff_base_task: None,
             base_commit: None,
             head_commit: None,
             _subscription: git_store_subscription,
@@ -110,22 +115,42 @@ impl BranchDiff {
         &self.diff_base
     }
 
-    pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
-        self.diff_base = diff_base;
+    pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
+        let same_repo = match (self.repo.as_ref(), repo.as_ref()) {
+            (Some(current), Some(new)) => current.read(cx).id == new.read(cx).id,
+            (None, None) => true,
+            _ => false,
+        };
+        if same_repo {
+            return;
+        }
+
+        self.repo = repo;
         self.tree_diff = None;
+        self.tree_diff_update_needed = self.diff_base.is_merge_base();
+        self.tree_diff_base_task = None;
         self.base_commit = None;
         self.head_commit = None;
         cx.emit(BranchDiffEvent::FileListChanged);
         *self.update_needed.borrow_mut() = ();
     }
 
-    pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
-        self.repo = repo;
+    pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
+        if self.diff_base == diff_base {
+            return;
+        }
+
+        self.tree_diff_update_needed = diff_base.is_merge_base();
         self.tree_diff = None;
+        self.tree_diff_base_task = None;
+        self.diff_base = diff_base;
         self.base_commit = None;
         self.head_commit = None;
-        cx.emit(BranchDiffEvent::FileListChanged);
-        *self.update_needed.borrow_mut() = ();
+
+        cx.emit(BranchDiffEvent::DiffBaseChanged);
+        if self.tree_diff_update_needed {
+            *self.update_needed.borrow_mut() = ();
+        }
     }
 
     pub async fn handle_status_updates(
@@ -133,10 +158,12 @@ impl BranchDiff {
         mut recv: postage::watch::Receiver<()>,
         cx: &mut AsyncWindowContext,
     ) {
-        Self::reload_tree_diff(this.clone(), cx).await.log_err();
+        this.update(cx, |this, cx| this.spawn_reload_tree_diff(cx))
+            .log_err();
         while recv.next().await.is_some() {
-            let Ok(needs_update) = this.update(cx, |this, cx| {
-                let mut needs_update = false;
+            let Ok(()) = this.update(cx, |this, cx| {
+                let mut needs_update = this.tree_diff_update_needed;
+                this.tree_diff_update_needed = false;
 
                 if this.repo.is_none() {
                     let active_repo = this
@@ -167,14 +194,13 @@ impl BranchDiff {
                         }
                     })
                 }
-                needs_update
+
+                if needs_update {
+                    this.spawn_reload_tree_diff(cx);
+                }
             }) else {
                 return;
             };
-
-            if needs_update {
-                Self::reload_tree_diff(this.clone(), cx).await.log_err();
-            }
         }
     }
 
@@ -253,10 +279,26 @@ impl BranchDiff {
         }
     }
 
-    pub async fn reload_tree_diff(
-        this: WeakEntity<Self>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
+    fn spawn_reload_tree_diff(&mut self, cx: &mut Context<Self>) {
+        if !self.diff_base.is_merge_base() {
+            return;
+        }
+
+        let task = cx.spawn(async move |this, cx| {
+            Self::reload_tree_diff(this, cx).await.log_err();
+        });
+
+        self.tree_diff_base_task = Some(task);
+        cx.notify();
+    }
+
+    pub fn is_tree_base_loading(&self) -> bool {
+        self.tree_diff_base_task
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
+    }
+
+    pub async fn reload_tree_diff(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let task = this.update(cx, |this, cx| {
             let DiffBase::Merge { base_ref } = this.diff_base.clone() else {
                 return None;
@@ -295,6 +337,9 @@ impl BranchDiff {
         let Some(repo) = self.repo.clone() else {
             return output;
         };
+        if self.diff_base.is_merge_base() && self.tree_diff.is_none() {
+            return output;
+        }
 
         self.project.update(cx, |_project, cx| {
             let mut seen = HashSet::default();

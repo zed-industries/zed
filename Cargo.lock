@@ -3665,7 +3665,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rpc",
- "semver",
  "serde",
  "serde_json",
  "settings",
@@ -6341,6 +6340,7 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "gpui",
+ "language",
  "menu",
  "open_path_prompt",
  "picker",
@@ -22407,7 +22407,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

@@ -40,6 +40,7 @@ use zeta_prompt::ZetaFormat;
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::VecDeque;
 use std::env;
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
@@ -72,6 +73,9 @@ struct EpArgs {
     printenv: bool,
     #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
+    /// Process all examples from a repository together instead of distributing examples across workers.
+    #[clap(long, default_value_t = false, global = true)]
+    group_by_repo: bool,
     /// The limit for the number of examples to process
     /// Default is unlimited for processing local datasets, 5000 when pulling from snowflake
     #[clap(long, global = true)]
@@ -899,6 +903,18 @@ fn spec_hash(spec: &edit_prediction::example_spec::ExampleSpec) -> u64 {
     hasher.finish()
 }
 
+fn chunk_examples(examples: Vec<Example>, max_parallelism: usize) -> VecDeque<Vec<Example>> {
+    if examples.is_empty() || max_parallelism == 0 {
+        return VecDeque::new();
+    }
+
+    let chunk_size = examples.len().div_ceil(max_parallelism);
+    examples
+        .chunks(chunk_size)
+        .map(|chunk| chunk.to_vec())
+        .collect()
+}
+
 fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>, command: &Command) {
     let file = match File::open(path) {
         Ok(f) => f,
@@ -1173,7 +1189,12 @@ fn main() {
                     output_sender = Some(sender);
                 }
 
-                let grouped_examples = Mutex::new(group_examples_by_repo(examples));
+                let example_batches = if args.group_by_repo {
+                    group_examples_by_repo(examples)
+                } else {
+                    chunk_examples(examples, args.max_parallelism)
+                };
+                let example_batches = Mutex::new(example_batches);
                 let finished_examples = Mutex::new(Vec::new());
 
                 let mut tasks = Vec::new();
@@ -1181,7 +1202,7 @@ fn main() {
                     tasks.push(async {
                         loop {
                             let Some(mut repo_examples) =
-                                grouped_examples.lock().unwrap().pop_front()
+                                example_batches.lock().unwrap().pop_front()
                             else {
                                 break;
                             };
