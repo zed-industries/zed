@@ -98,8 +98,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile,
-    OpenZedUrl, Quit,
+    About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenGpuiDevtools, OpenServerSettings,
+    OpenSettingsFile, OpenZedUrl, Quit,
 };
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
@@ -859,6 +859,9 @@ fn register_actions(
 ) {
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(|_, _: &OpenGpuiDevtools, window, _| {
+            gpui::devtools::open(window);
+        })
         .register_action(
             |workspace: &mut Workspace,
              _: &input_latency_ui::DumpInputLatencyHistogram,
