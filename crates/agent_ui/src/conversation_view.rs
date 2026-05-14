@@ -45,11 +45,9 @@ use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
 use crate::message_editor::SessionCapabilities;
-use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
+use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
 use rope::Point;
-use settings::{
-    NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
-};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -698,7 +696,7 @@ impl ConversationView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
-        source: &'static str,
+        source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -812,7 +810,7 @@ impl ConversationView {
             title,
             self.project.clone(),
             None,
-            "agent_panel",
+            AgentThreadSource::AgentPanel,
             window,
             cx,
         );
@@ -837,7 +835,7 @@ impl ConversationView {
         title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
-        source: &'static str,
+        source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -870,10 +868,7 @@ impl ConversationView {
 
         let connect_result = connection_entry.read(cx).wait_for_connection();
 
-        let side = match AgentSettings::get_global(cx).sidebar_side() {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
+        let side = crate::agent_sidebar_side(cx);
         let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -892,7 +887,7 @@ impl ConversationView {
             telemetry::event!(
                 "Agent Thread Started",
                 agent = connection.telemetry_id(),
-                source = source,
+                source = source.as_str(),
                 side = side,
                 thread_location = thread_location
             );
@@ -2718,7 +2713,7 @@ impl ConversationView {
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
-                                                            "agent_panel",
+                                                            AgentThreadSource::AgentPanel,
                                                             window,
                                                             cx,
                                                         );
@@ -3369,7 +3364,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3506,7 +3501,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3588,7 +3583,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3727,7 +3722,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4028,7 +4023,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4126,7 +4121,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4195,7 +4190,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4317,7 +4312,7 @@ pub(crate) mod tests {
                     project1.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4539,7 +4534,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -5189,7 +5184,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store.clone()),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -7757,7 +7752,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )

@@ -14,8 +14,8 @@ use agent_ui::threads_archive_view::{
 };
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo,
-    ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewThread,
-    TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
+    AgentThreadSource, ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE,
+    NewThread, TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
     import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
@@ -48,8 +48,9 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, ScrollAxes, Scrollbars, Tab, ThreadItem,
-    ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*, render_modifiers,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes, Scrollbars, Tab,
+    ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*,
+    render_modifiers,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -2683,7 +2684,7 @@ impl Sidebar {
                     Some(metadata.folder_paths().clone()),
                     metadata.title.clone(),
                     focus,
-                    "sidebar",
+                    AgentThreadSource::Sidebar,
                     window,
                     cx,
                 );
@@ -4719,6 +4720,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace_path_list(workspace, cx).paths().is_empty() {
+            return;
+        }
+
         if self.should_create_terminal_for_workspace(workspace, cx) {
             self.create_new_terminal(workspace, window, cx);
         } else {
@@ -4743,6 +4748,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace_path_list(workspace, cx).paths().is_empty() {
+            return;
+        }
+
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -4754,7 +4763,7 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.activate_new_thread(true, "sidebar", window, cx);
+                panel.activate_new_thread(true, AgentThreadSource::Sidebar, window, cx);
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);
@@ -4776,6 +4785,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace_path_list(workspace, cx).paths().is_empty() {
+            return;
+        }
+
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -4787,7 +4800,7 @@ impl Sidebar {
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_terminal(Some(workspace), window, cx);
+                    panel.new_terminal(Some(workspace), AgentThreadSource::Sidebar, window, cx);
                 });
             }
             workspace.focus_panel::<AgentPanel>(window, cx);
@@ -5025,48 +5038,28 @@ impl Sidebar {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .id("sidebar-empty-state")
-            .p_4()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .gap_1()
-            .track_focus(&self.focus_handle(cx))
-            .child(
-                Button::new("open_project", "Open Project")
-                    .full_width()
-                    .key_binding(KeyBinding::for_action(&workspace::Open::default(), cx))
-                    .on_click(|_, window, cx| {
-                        let side = match AgentSettings::get_global(cx).sidebar_side() {
-                            SidebarSide::Left => "left",
-                            SidebarSide::Right => "right",
-                        };
-                        telemetry::event!("Sidebar Add Project Clicked", side = side);
-                        window.dispatch_action(
-                            Open {
-                                create_new_window: false,
-                            }
-                            .boxed_clone(),
-                            cx,
-                        );
-                    }),
-            )
-            .child(
-                h_flex()
-                    .w_1_2()
-                    .gap_2()
-                    .child(Divider::horizontal().color(ui::DividerColor::Border))
-                    .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
-                    .child(Divider::horizontal().color(ui::DividerColor::Border)),
-            )
-            .child(
-                Button::new("clone_repo", "Clone Repository")
-                    .full_width()
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(git::Clone.boxed_clone(), cx);
-                    }),
-            )
+        ProjectEmptyState::new(
+            "Threads Sidebar",
+            self.focus_handle(cx),
+            KeyBinding::for_action(&workspace::Open::default(), cx),
+        )
+        .on_open_project(|_, window, cx| {
+            let side = match AgentSettings::get_global(cx).sidebar_side() {
+                SidebarSide::Left => "left",
+                SidebarSide::Right => "right",
+            };
+            telemetry::event!("Sidebar Add Project Clicked", side = side);
+            window.dispatch_action(
+                Open {
+                    create_new_window: false,
+                }
+                .boxed_clone(),
+                cx,
+            );
+        })
+        .on_clone_repo(|_, window, cx| {
+            window.dispatch_action(git::Clone.boxed_clone(), cx);
+        })
     }
 
     fn render_sidebar_header(

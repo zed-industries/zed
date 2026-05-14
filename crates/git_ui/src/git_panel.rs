@@ -75,9 +75,9 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, PopoverMenu,
-    RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor, Tooltip,
-    WithScrollbar, prelude::*,
+    ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, KeyBinding,
+    PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab,
+    TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
@@ -121,6 +121,10 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+        /// Activates the Changes tab.
+        ActivateChangesTab,
+        /// Activates the History tab.
+        ActivateHistoryTab,
     ]
 );
 
@@ -4927,11 +4931,15 @@ impl GitPanel {
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
 
+        let focus_handle = self.focus_handle.clone();
         let tab = |id: ElementId,
                    active: bool,
                    show_changes: bool,
                    label: SharedString,
-                   set_active_tab: GitPanelTab| {
+                   set_active_tab: GitPanelTab,
+                   tooltip_action: Box<dyn Action>| {
+            let focus_handle = focus_handle.clone();
+
             h_flex()
                 .cursor_pointer()
                 .id(id)
@@ -4946,7 +4954,7 @@ impl GitPanel {
                     s.bg(cx.theme().colors().editor_background.opacity(0.6))
                         .border_color(cx.theme().colors().border.opacity(0.6))
                 })
-                .child(Label::new(label).when(!active, |this| this.color(Color::Muted)))
+                .child(Label::new(label.clone()).when(!active, |this| this.color(Color::Muted)))
                 .when(show_changes && self.changes_count > 0, |this| {
                     this.child(
                         Label::new(format!("({})", self.changes_count))
@@ -4954,9 +4962,14 @@ impl GitPanel {
                             .color(Color::Muted),
                     )
                 })
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.set_active_tab(set_active_tab, cx)),
-                )
+                .tooltip(Tooltip::for_action_title_in(
+                    format!("Toggle {} Tab", label),
+                    tooltip_action.as_ref(),
+                    &focus_handle,
+                ))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.set_active_tab(set_active_tab, window, cx)
+                }))
         };
 
         h_flex()
@@ -4969,6 +4982,7 @@ impl GitPanel {
                 true,
                 "Changes".into(),
                 GitPanelTab::Changes,
+                ActivateChangesTab.boxed_clone(),
             ))
             .child(Divider::vertical().color(ui::DividerColor::BorderFaded))
             .child(tab(
@@ -4977,6 +4991,7 @@ impl GitPanel {
                 false,
                 "History".into(),
                 GitPanelTab::History,
+                ActivateHistoryTab.boxed_clone(),
             ))
     }
 
@@ -5046,17 +5061,37 @@ impl GitPanel {
         );
     }
 
-    fn set_active_tab(&mut self, tab: GitPanelTab, cx: &mut Context<Self>) {
+    fn activate_changes_tab(
+        &mut self,
+        _: &ActivateChangesTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_tab(GitPanelTab::Changes, window, cx);
+    }
+
+    fn activate_history_tab(
+        &mut self,
+        _: &ActivateHistoryTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_tab(GitPanelTab::History, window, cx);
+    }
+
+    fn set_active_tab(&mut self, tab: GitPanelTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == tab {
             return;
         }
         self.active_tab = tab;
         match tab {
             GitPanelTab::History => {
+                self.focus_handle.focus(window, cx);
                 self.load_commit_history(cx);
                 self.focused_history_entry = Some(0);
             }
             GitPanelTab::Changes => {
+                self.focus_handle.focus(window, cx);
                 self.commit_history_shas.clear();
                 self.focused_history_entry = None;
                 self._repo_subscriptions.clear();
@@ -5453,6 +5488,22 @@ impl GitPanel {
                         }),
                 )
                 .into_any_element()
+        } else if worktree_count == 0 {
+            let focus_handle = self.focus_handle.clone();
+            ProjectEmptyState::new(
+                "Git Panel",
+                focus_handle.clone(),
+                KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
+            )
+            .on_open_project(|_, window, cx| {
+                telemetry::event!("Git Panel Add Project Clicked");
+                window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
+            })
+            .on_clone_repo(|_, window, cx| {
+                telemetry::event!("Git Panel Clone Repo Clicked");
+                window.dispatch_action(git::Clone.boxed_clone(), cx);
+            })
+            .into_any_element()
         } else {
             Empty.into_any_element()
         }
@@ -6529,6 +6580,8 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(Self::activate_changes_tab))
+            .on_action(cx.listener(Self::activate_history_tab))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
