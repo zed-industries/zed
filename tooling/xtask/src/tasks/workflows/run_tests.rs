@@ -532,6 +532,7 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>) -> NamedJob {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
+        Platform::Freebsd => unimplemented!(),
     };
     let mut job = release_job(&[])
         .runs_on(runner)
@@ -574,6 +575,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
+        Platform::Freebsd => unimplemented!(),
     };
     NamedJob {
         name: format!("run_tests_{platform}"),

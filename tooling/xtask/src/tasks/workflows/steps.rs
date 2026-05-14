@@ -207,7 +207,7 @@ pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
             Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
         "#}),
 
-        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+        Platform::Linux | Platform::Mac | Platform::Freebsd => named::bash(indoc::indoc! {r#"
             mkdir -p ./../.cargo
             cp ./.cargo/ci-config.toml ./../.cargo/config.toml
         "#}),
@@ -219,7 +219,7 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
         Platform::Windows => named::pwsh(indoc::indoc! {r#"
             Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
         "#}),
-        Platform::Linux | Platform::Mac => named::bash(indoc::indoc! {r#"
+        Platform::Linux | Platform::Mac | Platform::Freebsd => named::bash(indoc::indoc! {r#"
             rm -rf ./../.cargo
         "#}),
     };
@@ -230,8 +230,9 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 350 200"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
-        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
+        Platform::Linux | Platform::Mac | Platform::Freebsd => {
+            named::bash("./script/clear-target-dir-if-larger-than 350 200")
+        }
     }
 }
 
@@ -262,7 +263,9 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
 pub fn setup_sccache(platform: Platform) -> Step<Run> {
     let step = match platform {
         Platform::Windows => named::pwsh("./script/setup-sccache.ps1"),
-        Platform::Linux | Platform::Mac => named::bash("./script/setup-sccache"),
+        Platform::Linux | Platform::Mac | Platform::Freebsd => {
+            named::bash("./script/setup-sccache")
+        }
     };
     step.add_env(("R2_ACCOUNT_ID", vars::R2_ACCOUNT_ID))
         .add_env(("R2_ACCESS_KEY_ID", vars::R2_ACCESS_KEY_ID))
@@ -278,7 +281,9 @@ pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
         Platform::Windows => {
             named::pwsh("if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0")
         }
-        Platform::Linux | Platform::Mac => named::bash("sccache --show-stats || true"),
+        Platform::Linux | Platform::Mac | Platform::Freebsd => {
+            named::bash("sccache --show-stats || true")
+        }
     }
 }
 
@@ -466,7 +471,9 @@ pub mod named {
     pub fn run(platform: Platform, script: &str) -> Step<Run> {
         match platform {
             Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
-            Platform::Linux | Platform::Mac => Step::new(function_name(1)).run(script),
+            Platform::Linux | Platform::Mac | Platform::Freebsd => {
+                Step::new(function_name(1)).run(script)
+            }
         }
     }
 

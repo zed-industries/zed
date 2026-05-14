@@ -393,6 +393,67 @@ jobs:
         path: target/zed-remote-server-windows-x86_64.zip
         if-no-files-found: error
     timeout-minutes: 60
+  bundle_freebsd_x86_64:
+    needs:
+    - check_style
+    - run_tests_windows
+    - clippy_windows
+    runs-on: namespace-profile-32x64-ubuntu-2004
+    env:
+      CARGO_INCREMENTAL: 0
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: run_bundling::set_release_channel_to_nightly
+      run: |
+        set -eu
+        version=$(git rev-parse --short HEAD)
+        echo "Publishing version: ${version} on release channel nightly"
+        echo "nightly" > crates/zed/RELEASE_CHANNEL
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::install_rustup_target
+      run: rustup target add x86_64-unknown-freebsd
+    - name: run_bundling::bundle_freebsd
+      run: pip install ziglang cargo-zigbuild --break-system-packages
+    - name: run_bundling::bundle_freebsd
+      run: |
+        set -eu
+        mkdir -p ~/freebsd-sysroot
+        if [ ! -f ~/freebsd-sysroot/usr/include/stdio.h ]; then
+          curl -L -o /tmp/base.txz \
+            https://download.freebsd.org/releases/amd64/amd64/15.0-RELEASE/base.txz
+          tar -xJf /tmp/base.txz -C ~/freebsd-sysroot ./lib ./usr
+        fi
+    - name: run_bundling::bundle_freebsd
+      run: |
+        set -eu
+        export CFLAGS_x86_64_unknown_freebsd="\
+            -fPIC \
+            -I$HOME/freebsd-sysroot/usr/include \
+            -L$HOME/freebsd-sysroot/lib \
+            -L$HOME/freebsd-sysroot/usr/lib"
+        export RUSTFLAGS="\
+            -L $HOME/freebsd-sysroot/lib \
+            -L $HOME/freebsd-sysroot/usr/lib \
+            -C link-arg=$HOME/freebsd-sysroot/usr/lib/libkvm.so \
+            -C link-arg=$HOME/freebsd-sysroot/usr/lib/libprocstat.so"
+        cargo zigbuild -p remote_server --release --target x86_64-unknown-freebsd
+        gzip -f --stdout --best target/x86_64-unknown-freebsd/release/remote_server \
+            > target/zed-remote-server-freebsd-x86_64.gz
+    - name: '@actions/upload-artifact zed-remote-server-freebsd-x86_64.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-freebsd-x86_64.gz
+        path: target/zed-remote-server-freebsd-x86_64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
   build_nix_linux_x86_64:
     needs:
     - check_style
@@ -484,6 +545,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
+    - bundle_freebsd_x86_64
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
@@ -514,6 +576,7 @@ jobs:
         mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
         mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
         mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
+        mv ./artifacts/zed-remote-server-freebsd-x86_64.gz/zed-remote-server-freebsd-x86_64.gz release-artifacts/zed-remote-server-freebsd-x86_64.gz
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
       env:
@@ -546,6 +609,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
+    - bundle_freebsd_x86_64
     if: failure()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:

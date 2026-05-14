@@ -51,6 +51,7 @@ pub enum Platform {
     Windows,
     Linux,
     Mac,
+    Freebsd,
 }
 
 impl std::fmt::Display for Platform {
@@ -59,6 +60,7 @@ impl std::fmt::Display for Platform {
             Platform::Windows => write!(f, "windows"),
             Platform::Linux => write!(f, "linux"),
             Platform::Mac => write!(f, "mac"),
+            Platform::Freebsd => write!(f, "freebsd"),
         }
     }
 }

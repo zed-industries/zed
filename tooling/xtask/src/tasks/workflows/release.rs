@@ -2,7 +2,7 @@ use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx:
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    run_bundling::{bundle_linux, bundle_mac, bundle_windows, upload_artifact},
+    run_bundling::{bundle_freebsd, bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, TokenPermissions, dependant_job, named, release_job},
@@ -54,6 +54,11 @@ pub(crate) fn release() -> Workflow {
             Arch::X86_64,
             None,
             &[&windows_tests, &windows_clippy, &check_scripts],
+        ),
+        freebsd_x86_64: bundle_freebsd(
+            Arch::X86_64,
+            None,
+            &[&linux_tests, &linux_clippy, &check_scripts],
         ),
     };
 
@@ -124,6 +129,7 @@ pub(crate) struct ReleaseBundleJobs {
     pub mac_x86_64: NamedJob,
     pub windows_aarch64: NamedJob,
     pub windows_x86_64: NamedJob,
+    pub freebsd_x86_64: NamedJob,
 }
 
 impl ReleaseBundleJobs {
@@ -135,6 +141,7 @@ impl ReleaseBundleJobs {
             &self.mac_x86_64,
             &self.windows_aarch64,
             &self.windows_x86_64,
+            &self.freebsd_x86_64,
         ]
     }
 
@@ -146,6 +153,7 @@ impl ReleaseBundleJobs {
             self.mac_x86_64,
             self.windows_aarch64,
             self.windows_x86_64,
+            self.freebsd_x86_64,
         ]
     }
 }

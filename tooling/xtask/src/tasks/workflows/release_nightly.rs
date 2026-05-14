@@ -4,7 +4,7 @@ use crate::tasks::workflows::{
         ReleaseBundleJobs, create_sentry_release, download_workflow_artifacts, notify_on_failure,
         prep_release_artifacts,
     },
-    run_bundling::{bundle_linux, bundle_mac, bundle_windows},
+    run_bundling::{bundle_freebsd, bundle_linux, bundle_mac, bundle_windows},
     run_tests::{clippy, run_platform_tests_no_filter},
     runners::{Arch, Platform, ReleaseChannel},
     steps::{CommonJobConditions, FluentBuilder, NamedJob},
@@ -28,6 +28,7 @@ pub fn release_nightly() -> Workflow {
         mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
         windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
         windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
+        freebsd_x86_64: bundle_freebsd(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
     };
 
     let nix_linux_x86 = build_nix(
