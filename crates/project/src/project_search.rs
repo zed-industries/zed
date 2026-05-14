@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::Context;
+use async_channel::{Receiver, Sender, bounded, unbounded};
 use collections::HashSet;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -19,7 +20,6 @@ use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
-use smol::channel::{Receiver, Sender, bounded, unbounded};
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
@@ -164,6 +164,11 @@ impl Search {
             let buffer = handle.read(cx);
             if !buffers.is_searchable(&buffer.remote_id()) {
                 continue;
+            } else if buffer
+                .file()
+                .is_some_and(|file| file.disk_state().is_deleted())
+            {
+                continue;
             } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
             } else {
@@ -216,6 +221,7 @@ impl Search {
                                 query.clone(),
                                 input_paths_tx,
                                 sorted_search_results_tx,
+                                tx.clone(),
                             ))
                             .boxed_local(),
                             Self::open_buffers(
@@ -407,12 +413,25 @@ impl Search {
         query: Arc<SearchQuery>,
         tx: Sender<InputPath>,
         results: Sender<oneshot::Receiver<ProjectPath>>,
+        results_tx: Sender<SearchResult>,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
         async move |cx| {
             _ = maybe!(async move {
                 let gitignored_tracker = PathInclusionMatcher::new(query.clone());
                 let include_ignored = query.include_ignored();
                 for worktree in worktrees {
+                    let scan_complete = worktree.read_with(cx, |worktree, _| {
+                        worktree.as_local().map(|local| local.scan_complete())
+                    });
+                    if let Some(scan_complete) = scan_complete {
+                        let mut scan_complete = pin!(scan_complete);
+                        if scan_complete.as_mut().now_or_never().is_none() {
+                            _ = results_tx.send(SearchResult::WaitingForScan).await;
+                            scan_complete.await;
+                            _ = results_tx.send(SearchResult::Searching).await;
+                        }
+                    }
+
                     let (mut snapshot, worktree_settings) = worktree
                         .read_with(cx, |this, _| {
                             Some((this.snapshot(), this.as_local()?.settings()))
@@ -586,6 +605,9 @@ impl Search {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
+                    if file.disk_state().is_deleted() {
+                        return false;
+                    }
                     if !search_query.match_path(file.path()) {
                         return false;
                     }

@@ -1,15 +1,16 @@
 use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
 
 use acp_thread::MentionUri;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use gpui::{
-    Animation, AnimationExt, AnyView, Context, IntoElement, WeakEntity, Window, pulsating_between,
+    Animation, AnimationExt, AnyView, Context, IntoElement, TaskExt, WeakEntity, Window,
+    pulsating_between,
 };
 use prompt_store::PromptId;
 use rope::Point;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
 
@@ -176,18 +177,18 @@ fn open_mention_uri(
         MentionUri::Thread { id, name } => {
             open_thread(workspace, id, name, window, cx);
         }
-        MentionUri::TextThread { .. } => {}
         MentionUri::Rule { id, .. } => {
             open_rule(workspace, id, window, cx);
         }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
-        MentionUri::PastedImage
+        MentionUri::PastedImage { .. }
         | MentionUri::Selection { abs_path: None, .. }
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
-        | MentionUri::GitDiff { .. } => {}
+        | MentionUri::GitDiff { .. }
+        | MentionUri::MergeConflict { .. } => {}
     });
 }
 
@@ -268,25 +269,30 @@ fn open_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    use crate::AgentPanel;
-    use acp_thread::AgentSessionInfo;
+    use crate::{Agent, AgentPanel, AgentThreadSource, thread_metadata_store::ThreadMetadataStore};
 
     let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
         return;
     };
 
+    // Right now we only support loading threads in the native agent.
     panel.update(cx, |panel, cx| {
-        panel.load_agent_thread(
-            AgentSessionInfo {
-                session_id: id,
-                cwd: None,
-                title: Some(name.into()),
-                updated_at: None,
-                meta: None,
-            },
-            window,
-            cx,
-        )
+        let thread_id = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| store.read(cx).entry_by_session(&id).map(|m| m.thread_id));
+        if let Some(thread_id) = thread_id {
+            panel.load_agent_thread(
+                Agent::NativeAgent,
+                thread_id,
+                None,
+                Some(name.into()),
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        } else {
+            panel.open_thread(id, None, Some(name.into()), window, cx);
+        }
     });
 }
 

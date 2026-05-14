@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, TaskExt, actions,
     prelude::*,
 };
 use project::ProjectItem as _;
@@ -204,7 +204,8 @@ impl Render for ReplSessionsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
-        let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {
+        let (kernel_specifications, sessions) = store.update(cx, |store, cx| {
+            store.ensure_kernelspecs(cx);
             (
                 store
                     .pure_jupyter_kernel_specifications()

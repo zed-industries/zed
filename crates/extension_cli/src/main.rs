@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -7,12 +8,15 @@ use std::sync::Arc;
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
+use cloud_api_types::ExtensionProvides;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
+use settings_content::SemanticTokenRules;
 use snippet_provider::file_to_snippets;
 use snippet_provider::format::VsSnippetsFile;
+use task::TaskTemplates;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -78,10 +82,7 @@ async fn main() -> Result<()> {
         .context("failed to compile extension")?;
 
     let extension_provides = manifest.provides();
-
-    if extension_provides.is_empty() {
-        bail!("extension does not provide any features");
-    }
+    validate_extension_features(&extension_provides)?;
 
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
     test_languages(&manifest, &extension_path, &grammars)?;
@@ -164,6 +165,7 @@ async fn copy_extension_resources(
         let output_themes_dir = output_dir.join("themes");
         fs::create_dir_all(&output_themes_dir)?;
         for theme_path in &manifest.themes {
+            let theme_path = theme_path.as_std_path();
             fs::copy(
                 extension_path.join(theme_path),
                 output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
@@ -176,6 +178,7 @@ async fn copy_extension_resources(
         let output_icon_themes_dir = output_dir.join("icon_themes");
         fs::create_dir_all(&output_icon_themes_dir)?;
         for icon_theme_path in &manifest.icon_themes {
+            let icon_theme_path = icon_theme_path.as_std_path();
             fs::copy(
                 extension_path.join(icon_theme_path),
                 output_icon_themes_dir.join(
@@ -201,7 +204,7 @@ async fn copy_extension_resources(
             },
         )
         .await
-        .with_context(|| "failed to copy icons")?;
+        .context("failed to copy icons")?;
     }
 
     for (_, agent_entry) in &manifest.agent_servers {
@@ -223,6 +226,7 @@ async fn copy_extension_resources(
         let output_languages_dir = output_dir.join("languages");
         fs::create_dir_all(&output_languages_dir)?;
         for language_path in &manifest.languages {
+            let language_path = language_path.as_std_path();
             copy_recursive(
                 fs.as_ref(),
                 &extension_path.join(language_path),
@@ -242,14 +246,11 @@ async fn copy_extension_resources(
 
     if !manifest.debug_adapters.is_empty() {
         for (debug_adapter, entry) in &manifest.debug_adapters {
-            let schema_path = entry.schema_path.clone().unwrap_or_else(|| {
-                PathBuf::from("debug_adapter_schemas".to_owned())
-                    .join(debug_adapter.as_ref())
-                    .with_extension("json")
-            });
+            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, entry)?;
             let parent = schema_path
                 .parent()
                 .with_context(|| format!("invalid empty schema path for {debug_adapter}"))?;
+            let schema_path = schema_path.as_std_path();
             fs::create_dir_all(output_dir.join(parent))?;
             copy_recursive(
                 fs.as_ref(),
@@ -264,7 +265,7 @@ async fn copy_extension_resources(
             .with_context(|| {
                 format!(
                     "failed to copy debug adapter schema '{}'",
-                    schema_path.display()
+                    schema_path.display(),
                 )
             })?;
         }
@@ -290,6 +291,22 @@ async fn copy_extension_resources(
                 format!("failed to copy snippets from '{}'", snippets_path.display())
             })?;
         }
+    }
+
+    Ok(())
+}
+
+fn validate_extension_features(provides: &BTreeSet<ExtensionProvides>) -> Result<()> {
+    if provides.is_empty() {
+        bail!("extension does not provide any features");
+    }
+
+    if provides.contains(&ExtensionProvides::Themes) && provides.len() != 1 {
+        bail!("extension must not provide other features along with themes");
+    }
+
+    if provides.contains(&ExtensionProvides::IconThemes) && provides.len() != 1 {
+        bail!("extension must not provide other features along with icon themes");
     }
 
     Ok(())
@@ -323,9 +340,8 @@ fn test_languages(
 ) -> Result<()> {
     for relative_language_dir in &manifest.languages {
         let language_dir = extension_path.join(relative_language_dir);
-        let config_path = language_dir.join("config.toml");
-        let config_content = fs::read_to_string(&config_path)?;
-        let config: LanguageConfig = toml::from_str(&config_content)?;
+        let config_path = language_dir.join(LanguageConfig::FILE_NAME);
+        let config = LanguageConfig::load(&config_path)?;
         let grammar = if let Some(name) = &config.grammar {
             Some(
                 grammars
@@ -339,18 +355,48 @@ fn test_languages(
         let query_entries = fs::read_dir(&language_dir)?;
         for entry in query_entries {
             let entry = entry?;
-            let query_path = entry.path();
-            if query_path.extension() == Some("scm".as_ref()) {
-                let grammar = grammar.with_context(|| {
-                    format! {
-                        "language {} provides query {} but no grammar",
-                        config.name,
-                        query_path.display()
-                    }
-                })?;
+            let file_path = entry.path();
 
-                let query_source = fs::read_to_string(&query_path)?;
-                let _query = Query::new(grammar, &query_source)?;
+            let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+
+            match file_name {
+                LanguageConfig::FILE_NAME => {
+                    // Loaded above
+                }
+                SemanticTokenRules::FILE_NAME => {
+                    let _token_rules = SemanticTokenRules::load(&file_path)?;
+                }
+                TaskTemplates::FILE_NAME => {
+                    let task_file_content = std::fs::read(&file_path).with_context(|| {
+                        anyhow!(
+                            "Failed to read tasks file at {path}",
+                            path = file_path.display()
+                        )
+                    })?;
+                    let _task_templates =
+                        serde_json_lenient::from_slice::<TaskTemplates>(&task_file_content)
+                            .with_context(|| {
+                                anyhow!(
+                                    "Failed to parse tasks file at {path}",
+                                    path = file_path.display()
+                                )
+                            })?;
+                }
+                _ if file_name.ends_with(".scm") => {
+                    let grammar = grammar.with_context(|| {
+                        format! {
+                            "language {} provides query {} but no grammar",
+                            config.name,
+                            file_path.display()
+                        }
+                    })?;
+
+                    let query_source = fs::read_to_string(&file_path)?;
+                    let _query = Query::new(grammar, &query_source)?;
+                }
+                _ => {}
             }
         }
 
@@ -367,7 +413,8 @@ async fn test_themes(
 ) -> Result<()> {
     for relative_theme_path in &manifest.themes {
         let theme_path = extension_path.join(relative_theme_path);
-        let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
+        let theme_family =
+            theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
         log::info!("loaded theme family {}", theme_family.name);
 
         for theme in &theme_family.themes {

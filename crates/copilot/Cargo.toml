@@ -40,7 +40,6 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
-semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -52,14 +51,10 @@ workspace.workspace = true
 async-std = { version = "1.12.0", features = ["unstable"] }
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
-clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
-ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
@@ -72,3 +67,4 @@ settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+theme_settings.workspace = true

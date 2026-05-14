@@ -3,10 +3,10 @@ use base64::{
     Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
-use gpui::{App, ClipboardItem, Image, ImageFormat, RenderImage, Window, img};
+use gpui::{App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window, img};
 use settings::Settings as _;
 use std::sync::Arc;
-use ui::{IntoElement, Styled, div, prelude::*};
+use ui::{IntoElement, Styled, prelude::*};
 
 use crate::outputs::{OutputContent, plain};
 use crate::repl_settings::ReplSettings;
@@ -113,7 +113,7 @@ impl Render for ImageView {
         let settings = ReplSettings::get_global(cx);
         let line_height = window.line_height();
 
-        let max_width = plain::max_width_for_columns(settings.output_max_width_columns, window, cx);
+        let max_width = plain::max_width_for_columns(settings.max_columns, window, cx);
 
         let max_height = if settings.output_max_height_lines > 0 {
             Some(line_height * settings.output_max_height_lines as f32)
@@ -125,7 +125,7 @@ impl Render for ImageView {
 
         let image = self.image.clone();
 
-        div().h(height).w(width).child(img(image))
+        img(image).w(width).h(height)
     }
 }
 

@@ -400,6 +400,18 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_complex_path(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -510,6 +522,91 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_row_column_numbers_query_inside_unicode_file(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    let first_file_name = "first.rs";
+    let first_file_contents = "aéøbcdef";
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    first_file_name: first_file_contents,
+                    "second.rs": "// Second Rust file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let file_query = &first_file_name[..3];
+    let file_row = 1;
+    let file_column = 5;
+    let query_inside_file = format!("{file_query}:{file_row}:{file_column}");
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(query_inside_file.to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 1, &query_inside_file.to_string());
+        let finder = &finder.delegate;
+        assert_eq!(finder.matches.len(), 2);
+        let latest_search_query = finder
+            .latest_search_query
+            .as_ref()
+            .expect("Finder should have a query after the update_matches call");
+        assert_eq!(latest_search_query.raw_query, query_inside_file);
+        assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        assert_eq!(latest_search_query.path_position.row, Some(file_row));
+        assert_eq!(latest_search_query.path_position.column, Some(file_column));
+    });
+
+    cx.dispatch_action(Confirm);
+
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    cx.executor().advance_clock(Duration::from_secs(2));
+
+    let expected_column = first_file_contents
+        .chars()
+        .take(file_column as usize - 1)
+        .map(|character| character.len_utf8())
+        .sum::<usize>();
+
+    editor.update(cx, |editor, cx| {
+        let all_selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+        assert_eq!(
+            all_selections.len(),
+            1,
+            "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
+        );
+        let caret_selection = all_selections.into_iter().next().unwrap();
+        assert_eq!(
+            caret_selection.start, caret_selection.end,
+            "Caret selection should have its start and end at the same position"
+        );
+        assert_eq!(
+            file_row,
+            caret_selection.start.row + 1,
+            "Query inside file should get caret with the same focus row"
+        );
+        assert_eq!(
+            expected_column,
+            caret_selection.start.column as usize,
+            "Query inside file should map user-visible columns to byte offsets for Unicode text"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
@@ -582,6 +679,200 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
             assert_eq!(first_file_contents.len(), caret_selection.start.column as usize,
                 "Excessive columns (as in query outside file borders) should get trimmed to selected row's last column");
         });
+}
+
+#[test]
+fn test_line_range_query_parsing() {
+    let query = parse_file_search_query("fs/smb/server/connection.c:428-440");
+
+    assert_eq!(query.raw_query, "fs/smb/server/connection.c:428-440");
+    assert_eq!(
+        query.file_query_end,
+        Some("fs/smb/server/connection.c".len())
+    );
+    assert_eq!(query.path_query(), "fs/smb/server/connection.c");
+    assert_eq!(query.path_position.row, Some(428));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(428..=440));
+}
+
+#[test]
+fn test_parse_search_query() {
+    // Test trailing colon stripping.
+    let query = parse_file_search_query("content.rs:2:");
+    assert_eq!(query.raw_query, "content.rs:2");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test multiple trailing colons are also stripped.
+    let query = parse_file_search_query("content.rs:2:::");
+    assert_eq!(query.raw_query, "content.rs:2");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test trailing colon after an incomplete range is stripped.
+    let query = parse_file_search_query("content.rs:2-:");
+    assert_eq!(query.raw_query, "content.rs:2-");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test trailing colon after a complete range is stripped, range is preserved.
+    let query = parse_file_search_query("content.rs:2-4:");
+    assert_eq!(query.raw_query, "content.rs:2-4");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(2..=4));
+
+    // Test multiple trailing colons after a complete range are all stripped.
+    let query = parse_file_search_query("content.rs:2-4:::");
+    assert_eq!(query.raw_query, "content.rs:2-4");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(2));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, Some(2..=4));
+
+    // Test invalid end should fall back to using the start as a single row.
+    let query = parse_file_search_query("content.rs:5-x");
+    assert_eq!(query.raw_query, "content.rs:5-x");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(5));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+
+    // Test reversed range (end < start) should fall back to using the start as a single row.
+    let query = parse_file_search_query("content.rs:10-5");
+    assert_eq!(query.raw_query, "content.rs:10-5");
+    assert_eq!(query.path_query(), "content.rs");
+    assert_eq!(query.path_position.row, Some(10));
+    assert_eq!(query.path_position.column, None);
+    assert_eq!(query.line_range, None);
+}
+
+#[gpui::test]
+async fn test_line_range_query_selects_lines(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    let first_file_contents = "line 1\nline 2\nline 3\nline 4\nline 5";
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": first_file_contents,
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let query = "test/first.rs:2-4";
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(query.to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_match_at_position(finder, 0, "first.rs");
+        assert_match_at_position(finder, 1, "first.rs:2-4");
+
+        let latest_search_query = finder
+            .delegate
+            .latest_search_query
+            .as_ref()
+            .expect("Finder should have a query after the update_matches call");
+        assert_eq!(latest_search_query.raw_query, query);
+        assert_eq!(
+            latest_search_query.file_query_end,
+            Some("test/first.rs".len())
+        );
+        assert_eq!(latest_search_query.path_position.row, Some(2));
+        assert_eq!(latest_search_query.path_position.column, None);
+        assert_eq!(latest_search_query.line_range, Some(2..=4));
+    });
+
+    cx.dispatch_action(Confirm);
+
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    cx.executor().advance_clock(Duration::from_secs(2));
+
+    editor.update(cx, |editor, cx| {
+        let all_selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+        assert_eq!(
+            all_selections.len(),
+            1,
+            "Expected to have 1 selection after file finder confirm, but got: {all_selections:?}"
+        );
+        let selection = all_selections.into_iter().next().unwrap();
+        assert_eq!(selection.start.row, 1);
+        assert_eq!(selection.start.column, 0);
+        assert_eq!(selection.end.row, 4);
+        assert_eq!(selection.end.column, 0);
+    });
+}
+
+#[gpui::test]
+async fn test_line_range_query_outside_file_clamps_to_eof(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    let first_file_contents = "line 1\nline 2";
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": first_file_contents,
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let query = "test/first.rs:200-300";
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(query.to_string(), window, cx)
+        })
+        .await;
+
+    cx.dispatch_action(Confirm);
+
+    let editor = cx.update(|_, cx| workspace.read(cx).active_item_as::<Editor>(cx).unwrap());
+    cx.executor().advance_clock(Duration::from_secs(2));
+
+    editor.update(cx, |editor, cx| {
+        let all_selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+        assert_eq!(
+            all_selections.len(),
+            1,
+            "Expected to have 1 selection after file finder confirm, but got: {all_selections:?}"
+        );
+        let selection = all_selections.into_iter().next().unwrap();
+        assert_eq!(selection.start, selection.end);
+        assert_eq!(selection.start.row, 1);
+        assert_eq!(selection.start.column, "line 2".len() as u32);
+    });
 }
 
 #[gpui::test]
@@ -1413,6 +1704,18 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
 #[gpui::test]
 async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -1647,6 +1950,17 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
@@ -2148,6 +2462,17 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
 async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -2252,6 +2577,17 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
@@ -2736,6 +3072,17 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -2783,6 +3130,17 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
 #[gpui::test]
 async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
@@ -3182,6 +3540,17 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
 #[gpui::test]
 async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state.fs.as_fake().insert_tree("/src", json!({})).await;
 
@@ -3614,7 +3983,7 @@ async fn open_queried_buffer(
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         super::init(cx);
         editor::init(cx);
         state
@@ -3622,17 +3991,7 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 }
 
 fn test_path_position(test_str: &str) -> FileSearchQuery {
-    let path_position = PathWithPosition::parse_str(test_str);
-
-    FileSearchQuery {
-        raw_query: test_str.to_owned(),
-        file_query_end: if path_position.path.to_str().unwrap() == test_str {
-            None
-        } else {
-            Some(path_position.path.to_str().unwrap().len())
-        },
-        path_position,
-    }
+    parse_file_search_query(test_str)
 }
 
 fn build_find_picker(
@@ -3709,7 +4068,7 @@ impl SearchEntries {
 fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries {
     let mut search_entries = SearchEntries::default();
     for m in &picker.delegate.matches.matches {
-        match &m {
+        match m {
             Match::History {
                 path: history_path,
                 panel_match: path_match,
@@ -3734,6 +4093,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                 search_entries.search_matches.push(path_match.0.clone());
             }
             Match::CreateNew(_) => {}
+            Match::Channel { .. } => {}
         }
     }
     search_entries
@@ -3768,6 +4128,7 @@ fn assert_match_at_position(
         Match::History { path, .. } => path.absolute.file_name().and_then(|s| s.to_str()),
         Match::Search(path_match) => path_match.0.path.file_name(),
         Match::CreateNew(project_path) => project_path.path.file_name(),
+        Match::Channel { channel_name, .. } => Some(channel_name.as_str()),
     }
     .unwrap();
     assert_eq!(match_file_name, expected_file_name);
@@ -3776,6 +4137,17 @@ fn assert_match_at_position(
 #[gpui::test]
 async fn test_filename_precedence(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     app_state
         .fs
@@ -3821,6 +4193,18 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -3960,4 +4344,234 @@ async fn test_clear_navigation_history(cx: &mut TestAppContext) {
         0,
         "Should have no history items after clearing"
     );
+}
+
+#[gpui::test]
+async fn test_order_independent_search(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "internal": {
+                    "auth": {
+                        "login.rs": "",
+                    }
+                }
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    // forward order
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("auth internal"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path.as_unix_str(), "internal/auth/login.rs");
+    });
+
+    // reverse order should give same result
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("internal auth"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path.as_unix_str(), "internal/auth/login.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_filename_preferred_over_directory_match(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "crates": {
+                    "settings_ui": {
+                        "src": {
+                            "pages": {
+                                "audio_test_window.rs": "",
+                                "audio_input_output_setup.rs": "",
+                            }
+                        }
+                    },
+                    "audio": {
+                        "src": {
+                            "audio_settings.rs": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("settings audio"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert!(!matches.is_empty(),);
+        assert_eq!(
+            matches[0].path.as_unix_str(),
+            "crates/audio/src/audio_settings.rs"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_start_of_word_preferred_over_scattered_match(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "crates": {
+                    "livekit_client": {
+                        "src": {
+                            "livekit_client": {
+                                "playback.rs": "",
+                            }
+                        }
+                    },
+                    "vim": {
+                        "test_data": {
+                            "test_record_replay_interleaved.json": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("live pla"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert!(!matches.is_empty(),);
+        assert_eq!(
+            matches[0].path.as_unix_str(),
+            "crates/livekit_client/src/livekit_client/playback.rs",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_exact_filename_stem_preferred(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "assets": {
+                    "icons": {
+                        "file_icons": {
+                            "nix.svg": "",
+                        }
+                    }
+                },
+                "crates": {
+                    "zed": {
+                        "resources": {
+                            "app-icon-nightly@2x.png": "",
+                            "app-icon-preview@2x.png": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("nix icon"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert!(!matches.is_empty(),);
+        assert_eq!(
+            matches[0].path.as_unix_str(),
+            "assets/icons/file_icons/nix.svg",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_exact_filename_with_directory_token(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "crates": {
+                    "agent_servers": {
+                        "src": {
+                            "acp.rs": "",
+                            "agent_server.rs": "",
+                            "custom.rs": "",
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("acp server"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker).search_matches_only();
+        assert!(!matches.is_empty(),);
+        assert_eq!(
+            matches[0].path.as_unix_str(),
+            "crates/agent_servers/src/acp.rs",
+        );
+    });
 }
