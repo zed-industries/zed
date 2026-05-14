@@ -1367,6 +1367,43 @@ async fn test_keyboard_navigation_on_empty_list(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_new_entry_noops_without_open_project(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project = project::Project::test(fs, [], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    assert!(
+        !sidebar.read_with(cx, |sidebar, _cx| sidebar.contents.has_open_projects),
+        "empty workspaces should be treated as having no open projects"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.create_new_entry(&workspace, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(
+            panel.active_conversation_view().is_none(),
+            "sidebar should not create an agent thread without an open project"
+        );
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        Vec::<String>::new()
+    );
+}
+
+#[gpui::test]
 async fn test_selection_clamps_after_entry_removal(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
