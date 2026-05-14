@@ -580,6 +580,35 @@ mod oauth_callback_server {
         pub state: String,
     }
 
+    /// Configuration for the loopback OAuth callback server.
+    ///
+    /// OAuth servers compare `redirect_uri` against a per-client allow-list using
+    /// exact string matching (RFC 6749 §3.1.2), so the `host`, `preferred_port`,
+    /// and `path` here must match what's registered for the OAuth client_id.
+    #[derive(Clone, Copy)]
+    pub struct OAuthCallbackServerConfig {
+        /// Host portion of the redirect URI (typically `127.0.0.1` or `localhost`).
+        pub host: &'static str,
+        /// Preferred port. Use `0` for an OS-assigned ephemeral port.
+        pub preferred_port: u16,
+        /// Optional fallback port if `preferred_port` is unavailable. Only used
+        /// when `preferred_port` is non-zero.
+        pub fallback_port: Option<u16>,
+        /// Callback path on the redirect URI (e.g. `/callback`, `/auth/callback`).
+        pub path: &'static str,
+    }
+
+    impl Default for OAuthCallbackServerConfig {
+        fn default() -> Self {
+            Self {
+                host: "127.0.0.1",
+                preferred_port: 0,
+                fallback_port: None,
+                path: "/callback",
+            }
+        }
+    }
+
     impl OAuthCallbackParams {
         /// Parse the query string from a callback URL like
         /// `http://127.0.0.1:<port>/callback?code=...&state=...`.
@@ -644,16 +673,28 @@ mod oauth_callback_server {
         String,
         futures::channel::oneshot::Receiver<Result<OAuthCallbackParams>>,
     )> {
-        let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| {
-            anyhow!(e).context("Failed to bind loopback listener for OAuth callback")
-        })?;
+        start_oauth_callback_server_with_config(OAuthCallbackServerConfig::default())
+    }
+
+    /// Start a loopback HTTP server with custom host/port/path.
+    ///
+    /// Use this when the OAuth client requires a specific redirect URI that the
+    /// default ephemeral-port `http://127.0.0.1:<port>/callback` doesn't match.
+    pub fn start_oauth_callback_server_with_config(
+        config: OAuthCallbackServerConfig,
+    ) -> Result<(
+        String,
+        futures::channel::oneshot::Receiver<Result<OAuthCallbackParams>>,
+    )> {
+        let server = bind_callback_server(&config)?;
         let port = server
             .server_addr()
             .to_ip()
             .ok_or_else(|| anyhow!("server not bound to a TCP address"))?
             .port();
 
-        let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
+        let redirect_uri = format!("http://{}:{}{}", config.host, port, config.path);
+        let expected_path = config.path;
 
         let (tx, rx) = futures::channel::oneshot::channel();
 
@@ -680,7 +721,29 @@ mod oauth_callback_server {
                     continue;
                 };
 
-                let result = handle_oauth_callback_request(&request);
+                let raw_url = request.url().to_string();
+                let raw_path = raw_url.split('?').next().unwrap_or(&raw_url);
+                if raw_path == CANCEL_PATH {
+                    let response = tiny_http::Response::from_string("Cancelled")
+                        .with_status_code(200)
+                        .with_header(
+                            tiny_http::Header::from_str("Content-Type: text/plain")
+                                .expect("failed to construct response header"),
+                        )
+                        .with_header(
+                            tiny_http::Header::from_str("Connection: close")
+                                .expect("failed to construct response header"),
+                        );
+                    if let Err(err) = request.respond(response) {
+                        log::error!("Failed to send OAuth cancel response: {}", err);
+                    }
+                    let _ = tx.send(Err(anyhow!(
+                        "OAuth callback server was cancelled by another sign-in attempt"
+                    )));
+                    return;
+                }
+
+                let result = handle_oauth_callback_request(&request, expected_path);
 
                 let (status_code, body) = match &result {
                     Ok(_) => (
@@ -726,11 +789,14 @@ mod oauth_callback_server {
         Ok((redirect_uri, rx))
     }
 
-    fn handle_oauth_callback_request(request: &tiny_http::Request) -> Result<OAuthCallbackParams> {
+    fn handle_oauth_callback_request(
+        request: &tiny_http::Request,
+        expected_path: &str,
+    ) -> Result<OAuthCallbackParams> {
         let url = Url::parse(&format!("http://localhost{}", request.url()))
             .context("malformed callback request URL")?;
 
-        if url.path() != "/callback" {
+        if url.path() != expected_path {
             anyhow::bail!("unexpected path in OAuth callback: {}", url.path());
         }
 
@@ -739,7 +805,131 @@ mod oauth_callback_server {
             .ok_or_else(|| anyhow!("OAuth callback has no query string"))?;
         OAuthCallbackParams::parse_query(query)
     }
+
+    /// Callback path reserved for evicting a previously-running OAuth callback
+    /// server bound to the same port. Always handled, regardless of `config.path`.
+    const CANCEL_PATH: &str = "/cancel";
+
+    const BIND_MAX_ATTEMPTS: u32 = 10;
+    const BIND_RETRY_DELAY: Duration = Duration::from_millis(200);
+    const CANCEL_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+    fn bind_callback_server(config: &OAuthCallbackServerConfig) -> Result<tiny_http::Server> {
+        // Ephemeral ports always succeed; skip the cancel-retry dance entirely.
+        if config.preferred_port == 0 {
+            let addr = format!("{}:0", config.host);
+            return tiny_http::Server::http(&addr).map_err(|err| {
+                anyhow!(err).context(format!(
+                    "Failed to bind loopback listener for OAuth callback on {addr}"
+                ))
+            });
+        }
+
+        match try_bind_with_cancel(config.host, config.preferred_port) {
+            Ok(server) => Ok(server),
+            Err(primary_err) => {
+                let Some(fallback_port) = config.fallback_port else {
+                    return Err(primary_err.context(format!(
+                        "Failed to bind loopback listener for OAuth callback on {}:{}",
+                        config.host, config.preferred_port,
+                    )));
+                };
+                log::warn!(
+                    "OAuth callback port {}:{} unavailable; falling back to port {}",
+                    config.host,
+                    config.preferred_port,
+                    fallback_port,
+                );
+                try_bind_with_cancel(config.host, fallback_port).map_err(|fallback_err| {
+                    fallback_err.context(format!(
+                        "Failed to bind loopback listener for OAuth callback on {}:{} or {}:{}",
+                        config.host, config.preferred_port, config.host, fallback_port,
+                    ))
+                })
+            }
+        }
+    }
+
+    /// Attempts to bind to a fixed `host:port`. On `AddrInUse`, sends a single
+    /// `GET /cancel` to the existing listener (to evict a previous OAuth flow
+    /// from this or a compatible client) and retries.
+    fn try_bind_with_cancel(host: &'static str, port: u16) -> Result<tiny_http::Server> {
+        let addr = format!("{host}:{port}");
+        let mut cancel_attempted = false;
+        let mut last_err: Option<anyhow::Error> = None;
+
+        for _ in 0..BIND_MAX_ATTEMPTS {
+            match tiny_http::Server::http(&addr) {
+                Ok(server) => return Ok(server),
+                Err(err) => {
+                    let is_addr_in_use = err
+                        .downcast_ref::<std::io::Error>()
+                        .map(|io_err| io_err.kind() == std::io::ErrorKind::AddrInUse)
+                        .unwrap_or(false);
+
+                    if !is_addr_in_use {
+                        return Err(anyhow!(err).context(format!(
+                            "Failed to bind loopback listener for OAuth callback on {addr}"
+                        )));
+                    }
+
+                    if !cancel_attempted {
+                        cancel_attempted = true;
+                        if let Err(cancel_err) = send_cancel_request(host, port) {
+                            log::warn!(
+                                "Failed to cancel previous OAuth callback server on {addr}: {cancel_err}"
+                            );
+                        }
+                    }
+
+                    last_err = Some(anyhow!(err));
+                    std::thread::sleep(BIND_RETRY_DELAY);
+                }
+            }
+        }
+
+        Err(last_err
+            .unwrap_or_else(|| anyhow!("unknown bind error"))
+            .context(format!(
+                "OAuth callback port {addr} remained in use after {BIND_MAX_ATTEMPTS} attempts"
+            )))
+    }
+
+    /// Sends `GET /cancel` to a listener on `host:port`, asking it to shut down.
+    ///
+    /// Best-effort: errors here are surfaced to the caller for logging but do
+    /// not block the subsequent rebind attempt.
+    fn send_cancel_request(host: &str, port: u16) -> std::io::Result<()> {
+        use std::io::{Read as _, Write as _};
+        use std::net::{TcpStream, ToSocketAddrs as _};
+
+        let addr = format!("{host}:{port}")
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("could not resolve {host}:{port}"),
+                )
+            })?;
+        let mut stream = TcpStream::connect_timeout(&addr, CANCEL_REQUEST_TIMEOUT)?;
+        stream.set_read_timeout(Some(CANCEL_REQUEST_TIMEOUT))?;
+        stream.set_write_timeout(Some(CANCEL_REQUEST_TIMEOUT))?;
+
+        stream.write_all(b"GET /cancel HTTP/1.1\r\n")?;
+        stream.write_all(format!("Host: {host}:{port}\r\n").as_bytes())?;
+        stream.write_all(b"Connection: close\r\n\r\n")?;
+
+        // Drain the response so the server can close cleanly. We don't care
+        // about the body; errors here are harmless.
+        let mut buf = [0u8; 64];
+        let _ = stream.read(&mut buf);
+        Ok(())
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
-pub use oauth_callback_server::{OAuthCallbackParams, start_oauth_callback_server};
+pub use oauth_callback_server::{
+    OAuthCallbackParams, OAuthCallbackServerConfig, start_oauth_callback_server,
+    start_oauth_callback_server_with_config,
+};

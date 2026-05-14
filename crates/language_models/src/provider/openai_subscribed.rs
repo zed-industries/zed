@@ -651,13 +651,31 @@ struct TokenResponse {
     email: Option<String>,
 }
 
+// The OAuth client registered for `CLIENT_ID` (the Codex CLI's client) only allows
+// `http://localhost:1455/auth/callback` and `http://localhost:1457/auth/callback`
+// as redirect URIs; using anything else (different host, port, or path) causes
+// auth.openai.com to reject the authorize request with a generic `unknown_error`
+// before redirecting back. Keep these in sync with the Codex CLI's redirect URI
+// allow-list (see codex-rs/login/src/server.rs in openai/codex).
+const CODEX_CALLBACK_HOST: &str = "localhost";
+const CODEX_CALLBACK_PORT: u16 = 1455;
+const CODEX_CALLBACK_FALLBACK_PORT: u16 = 1457;
+const CODEX_CALLBACK_PATH: &str = "/auth/callback";
+
 async fn do_oauth_flow(
     http_client: Arc<dyn HttpClient>,
     cx: &AsyncApp,
 ) -> Result<CodexCredentials> {
     // Start the callback server FIRST so the redirect URI is ready
-    let (redirect_uri, callback_rx) = http_client::start_oauth_callback_server()
-        .context("Failed to start OAuth callback server")?;
+    let (redirect_uri, callback_rx) = http_client::start_oauth_callback_server_with_config(
+        http_client::OAuthCallbackServerConfig {
+            host: CODEX_CALLBACK_HOST,
+            preferred_port: CODEX_CALLBACK_PORT,
+            fallback_port: Some(CODEX_CALLBACK_FALLBACK_PORT),
+            path: CODEX_CALLBACK_PATH,
+        },
+    )
+    .context("Failed to start OAuth callback server")?;
 
     // PKCE verifier: 32 random bytes → base64url (no padding)
     let mut verifier_bytes = [0u8; 32];
@@ -679,10 +697,14 @@ async fn do_oauth_flow(
         .query_pairs_mut()
         .append_pair("client_id", CLIENT_ID)
         .append_pair("redirect_uri", &redirect_uri)
-        .append_pair("scope", "openid profile email offline_access")
+        .append_pair(
+            "scope",
+            "openid profile email offline_access api.connectors.read api.connectors.invoke",
+        )
         .append_pair("response_type", "code")
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
+        .append_pair("id_token_add_organizations", "true")
         .append_pair("state", &oauth_state)
         .append_pair("codex_cli_simplified_flow", "true")
         .append_pair("originator", "zed");
